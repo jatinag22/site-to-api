@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { fakeHtmlLocator, fakeSourceResolver, SECRET_VALUES, shopCapture } from '../../../test/scenarios'
 import { traceValues } from '../../analyze/correlate'
 import { buildFlows } from '../../analyze/flows'
+import { createRedactor } from '../../analyze/redact'
 import { SiteToApiError } from '../../errors'
 import { FlowsDocumentSchema } from '../../model'
 import { renderFlowsMarkdown, writeFlows } from './index'
@@ -25,6 +26,15 @@ const doc: FlowsDocument = buildFlows({
   }),
   sourceResolver: fakeSourceResolver,
   botProtection: capture.botProtection,
+  redactor: createRedactor({
+    exchanges: capture.exchanges,
+    config: {
+      examples: 'masked',
+      maxExamples: 3,
+      patterns: [],
+      fields: [],
+    },
+  }),
   toolVersion: '1.2.3',
 })
 

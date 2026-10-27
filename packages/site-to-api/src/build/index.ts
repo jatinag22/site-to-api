@@ -198,6 +198,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     traces,
     sourceResolver: callSites,
     botProtection: classified.botProtection,
+    redactor,
     toolVersion: VERSION,
   })
 

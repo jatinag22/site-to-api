@@ -6,6 +6,8 @@ import type {
   FlowStep,
   LoadedSession,
   Operation,
+  RedactContext,
+  Redactor,
   SourceResolver,
   TransformEvent,
   ValueLocation,
@@ -15,8 +17,8 @@ import type {
 import type { DraftStep, Segment, Trigger } from './segments'
 import { FLOWS_FORMAT_VERSION } from '../../model'
 import { responseText, responseValues } from '../correlate'
-import { describeShape, inspectJwt } from '../shape'
-import { formatLocation, outputName, slugify, uniqueName } from './locations'
+import { describeShape } from '../shape'
+import { formatLocation, lastPointerToken, outputName, slugify, uniqueName } from './locations'
 import { splitSession } from './segments'
 import { sessionRequirements } from './session'
 
@@ -28,14 +30,14 @@ export interface BuildFlowsInput {
   traces: ValueTrace[]
   sourceResolver: SourceResolver
   botProtection: BotProtectionFinding[]
+  /**
+   * The build's redactor (decision 0004). Every value `flows.json` would copy from the capture
+   * (constants, labels, page URLs, HTML anchors) goes through it, so flows and specs agree on
+   * what is secret.
+   */
+  redactor: Redactor
   toolVersion: string
 }
-
-/**
- * Names that mark a value as a credential. A constant with such a name is still written as a
- * shape, because "the same in every session" can also mean "the same account was used".
- */
-const CREDENTIAL_NAME = /auth|token|secret|passw|pwd|session|csrf|xsrf|jwt|signature|api[-_]?key|credential/i
 
 /** Transform inputs shorter than this match too many unrelated response values. */
 const MIN_USE_LENGTH = 8
@@ -54,21 +56,34 @@ interface StepAddress {
   stepId: string
 }
 
-function locationName(location: ValueLocation): string {
+type HtmlLocation = Extract<ValueLocation, { in: 'html' }>
+
+/** Where a request value sits, in the redactor's terms; for JSON the nearest property name. */
+function redactContextOf(location: ValueLocation): RedactContext {
   switch (location.in) {
     case 'path':
-      return ''
+      return { in: 'path', name: null }
     case 'body':
-      return location.pointer
+      return {
+        in: 'body',
+        name: lastPointerToken(location.pointer),
+      }
     case 'html':
-      return location.selector
+      return { in: 'response-body', name: null }
     default:
-      return location.name
+      return { in: location.in, name: location.name }
   }
 }
 
-function looksLikeCredential(location: ValueLocation, value: string): boolean {
-  return location.in === 'cookie' || CREDENTIAL_NAME.test(locationName(location)) || inspectJwt(value) !== null
+/**
+ * The literal text of an extraction pattern, without its capture group and regex escapes:
+ * `"csrfToken":"([^"]*)` → `"csrfToken":"`. That text was copied from the page.
+ */
+function patternLiteral(pattern: string): string {
+  return pattern
+    .replace(/\((?:[^()\\]|\\.)*\)/g, ' ')
+    .replace(/\\s\*/g, ' ')
+    .replace(/\\(.)/g, '$1')
 }
 
 function compareExchanges(a: Exchange, b: Exchange): number {
@@ -96,18 +111,6 @@ function stepSummary(operation: Operation, trigger: Trigger): string {
 }
 
 /**
- * Turns traced traffic into `flows.json`: one flow per action the person took (plus the initial
- * page load), each a list of steps with the origin of every input. Flows with the same trigger
- * label and operation sequence in several sessions are merged. Pure and deterministic.
- *
- * Step references: inside a flow's own steps, `step` names a step of the same flow (`s1`). A
- * value produced by another flow is written `<flowId>.<stepId>`, and so are all references in
- * `computedValues`, which belong to no single flow.
- *
- * No secret value is written: only constants that do not look like credentials keep their
- * value; everything else is described by origin or by shape.
- */
-/**
  * Whether a traced value is an input a wrapper has to supply. Literal path segments
  * (`/api/stock.txt`) are part of the route, not inputs; bot-protection steps run in a real
  * browser, so their payloads (`sensor_data`) are never inputs (decision 0008).
@@ -131,13 +134,15 @@ function collectInputs(
   operation: Operation,
   tracesByExchange: ReadonlyMap<string, ValueTrace[]>,
   originOf: (trace: ValueTrace, exchange: Exchange) => ValueOrigin,
+  /** Redacts an input key: JSON pointers can hold data used as keys (`/users/<email>`). */
+  safeKey: (key: string) => string,
 ): Map<string, ValueOrigin> {
   const inputs = new Map<string, ValueOrigin>()
   for (const exchange of occurrences.flatMap(occurrence => occurrence.exchanges.slice(0, 1))) {
     for (const trace of tracesByExchange.get(exchange.id) ?? []) {
       if (!isStepInput(trace, operation))
         continue
-      const key = formatLocation(trace.location)
+      const key = safeKey(formatLocation(trace.location))
       const existing = inputs.get(key)
       if (existing && existing.kind !== 'unknown')
         continue
@@ -149,7 +154,50 @@ function collectInputs(
   return inputs
 }
 
+/**
+ * Turns traced traffic into `flows.json`: one flow per action the person took (plus the initial
+ * page load), each a list of steps with the origin of every input. Flows with the same trigger
+ * label and operation sequence in several sessions are merged. Pure and deterministic.
+ *
+ * Step references: inside a flow's own steps, `step` names a step of the same flow (`s1`). A
+ * value produced by another flow is written `<flowId>.<stepId>`, and so are all references in
+ * `computedValues`, which belong to no single flow.
+ *
+ * No secret value is written: a constant keeps its value only when the redactor leaves it
+ * unchanged (the same rule the specs use for header defaults); everything else is described by
+ * origin or by shape. Trigger labels, page URLs, HTML selectors and patterns, location texts and
+ * computed-value details pass through the redactor too, and token path segments become `{token}`.
+ */
 export function buildFlows(input: BuildFlowsInput): FlowsDocument {
+  const { redactor } = input
+  /** Text copied from the capture, redacted like any other free text. */
+  const safeText = (text: string): string => redactor.value(text, { in: 'text' })
+  const leaks = (text: string | null): boolean => text !== null && safeText(text) !== text
+  /**
+   * HTML selectors and patterns embed page text (`[data-user="..."]`, the words before a value).
+   * When that text holds a secret or personal data, fall back to a weaker, value-free location.
+   */
+  const safeHtmlLocation = (location: HtmlLocation): HtmlLocation => {
+    if (leaks(location.selector) || leaks(location.attr)) {
+      return {
+        in: 'html',
+        selector: '',
+        attr: null,
+        pattern: null,
+      }
+    }
+    if (location.pattern !== null && (leaks(location.pattern) || leaks(patternLiteral(location.pattern))))
+      return { ...location, pattern: null }
+    return location
+  }
+  const safeLocation = (location: ValueLocation): ValueLocation => location.in === 'html'
+    ? safeHtmlLocation(location)
+    : location
+  const safeTrigger = (trigger: Trigger): Trigger => ({
+    kind: trigger.kind,
+    label: safeText(trigger.label),
+    pageUrl: safeText(trigger.pageUrl),
+  })
   const operationByExchange = new Map<string, Operation>()
   for (const operation of input.operations) {
     for (const exchange of operation.exchanges)
@@ -178,7 +226,11 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       exchanges: exchangesBySession.get(sessionId) ?? [],
       operationOf,
     })
-    for (const segment of segments) {
+    for (const raw of segments) {
+      const segment = {
+        ...raw,
+        trigger: safeTrigger(raw.trigger),
+      }
       const key = `${segment.trigger.label}\u0000${segment.steps.map(step => step.operation.operationId).join('\u0000')}`
       groups.set(key, [
         ...(groups.get(key) ?? []),
@@ -229,14 +281,15 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       return null
     const key = `${address.flowId}\u0000${address.stepId}`
     const locations = references.get(key) ?? new Map<string, ValueLocation>()
-    locations.set(formatLocation(location), location)
+    locations.set(safeText(formatLocation(location)), location)
     references.set(key, locations)
     return address.flowId === currentFlow
       ? address.stepId
       : `${address.flowId}.${address.stepId}`
   }
 
-  const responseOrigin = (producerId: string, location: ValueLocation, transform: Extract<ValueOrigin, { kind: 'step' }>['transform'], value: string, currentFlow: string | null): ValueOrigin => {
+  const responseOrigin = (producerId: string, rawLocation: ValueLocation, transform: Extract<ValueOrigin, { kind: 'step' }>['transform'], value: string, currentFlow: string | null): ValueOrigin => {
+    const location = safeLocation(rawLocation)
     const step = reference(producerId, location, currentFlow)
     if (step === null) {
       return {
@@ -260,7 +313,7 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
     return {
       kind: 'step',
       step,
-      output: formatLocation(location),
+      output: safeText(formatLocation(location)),
       transform,
     }
   }
@@ -328,7 +381,13 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
         ? input.sourceResolver.callSite(exchange.initiator.stack, exchange.sessionId)
         : null,
       api: event.api,
-      details: event.details,
+      // Algorithm parameters can carry bytes (an IV, a label); redact them like any value.
+      details: event.details === null
+        ? null
+        : Object.fromEntries(Object.entries(event.details).map(([name, value]) => [
+            name,
+            redactor.value(value, { in: 'text', name }),
+          ])),
       uses: usesOf(event, sessionId),
       evidence: 'transform-hook',
     })
@@ -341,16 +400,18 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       case 'response':
         return responseOrigin(origin.exchangeId, origin.location, origin.transform, trace.value, flowId)
       case 'transform':
-        return computedOrigin(trace, exchange, operation, formatLocation(trace.location), origin.eventIndex, origin.sessionId)
+        return computedOrigin(trace, exchange, operation, safeText(formatLocation(trace.location)), origin.eventIndex, origin.sessionId)
       case 'user-input':
         return { kind: 'user-input', field: origin.field }
       case 'constant':
-        return looksLikeCredential(trace.location, trace.value)
-          ? {
+        // Identical in every session can also mean "the same person captured twice": their
+        // email or user id. Keep the value only when the redactor would write it unchanged.
+        return redactor.value(trace.value, redactContextOf(trace.location)) === trace.value
+          ? { kind: 'constant', value: trace.value }
+          : {
               kind: 'unknown',
               shape: describeShape(trace.value),
             }
-          : { kind: 'constant', value: trace.value }
       case 'browser':
         return { kind: 'browser', note: origin.note }
       case 'unknown':
@@ -369,7 +430,7 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
           ? [step]
           : []
       })
-      const inputs = collectInputs(occurrences, draftStep.operation, tracesByExchange, (trace, exchange) => originOf(trace, exchange, draftStep.operation, draft.id))
+      const inputs = collectInputs(occurrences, draftStep.operation, tracesByExchange, (trace, exchange) => originOf(trace, exchange, draftStep.operation, draft.id), safeText)
       const representative = occurrences[0]?.exchanges[0]
       return {
         id: draftStep.id,
@@ -403,7 +464,7 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       const names = new Set<string>()
       const entries = [...locations].sort(([a], [b]) => a.localeCompare(b))
       const named = entries.map(([text, location]): [string, string] => [
-        uniqueName(outputName(location), names),
+        uniqueName(safeText(outputName(location)), names),
         text,
       ])
       step.outputs = Object.fromEntries(named.sort(([a], [b]) => a.localeCompare(b)))
@@ -421,7 +482,14 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       traces: input.traces,
       botProtection: input.botProtection,
       operationOf,
-    }),
+    }).map(entry => ({
+      ...entry,
+      // Evidence quotes request paths (`request to host/path`), which can hold tokens.
+      botProtection: entry.botProtection.map(finding => ({
+        ...finding,
+        evidence: safeText(finding.evidence),
+      })),
+    })),
     flows,
     computedValues: [
       ...computed.values(),

@@ -1,11 +1,31 @@
-import type { CaptureEvent, Exchange, FlowsDocument, LoadedSession, Operation, ValueTrace } from '../../model'
+import type { ResolvedConfig } from '../../config/schema'
+import type { CaptureEvent, Exchange, FlowsDocument, LoadedSession, Operation, Redactor, ValueTrace } from '../../model'
 import type { BuildFlowsInput } from './index'
 import { describe, expect, it } from 'vitest'
 import { exchange, jsonBody } from '../../../test/helpers'
 import { CLIENT_VERSION, CONSTANT_API_KEY, fakeHtmlLocator, fakeSourceResolver, HOST, SECRET_VALUES, shopCapture } from '../../../test/scenarios'
 import { FlowsDocumentSchema } from '../../model'
 import { traceValues } from '../correlate'
+import { createRedactor } from '../redact'
 import { buildFlows } from './index'
+
+/** The default redaction settings (`redact.examples: masked`). */
+const REDACT: ResolvedConfig['redact'] = {
+  examples: 'masked',
+  maxExamples: 3,
+  patterns: [],
+  fields: [],
+}
+
+function redactorFor(exchanges: Exchange[], config: Partial<ResolvedConfig['redact']> = {}): Redactor {
+  return createRedactor({
+    exchanges,
+    config: {
+      ...REDACT,
+      ...config,
+    },
+  })
+}
 
 function shopFlows(capture = shopCapture(), reverse = false): { doc: FlowsDocument, capture: ReturnType<typeof shopCapture> } {
   const order = <T>(items: T[]): T[] => (reverse
@@ -27,6 +47,7 @@ function shopFlows(capture = shopCapture(), reverse = false): { doc: FlowsDocume
     traces,
     sourceResolver: fakeSourceResolver,
     botProtection: capture.botProtection,
+    redactor: redactorFor(exchanges),
     toolVersion: '1.2.3',
   })
   return { doc, capture }
@@ -91,7 +112,8 @@ describe('buildFlows: shop scenario', () => {
     const login = flow(doc, 'sign-in').steps[0]!
     expect(login.inputs).toEqual({
       'header.x-client-version': { kind: 'constant', value: CLIENT_VERSION },
-      'header.x-api-key': { kind: 'unknown', shape: '23 base64 chars' },
+      // Secret-named but identical in both sessions: kept, as the redactor and the specs keep it.
+      'header.x-api-key': { kind: 'constant', value: CONSTANT_API_KEY },
       'header.x-csrf-token': {
         kind: 'html',
         step: 'load-login.s1',
@@ -203,7 +225,6 @@ describe('buildFlows: shop scenario', () => {
     const json = JSON.stringify(doc)
     for (const secret of SECRET_VALUES)
       expect(json).not.toContain(secret)
-    expect(json).not.toContain(CONSTANT_API_KEY)
   })
 
   it('is deterministic, whatever order the inputs come in', () => {
@@ -261,6 +282,7 @@ function build(exchanges: Exchange[], operations: Operation[], sessions: LoadedS
     traces,
     sourceResolver: fakeSourceResolver,
     botProtection: [],
+    redactor: redactorFor(exchanges),
     toolVersion: 'test',
   }
   return buildFlows(input)
@@ -493,6 +515,7 @@ describe('buildFlows: what counts as an input', () => {
       traces,
       sourceResolver: fakeSourceResolver,
       botProtection: [],
+      redactor: redactorFor(exchanges),
       toolVersion: 'test',
     })
     const steps = doc.flows.flatMap(entry => entry.steps)
