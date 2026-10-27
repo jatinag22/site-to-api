@@ -26,6 +26,7 @@ catalogs:
     typescript: ^6.0.3
     vitest: ^5.0.5
   prod:
+    '@hey-api/shared': 0.5.0
     commander: ^15.0.0
     consola: ^3.4.2
     jiti: ^2.7.0

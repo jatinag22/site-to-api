@@ -47,6 +47,7 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
+    "@hey-api/shared": "catalog:prod",
     "@site-to-api/runtime": "workspace:*",
     "commander": "catalog:prod",
     "consola": "catalog:prod",
