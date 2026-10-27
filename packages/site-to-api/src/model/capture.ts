@@ -59,6 +59,12 @@ const base = {
   /** Milliseconds since epoch, from the page clock. */
   ts: z.number(),
   pageUrl: z.string(),
+  /**
+   * Origin of the frame whose instrumentation sent the event, as the browser reported it rather
+   * than as the page claimed (`https://example.com`, or `null` for opaque origins). Absent for
+   * events recorded outside the page (navigations, WebSocket frames) and in older captures.
+   */
+  frameOrigin: z.string().optional(),
 }
 
 /** A request the page's own code started, with the JavaScript stack at the moment it was sent. */

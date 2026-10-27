@@ -5,10 +5,12 @@
  */
 import type { APIRequestContext, Response } from 'playwright'
 import type { SessionMeta } from '../model'
+import type { Lookup } from './network'
 import { Buffer } from 'node:buffer'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
+import { nonPublicReason, sourceMapRefusal } from './network'
 import { hostDir, safeJoin, scriptFilePath, sourceFilePath, sourceMapFilePath } from './paths'
 
 type ScriptRecord = SessionMeta['scripts'][number]
@@ -42,6 +44,8 @@ const SKIPPED_SCRIPT_HOSTS = [
 ]
 
 const SOURCEMAP_TIMEOUT_MS = 8000
+/** Redirects followed by hand, so each hop goes through the same address check as the first. */
+const SOURCEMAP_MAX_REDIRECTS = 3
 
 /** Label stored as the sourcemap URL when the map was embedded in the script as a `data:` URI. */
 const INLINE_SOURCEMAP_URL = 'inline'
@@ -152,6 +156,29 @@ async function writeInside(sessionDir: string, relative: string, data: string | 
   await writeFile(target, data)
 }
 
+/** Where a script came from, for deciding which sourcemap URLs may be fetched. */
+interface ScriptOrigin {
+  url: URL
+  /** The page that loaded the script is on a non-public host (a dev server, a local fixture). */
+  pageIsLocal: boolean
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : String(error)
+}
+
+/** URL of the top frame that loaded a script, or `null` for worker scripts and closed pages. */
+function pageUrlOf(response: Response): string | null {
+  try {
+    return response.frame().page().mainFrame().url()
+  }
+  catch {
+    return null
+  }
+}
+
 interface FoundMap {
   url: string
   text: string
@@ -168,7 +195,7 @@ export class ScriptCollector {
   constructor(
     private readonly sessionDir: string,
     private readonly request: APIRequestContext,
-    private readonly options: { saveScripts: boolean, sourcemaps: boolean },
+    private readonly options: { saveScripts: boolean, sourcemaps: boolean, /** Replaces DNS in tests. */ lookup?: Lookup },
   ) {}
 
   /** Starts processing a response if it is a script worth keeping. */
@@ -210,7 +237,8 @@ export class ScriptCollector {
       await writeInside(this.sessionDir, file, body)
     let sourceMap: ScriptRecord['sourceMap'] = null
     if (this.options.sourcemaps) {
-      const found = await this.findSourceMap(url.href, response.headers(), body)
+      const origin = { url, pageIsLocal: await this.isLocalPage(pageUrlOf(response)) }
+      const found = await this.findSourceMap(origin, response.headers(), body)
       if (found)
         sourceMap = await this.saveSourceMap(url, file, found)
     }
@@ -224,7 +252,24 @@ export class ScriptCollector {
     }
   }
 
-  private async findSourceMap(scriptUrl: string, headers: Record<string, string>, body: string): Promise<FoundMap | null> {
+  /** True when the page is on a non-public host; unknown pages count as public, the safe side. */
+  private async isLocalPage(pageUrl: string | null): Promise<boolean> {
+    if (pageUrl === null)
+      return false
+    let parsed: URL
+    try {
+      parsed = new URL(pageUrl)
+    }
+    catch {
+      return false
+    }
+    if (!/^https?:$/.test(parsed.protocol))
+      return false
+    return await nonPublicReason(parsed.hostname, this.options.lookup) !== null
+  }
+
+  private async findSourceMap(script: ScriptOrigin, headers: Record<string, string>, body: string): Promise<FoundMap | null> {
+    const scriptUrl = script.url.href
     for (const candidate of sourceMapCandidates(scriptUrl, headers, body)) {
       if (candidate.kind === 'inline') {
         const map = parseSourceMap(candidate.text)
@@ -233,7 +278,7 @@ export class ScriptCollector {
         this.warnings.push(`Inline sourcemap in ${scriptUrl} is not a valid sourcemap.`)
         continue
       }
-      const text = await this.fetchText(candidate.url, !candidate.guess)
+      const text = await this.fetchText(candidate.url, script, !candidate.guess)
       if (text === null)
         continue
       const map = parseSourceMap(text)
@@ -245,26 +290,45 @@ export class ScriptCollector {
     return null
   }
 
-  /** Fetches with the browser's cookies. A miss on the `<url>.map` guess is expected and silent. */
-  private async fetchText(url: string, warnOnFailure: boolean): Promise<string | null> {
+  /**
+   * Fetches with the browser's cookies, following redirects by hand so every hop is checked by
+   * {@link sourceMapRefusal}. A refused URL is always a warning; other misses on the `<url>.map`
+   * guess are expected and silent.
+   */
+  private async fetchText(url: string, script: ScriptOrigin, warnOnFailure: boolean): Promise<string | null> {
+    let current = url
     try {
-      const response = await this.request.get(url, { timeout: SOURCEMAP_TIMEOUT_MS, failOnStatusCode: false, maxRedirects: 3 })
-      if (!response.ok()) {
-        if (warnOnFailure)
-          this.warnings.push(`Sourcemap ${url} returned HTTP ${response.status()}.`)
+      for (let hop = 0; hop <= SOURCEMAP_MAX_REDIRECTS; hop++) {
+        const refusal = await sourceMapRefusal(new URL(current), script.url, script.pageIsLocal, this.options.lookup)
+        if (refusal !== null) {
+          this.warnings.push(`Did not fetch sourcemap ${current} for ${script.url.href}: ${refusal}.`)
+          return null
+        }
+        const response = await this.request.get(current, { timeout: SOURCEMAP_TIMEOUT_MS, failOnStatusCode: false, maxRedirects: 0 })
+        const status = response.status()
+        const location = response.headers().location
+        if (status >= 300 && status < 400 && location !== undefined) {
+          await response.dispose()
+          current = new URL(location, current).href
+          continue
+        }
+        if (!response.ok()) {
+          if (warnOnFailure)
+            this.warnings.push(`Sourcemap ${current} returned HTTP ${status}.`)
+          await response.dispose()
+          return null
+        }
+        const text = await response.text()
         await response.dispose()
-        return null
+        return text
       }
-      const text = await response.text()
-      await response.dispose()
-      return text
+      if (warnOnFailure)
+        this.warnings.push(`Sourcemap ${url} redirected more than ${SOURCEMAP_MAX_REDIRECTS} times.`)
+      return null
     }
     catch (error) {
-      if (warnOnFailure) {
-        this.warnings.push(`Could not fetch sourcemap ${url}: ${error instanceof Error
-          ? error.message
-          : String(error)}`)
-      }
+      if (warnOnFailure)
+        this.warnings.push(`Could not fetch sourcemap ${current}: ${errorText(error)}`)
       return null
     }
   }

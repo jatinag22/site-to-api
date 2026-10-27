@@ -10,6 +10,10 @@
  * `toString()` output; prototypes and constructors are never replaced, only methods on them; and
  * form field values are never read for `action` events.
  *
+ * Every field the page sends is trimmed to {@link LIMITS} in the page and checked against the
+ * same limits in {@link pageMessageToEvent}: the binding is reachable by any script in the page,
+ * so the Node side cannot rely on the page code having done it.
+ *
  * Known limitation: init scripts and bindings do not reach Web Workers or Service Workers, so
  * requests and crypto calls made inside workers have no `request`/`transform` events. Their
  * traffic is still in the HAR, just without an initiator stack.
@@ -21,6 +25,32 @@ import { INSTRUMENT_SOURCE_URL, parseV8Stack } from './stack'
 /** Name of the binding the page calls; Playwright exposes it on `window`. */
 export const BINDING_NAME = '__siteToApiEmit'
 
+/**
+ * Size limits for what the page sends, in UTF-16 code units for strings and entries for arrays.
+ * The page code trims to them; the schema rejects anything larger.
+ */
+const LIMITS = {
+  url: 8192,
+  stack: 16_384,
+  method: 32,
+  bodyPreview: 2048,
+  /** Response bodies larger than this (in bytes, so also in characters) are left to the HAR. */
+  response: 2_000_000,
+  /** A response body still arriving after this long is a stream; stop copying it. */
+  responseMs: 30_000,
+  mimeType: 256,
+  api: 100,
+  input: 256,
+  /** Longer outputs are dropped, not cut: a truncated digest or ciphertext matches nothing. */
+  output: 65_536,
+  items: 16,
+  detailKeys: 32,
+  detailKey: 64,
+  label: 200,
+  selector: 500,
+  field: 200,
+} as const
+
 const PAGE_SOURCE = String.raw`
 (function () {
   'use strict';
@@ -31,11 +61,16 @@ const PAGE_SOURCE = String.raw`
     Object.defineProperty(window, FLAG, { value: true, enumerable: false });
   } catch (e) { return; }
 
-  var BODY_LIMIT = 2048;
-  // Response bodies larger than this are left to the HAR.
-  var RESPONSE_LIMIT = 2000000;
+  var LIMITS = __LIMITS__;
+  var BODY_LIMIT = LIMITS.bodyPreview;
+  var RESPONSE_LIMIT = LIMITS.response;
   var TEXTUAL = /json|text|xml|javascript|csv|x-www-form-urlencoded/i;
-  var INPUT_LIMIT = 256;
+  // Long-lived streams: copying them would buffer the whole stream in page memory, and a cloned
+  // body keeps the connection open after the page cancels its own reader.
+  var STREAMING = /event-stream|ndjson|stream\+json|multipart\//i;
+  var INPUT_LIMIT = LIMITS.input;
+  var nativeSetTimeout = window.setTimeout;
+  var nativeClearTimeout = window.clearTimeout;
   var queue = [];
   var nativeToString = Function.prototype.toString;
   var originals = new WeakMap();
@@ -57,7 +92,7 @@ const PAGE_SOURCE = String.raw`
   function emit(message) {
     try {
       message.ts = Date.now();
-      message.pageUrl = String(location.href);
+      message.pageUrl = clip(location.href, LIMITS.url);
       if (queue.length < 5000) queue.push(message);
       flush();
     } catch (e) {}
@@ -69,7 +104,7 @@ const PAGE_SOURCE = String.raw`
       Error.stackTraceLimit = 60;
       var text = String(new Error().stack || '');
       Error.stackTraceLimit = previous;
-      return text;
+      return clip(text, LIMITS.stack);
     } catch (e) { return ''; }
   }
 
@@ -202,16 +237,60 @@ const PAGE_SOURCE = String.raw`
   }
 
   function absolute(url) {
-    try { return new URL(String(url), location.href).href; } catch (e) { return String(url); }
+    var text;
+    try { text = new URL(String(url), location.href).href; } catch (e) { text = String(url); }
+    return clip(text, LIMITS.url);
+  }
+
+  function methodName(method) {
+    return clip(String(method || 'GET').toUpperCase(), LIMITS.method);
   }
 
   function request(via, method, url, body) {
-    emit({ t: 'request', via: via, method: String(method || 'GET').toUpperCase(), url: absolute(url), bodyPreview: preview(body, BODY_LIMIT), stack: stack() });
+    emit({ t: 'request', via: via, method: methodName(method), url: absolute(url), bodyPreview: preview(body, BODY_LIMIT), stack: stack() });
   }
 
   function response(via, method, url, status, mimeType, body) {
     if (typeof body !== 'string' || body.length > RESPONSE_LIMIT) return;
-    emit({ t: 'response', via: via, method: String(method || 'GET').toUpperCase(), url: absolute(url), status: status, mimeType: mimeType, body: body });
+    emit({ t: 'response', via: via, method: methodName(method), url: absolute(url), status: status, mimeType: clip(mimeType, LIMITS.mimeType), body: body });
+  }
+
+  function isCopyable(type) {
+    return TEXTUAL.test(type) && !STREAMING.test(type);
+  }
+
+  // Reads a clone of the body chunk by chunk and gives up, cancelling only the clone, as soon as
+  // it passes the size or time limit, so a large or endless body is never buffered whole.
+  function readClone(res, done) {
+    var body = res.clone().body;
+    if (!body) { done(''); return; }
+    var reader = body.getReader();
+    var chunks = [];
+    var size = 0;
+    var stopped = false;
+    function stop() {
+      stopped = true;
+      try { reader.cancel().catch(function () {}); } catch (e) {}
+    }
+    var timer = apply(nativeSetTimeout, window, [stop, LIMITS.responseMs]);
+    function pump() {
+      reader.read().then(function (step) {
+        if (stopped) return;
+        if (step.done) {
+          apply(nativeClearTimeout, window, [timer]);
+          var all = new Uint8Array(size);
+          var offset = 0;
+          for (var i = 0; i < chunks.length; i++) { all.set(chunks[i], offset); offset += chunks[i].byteLength; }
+          done(new TextDecoder().decode(all));
+          return;
+        }
+        size += step.value.byteLength;
+        if (size > RESPONSE_LIMIT) { apply(nativeClearTimeout, window, [timer]); stop(); return; }
+        chunks.push(step.value);
+        pump();
+      }, function () { apply(nativeClearTimeout, window, [timer]); });
+    }
+    pump();
   }
 
   // Reads a copy of a fetch response so the page's own reading is untouched.
@@ -219,17 +298,49 @@ const PAGE_SOURCE = String.raw`
     try {
       if (!res || res.type === 'opaque' || res.type === 'opaqueredirect') return;
       var type = (res.headers && res.headers.get('content-type')) || '';
-      if (!TEXTUAL.test(type)) return;
+      if (!isCopyable(type)) return;
       var length = Number(res.headers.get('content-length'));
       if (length > RESPONSE_LIMIT) return;
-      res.clone().text().then(function (text) {
+      readClone(res, function (text) {
         try { response('fetch', method, res.url || url, res.status, type, text); } catch (e) {}
-      }, function () {});
+      });
     } catch (e) {}
   }
 
-  function transform(api, output, inputs, details) {
-    emit({ t: 'transform', api: api, output: output, inputs: inputs, details: details, stack: stack() });
+  // Trims a list of strings to the item limit. Over-long entries are cut (inputs) or dropped
+  // (outputs, which only help when they match a request value exactly).
+  function strings(list, limit, dropLong) {
+    var out = [];
+    for (var i = 0; i < list.length && out.length < LIMITS.items; i++) {
+      var text = String(list[i]);
+      if (text.length > limit) {
+        if (dropLong) continue;
+        text = text.slice(0, limit);
+      }
+      out.push(text);
+    }
+    return out;
+  }
+
+  function cleanDetails(details) {
+    if (!details) return null;
+    var out = {};
+    var keys = Object.keys(details).slice(0, LIMITS.detailKeys);
+    for (var i = 0; i < keys.length; i++) out[clip(keys[i], LIMITS.detailKey)] = clip(details[keys[i]], INPUT_LIMIT);
+    return out;
+  }
+
+  function transform(api, output, inputs, details, trace) {
+    var outputs = strings(output, LIMITS.output, true);
+    if (outputs.length === 0) return;
+    emit({
+      t: 'transform',
+      api: clip(api, LIMITS.api),
+      output: outputs,
+      inputs: strings(inputs, INPUT_LIMIT, false),
+      details: cleanDetails(details),
+      stack: trace === undefined ? stack() : trace
+    });
   }
 
   var nativeBtoa = window.btoa;
@@ -278,7 +389,7 @@ const PAGE_SOURCE = String.raw`
               xhr.addEventListener('load', function () {
                 try {
                   var type = xhr.getResponseHeader('content-type') || '';
-                  if (!TEXTUAL.test(type)) return;
+                  if (!isCopyable(type)) return;
                   var text = xhr.responseType === '' || xhr.responseType === 'text' ? xhr.responseText
                     : xhr.responseType === 'json' ? JSON.stringify(xhr.response) : null;
                   response('xhr', info.method, xhr.responseURL || info.url, xhr.status, type, text);
@@ -370,7 +481,7 @@ const PAGE_SOURCE = String.raw`
     try {
       var source = keySources && key && typeof key === 'object' ? keySources.get(key) : null;
       if (source) return source;
-      return key && key.algorithm ? '<CryptoKey ' + String(key.algorithm.name) + '>' : '<key>';
+      return key && key.algorithm ? clip('<CryptoKey ' + String(key.algorithm.name) + '>', INPUT_LIMIT) : '<key>';
     } catch (e) { return '<key>'; }
   }
 
@@ -397,14 +508,7 @@ const PAGE_SOURCE = String.raw`
               try {
                 var bytes = bytesOf(buffer);
                 if (!bytes) return;
-                emit({
-                  t: 'transform',
-                  api: 'crypto.subtle.' + name,
-                  output: [toBase64(bytes), toHex(bytes)],
-                  inputs: describeInputs(args),
-                  details: algorithmDetails(args[0]),
-                  stack: trace
-                });
+                transform('crypto.subtle.' + name, [toBase64(bytes), toHex(bytes)], describeInputs(args), algorithmDetails(args[0]), trace);
               } catch (e) {}
             }, function () {});
           } catch (e) {}
@@ -417,7 +521,7 @@ const PAGE_SOURCE = String.raw`
     subtleHook('digest', function (args) { return [preview(args[1], INPUT_LIMIT) || '']; });
     subtleHook('encrypt', function (args) { return [keyInput(args[1]), preview(args[2], INPUT_LIMIT) || '']; });
     subtleHook('sign', function (args) { return [keyInput(args[1]), preview(args[2], INPUT_LIMIT) || '']; });
-    subtleHook('deriveBits', function (args) { return [keyInput(args[1]), String(args[2])]; });
+    subtleHook('deriveBits', function (args) { return [keyInput(args[1]), clip(String(args[2]), INPUT_LIMIT)]; });
     if (keySources) {
       wrapMethod(subtle, 'importKey', function (original) {
         return {
@@ -488,7 +592,7 @@ const PAGE_SOURCE = String.raw`
               var result = apply(original, this, arguments);
               try {
                 var inputs = [];
-                for (var i = 0; i < arguments.length; i++) inputs.push(inputText(arguments[i]));
+                for (var i = 0; i < arguments.length && i < LIMITS.items; i++) inputs.push(inputText(arguments[i]));
                 transform('CryptoJS.' + name, wordArrayOutputs(CryptoJS, result), inputs, { name: name });
               } catch (e) {}
               return result;
@@ -574,7 +678,7 @@ const PAGE_SOURCE = String.raw`
   var CLICKABLE = 'a,button,input,select,textarea,label,summary,option,[role=button],[role=link],[role=menuitem],[role=tab],[onclick]';
 
   function action(kind, el, field) {
-    emit({ t: 'action', kind: kind, label: labelFor(el), selector: selectorFor(el), field: field });
+    emit({ t: 'action', kind: kind, label: labelFor(el), selector: clip(selectorFor(el), LIMITS.selector), field: field === null ? null : clip(field, LIMITS.field) });
   }
 
   try {
@@ -593,7 +697,7 @@ const PAGE_SOURCE = String.raw`
         var submitter = event.submitter || null;
         var label = '';
         if (submitter) label = labelFor(submitter);
-        emit({ t: 'action', kind: 'submit', label: label || collapse(form.getAttribute('aria-label') || form.name || form.id || 'form', 80), selector: selectorFor(form), field: null });
+        emit({ t: 'action', kind: 'submit', label: label || collapse(form.getAttribute('aria-label') || form.name || form.id || 'form', 80), selector: clip(selectorFor(form), LIMITS.selector), field: null });
         formRequest(form, submitter);
       } catch (e) {}
     }, true);
@@ -611,59 +715,73 @@ const PAGE_SOURCE = String.raw`
 
 /** Source of the init script, ending with a `sourceURL` so its stack frames can be filtered. */
 export function instrumentSource(): string {
-  return `${PAGE_SOURCE.replace('__BINDING__', BINDING_NAME)}\n//# sourceURL=${INSTRUMENT_SOURCE_URL}\n`
+  const source = PAGE_SOURCE.replace('__BINDING__', BINDING_NAME).replace('__LIMITS__', JSON.stringify(LIMITS))
+  return `${source}\n//# sourceURL=${INSTRUMENT_SOURCE_URL}\n`
+}
+
+function text(max: number): z.ZodString {
+  return z.string().max(max)
 }
 
 const pageBase = {
   ts: z.number(),
-  pageUrl: z.string(),
+  pageUrl: text(LIMITS.url),
 }
 
-/** What the page sends through the binding. Validated because page code can be tampered with. */
+const stackText = text(LIMITS.stack)
+
+/**
+ * What the page sends through the binding. Validated, with the same size limits the page code
+ * trims to, because any script in the page can call the binding with whatever it likes.
+ */
 const PageMessageSchema = z.discriminatedUnion('t', [
   z.object({
     ...pageBase,
     t: z.literal('request'),
     via: z.enum(['fetch', 'xhr', 'beacon', 'form']),
-    method: z.string(),
-    url: z.string(),
-    bodyPreview: z.string().nullable(),
-    stack: z.string(),
+    method: text(LIMITS.method),
+    url: text(LIMITS.url),
+    bodyPreview: text(LIMITS.bodyPreview).nullable(),
+    stack: stackText,
   }),
   z.object({
     ...pageBase,
     t: z.literal('transform'),
-    api: z.string(),
-    output: z.array(z.string()),
-    inputs: z.array(z.string()),
-    details: z.record(z.string(), z.string()).nullable(),
-    stack: z.string(),
+    api: text(LIMITS.api),
+    output: z.array(text(LIMITS.output)).max(LIMITS.items),
+    inputs: z.array(text(LIMITS.input)).max(LIMITS.items),
+    details: z.record(text(LIMITS.detailKey), text(LIMITS.input))
+      .refine(details => Object.keys(details).length <= LIMITS.detailKeys, `at most ${LIMITS.detailKeys} details`)
+      .nullable(),
+    stack: stackText,
   }),
   z.object({
     ...pageBase,
     t: z.literal('response'),
     via: z.enum(['fetch', 'xhr']),
-    method: z.string(),
-    url: z.string(),
+    method: text(LIMITS.method),
+    url: text(LIMITS.url),
     status: z.number().int(),
-    mimeType: z.string(),
-    body: z.string(),
+    mimeType: text(LIMITS.mimeType),
+    body: text(LIMITS.response),
   }),
   z.object({
     ...pageBase,
     t: z.literal('action'),
     kind: z.enum(['click', 'submit', 'change']),
-    label: z.string(),
-    selector: z.string(),
-    field: z.string().nullable(),
+    label: text(LIMITS.label),
+    selector: text(LIMITS.selector),
+    field: text(LIMITS.field).nullable(),
   }),
 ])
 
 /**
- * Turns a binding payload into a capture event, parsing its stack. Returns an error message
- * instead of throwing, because a malformed message is a warning, not a reason to stop capturing.
+ * Turns a binding payload into a capture event, parsing its stack and recording `frameOrigin`,
+ * the origin of the frame that called the binding as Playwright reports it (the page cannot
+ * forge it). Returns an error message instead of throwing, because a malformed message is a
+ * warning, not a reason to stop capturing.
  */
-export function pageMessageToEvent(payload: unknown): { event: CaptureEvent } | { error: string } {
+export function pageMessageToEvent(payload: unknown, frameOrigin: string): { event: CaptureEvent } | { error: string } {
   const parsed = PageMessageSchema.safeParse(payload)
   if (!parsed.success) {
     return {
@@ -671,11 +789,15 @@ export function pageMessageToEvent(payload: unknown): { event: CaptureEvent } | 
     }
   }
   const message = parsed.data
-  if (message.t === 'action' || message.t === 'response')
-    return { event: message }
+  if (message.t === 'action' || message.t === 'response') {
+    return {
+      event: { ...message, frameOrigin },
+    }
+  }
   return {
     event: {
       ...message,
+      frameOrigin,
       stack: parseV8Stack(message.stack),
     },
   }

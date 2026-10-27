@@ -100,12 +100,97 @@ const SECOND_HTML = '<!doctype html><html><head><title>Second Page</title></head
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
+/**
+ * A second site on another origin (`localhost` rather than `127.0.0.1`, so a different site too)
+ * that plays a third-party iframe forging events and an internal service a sourcemap points at.
+ */
+interface OtherSite {
+  url: string
+  hits: string[]
+  close: () => Promise<void>
+}
+
+const OTHER_FRAME_HTML = `<!doctype html><html><body><script>
+fetch('/other-api').catch(() => {});
+Promise.resolve(window.__siteToApiEmit({ t: 'action', kind: 'click', ts: 1, pageUrl: 'http://127.0.0.1/forged', label: 'Forged', selector: '#forged', field: null }))
+  .finally(() => { window.__sent = true; });
+</script></body></html>`
+
+const SAME_FRAME_HTML = `<!doctype html><html><body><script>
+fetch('/api/config').then(() => { window.__sent = true; });
+</script></body></html>`
+
+function startOtherSite(): Promise<OtherSite> {
+  const hits: string[] = []
+  const server = createServer((req, res) => {
+    hits.push(req.url ?? '/')
+    if (req.url === '/frame') {
+      res.writeHead(200, { 'content-type': 'text/html' })
+      return res.end(OTHER_FRAME_HTML)
+    }
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end('{"version":3,"sources":["internal-secret.ts"],"sourcesContent":["leaked"],"mappings":""}')
+  })
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address !== null
+        ? address.port
+        : 0
+      resolve({
+        url: `http://localhost:${port}`,
+        hits,
+        close: () => new Promise<void>((r) => {
+          server.closeAllConnections()
+          server.close(() => r())
+        }),
+      })
+    })
+  })
+}
+
+let other: OtherSite
+
+function hostileRoutes(url: string, send: (type: string, body: string, headers?: Record<string, string>) => void, redirect: (location: string) => void): boolean {
+  const otherPort = new URL(other.url).port
+  switch (url) {
+    case '/hostile':
+      send('text/html', `<!doctype html><html><head><title>Hostile</title></head><body>
+<iframe id="other" src="${other.url}/frame"></iframe>
+<iframe id="same" src="/same-frame"></iframe>
+<script src="/static/cross.js"></script>
+<script src="/static/redirect.js"></script>
+</body></html>`)
+      return true
+    case '/same-frame':
+      send('text/html', SAME_FRAME_HTML)
+      return true
+    case '/static/cross.js':
+      send('text/javascript', `window.__cross = 1;\n${MAP_COMMENT}http://127.0.0.1:${otherPort}/evil.map\n`, { 'x-sourcemap': `${other.url}/header.map` })
+      return true
+    case '/static/redirect.js':
+      send('text/javascript', `window.__redirect = 1;\n${MAP_COMMENT}redirect.js.map\n`)
+      return true
+    case '/static/redirect.js.map':
+      redirect(`http://127.0.0.1:${otherPort}/redirected.map`)
+      return true
+    default:
+      return false
+  }
+}
+
 function startServer(): Promise<{ url: string, close: () => Promise<void> }> {
   const server = createServer((req, res) => {
     const url = req.url ?? '/'
-    const send = (type: string, body: string): void => {
-      res.writeHead(200, { 'content-type': type })
+    const send = (type: string, body: string, headers: Record<string, string> = {}): void => {
+      res.writeHead(200, { 'content-type': type, ...headers })
       res.end(body)
+    }
+    if (hostileRoutes(url, send, (location) => {
+      res.writeHead(302, { location })
+      res.end()
+    })) {
+      return
     }
     if (url === '/')
       return send('text/html', INDEX_HTML)
@@ -186,12 +271,14 @@ let site: { url: string, close: () => Promise<void> }
 let work: string
 
 beforeAll(async () => {
+  other = await startOtherSite()
   site = await startServer()
   work = await mkdtemp(path.join(tmpdir(), 'site-to-api-capture-'))
 })
 
 afterAll(async () => {
   await site.close()
+  await other.close()
   await rm(work, { recursive: true, force: true })
 })
 
@@ -389,4 +476,113 @@ describe('runCapture errors and interactive mode', () => {
       output: ['rsa(late)'],
     })
   }, 60_000)
+})
+
+const HOSTILE_SCRIPT = `
+import type { Page } from 'playwright'
+
+type Emit = (message: unknown) => Promise<void>
+
+export default async ({ page, baseUrl }: { page: Page, baseUrl: string }) => {
+  await page.goto(baseUrl + '/hostile')
+  for (const id of ['other', 'same']) {
+    const frame = await (await page.waitForSelector('#' + id)).contentFrame()
+    await frame?.waitForFunction(() => (window as unknown as { __sent?: boolean }).__sent === true)
+  }
+  // The page itself calls the binding directly, past the page code's own trimming.
+  await page.evaluate(async () => {
+    const emit = (window as unknown as { __siteToApiEmit: Emit }).__siteToApiEmit
+    const base = { ts: 1, pageUrl: location.href }
+    await emit({ ...base, t: 'action', kind: 'click', label: 'x'.repeat(10_000), selector: '', field: null })
+    await emit({ ...base, t: 'request', via: 'fetch', method: 'GET', url: 'http://x/' + 'x'.repeat(100_000), bodyPreview: null, stack: '' })
+    await emit({ ...base, t: 'response', via: 'fetch', method: 'GET', url: location.href, status: 200, mimeType: 'text/plain', body: 'x'.repeat(3_000_000) })
+    await emit({ ...base, t: 'transform', api: 'btoa', output: Array.from({ length: 100 }, () => 'a'), inputs: [], details: null, stack: '' })
+    await emit({ ...base, t: 'action', kind: 'click', label: 'Direct', selector: '#direct', field: null })
+  })
+}
+`
+
+const FLOOD_SCRIPT = `
+import type { Page } from 'playwright'
+
+type Emit = (message: unknown) => Promise<void>
+
+export default async ({ page, baseUrl }: { page: Page, baseUrl: string }) => {
+  await page.goto(baseUrl + '/second')
+  await page.evaluate(async () => {
+    const emit = (window as unknown as { __siteToApiEmit: Emit }).__siteToApiEmit
+    const body = 'f'.repeat(100_000)
+    for (let i = 0; i < 100; i++)
+      await emit({ ts: i, pageUrl: location.href, t: 'response', via: 'fetch', method: 'GET', url: location.href, status: 200, mimeType: 'text/plain', body })
+    for (let i = 0; i < 1000; i++)
+      await emit({ ts: i, pageUrl: location.href, t: 'action', kind: 'click', label: 'flood', selector: '#f', field: null })
+  })
+}
+`
+
+describe('runCapture on a hostile page', () => {
+  let events: CaptureEvent[]
+  let warnings: string[]
+  let meta: ReturnType<typeof SessionMetaSchema.parse>
+
+  beforeAll(async () => {
+    await writeFile(path.join(work, 'hostile.ts'), HOSTILE_SCRIPT)
+    other.hits.length = 0
+    const result = await runCapture(headlessConfig('hostile.ts'), { url: site.url, sessionId: 'hostile', cwd: work })
+    warnings = result.warnings
+    meta = result.meta
+    events = await readEvents(path.join(result.sessionDir, 'events.jsonl'))
+  }, 120_000)
+
+  it('ignores events from a frame on another site, forged or not', () => {
+    const otherOrigin = new URL(other.url).origin
+    expect(events.filter(e => e.frameOrigin === otherOrigin)).toEqual([])
+    expect(events.some(e => e.t === 'action' && e.label === 'Forged')).toBe(false)
+    expect(events.some(e => e.t === 'request' && e.url.endsWith('/other-api'))).toBe(false)
+    expect(warnings).toContainEqual(expect.stringMatching(new RegExp(`^Ignored [23] instrumentation event\\(s\\) from frames of other sites: ${otherOrigin}\\.$`)))
+  })
+
+  it('keeps events from a same-origin frame and records the origin of each frame', () => {
+    const fromFrame = events.find(e => e.t === 'request' && e.pageUrl === `${site.url}/same-frame`)
+    expect(fromFrame).toMatchObject({ url: `${site.url}/api/config`, frameOrigin: site.url })
+  })
+
+  it('rejects oversized messages sent straight to the binding and keeps the valid one', () => {
+    expect(warnings).toContainEqual(expect.stringMatching(/^Dropped 4 malformed instrumentation event\(s\)/))
+    expect(events.find(e => e.t === 'action' && e.label === 'Direct')).toMatchObject({ frameOrigin: site.url })
+    expect(events.every(e => JSON.stringify(e).length < 100_000)).toBe(true)
+  })
+
+  it('never fetches sourcemaps that point at another local origin, directly or by redirect', () => {
+    const port = new URL(other.url).port
+    expect(other.hits.filter(hit => hit.endsWith('.map'))).toEqual([])
+    expect(warnings).toEqual(expect.arrayContaining([
+      expect.stringMatching(new RegExp(`^Did not fetch sourcemap ${other.url}/header\\.map for ${site.url}/static/cross\\.js: localhost is a local host name`)),
+      expect.stringMatching(new RegExp(`^Did not fetch sourcemap http://127\\.0\\.0\\.1:${port}/evil\\.map for ${site.url}/static/cross\\.js: .*not the script's own origin`)),
+      expect.stringMatching(new RegExp(`^Did not fetch sourcemap http://127\\.0\\.0\\.1:${port}/redirected\\.map for ${site.url}/static/redirect\\.js`)),
+    ]))
+    expect(meta.scripts.find(s => s.url.endsWith('/static/cross.js'))?.sourceMap).toBeNull()
+    expect(meta.scripts.find(s => s.url.endsWith('/static/redirect.js'))?.sourceMap).toBeNull()
+  })
+})
+
+describe('runCapture when a page floods the binding', () => {
+  it('stops at the session byte cap and warns once', async () => {
+    await writeFile(path.join(work, 'flood.ts'), FLOOD_SCRIPT)
+    const result = await runCapture(headlessConfig('flood.ts'), {
+      url: site.url,
+      sessionId: 'flood',
+      cwd: work,
+      eventLimits: { maxBytes: 1024 * 1024 },
+    })
+    const text = await readFile(path.join(result.sessionDir, 'events.jsonl'), 'utf8')
+    expect(text.length).toBeLessThanOrEqual(1024 * 1024)
+    const events = text.trim().split('\n').map(line => CaptureEventSchema.parse(JSON.parse(line)))
+    // About ten 100 KB bodies fit under 1 MB; the other ninety and every later event do not.
+    expect(events.filter(e => e.t === 'response')).toHaveLength(10)
+    expect(events.some(e => e.t === 'action' && e.label === 'flood')).toBe(false)
+    const limit = result.warnings.filter(w => w.startsWith('Stopped recording events'))
+    expect(limit).toHaveLength(1)
+    expect(limit[0]).toMatch(/session limit of 1 MB; \d+ later event\(s\) were dropped/)
+  }, 120_000)
 })

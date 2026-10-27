@@ -7,6 +7,7 @@ import type { Buffer } from 'node:buffer'
 import type { BrowserContext, Page, WebSocket } from 'playwright'
 import type { ResolvedConfig } from '../config/schema'
 import type { CaptureEvent, SessionMeta } from '../model'
+import type { EventLimits } from './events'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -18,6 +19,7 @@ import pkg from '../../package.json' with { type: 'json' }
 import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { EventWriter } from './events'
+import { effectiveOrigin, isFrameInScope } from './frames'
 import { BINDING_NAME, instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
 import { ScriptCollector } from './scripts'
@@ -34,6 +36,8 @@ export interface RunCaptureOptions {
   signal?: AbortSignal
   /** Progress and instructions for the person running the capture. */
   log?: (message: string) => void
+  /** Overrides the per-session event caps; tests use small ones. */
+  eventLimits?: Partial<EventLimits>
 }
 
 /** What {@link runCapture} produced. */
@@ -191,7 +195,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
   const warnings: string[] = []
   const startedAt = new Date().toISOString()
   const harPath = path.join(sessionDir, HAR_FILE)
-  const events = new EventWriter(path.join(sessionDir, EVENTS_FILE))
+  const events = new EventWriter(path.join(sessionDir, EVENTS_FILE), options.eventLimits)
   const { browser } = capture
 
   let context: BrowserContext
@@ -209,11 +213,18 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     void task.finally(() => pending.delete(task))
   }
   const collector = new ScriptCollector(sessionDir, context.request, { saveScripts: capture.saveScripts, sourcemaps: capture.sourcemaps })
+  const ignoredFrames = new Map<string, number>()
 
   try {
     if (capture.instrument) {
-      await context.exposeBinding(BINDING_NAME, (_source, payload: unknown) => {
-        const result = pageMessageToEvent(payload)
+      await context.exposeBinding(BINDING_NAME, (source, payload: unknown) => {
+        // Every frame can call the binding; only the site's own frames are listened to (frames.ts).
+        const origin = effectiveOrigin(source.frame)
+        if (source.frame !== source.page.mainFrame() && !isFrameInScope(origin, effectiveOrigin(source.page.mainFrame()))) {
+          ignoredFrames.set(origin, (ignoredFrames.get(origin) ?? 0) + 1)
+          return
+        }
+        const result = pageMessageToEvent(payload, origin)
         if ('event' in result)
           events.write(result.event)
         else
@@ -265,7 +276,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     const entries = await validateHar(harPath)
     if (entries === 0)
       warnings.push('The HAR has no requests. Did the page load?')
-    warnings.push(...collector.warnings, ...await events.close())
+    warnings.push(...collector.warnings, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
 
     const meta = SessionMetaSchema.parse({
       formatVersion: RAW_FORMAT_VERSION,
@@ -288,6 +299,22 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     await context.close().catch(() => {})
     await events.close()
   }
+}
+
+function ignoredFramesWarning(ignored: Map<string, number>): string[] {
+  if (ignored.size === 0)
+    return []
+  const total = [
+    ...ignored.values(),
+  ].reduce((sum, n) => sum + n, 0)
+  const origins = [
+    ...ignored.keys(),
+  ].toSorted()
+  const shown = origins.slice(0, 5).join(', ')
+  const more = origins.length > 5
+    ? ` and ${origins.length - 5} more`
+    : ''
+  return [`Ignored ${total} instrumentation event(s) from frames of other sites: ${shown}${more}.`]
 }
 
 async function navigationLabel(page: Page, url: string): Promise<string> {
