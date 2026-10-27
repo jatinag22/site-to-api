@@ -48,6 +48,8 @@
   },
   "dependencies": {
     "@site-to-api/runtime": "workspace:*",
+    "jiti": "catalog:prod",
+    "playwright": "catalog:prod",
     "zod": "catalog:prod"
   }
 }
