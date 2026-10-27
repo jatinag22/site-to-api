@@ -5,6 +5,7 @@ import type { Exchange, Operation, PathParam, SourceRoute } from '../../model'
 import type { Evidence, Marks } from './templates'
 import { inferStringSchema } from '../schema'
 import { isSlug } from './identifiers'
+import { linkedSlugs } from './links'
 import { camelCase, operationIdFor, pathPhrase, singular, words } from './naming'
 import { markParameters, parseTemplate, segmentsOf, templateMatches } from './templates'
 
@@ -181,26 +182,6 @@ function emptyOperation(init: Pick<Operation, 'host' | 'method' | 'path' | 'kind
     sentFrom: [],
     ...init,
   }
-}
-
-/**
- * Slugs in these requests' paths that some other page or API response links to (`/pine-hill`
- * inside an `href` or a JSON value). That link is the evidence that the slug is data, not a
- * fixed endpoint name.
- */
-function linkedSlugs(members: Exchange[], all: Exchange[]): Set<string> {
-  const slugs = new Set(members.flatMap(exchange => segmentsOf(exchange.request.path).filter(isSlug)))
-  const linked = new Set<string>()
-  if (slugs.size === 0)
-    return linked
-  for (const slug of slugs) {
-    const needle = `/${slug}`
-    const linkedFrom = all.some(exchange => exchange.response.body?.text?.includes(needle) === true
-      && !exchange.request.path.endsWith(needle))
-    if (linkedFrom)
-      linked.add(slug)
-  }
-  return linked
 }
 
 function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Operation[] {
