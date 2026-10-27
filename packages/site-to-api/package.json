@@ -49,6 +49,11 @@
   "dependencies": {
     "@hey-api/openapi-ts": "catalog:prod",
     "@site-to-api/runtime": "workspace:*",
+    "commander": "catalog:prod",
+    "consola": "catalog:prod",
+    "jiti": "catalog:prod",
+    "pathe": "catalog:prod",
+    "playwright": "catalog:prod",
     "typescript": "catalog:dev",
     "yaml": "catalog:prod",
     "zod": "catalog:prod"

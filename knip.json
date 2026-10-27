@@ -15,7 +15,11 @@
     "packages/runtime": {},
     "e2e": {
       "entry": [
-        "**/*.test.ts"
+        "**/*.test.ts",
+        "scenarios/*.ts",
+        "fixture-site/app/src/main.ts",
+        "fixture-site/app/src/widgets/ticker.ts",
+        "fixture-site/app/src/shield/sensor.ts"
       ]
     }
   }
