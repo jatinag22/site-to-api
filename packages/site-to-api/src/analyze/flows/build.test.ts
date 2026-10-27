@@ -110,7 +110,7 @@ describe('buildFlows: shop scenario', () => {
       'body./username': { kind: 'user-input', field: 'username' },
       'body./password': { kind: 'computed', computedId: 'postapilogin-body-password' },
     })
-    expect(login.summary).toBe('Sign in with email and password, after submitting "Sign in"')
+    expect(login.summary).toBe('After submitting "Sign in": Sign in with email and password')
     expect(login.sentFrom).toMatchObject({ file: 'src/submitLogin.ts', line: 42, functionName: 'submitLogin' })
   })
 
@@ -292,7 +292,7 @@ describe('buildFlows: segments and merging', () => {
       ['go', 1],
       ['go-2', 1],
     ])
-    expect(doc.flows[0]?.steps[0]?.summary).toBe('GET /one, after clicking "Go!"')
+    expect(doc.flows[0]?.steps[0]?.summary).toBe('After clicking "Go!": GET /one.')
   })
 
   it('drops segments without steps and skips exchanges without an operation or of other kinds', () => {
@@ -417,10 +417,122 @@ describe('buildFlows: segments and merging', () => {
       [
         'cookie.example.test',
         'cookies',
-        ['sid:unknown'],
+        ['sid:browser'],
       ],
       ['plain.example.test', 'none', []],
       ['token.example.test', 'token', []],
     ])
   })
 })
+
+describe('buildFlows: what counts as an input', () => {
+  it('skips literal path segments and bot-protection payloads, keeps real path parameters', () => {
+    const list = exchange({
+      url: `https://${HOST}/api/items`,
+      responseBody: jsonBody([
+        { id: 'X81234567' },
+      ]),
+      startedAt: 1_000,
+    })
+    const file = exchange({ url: `https://${HOST}/api/stock.txt`, startedAt: 2_000 })
+    const item = exchange({ url: `https://${HOST}/api/items/X81234567`, startedAt: 3_000 })
+    const sensor = exchange({
+      method: 'POST',
+      url: `https://${HOST}/shield/collect`,
+      requestBody: jsonBody({ sensor_data: '3;0;1;0;abcdefghij' }),
+      kind: 'bot-protection',
+      startedAt: 4_000,
+    })
+    const operations: Operation[] = [
+      {
+        ...operationStub('getApiItems', '/api/items'),
+        exchanges: [list],
+      },
+      {
+        ...operationStub('getApiStockTxt', '/api/stock.txt'),
+        exchanges: [file],
+      },
+      {
+        ...operationStub('getApiItemsByItemId', '/api/items/{itemId}'),
+        pathParams: [
+          {
+            name: 'itemId',
+            index: 2,
+            schema: { type: 'string' },
+            evidence: ['varies'],
+          },
+        ],
+        exchanges: [item],
+      },
+      {
+        ...operationStub('postShieldCollect', '/shield/collect'),
+        method: 'POST',
+        kind: 'bot-protection',
+        exchanges: [sensor],
+      },
+    ]
+    const exchanges = [list, file, item, sensor]
+    const sessions: LoadedSession[] = [
+      {
+        dir: '/tmp/s1',
+        events: [],
+        meta: sessionMeta('s1'),
+      },
+    ]
+    const traces = traceValues({
+      exchanges,
+      sessions,
+      htmlLocator: fakeHtmlLocator,
+      staticStrings: new Set(),
+      minValueLength: 4,
+    })
+    const doc = buildFlows({
+      exchanges,
+      operations,
+      sessions,
+      traces,
+      sourceResolver: fakeSourceResolver,
+      botProtection: [],
+      toolVersion: 'test',
+    })
+    const steps = doc.flows.flatMap(entry => entry.steps)
+    expect(steps.find(step => step.operationId === 'getApiStockTxt')?.inputs).toEqual({})
+    expect(steps.find(step => step.operationId === 'postShieldCollect')?.inputs).toEqual({})
+    expect(steps.find(step => step.operationId === 'getApiItemsByItemId')?.inputs['path.2']?.kind).toBe('step')
+  })
+})
+
+function operationStub(operationId: string, path: string): Operation {
+  return {
+    operationId,
+    host: HOST,
+    method: 'GET',
+    path,
+    kind: 'api',
+    pathParams: [],
+    query: [],
+    headers: [],
+    cookies: [],
+    requestBody: null,
+    responses: [],
+    sentFrom: [],
+    sourceOnly: false,
+    summary: '',
+    exchanges: [],
+  }
+}
+
+function sessionMeta(sessionId: string): LoadedSession['meta'] {
+  return {
+    formatVersion: 1,
+    sessionId,
+    toolVersion: 'test',
+    startUrl: null,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    completedAt: '2026-01-01T00:01:00.000Z',
+    browser: { channel: null, headless: true, userAgent: 'test' },
+    har: 'traffic.har',
+    events: 'events.jsonl',
+    scripts: [],
+  }
+}

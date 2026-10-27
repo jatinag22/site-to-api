@@ -88,9 +88,11 @@ function triggerPhrase(trigger: Trigger): string {
   }
 }
 
+/** `After submitting "Sign in": Get api auth key. Returns keyId, publicKey.` */
 function stepSummary(operation: Operation, trigger: Trigger): string {
-  const what = operation.summary.trim() || `${operation.method} ${operation.path}`
-  return `${what}, ${triggerPhrase(trigger)}`
+  const what = operation.summary.trim() || `${operation.method} ${operation.path}.`
+  const phrase = triggerPhrase(trigger)
+  return `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}: ${what}`
 }
 
 /**
@@ -105,6 +107,48 @@ function stepSummary(operation: Operation, trigger: Trigger): string {
  * No secret value is written: only constants that do not look like credentials keep their
  * value; everything else is described by origin or by shape.
  */
+/**
+ * Whether a traced value is an input a wrapper has to supply. Literal path segments
+ * (`/api/stock.txt`) are part of the route, not inputs; bot-protection steps run in a real
+ * browser, so their payloads (`sensor_data`) are never inputs (decision 0008).
+ */
+function isStepInput(trace: ValueTrace, operation: Operation): boolean {
+  if (operation.kind === 'bot-protection')
+    return false
+  if (trace.location.in === 'path') {
+    const index = trace.location.index
+    return operation.pathParams.some(param => param.index === index)
+  }
+  return true
+}
+
+/**
+ * Inputs of one step across every session it was seen in. The first session decides; a later
+ * session only fills in what the first could not trace.
+ */
+function collectInputs(
+  occurrences: DraftStep[],
+  operation: Operation,
+  tracesByExchange: ReadonlyMap<string, ValueTrace[]>,
+  originOf: (trace: ValueTrace, exchange: Exchange) => ValueOrigin,
+): Map<string, ValueOrigin> {
+  const inputs = new Map<string, ValueOrigin>()
+  for (const exchange of occurrences.flatMap(occurrence => occurrence.exchanges.slice(0, 1))) {
+    for (const trace of tracesByExchange.get(exchange.id) ?? []) {
+      if (!isStepInput(trace, operation))
+        continue
+      const key = formatLocation(trace.location)
+      const existing = inputs.get(key)
+      if (existing && existing.kind !== 'unknown')
+        continue
+      const origin = originOf(trace, exchange)
+      if (!existing || origin.kind !== 'unknown')
+        inputs.set(key, origin)
+    }
+  }
+  return inputs
+}
+
 export function buildFlows(input: BuildFlowsInput): FlowsDocument {
   const operationByExchange = new Map<string, Operation>()
   for (const operation of input.operations) {
@@ -325,22 +369,7 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
           ? [step]
           : []
       })
-      const inputs = new Map<string, ValueOrigin>()
-      // The first session decides; a later session only fills in what the first could not trace.
-      for (const occurrence of occurrences) {
-        const exchange = occurrence.exchanges[0]
-        if (!exchange)
-          continue
-        for (const trace of tracesByExchange.get(exchange.id) ?? []) {
-          const key = formatLocation(trace.location)
-          const existing = inputs.get(key)
-          if (existing && existing.kind !== 'unknown')
-            continue
-          const origin = originOf(trace, exchange, draftStep.operation, draft.id)
-          if (!existing || origin.kind !== 'unknown')
-            inputs.set(key, origin)
-        }
-      }
+      const inputs = collectInputs(occurrences, draftStep.operation, tracesByExchange, (trace, exchange) => originOf(trace, exchange, draftStep.operation, draft.id))
       const representative = occurrences[0]?.exchanges[0]
       return {
         id: draftStep.id,

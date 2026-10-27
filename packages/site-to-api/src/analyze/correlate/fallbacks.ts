@@ -35,12 +35,19 @@ export function browserCookieNote(cookieName: string): string {
 }
 
 /**
+ * APIs that only re-encode bytes. When a crypto call and an encoding of its result both match a
+ * value (`btoa(encrypt(...))`), the crypto call is the computation worth porting.
+ */
+const ENCODING_APIS: ReadonlySet<string> = new Set(['btoa', 'atob'])
+
+/**
  * Index of the transform event whose output is the value (or one of its encodings), recorded
- * at or before `before`. Exact outputs beat encoded ones; among equals the latest call wins,
- * because the page computes the value right before sending it.
+ * at or before `before`. Exact outputs beat encoded ones; then a real computation beats a pure
+ * encoding step; then the latest call wins, because the page computes the value right before
+ * sending it.
  */
 export function findTransformEvent(events: readonly CaptureEvent[], variants: readonly Variant[], before: number): number | null {
-  let best: { index: number, rank: number, ts: number } | null = null
+  let best: { index: number, rank: number, encoding: boolean, ts: number } | null = null
   for (const [index, event] of events.entries()) {
     if (event.t !== 'transform' || event.ts > before)
       continue
@@ -49,11 +56,24 @@ export function findTransformEvent(events: readonly CaptureEvent[], variants: re
       .map(variant => variant.transform)
     if (transforms.length === 0)
       continue
-    const rank = Math.min(...transforms.map(transform => TRANSFORM_RANK[transform]))
-    if (!best || rank < best.rank || (rank === best.rank && event.ts >= best.ts))
-      best = { index, rank, ts: event.ts }
+    const candidate = {
+      index,
+      rank: Math.min(...transforms.map(transform => TRANSFORM_RANK[transform])),
+      encoding: ENCODING_APIS.has(event.api),
+      ts: event.ts,
+    }
+    if (!best || isBetterTransform(candidate, best))
+      best = candidate
   }
   return best?.index ?? null
+}
+
+function isBetterTransform(a: { rank: number, encoding: boolean, ts: number }, b: { rank: number, encoding: boolean, ts: number }): boolean {
+  if (a.rank !== b.rank)
+    return a.rank < b.rank
+  if (a.encoding !== b.encoding)
+    return !a.encoding
+  return a.ts >= b.ts
 }
 
 function normalizeField(name: string): string {

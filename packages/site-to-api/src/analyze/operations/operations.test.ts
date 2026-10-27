@@ -270,3 +270,28 @@ describe('identifiers and naming', () => {
     expect(operationIdFor('POST', '/')).toBe('postRoot')
   })
 })
+
+describe('buildOperations: slugs', () => {
+  it('makes linked slugs a parameter: a listing page links to each detail page', () => {
+    const listing = get('/stores', {
+      kind: 'page',
+      responseBody: textBody('<a href="/stores/pine-hill">Pine Hill</a><a href="/stores/cedar-park">Cedar Park</a>'),
+    })
+    const operations = build([
+      listing,
+      get('/stores/pine-hill', { kind: 'page' }),
+      get('/stores/cedar-park', { kind: 'page' }),
+    ])
+    expect(paths(operations)).toEqual(['GET /stores', 'GET /stores/{slug}'])
+    expect(operations.find(op => op.path === '/stores/{slug}')?.pathParams[0]?.evidence).toEqual(['value-trace', 'varies'])
+  })
+
+  it('keeps distinct hyphenated endpoint names separate when nothing links to them as data', () => {
+    const operations = build([
+      get('/api/all-upcoming-issues'),
+      get('/api/live-ofs-active-issues'),
+      get('/api/past-issues-list'),
+    ])
+    expect(paths(operations)).toEqual(['GET /api/all-upcoming-issues', 'GET /api/live-ofs-active-issues', 'GET /api/past-issues-list'])
+  })
+})

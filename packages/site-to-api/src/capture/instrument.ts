@@ -32,6 +32,9 @@ const PAGE_SOURCE = String.raw`
   } catch (e) { return; }
 
   var BODY_LIMIT = 2048;
+  // Response bodies larger than this are left to the HAR.
+  var RESPONSE_LIMIT = 2000000;
+  var TEXTUAL = /json|text|xml|javascript|csv|x-www-form-urlencoded/i;
   var INPUT_LIMIT = 256;
   var queue = [];
   var nativeToString = Function.prototype.toString;
@@ -206,6 +209,25 @@ const PAGE_SOURCE = String.raw`
     emit({ t: 'request', via: via, method: String(method || 'GET').toUpperCase(), url: absolute(url), bodyPreview: preview(body, BODY_LIMIT), stack: stack() });
   }
 
+  function response(via, method, url, status, mimeType, body) {
+    if (typeof body !== 'string' || body.length > RESPONSE_LIMIT) return;
+    emit({ t: 'response', via: via, method: String(method || 'GET').toUpperCase(), url: absolute(url), status: status, mimeType: mimeType, body: body });
+  }
+
+  // Reads a copy of a fetch response so the page's own reading is untouched.
+  function fetchResponse(method, url, res) {
+    try {
+      if (!res || res.type === 'opaque' || res.type === 'opaqueredirect') return;
+      var type = (res.headers && res.headers.get('content-type')) || '';
+      if (!TEXTUAL.test(type)) return;
+      var length = Number(res.headers.get('content-length'));
+      if (length > RESPONSE_LIMIT) return;
+      res.clone().text().then(function (text) {
+        try { response('fetch', method, res.url || url, res.status, type, text); } catch (e) {}
+      }, function () {});
+    } catch (e) {}
+  }
+
   function transform(api, output, inputs, details) {
     emit({ t: 'transform', api: api, output: output, inputs: inputs, details: details, stack: stack() });
   }
@@ -216,15 +238,20 @@ const PAGE_SOURCE = String.raw`
   wrapMethod(window, 'fetch', function (original) {
     return {
       fetch(input, init) {
+        var method = 'GET';
+        var url = input;
         try {
-          var method = 'GET';
-          var url = input;
           if (typeof Request !== 'undefined' && input instanceof Request) { method = input.method; url = input.url; }
           else if (input && typeof input === 'object' && 'href' in input) { url = input.href; }
           if (init && init.method) method = init.method;
           request('fetch', method, url, init ? init.body : null);
         } catch (e) {}
-        return apply(original, this, arguments);
+        var result = apply(original, this, arguments);
+        try {
+          if (result && typeof result.then === 'function')
+            result.then(function (res) { fetchResponse(method, url, res); }, function () {});
+        } catch (e) {}
+        return result;
       }
     }.fetch;
   });
@@ -245,7 +272,19 @@ const PAGE_SOURCE = String.raw`
         send(body) {
           try {
             var info = xhrInfo.get(this);
-            if (info) request('xhr', info.method, info.url, body);
+            if (info) {
+              request('xhr', info.method, info.url, body);
+              var xhr = this;
+              xhr.addEventListener('load', function () {
+                try {
+                  var type = xhr.getResponseHeader('content-type') || '';
+                  if (!TEXTUAL.test(type)) return;
+                  var text = xhr.responseType === '' || xhr.responseType === 'text' ? xhr.responseText
+                    : xhr.responseType === 'json' ? JSON.stringify(xhr.response) : null;
+                  response('xhr', info.method, xhr.responseURL || info.url, xhr.status, type, text);
+                } catch (e) {}
+              });
+            }
           } catch (e) {}
           return apply(original, this, arguments);
         }
@@ -323,8 +362,24 @@ const PAGE_SOURCE = String.raw`
     return details;
   }
 
+  // Raw key material each CryptoKey was imported from, so an encrypt or sign call can name the
+  // response the key came from (a public key from GET /api/auth/key, for example).
+  var keySources = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+
   function keyInput(key) {
-    try { return key && key.algorithm ? '<CryptoKey ' + String(key.algorithm.name) + '>' : '<key>'; } catch (e) { return '<key>'; }
+    try {
+      var source = keySources && key && typeof key === 'object' ? keySources.get(key) : null;
+      if (source) return source;
+      return key && key.algorithm ? '<CryptoKey ' + String(key.algorithm.name) + '>' : '<key>';
+    } catch (e) { return '<key>'; }
+  }
+
+  function keyMaterial(format, data) {
+    try {
+      if (format === 'jwk') return clip(JSON.stringify(data), INPUT_LIMIT);
+      var bytes = bytesOf(data);
+      return bytes ? clip(toBase64(bytes), INPUT_LIMIT) : null;
+    } catch (e) { return null; }
   }
 
   // crypto.subtle: outputs are recorded when the promise resolves; the site gets the original promise.
@@ -363,6 +418,20 @@ const PAGE_SOURCE = String.raw`
     subtleHook('encrypt', function (args) { return [keyInput(args[1]), preview(args[2], INPUT_LIMIT) || '']; });
     subtleHook('sign', function (args) { return [keyInput(args[1]), preview(args[2], INPUT_LIMIT) || '']; });
     subtleHook('deriveBits', function (args) { return [keyInput(args[1]), String(args[2])]; });
+    if (keySources) {
+      wrapMethod(subtle, 'importKey', function (original) {
+        return {
+          importKey(format, keyData) {
+            var result = apply(original, this, arguments);
+            try {
+              var material = keyMaterial(format, keyData);
+              if (material) Promise.resolve(result).then(function (key) { try { keySources.set(key, material); } catch (e) {} }, function () {});
+            } catch (e) {}
+            return result;
+          }
+        }.importKey;
+      });
+    }
   }
 
   // A top-level function declaration in a classic script replaces the accessor without calling
@@ -572,6 +641,16 @@ const PageMessageSchema = z.discriminatedUnion('t', [
   }),
   z.object({
     ...pageBase,
+    t: z.literal('response'),
+    via: z.enum(['fetch', 'xhr']),
+    method: z.string(),
+    url: z.string(),
+    status: z.number().int(),
+    mimeType: z.string(),
+    body: z.string(),
+  }),
+  z.object({
+    ...pageBase,
     t: z.literal('action'),
     kind: z.enum(['click', 'submit', 'change']),
     label: z.string(),
@@ -592,7 +671,7 @@ export function pageMessageToEvent(payload: unknown): { event: CaptureEvent } | 
     }
   }
   const message = parsed.data
-  if (message.t === 'action')
+  if (message.t === 'action' || message.t === 'response')
     return { event: message }
   return {
     event: {

@@ -296,7 +296,20 @@ function operation(operationId: string, kind: Operation['kind'], method: string,
     method,
     path,
     kind,
-    pathParams: [],
+    // Same convention as the operations stage: segment index after the leading slash.
+    pathParams: path.split('/').slice(1).flatMap((segment, index) => {
+      const name = /^\{(\w+)\}$/.exec(segment)?.[1]
+      return name
+        ? [
+            {
+              name,
+              index,
+              schema: { type: 'string' as const },
+              evidence: ['varies' as const],
+            },
+          ]
+        : []
+    }),
     query: [],
     headers: [
       ...new Set(exchanges.flatMap(entry => entry.request.headers.map(header => header.name))),

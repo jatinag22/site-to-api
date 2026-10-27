@@ -6,13 +6,13 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@site-to-api/runtime": "workspace:*",
     "@types/ws": "catalog:dev",
     "esbuild": "catalog:dev",
-    "playwright": "catalog:prod",
-    "ws": "catalog:dev",
-    "zod": "catalog:prod",
-    "@site-to-api/runtime": "workspace:*",
     "pathe": "catalog:prod",
-    "typescript": "catalog:dev"
+    "playwright": "catalog:prod",
+    "typescript": "catalog:dev",
+    "ws": "catalog:dev",
+    "zod": "catalog:prod"
   }
 }

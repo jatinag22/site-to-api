@@ -109,6 +109,22 @@ export const ActionEventSchema = z.object({
   field: z.string().nullable(),
 })
 
+/**
+ * A response body read inside the page as soon as the site's own code received it. The HAR loses
+ * bodies of requests the page navigated away from (typical right after a login), so `load` uses
+ * these to fill the gaps. Only text responses up to 2 MB.
+ */
+export const ResponseEventSchema = z.object({
+  ...base,
+  t: z.literal('response'),
+  via: z.enum(['fetch', 'xhr']),
+  method: z.string(),
+  url: z.string(),
+  status: z.number().int(),
+  mimeType: z.string(),
+  body: z.string(),
+})
+
 export const WebSocketEventSchema = z.object({
   ...base,
   t: z.literal('ws'),
@@ -122,10 +138,12 @@ export const CaptureEventSchema = z.discriminatedUnion('t', [
   RequestEventSchema,
   TransformEventSchema,
   ActionEventSchema,
+  ResponseEventSchema,
   WebSocketEventSchema,
 ])
 export type CaptureEvent = z.infer<typeof CaptureEventSchema>
 export type RequestEvent = z.infer<typeof RequestEventSchema>
 export type TransformEvent = z.infer<typeof TransformEventSchema>
 export type ActionEvent = z.infer<typeof ActionEventSchema>
+export type ResponseEvent = z.infer<typeof ResponseEventSchema>
 export type WebSocketEvent = z.infer<typeof WebSocketEventSchema>

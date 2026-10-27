@@ -1,13 +1,14 @@
 /**
  * Reads raw capture sessions from disk (format: `src/model/capture.ts`).
  */
-import type { CaptureEvent, Exchange, LoadedSession, RequestEvent, SessionMeta } from '../model'
+import type { CaptureEvent, Exchange, LoadedSession, RequestEvent, ResponseEvent, SessionMeta } from '../model'
 import type { HarEntry } from './har'
 import type { MatchableEntry } from './initiator'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { SiteToApiError } from '../errors'
 import { CaptureEventSchema, SessionMetaSchema } from '../model'
+import { fillMissingBodies } from './bodies'
 import { buildExchange } from './exchange'
 import { HarEntrySchema, HarFileSchema } from './har'
 import { matchRequestEvents, urlWithoutFragment } from './initiator'
@@ -136,6 +137,7 @@ async function loadSession(dir: string, warnings: string[]): Promise<{ session: 
     else
       warnings.push(`${meta.data.sessionId}: HAR entry ${harIndex} skipped (invalid URL)`)
   })
+  fillMissingBodies(exchanges, events.filter((event): event is ResponseEvent => event.t === 'response'))
   exchanges.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id, 'en', { numeric: true }))
   exchanges.forEach((exchange, seq) => {
     exchange.seq = seq

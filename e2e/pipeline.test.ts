@@ -53,10 +53,18 @@ beforeAll(async () => {
   const base = {
     rawDir: join(work, 'raw'),
     outDir: join(work, 'handoff'),
-    capture: { browser: { channel: null, headless: true } },
+    capture: {
+      browser: { channel: null, headless: true },
+    },
   }
   for (const scenario of scenarios) {
-    const scenarioConfig = ConfigSchema.parse({ ...base, capture: { ...base.capture, script: join(here, 'scenarios', `${scenario}.ts`) } })
+    const scenarioConfig = ConfigSchema.parse({
+      ...base,
+      capture: {
+        ...base.capture,
+        script: join(here, 'scenarios', `${scenario}.ts`),
+      },
+    })
     await runCapture(scenarioConfig, { url: site.origin, sessionId: scenario, cwd: work })
   }
   config = ConfigSchema.parse(base)
@@ -72,9 +80,19 @@ afterAll(async () => {
 
 describe('handoff folder', () => {
   it('writes every documented file', () => {
-    for (const name of ['AGENT.md', 'API_MAP.md', 'flows.json', 'flows.md', 'flows.schema.json', 'client/index.ts', 'client/README.md'])
+    for (const name of [
+      'AGENT.md',
+      'API_MAP.md',
+      'flows.json',
+      'flows.md',
+      'flows.schema.json',
+      'client/index.ts',
+      'client/README.md',
+    ])
       expect(files.has(name), name).toBe(true)
-    expect([...files.keys()].some(name => name.startsWith('specs/') && name.endsWith('.yaml'))).toBe(true)
+    expect([
+      ...files.keys(),
+    ].some(name => name.startsWith('specs/') && name.endsWith('.yaml'))).toBe(true)
   })
 
   it('covers the shop host and leaves the analytics host out', () => {
@@ -83,13 +101,18 @@ describe('handoff folder', () => {
   })
 
   it('never contains captured secrets', () => {
+    // Session, bot-protection and auth values. (`pm_store` is a public store slug, not a secret.)
+    const SECRET_COOKIES = new Set(['pm_session', '_abck', 'bm_sz'])
     const forbidden = ['demo-password']
     const raw = analysis.operations.flatMap(op => op.exchanges)
     for (const exchange of raw) {
       for (const cookie of exchange.request.cookies) {
-        if (cookie.value.length >= 8)
+        if (SECRET_COOKIES.has(cookie.name))
           forbidden.push(cookie.value)
       }
+      const csrf = exchange.request.headers.find(header => header.name === 'x-csrf-token')?.value
+      if (csrf)
+        forbidden.push(csrf)
       const auth = exchange.request.headers.find(header => header.name === 'authorization')?.value
       if (auth)
         forbidden.push(auth.replace(/^Bearer /i, ''))
@@ -104,7 +127,11 @@ describe('handoff folder', () => {
   it('is deterministic for the same captures', async () => {
     await buildHandoff({ config, cwd: work })
     const again = await readAll(outDir)
-    expect([...again.keys()].sort()).toEqual([...files.keys()].sort())
+    expect([
+      ...again.keys(),
+    ].sort()).toEqual([
+      ...files.keys(),
+    ].sort())
     for (const [name, content] of files)
       expect(again.get(name), name).toBe(content)
   }, 120_000)
@@ -115,6 +142,11 @@ describe('operations', () => {
     const detail = operation('GET', '/api/products/{productId}')
     expect(detail.pathParams.map(param => param.name)).toEqual(['productId'])
     expect(operation('GET', '/api/products/{productId}/reviews').exchanges.length).toBeGreaterThan(1)
+  })
+
+  it('turns store slugs into a parameter because the store list links to them', () => {
+    expect(operation('GET', '/stores/{slug}').exchanges.length).toBe(4)
+    expect(analysis.operations.some(op => /^\/stores\/[a-z]+-[a-z]+$/.test(op.path))).toBe(false)
   })
 
   it('finds the endpoint that only exists in the code', () => {
@@ -152,6 +184,17 @@ describe('flows and session needs', () => {
     expect(orders?.inputs['header.authorization']?.kind).toBe('step')
   })
 
+  it('reports no gaps for route literals or bot-protection payloads', () => {
+    const guide = files.get('AGENT.md') ?? ''
+    expect(guide).not.toMatch(/`body\.\/sensor_data` of/)
+    expect(guide).not.toMatch(/`path\.\d+` of `getApiStockTxt`/)
+  })
+
+  it('reports the script-set store cookie as set by the page, not unknown', () => {
+    const session = analysis.flows.session.find(entry => entry.host === host)
+    expect(session?.cookies.find(cookie => cookie.name === 'pm_store')?.source).toBe('browser')
+  })
+
   it('names the function that encrypts the password', () => {
     const computed = analysis.flows.computedValues.find(value => value.input === 'body./password')
     expect(computed?.api).toBe('crypto.subtle.encrypt')
@@ -159,11 +202,24 @@ describe('flows and session needs', () => {
     expect(computed?.producedBy?.file).toContain('auth/crypto.ts')
     expect(files.get('AGENT.md')).toContain('encryptPassword')
   })
+
+  it('links the encryption key to the response it came from', () => {
+    const computed = analysis.flows.computedValues.find(value => value.input === 'body./password')
+    expect(computed?.uses.length).toBeGreaterThan(0)
+    expect(files.get('AGENT.md')).toMatch(/uses `body\.\/publicKey` from `getApiAuthKey`/)
+  })
+
+  it('reports the code that asked for a request, not the shared fetch wrapper', () => {
+    const login = operation('POST', '/api/auth/login')
+    expect(login.sentFrom[0]?.functionName).not.toBe('apiFetch')
+  })
 })
 
 describe('generated client', () => {
   it('type-checks in strict mode', () => {
-    const clientFiles = [...files.keys()].filter(name => name.startsWith('client/') && name.endsWith('.ts')).map(name => join(outDir, name))
+    const clientFiles = [
+      ...files.keys(),
+    ].filter(name => name.startsWith('client/') && name.endsWith('.ts')).map(name => join(outDir, name))
     const program = ts.createProgram(clientFiles, {
       strict: true,
       noEmit: true,
@@ -197,7 +253,12 @@ describe('generated client', () => {
     })
     await session.refresh()
     const createSiteClient = client.createSiteClient as (options: { host: string, session: unknown, jar: unknown, baseUrl: string }) => { fetch: typeof fetch }
-    const { fetch: siteFetch } = createSiteClient({ host, session, jar, baseUrl: site.origin })
+    const { fetch: siteFetch } = createSiteClient({
+      host,
+      session,
+      jar,
+      baseUrl: site.origin,
+    })
     const response = await siteFetch(`${site.origin}/api/categories`)
     expect(response.status).toBe(200)
   }, 120_000)
@@ -205,7 +266,11 @@ describe('generated client', () => {
 
 describe('probe', () => {
   it('confirms against the live site that the shield cookie is required', async () => {
-    const report = await probeOperations({ operations: analysis.operations, config: { ...config.probe, maxRps: 10 }, toolVersion: 'e2e' })
+    const report = await probeOperations({
+      operations: analysis.operations,
+      config: { ...config.probe, maxRps: 10 },
+      toolVersion: 'e2e',
+    })
     const categories = report.operations.find(result => result.operationId === operation('GET', '/api/categories').operationId)
     expect(categories?.bare).toBe('rejected')
     expect(report.skipped.some(entry => entry.reason.includes('--unsafe-methods'))).toBe(true)

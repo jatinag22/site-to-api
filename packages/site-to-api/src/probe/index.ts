@@ -10,7 +10,7 @@ export { applyProbeReport, requirementsByOperation } from './apply'
 export { probeOperations } from './probe'
 export type { ProbeOptions } from './probe'
 
-export const PROBE_FILE = 'probe.json'
+const PROBE_FILE = 'probe.json'
 
 /** Writes `probe.json` (names only, safe to commit) into the handoff folder. */
 export async function writeProbeReport(outDir: string, report: ProbeReport): Promise<string> {

@@ -14,7 +14,7 @@ import { createHtmlLocator, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
 import { createRedactor } from '../analyze/redact'
 import { inferOperationSchemas } from '../analyze/schema'
-import { buildExcerpt, collectStaticStrings, createSourceResolver, findSourceEndpoints } from '../analyze/source'
+import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findSourceEndpoints } from '../analyze/source'
 import { writeFlows } from '../emit/flows'
 import { writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
@@ -22,6 +22,7 @@ import { generateClient } from '../gen'
 import { loadSessions } from '../load'
 import { applyProbeReport, readProbeReport, requirementsByOperation } from '../probe'
 import { VERSION } from '../version'
+import { alignWithRuntime } from './extract-check'
 
 export interface BuildOptions {
   config: ResolvedConfig
@@ -51,9 +52,24 @@ function addExtraction(operations: Operation[], minSamples: number): Operation[]
         return response
       const samples = operation.exchanges
         .filter(exchange => exchange.response.status === response.status && exchange.response.body?.mimeType === response.mimeType)
-        .flatMap(exchange => exchange.response.body?.text ? [{ text: exchange.response.body.text, mimeType: response.mimeType }] : [])
-      const extract = samples.length > 0 ? inferExtraction(samples, { minSamples }) : null
-      return { ...response, extract }
+        .flatMap(exchange => exchange.response.body?.text
+          ? [
+              { text: exchange.response.body.text, mimeType: response.mimeType },
+            ]
+          : [])
+      const inferred = samples.length > 0
+        ? inferExtraction(samples, { minSamples })
+        : null
+      // Generated clients run the runtime's extract(); make sure it reads the spec the same way.
+      const spec = inferred
+        ? alignWithRuntime(inferred.spec, samples.map(sample => sample.text))
+        : null
+      return {
+        ...response,
+        extract: inferred && spec
+          ? { ...inferred, spec }
+          : null,
+      }
     }),
   }))
 }
@@ -76,7 +92,9 @@ function addCallSites(operations: Operation[], resolver: SourceResolver): Operat
       entry.count++
       counts.set(refKey(ref), entry)
     }
-    const sentFrom = [...counts.values()]
+    const sentFrom = [
+      ...counts.values(),
+    ]
       .sort((a, b) => b.count - a.count || refKey(a.ref).localeCompare(refKey(b.ref)))
       .slice(0, 3)
       .map(entry => entry.ref)
@@ -102,25 +120,28 @@ function referencedSources(analysis: Analysis): SourceRef[] {
   return refs
 }
 
+/** The first session whose saved code can produce an excerpt for this location. */
+async function excerptFor(ref: SourceRef, sessions: LoadedSession[]): Promise<{ path: string, content: string } | null> {
+  for (const session of sessions) {
+    const excerpt = await buildExcerpt(ref, sessions, session.meta.sessionId)
+    if (excerpt)
+      return excerpt
+  }
+  return null
+}
+
 /** Builds excerpts for every referenced location and records their paths on the references. */
 async function addExcerpts(analysis: Analysis, sessions: LoadedSession[]): Promise<void> {
-  const sessionFor = new Map<string, string>()
-  for (const operation of analysis.operations) {
-    for (const exchange of operation.exchanges) {
-      for (const frame of exchange.initiator?.stack ?? [])
-        sessionFor.set(frame.url, exchange.sessionId)
-    }
-  }
-  const fallbackSession = sessions[0]?.meta.sessionId
   const byKey = new Map<string, string | null>()
   for (const ref of referencedSources(analysis)) {
     const key = refKey(ref)
     if (!byKey.has(key)) {
-      const sessionId = sessionFor.get(ref.file) ?? fallbackSession
-      const excerpt = sessionId ? await buildExcerpt(ref, sessions, sessionId) : null
+      const excerpt = await excerptFor(ref, sessions)
       if (excerpt)
         analysis.excerpts.set(excerpt.path, excerpt.content)
-      byKey.set(key, excerpt ? `source/${excerpt.path}` : null)
+      byKey.set(key, excerpt
+        ? `source/${excerpt.path}`
+        : null)
     }
     ref.excerpt = byKey.get(key) ?? null
   }
@@ -141,7 +162,9 @@ async function writeExcerpts(outDir: string, excerpts: Map<string, string>): Pro
 
 /** Hosts that ended up with at least one operation, sorted. */
 function hostsOf(operations: Operation[]): string[] {
-  return [...new Set(operations.map(operation => operation.host))].sort()
+  return [
+    ...new Set(operations.map(operation => operation.host)),
+  ].sort()
 }
 
 async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, log: (message: string) => void): Promise<Analysis> {
@@ -157,7 +180,9 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   let operations = buildOperations(classified.exchanges, { sourceRoutes })
   operations = inferOperationSchemas(operations, redactor)
   operations = addExtraction(operations, config.build.minExtractSamples)
-  operations = addCallSites(operations, resolver)
+  const operationIdByExchange = new Map(operations.flatMap(operation => operation.exchanges.map(exchange => [exchange.id, operation.operationId] as const)))
+  const callSites = createWrapperAwareResolver(resolver, classified.exchanges, exchange => operationIdByExchange.get(exchange.id) ?? null)
+  operations = addCallSites(operations, callSites)
 
   const traces = traceValues({
     exchanges: classified.exchanges,
@@ -171,7 +196,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     operations,
     sessions: loaded.sessions,
     traces,
-    sourceResolver: resolver,
+    sourceResolver: callSites,
     botProtection: classified.botProtection,
     toolVersion: VERSION,
   })
@@ -205,7 +230,15 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
   const analysis = await analyze(options.config, rawDir, outDir, log)
 
   // Remove generated files from a previous build so deleted operations do not linger.
-  for (const stale of ['specs', 'source', 'AGENT.md', 'API_MAP.md', 'flows.json', 'flows.md', 'flows.schema.json'])
+  for (const stale of [
+    'specs',
+    'source',
+    'AGENT.md',
+    'API_MAP.md',
+    'flows.json',
+    'flows.md',
+    'flows.schema.json',
+  ])
     await rm(join(outDir, stale), { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 

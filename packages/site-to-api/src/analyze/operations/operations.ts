@@ -183,6 +183,26 @@ function emptyOperation(init: Pick<Operation, 'host' | 'method' | 'path' | 'kind
   }
 }
 
+/**
+ * Slugs in these requests' paths that some other page or API response links to (`/pine-hill`
+ * inside an `href` or a JSON value). That link is the evidence that the slug is data, not a
+ * fixed endpoint name.
+ */
+function linkedSlugs(members: Exchange[], all: Exchange[]): Set<string> {
+  const slugs = new Set(members.flatMap(exchange => segmentsOf(exchange.request.path).filter(isSlug)))
+  const linked = new Set<string>()
+  if (slugs.size === 0)
+    return linked
+  for (const slug of slugs) {
+    const needle = `/${slug}`
+    const linkedFrom = all.some(exchange => exchange.response.body?.text?.includes(needle) === true
+      && !exchange.request.path.endsWith(needle))
+    if (linkedFrom)
+      linked.add(slug)
+  }
+  return linked
+}
+
 function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Operation[] {
   const relevant = exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind))
   // 1. Parameter positions per host + method.
@@ -199,7 +219,7 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Opera
     const { host, method } = members[0]!.request
     const marks = markParameters([
       ...new Set(members.map(exchange => exchange.request.path)),
-    ], routesFor(routes, host, method))
+    ], routesFor(routes, host, method), linkedSlugs(members, relevant))
     for (const exchange of members) {
       classified.push({
         exchange,

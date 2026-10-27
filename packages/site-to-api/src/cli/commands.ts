@@ -54,10 +54,14 @@ const captureCommand: CommandRegistrar = (program) => {
         capture: {
           browser: {
             headless: flags.headless,
-            channel: flags.channel === 'bundled' ? null : flags.channel,
+            channel: flags.channel === 'bundled'
+              ? null
+              : flags.channel,
             userDataDir: flags.userDataDir,
           },
-          script: flags.script ? resolve(process.cwd(), flags.script) : undefined,
+          script: flags.script
+            ? resolve(process.cwd(), flags.script)
+            : undefined,
         },
       })
       const controller = new AbortController()
@@ -93,11 +97,19 @@ const buildCommand: CommandRegistrar = (program) => {
       const { config, cwd } = await resolveConfig(command, {
         hosts: { include: flags.include, exclude: flags.exclude },
         redact: { examples: flags.examples },
-        gen: { client: flags.client === false ? false : undefined },
+        gen: {
+          client: flags.client === false
+            ? false
+            : undefined,
+        },
       })
       if (config.redact.examples === 'raw')
         consola.warn('redact.examples is "raw": captured values, including personal data, will be written to the handoff folder.')
-      const result = await buildHandoff({ config, cwd, log: message => consola.info(message) })
+      const result = await buildHandoff({
+        config,
+        cwd,
+        log: message => consola.info(message),
+      })
       printWarnings(result.warnings)
       consola.success(`${result.analysis.operations.length} operations, ${result.analysis.flows.flows.length} flows → ${result.outDir}`)
       consola.info(`Start with ${resolve(result.outDir, 'AGENT.md')}`)
@@ -143,10 +155,18 @@ const genCommand: CommandRegistrar = (program) => {
     .action(async (_flags: unknown, command: Command) => {
       const { config, cwd } = await resolveConfig(command)
       const analysis = await analyzeCaptures({ config, cwd })
-      const result = await generateClient({ handoffDir: resolve(cwd, config.outDir), flows: analysis.flows })
+      const result = await generateClient({
+        handoffDir: resolve(cwd, config.outDir),
+        flows: analysis.flows,
+      })
       printWarnings(result.warnings)
       consola.success(`Generated ${result.files.length} client files`)
     })
 }
 
-export const pipelineCommands: CommandRegistrar[] = [captureCommand, buildCommand, probeCommand, genCommand]
+export const pipelineCommands: CommandRegistrar[] = [
+  captureCommand,
+  buildCommand,
+  probeCommand,
+  genCommand,
+]

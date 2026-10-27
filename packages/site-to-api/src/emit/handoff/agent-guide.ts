@@ -2,7 +2,7 @@
  * `AGENT.md`: the entry point for a coding agent (decision 0011). Generated from a template with
  * no LLM; every sentence is derived from the analysis.
  */
-import type { Analysis, SessionRequirement } from '../../model'
+import type { Analysis, SessionRequirement, ValueOrigin } from '../../model'
 import { specFileName } from '../openapi/write'
 import { describeSource } from './api-map'
 
@@ -65,6 +65,44 @@ function flowsSection(analysis: Analysis): string[] {
   return lines
 }
 
+/** Operation of a step reference: `s2` within a flow, or `<flowId>.<stepId>` across flows. */
+function operationOfStep(reference: string, analysis: Analysis): string | null {
+  const dot = reference.lastIndexOf('.')
+  const flowId = dot === -1
+    ? null
+    : reference.slice(0, dot)
+  const stepId = dot === -1
+    ? reference
+    : reference.slice(dot + 1)
+  for (const flow of analysis.flows.flows) {
+    if (flowId !== null && flow.id !== flowId)
+      continue
+    const step = flow.steps.find(candidate => candidate.id === stepId)
+    if (step)
+      return step.operationId
+  }
+  return null
+}
+
+/** `the value at body./publicKey of getApiAuthKey`, or null when the origin says nothing useful. */
+function describeUse(origin: ValueOrigin, analysis: Analysis): string | null {
+  if (origin.kind === 'step') {
+    const operationId = operationOfStep(origin.step, analysis)
+    return operationId
+      ? `\`${origin.output}\` from \`${operationId}\``
+      : null
+  }
+  if (origin.kind === 'html') {
+    const operationId = operationOfStep(origin.step, analysis)
+    return operationId
+      ? `a value from the HTML of \`${operationId}\``
+      : null
+  }
+  return origin.kind === 'user-input'
+    ? `the \`${origin.field}\` field`
+    : null
+}
+
 function computedSection(analysis: Analysis): string[] {
   if (analysis.flows.computedValues.length === 0)
     return []
@@ -83,7 +121,11 @@ function computedSection(analysis: Analysis): string[] {
         ? ` (${Object.entries(value.details).map(([key, detail]) => `${key}=${detail}`).join(', ')})`
         : ''}`
       : ''
-    lines.push(`- \`${value.input}\` of \`${value.operationId}\`: ${where}${how}.`)
+    const uses = value.uses.map(origin => describeUse(origin, analysis)).filter(text => text !== null)
+    const using = uses.length > 0
+      ? `; it uses ${uses.join(', ')}`
+      : ''
+    lines.push(`- \`${value.input}\` of \`${value.operationId}\`: ${where}${how}${using}.`)
   }
   lines.push('')
   return lines
