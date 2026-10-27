@@ -3,7 +3,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "fixture": "tsx fixture-site/serve.ts"
   },
   "devDependencies": {
     "@site-to-api/runtime": "workspace:*",
@@ -11,6 +12,7 @@
     "esbuild": "catalog:dev",
     "pathe": "catalog:prod",
     "playwright": "catalog:prod",
+    "tsx": "catalog:dev",
     "typescript": "catalog:dev",
     "ws": "catalog:dev",
     "zod": "catalog:prod"

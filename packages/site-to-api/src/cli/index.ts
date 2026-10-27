@@ -2,4 +2,11 @@ import process from 'node:process'
 import { pipelineCommands } from './commands'
 import { run } from './program'
 
-await run(process.argv, pipelineCommands)
+// `site-to-api config | head` closes the pipe early; that is a normal way to end, not a crash.
+process.stdout.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code === 'EPIPE')
+    process.exit(0)
+  throw error
+})
+
+void run(process.argv, pipelineCommands)

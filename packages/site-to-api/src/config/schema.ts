@@ -35,7 +35,7 @@ export const ConfigSchema = z.strictObject({
     sourcemaps: z.boolean().default(true),
     /** Save every JavaScript bundle, so source analysis works without sourcemaps too. */
     saveScripts: z.boolean().default(true),
-    /** Inject the request, crypto and action hooks into every page and worker. */
+    /** Inject the request, response, crypto and action hooks into every page (not workers). */
     instrument: z.boolean().default(true),
     websockets: z.boolean().default(true),
     /**

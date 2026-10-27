@@ -4,6 +4,7 @@
  */
 import type { ResolvedConfig } from './schema'
 import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { createJiti } from 'jiti'
 import { resolve } from 'pathe'
 import { z } from 'zod'
@@ -118,8 +119,27 @@ function findConfigFile(cwd: string, explicit: string | null | undefined): strin
   return null
 }
 
+/**
+ * Config files `import { defineConfig } from 'site-to-api'`. When the tool runs through `npx` or
+ * a global install, the project has no local copy, so that import is pointed at the running one.
+ */
+function selfAlias(): Record<string, string> {
+  try {
+    return {
+      'site-to-api': fileURLToPath(import.meta.resolve('site-to-api')),
+    }
+  }
+  catch {
+    return {}
+  }
+}
+
 async function readConfigFile(path: string): Promise<PlainObject> {
-  const jiti = createJiti(import.meta.url, { interopDefault: true, moduleCache: false })
+  const jiti = createJiti(import.meta.url, {
+    interopDefault: true,
+    moduleCache: false,
+    alias: selfAlias(),
+  })
   let loaded: unknown
   try {
     loaded = await jiti.import(path, { default: true })

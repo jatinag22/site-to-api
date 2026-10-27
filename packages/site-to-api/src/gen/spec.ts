@@ -214,6 +214,9 @@ function collectConstantHeaders(parameters: unknown[], values: Map<string, Set<s
   }
 }
 
+/** Headers that name the page a request came from: differing per operation is normal, not worth a warning. */
+const PER_PAGE_HEADERS: ReadonlySet<string> = new Set(['referer', 'origin'])
+
 /** Headers with a single default across the host; a header with several is left to the caller. */
 function settleHeaders(values: Map<string, Set<string>>, file: string, warnings: string[]): Record<string, string> {
   const headers: Record<string, string> = {}
@@ -221,7 +224,7 @@ function settleHeaders(values: Map<string, Set<string>>, file: string, warnings:
     const all = [...set].sort()
     if (all.length === 1 && all[0] !== undefined)
       headers[name] = all[0]
-    else
+    else if (!PER_PAGE_HEADERS.has(name.toLowerCase()))
       warnings.push(`specs/${file}: constant header ${name} has different defaults across operations (${all.join(', ')}); it is not sent by default`)
   }
   return headers
