@@ -28,6 +28,8 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Capture unit tests launch a real (headless) Chromium.
+      - run: pnpm --filter site-to-api exec playwright install --with-deps chromium
       - run: pnpm run lint
       - run: pnpm run build
       - run: pnpm run typecheck
