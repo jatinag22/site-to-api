@@ -1,3 +1,5 @@
+export { runCapture } from './capture'
+export type { CaptureResult, RunCaptureOptions } from './capture'
 export { ConfigSchema, defineConfig } from './config/schema'
 export type { ResolvedConfig, UserConfig } from './config/schema'
 export { SiteToApiError } from './errors'
