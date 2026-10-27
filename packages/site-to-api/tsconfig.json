@@ -1,4 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Type-check against the runtime's source so `typecheck` does not need a prior build.
+    "paths": {
+      "@site-to-api/runtime": ["../runtime/src/index.ts"]
+    }
+  },
   "include": ["src", "test"]
 }
