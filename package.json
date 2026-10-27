@@ -18,7 +18,7 @@
     "knip": "knip",
     "test": "vitest",
     "test:e2e": "pnpm run build && vitest --project e2e",
-    "ci": "pnpm run lint && pnpm run typecheck && pnpm run knip && pnpm run build && vitest --run",
+    "ci": "pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run knip && vitest --run",
     "release": "bumpp -r",
     "prepare": "simple-git-hooks"
   },

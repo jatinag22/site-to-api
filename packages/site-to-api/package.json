@@ -48,7 +48,10 @@
   },
   "dependencies": {
     "@site-to-api/runtime": "workspace:*",
+    "commander": "catalog:prod",
+    "consola": "catalog:prod",
     "jiti": "catalog:prod",
+    "pathe": "catalog:prod",
     "playwright": "catalog:prod",
     "zod": "catalog:prod"
   }
