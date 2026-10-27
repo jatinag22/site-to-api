@@ -439,11 +439,64 @@ describe('buildFlows: segments and merging', () => {
       [
         'cookie.example.test',
         'cookies',
-        ['sid:browser'],
+        ['sid:script'],
       ],
       ['plain.example.test', 'none', []],
       ['token.example.test', 'token', []],
     ])
+  })
+})
+
+describe('buildFlows: cookies set by page scripts', () => {
+  function sessionOf(cookies: Record<string, string>): FlowsDocument['session'][number] | undefined {
+    const config = exchange({
+      url: 'https://script.example.test/api/config',
+      startedAt: 1,
+      responseBody: jsonBody({ defaultStore: 'pine-hill' }),
+    })
+    const call = exchange({
+      url: 'https://script.example.test/api/stock',
+      startedAt: 2,
+      cookies,
+      responseBody: jsonBody({ ok: true }),
+    })
+    const exchanges = [config, call]
+    const sessions = [
+      loaded('s1', []),
+    ]
+    const traces = traceValues({
+      exchanges,
+      sessions,
+      htmlLocator: fakeHtmlLocator,
+      staticStrings: new Set(),
+      minValueLength: 4,
+    })
+    const operations = [
+      op('getApiConfig', [config]),
+      op('getApiStock', [call], {
+        cookies: Object.keys(cookies).map(name => ({ name, required: true, schema: {} })),
+      }),
+    ]
+    return build(exchanges, operations, sessions, traces).session[0]
+  }
+
+  it('marks a cookie whose value a response provides as script-set, needing no browser', () => {
+    const session = sessionOf({ store: 'pine-hill' })
+    expect(session?.cookies).toEqual([
+      { name: 'store', setBy: null, source: 'script' },
+    ])
+    expect(session?.requires).toBe('cookies')
+  })
+
+  it('needs a browser for opaque or bot-protection cookies', () => {
+    const opaque = sessionOf({ store: 'pine-hill', vid: 'Qm9vdHN0cmFwcGVkVmFsdWU5' })
+    expect(opaque?.cookies.map(cookie => `${cookie.name}:${cookie.source}`)).toEqual(['store:script', 'vid:browser'])
+    expect(opaque?.requires).toBe('browser')
+    const bot = sessionOf({ _px3: 'abc' })
+    expect(bot?.cookies).toEqual([
+      { name: '_px3', setBy: null, source: 'browser' },
+    ])
+    expect(bot?.requires).toBe('browser')
   })
 })
 

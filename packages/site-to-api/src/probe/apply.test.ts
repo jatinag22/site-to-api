@@ -52,6 +52,26 @@ describe('applyProbeReport', () => {
     ]))[0]?.requires).toBe('browser')
   })
 
+  it('reports cookies, not browser, when a needed cookie is script-set but derivable', () => {
+    const withStore: SessionRequirement = {
+      ...base,
+      cookies: [
+        ...base.cookies,
+        { name: 'store', setBy: null, source: 'script' },
+      ],
+    }
+    expect(applyProbeReport([withStore], report([
+      {
+        requires: ['cookie:store'],
+      },
+    ]))[0]?.requires).toBe('cookies')
+    expect(applyProbeReport([withStore], report([
+      {
+        requires: ['cookie:store', 'cookie:_abck'],
+      },
+    ]))[0]?.requires).toBe('browser')
+  })
+
   it('reports token or cookies from the required items', () => {
     expect(applyProbeReport([base], report([
       {

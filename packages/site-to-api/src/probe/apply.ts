@@ -4,6 +4,7 @@
  */
 import type { SessionRequirement } from '../model'
 import type { ProbeReport } from '../model/probe'
+import { cookieNeedsBrowser } from '../model'
 
 function requirementFor(entry: SessionRequirement, probes: ProbeReport['operations']): SessionRequirement['requires'] {
   const tested = probes.filter(probe => probe.replay === 'ok')
@@ -12,7 +13,9 @@ function requirementFor(entry: SessionRequirement, probes: ProbeReport['operatio
   if (tested.every(probe => probe.bare === 'ok'))
     return 'none'
   const needed = new Set(tested.flatMap(probe => probe.requires ?? []))
-  const browserCookies = new Set(entry.cookies.filter(cookie => cookie.source === 'browser').map(cookie => `cookie:${cookie.name}`))
+  // Only opaque, browser-made cookies need a browser; a derivable script-set one (`script`) only
+  // needs the wrapper to set it, like any other cookie.
+  const browserCookies = new Set(entry.cookies.filter(cookieNeedsBrowser).map(cookie => `cookie:${cookie.name}`))
   if (entry.botProtection.length > 0 || [...needed].some(item => browserCookies.has(item)))
     return 'browser'
   if (needed.has('header:authorization'))

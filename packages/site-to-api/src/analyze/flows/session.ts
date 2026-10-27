@@ -1,5 +1,6 @@
 /** Per-host session requirements: which cookies the APIs need, who sets them, bot protection. */
 import type { BotProtectionFinding, Exchange, Operation, SessionRequirement, ValueTrace } from '../../model'
+import { cookieNeedsBrowser } from '../../model'
 import { botProtectionVendor } from '../correlate'
 
 /**
@@ -42,11 +43,14 @@ export function sessionRequirements(input: {
       if (producer)
         return { name, setBy: input.operationOf(producer)?.operationId ?? null, source: 'response' }
       // No response set it, so a script in the page did (document.cookie), or a reused browser
-      // profile already had it.
+      // profile already had it. A wrapper can set `store=pine-hill` itself, but not an opaque
+      // value or a bot-protection token.
       return {
         name,
         setBy: null,
-        source: 'browser',
+        source: opaqueCookies.has(name) || botProtectionVendor(name) !== null
+          ? 'browser'
+          : 'script',
       }
     })
     const botProtection = [
@@ -60,11 +64,7 @@ export function sessionRequirements(input: {
       .sort((a, b) => a.vendor.localeCompare(b.vendor) || a.evidence.localeCompare(b.evidence))
     const needsToken = operations.some(operation => operation.headers.some(header => header.name.toLowerCase() === 'authorization'))
     let requires: SessionRequirement['requires'] = 'none'
-    // A script-set cookie only needs a browser when its value cannot be derived: a wrapper can
-    // set `store=pine-hill` itself, but not a bot-protection token.
-    const needsBrowserCookie = cookies.some(cookie => cookie.source === 'browser'
-      && (opaqueCookies.has(cookie.name) || botProtectionVendor(cookie.name) !== null))
-    if (botProtection.length > 0 || needsBrowserCookie)
+    if (botProtection.length > 0 || cookies.some(cookieNeedsBrowser))
       requires = 'browser'
     else if (needsToken)
       requires = 'token'

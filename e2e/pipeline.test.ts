@@ -190,9 +190,9 @@ describe('flows and session needs', () => {
     expect(guide).not.toMatch(/`path\.\d+` of `getApiStockTxt`/)
   })
 
-  it('reports the script-set store cookie as set by the page, not unknown', () => {
+  it('reports the script-set store cookie as set by the page, with a value a wrapper can derive', () => {
     const session = analysis.flows.session.find(entry => entry.host === host)
-    expect(session?.cookies.find(cookie => cookie.name === 'pm_store')?.source).toBe('browser')
+    expect(session?.cookies.find(cookie => cookie.name === 'pm_store')?.source).toBe('script')
   })
 
   it('names the function that encrypts the password', () => {
