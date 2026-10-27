@@ -36,9 +36,6 @@ catalogs:
     nano-staged:
       specifier: ^1.0.2
       version: 1.0.2
-    playwright:
-      specifier: ^1.64.1
-      version: 1.64.1
     publint:
       specifier: ^0.3.25
       version: 0.3.25
@@ -130,7 +127,7 @@ importers:
         specifier: catalog:dev
         version: 0.28.2
       playwright:
-        specifier: catalog:dev
+        specifier: catalog:prod
         version: 1.64.1
       ws:
         specifier: catalog:dev
