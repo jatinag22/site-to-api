@@ -1,0 +1,45 @@
+# Benign twin of hostile.example.yaml: the same structure with plain strings. The generated
+# client for both must have the same number of statements in every file.
+openapi: 3.1.0
+info:
+  title: benign
+  version: '1'
+servers:
+  - url: 'https://benign.example'
+paths:
+  /a:
+    get:
+      operationId: getA
+      summary: Sign in
+      x-site-to-api-kind: page
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: x-plain
+          in: header
+          required: false
+          x-site-to-api-constant: true
+          schema:
+            type: string
+            default: v
+      responses:
+        '200':
+          description: OK
+          content:
+            text/html:
+              schema:
+                type: string
+              x-site-to-api-extract:
+                kind: html
+                records: tr
+                many: true
+                fields:
+                  name:
+                    selector: td
+                    attr: null
+                    pattern: '(\d+)'
+                    type: string
+                    optional: false

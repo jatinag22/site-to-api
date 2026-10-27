@@ -359,6 +359,10 @@ describe('loadSessions', () => {
     expect(warnings.join('\n')).toMatch(/HAR entry 1 skipped/)
     expect(warnings.join('\n')).toMatch(/meta\.json is invalid/)
     expect(warnings.join('\n')).toMatch(/unrelated: no meta\.json/)
+    expect(warnings.join('\n')).toMatch(/broken: meta\.json is invalid/)
+    // Warnings end up in the committed AGENT.md: no absolute local paths.
+    for (const warning of warnings)
+      expect(warning).not.toContain(root)
   })
 
   it('sorts by session start, then by request time, and numbers seq within each session', async () => {

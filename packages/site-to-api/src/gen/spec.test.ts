@@ -208,4 +208,12 @@ describe('toIdentifier and toPascalCase', () => {
     expect(toPascalCase('getApiItem')).toBe('GetApiItem')
     expect(toPascalCase('get-api_item.v2')).toBe('GetApiItemV2')
   })
+
+  it('never returns a reserved word or a name client/index.ts declares', () => {
+    expect(toIdentifier('default')).toBe('default_')
+    expect(toIdentifier('new:443')).toBe('new_443')
+    expect(toIdentifier('in')).toBe('in_')
+    expect(toIdentifier('sdks')).toBe('sdks_')
+    expect(toIdentifier('h`o$s{t}\'q"x.example')).toBe('h_o_s_t_q_x_example')
+  })
 })

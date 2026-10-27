@@ -106,15 +106,19 @@ function toMatchable(entries: Array<HarEntry | null>): MatchableEntry[] {
   return matchable
 }
 
-async function loadSession(dir: string, warnings: string[]): Promise<{ session: LoadedSession, exchanges: Exchange[] } | null> {
+/**
+ * `dir` is absolute; warnings name the folder by its name inside the raw directory instead,
+ * because they are copied into the committed `AGENT.md` and must not reveal local paths.
+ */
+async function loadSession(dir: string, name: string, warnings: string[]): Promise<{ session: LoadedSession, exchanges: Exchange[] } | null> {
   const metaText = await readText(join(dir, 'meta.json'))
   if (metaText === null) {
-    warnings.push(`${dir}: no meta.json; not a capture session, skipped`)
+    warnings.push(`${name}: no meta.json; not a capture session, skipped`)
     return null
   }
   const meta = SessionMetaSchema.safeParse(parseJson(metaText))
   if (!meta.success) {
-    warnings.push(`${dir}: meta.json is invalid (${zodMessage(meta.error)}); session skipped. Capture it again with this version of site-to-api.`)
+    warnings.push(`${name}: meta.json is invalid (${zodMessage(meta.error)}); session skipped. Capture it again with this version of site-to-api.`)
     return null
   }
   const events = await readEvents(dir, meta.data, warnings)
@@ -173,7 +177,7 @@ export async function loadSessions(rawDir: string): Promise<LoadResult> {
   const warnings: string[] = []
   const loaded: Array<{ session: LoadedSession, exchanges: Exchange[] }> = []
   for (const name of names) {
-    const result = await loadSession(join(root, name), warnings)
+    const result = await loadSession(join(root, name), name, warnings)
     if (result)
       loaded.push(result)
   }

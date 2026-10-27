@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import ts from 'typescript'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { renderMarkdown } from '../../test/markdown'
 import { SiteToApiError } from '../errors'
 import { FLOWS_FORMAT_VERSION } from '../model'
 import { generateClient, typeScriptVersionForHeyApi } from './generate'
@@ -324,6 +325,93 @@ describe('generateClient errors', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+})
+
+/** Generates a client from one fixture spec into a fresh workspace and returns its directory. */
+async function generateFrom(fixtureName: string): Promise<{ dir: string, result: Awaited<ReturnType<typeof generateClient>> }> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'site-to-api-gen-'))
+  await mkdir(path.join(dir, 'handoff', 'specs'), { recursive: true })
+  await mkdir(path.join(dir, 'node_modules'))
+  await symlink(zodDir, path.join(dir, 'node_modules', 'zod'), 'dir')
+  await copyFile(path.join(here, 'fixtures', fixtureName), path.join(dir, 'handoff', 'specs', fixtureName))
+  const result = await generateClient({
+    handoffDir: path.join(dir, 'handoff'),
+    flows,
+  })
+  return { dir, result }
+}
+
+interface ParsedFile {
+  /** Syntax errors only: the parser's own diagnostics, no type checking. */
+  errors: string[]
+  /** Kinds of the top-level statements, e.g. `VariableStatement`. */
+  statements: string[]
+}
+
+async function parseGenerated(dir: string, files: string[], identifier: string): Promise<Map<string, ParsedFile>> {
+  const parsed = new Map<string, ParsedFile>()
+  for (const file of files.filter(name => name.endsWith('.ts'))) {
+    const source = ts.createSourceFile(file, await readFile(path.join(dir, 'handoff', file), 'utf8'), ts.ScriptTarget.ES2023, false, ts.ScriptKind.TS)
+    // A one-file program reports exactly the syntax errors of that file.
+    const program = ts.createProgram({
+      rootNames: [file],
+      options: { noResolve: true, noLib: true, types: [] },
+      host: {
+        ...ts.createCompilerHost({}),
+        getSourceFile: name => name === file
+          ? source
+          : undefined,
+        fileExists: name => name === file,
+        writeFile: () => {},
+      },
+    })
+    parsed.set(file.replace(identifier, 'HOST'), {
+      errors: program.getSyntacticDiagnostics(source).map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+      statements: source.statements.map(statement => ts.SyntaxKind[statement.kind]),
+    })
+  }
+  return parsed
+}
+
+describe('generateClient with hostile specs', () => {
+  it('writes no syntax errors and no extra statements when site strings try to break out', async () => {
+    const hostile = await generateFrom('hostile.example.yaml')
+    const benign = await generateFrom('benign.example.yaml')
+    try {
+      const hostileFiles = await parseGenerated(hostile.dir, hostile.result.files, 'h_o_s_t_q_x_example')
+      const benignFiles = await parseGenerated(benign.dir, benign.result.files, 'benign_example')
+      expect([
+        ...hostileFiles.keys(),
+      ].sort()).toEqual([
+        ...benignFiles.keys(),
+      ].sort())
+      for (const [file, parsed] of hostileFiles) {
+        expect(parsed.errors, file).toEqual([])
+        expect(parsed.statements, file).toEqual(benignFiles.get(file)?.statements)
+      }
+      // The payload is still there, as data: inside comments and string literals only.
+      const extract = await readFile(path.join(hostile.dir, 'handoff', 'client', 'extract.ts'), 'utf8')
+      expect(extract).toContain('globalThis.pwned')
+      expect(extract).not.toMatch(/[\u2028\u2029]/)
+    }
+    finally {
+      await Promise.all([hostile.dir, benign.dir].map(dir => rm(dir, { recursive: true, force: true })))
+    }
+  }, 60_000)
+
+  it('writes a README whose code block and spans the site strings cannot close', async () => {
+    const { dir, result } = await generateFrom('hostile.example.yaml')
+    try {
+      const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
+      const html = renderMarkdown(readme)
+      expect(html.match(/<pre>/g)).toHaveLength(1)
+      expect(html.match(/<h\d>/g)).toHaveLength(4)
+      expect(result.files).toContain('client/README.md')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
 })
 
 describe('typeScriptVersionForHeyApi', () => {
