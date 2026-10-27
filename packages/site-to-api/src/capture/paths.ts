@@ -11,6 +11,23 @@ import { SiteToApiError } from '../errors'
 const MAX_SEGMENT = 120
 /** Marker for a `..` that would climb above the root; keeps paths distinct without traversal. */
 const ESCAPED_PARENT = '__'
+/**
+ * Names Windows reserves for devices, with or without an extension (`NUL.js` opens the null
+ * device). Compared against the part before the first dot, ignoring case.
+ */
+const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com\d|lpt\d)$/i
+
+/**
+ * Makes a name that is already limited to safe characters valid on Windows too: device names get
+ * a `_` prefix and trailing dots (which Windows silently strips, so `a.` and `a` would collide)
+ * become underscores. Trailing spaces cannot occur because spaces are replaced before this runs.
+ */
+function windowsSafe(name: string): string {
+  let out = name.replace(/\.+$/, dots => '_'.repeat(dots.length))
+  if (WINDOWS_RESERVED.test(out.split('.')[0] ?? ''))
+    out = `_${out}`
+  return out
+}
 
 function shortHash(value: string): string {
   return createHash('sha1').update(value).digest('hex').slice(0, 8)
@@ -37,9 +54,10 @@ function splitExtension(name: string): { stem: string, ext: string } {
 }
 
 /**
- * Makes one path segment safe to use as a file name: decodes percent escapes, replaces anything
- * outside a conservative character set and caps the length (keeping the extension and adding a
- * hash so truncated names stay unique). `.` and `..` are returned unchanged for the caller to
+ * Makes one path segment safe to use as a file name on Linux, macOS and Windows: decodes percent
+ * escapes, replaces anything outside a conservative character set, avoids Windows device names
+ * (`CON`, `NUL.js`, `COM1`, ...) and trailing dots, and caps the length (keeping the extension and
+ * adding a hash so truncated names stay unique). `.` and `..` are returned unchanged for the caller to
  * normalise.
  */
 export function sanitizeSegment(segment: string): string {
@@ -50,6 +68,7 @@ export function sanitizeSegment(segment: string): string {
   // Only dots would read as `.`/`..` on some systems after trimming.
   if (/^\.+$/.test(clean))
     clean = clean.replaceAll('.', '_')
+  clean = windowsSafe(clean)
   if (clean.length <= MAX_SEGMENT)
     return clean
   const { stem, ext } = splitExtension(clean)
@@ -171,10 +190,10 @@ function pad(value: number): string {
  * Throws when nothing usable is left.
  */
 export function sanitizeSessionId(id: string): string {
-  const clean = id.trim().replaceAll(/[^\w.-]+/g, '-').replace(/^[.-]+/, '').slice(0, 100)
-  if (clean === '')
+  const trimmed = id.trim().replaceAll(/[^\w.-]+/g, '-').replace(/^[.-]+/, '').slice(0, 100)
+  if (trimmed === '')
     throw new SiteToApiError(`Session id "${id}" has no usable characters. Use letters, digits, ".", "-" or "_".`)
-  return clean
+  return windowsSafe(trimmed)
 }
 
 /**
