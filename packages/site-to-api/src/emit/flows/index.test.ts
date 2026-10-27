@@ -8,7 +8,7 @@ import { traceValues } from '../../analyze/correlate'
 import { buildFlows } from '../../analyze/flows'
 import { SiteToApiError } from '../../errors'
 import { FlowsDocumentSchema } from '../../model'
-import { renderFlowsMarkdown, responseSchemaName, writeFlows } from './index'
+import { renderFlowsMarkdown, writeFlows } from './index'
 
 const capture = shopCapture()
 const sessions = capture.sessions.map(entry => entry.session)
@@ -132,12 +132,5 @@ describe('renderFlowsMarkdown', () => {
     const rendered = renderFlowsMarkdown(tricky, capture.operations)
     expect(rendered).toContain('### Buy \\*now\\* \\| \\<b\\>')
     expect(rendered).toContain('Trigger: load `` Buy `now` ``')
-  })
-})
-
-describe('responseSchemaName', () => {
-  it('builds the Zod schema name the client generator uses', () => {
-    expect(responseSchemaName('getApiItems')).toBe('zGetApiItemsResponse')
-    expect(responseSchemaName('get_api-items')).toBe('zGetApiItemsResponse')
   })
 })

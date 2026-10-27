@@ -80,6 +80,8 @@ export interface Operation {
   sentFrom: SourceRef[]
   /** True when the operation appears in source code but was never called during capture. */
   sourceOnly: boolean
+  /** From `probe`: cookies and headers the request needs (`cookie:sid`, `header:referer`). Absent when not probed. */
+  requires?: string[] | null
   /** Short description without an LLM: trigger labels, path words, response field names. */
   summary: string
   exchanges: Exchange[]

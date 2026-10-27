@@ -312,6 +312,9 @@ function operationObject(operation: Operation, origins: Map<string, ValueOrigin>
     ...(operation.sourceOnly
       ? { 'x-site-to-api-source-only': true }
       : {}),
+    ...(operation.requires
+      ? { 'x-site-to-api-requires': operation.requires }
+      : {}),
   }
 }
 

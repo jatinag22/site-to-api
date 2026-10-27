@@ -1,15 +1,6 @@
 /** Renders `flows.json` as `flows.md` for coding agents and people. */
 import type { ComputedValue, Flow, FlowsDocument, FlowStep, Operation, SourceRef, ValueOrigin } from '../../model'
-
-/** Name of the generated Zod schema for an operation's response, e.g. `zGetApiItemsResponse`. */
-export function responseSchemaName(operationId: string): string {
-  const pascal = operationId
-    .split(/[^a-z0-9]+/i)
-    .filter(Boolean)
-    .map(part => part[0]?.toUpperCase() + part.slice(1))
-    .join('')
-  return `z${pascal}Response`
-}
+import { responseSchemaName, sdkFunctionName } from '../naming'
 
 /** Inline text: one line, Markdown punctuation escaped so labels from the site cannot break the page. */
 function text(value: string): string {
@@ -104,7 +95,7 @@ function renderStep(step: FlowStep, index: number, flow: Flow, operations: Reado
   if (step.browserOnly)
     item('Browser only: a real browser must run this step; it is not a client function.')
   else
-    item(`SDK function ${code(`${step.operationId}()`)}, response schema ${code(responseSchemaName(step.operationId))}`)
+    item(`SDK function ${code(`${sdkFunctionName(step.operationId)}()`)}, response schema ${code(responseSchemaName(step.operationId))}`)
   item(`Sent from: ${step.sentFrom
     ? sourceRef(step.sentFrom)
     : 'unknown (no initiator stack)'}`)

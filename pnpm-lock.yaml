@@ -144,15 +144,24 @@ importers:
 
   e2e:
     devDependencies:
+      '@site-to-api/runtime':
+        specifier: workspace:*
+        version: link:../packages/runtime
       '@types/ws':
         specifier: catalog:dev
         version: 8.18.2
       esbuild:
         specifier: catalog:dev
         version: 0.28.2
+      pathe:
+        specifier: catalog:prod
+        version: 2.0.3
       playwright:
         specifier: catalog:prod
         version: 1.64.1
+      typescript:
+        specifier: catalog:dev
+        version: 6.0.3
       ws:
         specifier: catalog:dev
         version: 8.22.0

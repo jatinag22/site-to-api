@@ -7,7 +7,7 @@ import { SiteToApiError } from '../../errors'
 import { FlowsDocumentSchema } from '../../model'
 import { renderFlowsMarkdown } from './markdown'
 
-export { renderFlowsMarkdown, responseSchemaName } from './markdown'
+export { renderFlowsMarkdown } from './markdown'
 
 /** Value of `$schema` in `flows.json`: the schema file written next to it. */
 const SCHEMA_FILE = 'flows.schema.json'

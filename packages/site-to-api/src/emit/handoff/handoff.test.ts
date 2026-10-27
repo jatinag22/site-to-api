@@ -225,7 +225,7 @@ describe('renderAgentGuide', () => {
     expect(guide).toContain('Bot protection: Akamai')
     expect(guide).toContain('Cookie `_abck`: set by a script in the page.')
     expect(guide).toContain('Cookie `pm_session`: set by `postApiAuthLogin`.')
-    expect(guide).toContain('specs/shop_example.yaml')
+    expect(guide).toContain('specs/shop.example.yaml')
   })
 
   it('links flows and names the function to port for computed values', () => {

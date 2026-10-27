@@ -3,7 +3,7 @@
  * no LLM; every sentence is derived from the analysis.
  */
 import type { Analysis, SessionRequirement } from '../../model'
-import { hostSlug } from '../naming'
+import { specFileName } from '../openapi/write'
 import { describeSource } from './api-map'
 
 export interface AgentGuideContext {
@@ -43,7 +43,7 @@ function sessionSection(analysis: Analysis): string[] {
           : 'origin unknown'
       lines.push(`- Cookie \`${cookie.name}\`: ${origin}.`)
     }
-    lines.push(`- Spec: \`specs/${hostSlug(entry.host)}.yaml\`.`, '')
+    lines.push(`- Spec: \`specs/${specFileName(entry.host)}\`.`, '')
   }
   return lines
 }

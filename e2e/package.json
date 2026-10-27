@@ -10,6 +10,9 @@
     "esbuild": "catalog:dev",
     "playwright": "catalog:prod",
     "ws": "catalog:dev",
-    "zod": "catalog:prod"
+    "zod": "catalog:prod",
+    "@site-to-api/runtime": "workspace:*",
+    "pathe": "catalog:prod",
+    "typescript": "catalog:dev"
   }
 }

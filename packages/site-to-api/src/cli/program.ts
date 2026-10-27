@@ -19,7 +19,7 @@ interface CommandContext extends LoadedConfig {
 }
 
 /** Loads config for a command, layering this command's flags on top. */
-async function resolveConfig(command: Command, flags: Record<string, unknown> = {}): Promise<CommandContext> {
+export async function resolveConfig(command: Command, flags: Record<string, unknown> = {}): Promise<CommandContext> {
   const options = command.optsWithGlobals<GlobalOptions>()
   const cwd = options.cwd ?? process.cwd()
   const loaded = await loadConfig({

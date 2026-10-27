@@ -15,8 +15,3 @@ export function sdkFunctionName(operationId: string): string {
 export function responseSchemaName(operationId: string): string {
   return `z${toCase(operationId, 'PascalCase')}Response`
 }
-
-/** File name used for a host's spec and client folder (`www.example.com` → `www_example_com`). */
-export function hostSlug(host: string): string {
-  return host.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
-}
