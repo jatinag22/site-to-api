@@ -36,5 +36,12 @@
     "dev": "tsdown --watch",
     "typecheck": "tsc --noEmit",
     "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "css-select": "catalog:prod",
+    "domhandler": "catalog:prod",
+    "domutils": "catalog:prod",
+    "htmlparser2": "catalog:prod",
+    "zod": "catalog:prod"
   }
 }

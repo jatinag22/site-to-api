@@ -1,0 +1,211 @@
+import type { OpenApiDocument } from './spec'
+import { describe, expect, it } from 'vitest'
+import { describeHost, OpenApiDocumentSchema, toIdentifier, toPascalCase } from './spec'
+
+const HTML_EXTRACT = {
+  kind: 'html',
+  records: 'li',
+  many: true,
+  fields: {
+    name: {
+      selector: '',
+      attr: null,
+      pattern: null,
+      type: 'string',
+      optional: false,
+    },
+  },
+}
+
+function doc(paths: Record<string, unknown>, servers: unknown = [
+  { url: 'https://api.example.com/' },
+]): OpenApiDocument {
+  return OpenApiDocumentSchema.parse({
+    openapi: '3.1.0',
+    info: { title: 't', version: '1' },
+    servers,
+    paths,
+  })
+}
+
+function header(name: string, value: string, constant = true): Record<string, unknown> {
+  return {
+    'name': name,
+    'in': 'header',
+    'schema': { type: 'string', default: value },
+    'x-site-to-api-constant': constant,
+  }
+}
+
+describe('describeHost', () => {
+  it('reads host, base URL, sorted operation ids and constant headers', () => {
+    const warnings: string[] = []
+    const host = describeHost('api.example.com.yaml', doc({
+      '/b': {
+        get: {
+          operationId: 'getB',
+          parameters: [
+            header('X-Client', 'web'),
+            header('x-other', 'v', false),
+          ],
+          responses: {},
+        },
+      },
+      '/a': {
+        parameters: [
+          header('accept-language', 'en'),
+        ],
+        post: { operationId: 'postA', responses: {} },
+      },
+    }), warnings)
+    expect(warnings).toEqual([])
+    expect(host).toMatchObject({
+      host: 'api.example.com',
+      identifier: 'api_example_com',
+      baseUrl: 'https://api.example.com',
+      operationIds: ['getB', 'postA'],
+      defaultHeaders: { 'accept-language': 'en', 'x-client': 'web' },
+      extracts: [],
+    })
+  })
+
+  it('keeps the port in the host and falls back to the file name without servers', () => {
+    expect(describeHost('x.yaml', doc({}, [
+      { url: 'http://localhost:8080' },
+    ]), []).host).toBe('localhost:8080')
+    const warnings: string[] = []
+    const host = describeHost('shop.example.com.yaml', doc({}, []), warnings)
+    expect(host).toMatchObject({ host: 'shop.example.com', baseUrl: 'https://shop.example.com' })
+    expect(warnings[0]).toMatch(/no servers entry/)
+    const relative: string[] = []
+    describeHost('shop.example.com.yaml', doc({}, [
+      { url: '/api' },
+    ]), relative)
+    expect(relative[0]).toMatch(/is not absolute/)
+  })
+
+  it('drops a constant header with conflicting defaults, with a warning', () => {
+    const warnings: string[] = []
+    const host = describeHost('a.yaml', doc({
+      '/a': {
+        get: {
+          operationId: 'a',
+          parameters: [
+            header('x-v', '1'),
+          ],
+        },
+      },
+      '/b': {
+        get: {
+          operationId: 'b',
+          parameters: [
+            header('x-v', '2'),
+          ],
+        },
+      },
+    }), warnings)
+    expect(host.defaultHeaders).toEqual({})
+    expect(warnings).toEqual(['specs/a.yaml: constant header x-v has different defaults across operations (1, 2); it is not sent by default'])
+  })
+
+  it('warns about operations without an id and parameters it cannot read', () => {
+    const warnings: string[] = []
+    describeHost('a.yaml', doc({
+      '/a': {
+        get: { responses: {} },
+        put: {
+          operationId: 'putA',
+          parameters: [
+            { $ref: '#/components/parameters/X' },
+            { in: 'query' },
+          ],
+        },
+      },
+    }), warnings)
+    expect(warnings).toEqual([
+      'specs/a.yaml: GET /a has no operationId; its SDK function is named by hey-api and it gets no extract parser',
+      'specs/a.yaml: PUT /a: parameter #/components/parameters/X is a reference; constant headers are only read from inline parameters',
+      'specs/a.yaml: PUT /a: a parameter has no name or location and is ignored',
+    ])
+  })
+
+  it('finds extraction specs on text responses only, from the lowest 2xx status', () => {
+    const warnings: string[] = []
+    const host = describeHost('a.yaml', doc({
+      '/page': {
+        get: {
+          operationId: 'getPage',
+          responses: {
+            404: {
+              content: {
+                'text/html': { 'x-site-to-api-extract': HTML_EXTRACT },
+              },
+            },
+            200: {
+              content: {
+                'text/html': {
+                  'schema': { type: 'string' },
+                  'x-site-to-api-extract': HTML_EXTRACT,
+                },
+              },
+            },
+          },
+        },
+      },
+      '/json': {
+        get: {
+          operationId: 'getJson',
+          responses: {
+            200: {
+              content: {
+                'application/json': { 'x-site-to-api-extract': HTML_EXTRACT },
+              },
+            },
+          },
+        },
+      },
+      '/bad': {
+        get: {
+          operationId: 'getBad',
+          responses: {
+            200: {
+              content: {
+                'text/plain': {
+                  'x-site-to-api-extract': { kind: 'csv' },
+                },
+              },
+            },
+          },
+        },
+      },
+    }), warnings)
+    expect(host.extracts).toEqual([
+      {
+        operationId: 'getPage',
+        method: 'GET',
+        path: '/page',
+        status: '200',
+        mimeType: 'text/html',
+        spec: HTML_EXTRACT,
+      },
+    ])
+    expect(warnings).toHaveLength(2)
+    expect(warnings[0]).toMatch(/x-site-to-api-extract on application\/json is ignored/)
+    expect(warnings[1]).toMatch(/GET \/bad: x-site-to-api-extract is not a valid extraction spec/)
+  })
+})
+
+describe('openApiDocumentSchema', () => {
+  it('rejects documents without an openapi version', () => {
+    expect(OpenApiDocumentSchema.safeParse({ swagger: '2.0' }).success).toBe(false)
+  })
+})
+
+describe('toIdentifier and toPascalCase', () => {
+  it('make identifiers from hosts and operation ids', () => {
+    expect(toIdentifier('Shop.Example.com:8080')).toBe('shop_example_com_8080')
+    expect(toIdentifier('1.example')).toBe('_1_example')
+    expect(toPascalCase('getApiItem')).toBe('GetApiItem')
+    expect(toPascalCase('get-api_item.v2')).toBe('GetApiItemV2')
+  })
+})
