@@ -1,0 +1,258 @@
+import type { ExtractField, HtmlExtractSpec, TextExtractSpec } from './types'
+import { describe, expect, it } from 'vitest'
+import { extract } from './extract'
+
+function field(selector: string, overrides: Partial<ExtractField> = {}): ExtractField {
+  return {
+    selector,
+    attr: null,
+    pattern: null,
+    type: 'string',
+    optional: false,
+    ...overrides,
+  }
+}
+
+const LIST_HTML = `
+<html><body>
+  <table class="prices">
+    <tbody>
+      <tr data-id="a1">
+        <td class="name">  Alpha
+          Widget </td>
+        <td class="price">₹1,234.50</td>
+        <td class="change">+2.5%</td>
+        <td><a href="/items/a1">view</a></td>
+      </tr>
+      <tr data-id="b2">
+        <td class="name">Beta</td>
+        <td class="price">n/a</td>
+        <td class="change">-1%</td>
+      </tr>
+    </tbody>
+  </table>
+</body></html>`
+
+describe('extract (html)', () => {
+  const spec: HtmlExtractSpec = {
+    kind: 'html',
+    records: 'table.prices tbody tr',
+    many: true,
+    fields: {
+      id: field('', { attr: 'data-id' }),
+      name: field('td.name'),
+      price: field('td.price', { type: 'number' }),
+      change: field('td.change', { type: 'number' }),
+      link: field('a', { attr: 'href', optional: true }),
+      slug: field('a', { attr: 'href', pattern: '/items/(\\w+)', optional: true }),
+      note: field('td.note'),
+    },
+  }
+
+  it('reads one record per match with relative selectors, attributes and patterns', () => {
+    expect(extract(LIST_HTML, spec)).toEqual([
+      {
+        id: 'a1',
+        name: 'Alpha Widget',
+        price: 1234.5,
+        change: 2.5,
+        link: '/items/a1',
+        slug: 'a1',
+        note: null,
+      },
+      {
+        id: 'b2',
+        name: 'Beta',
+        price: null,
+        change: -1,
+        note: null,
+      },
+    ])
+  })
+
+  it('returns one record for many: false, with ":root" meaning the whole page', () => {
+    const detail: HtmlExtractSpec = {
+      kind: 'html',
+      records: ':root',
+      many: false,
+      fields: {
+        title: field('h1'),
+        price: field('.price', { pattern: 'Price: ([\\d.,]+)', type: 'number' }),
+        inStock: field('.stock', { type: 'boolean' }),
+        listed: field('time', { attr: 'datetime', type: 'date' }),
+        missing: field('.nothing', { optional: true }),
+      },
+    }
+    const html = '<h1>Gadget</h1><p class="price">Price: 1,999</p><span class="stock">Yes</span><time datetime="2026-03-12">12 March</time>'
+    expect(extract(html, detail)).toEqual({
+      title: 'Gadget',
+      price: 1999,
+      inStock: true,
+      listed: '2026-03-12',
+    })
+  })
+
+  it('returns the first match for many: false and nulls when nothing matches', () => {
+    const first: HtmlExtractSpec = {
+      kind: 'html',
+      records: 'tr',
+      many: false,
+      fields: {
+        name: field('td.name'),
+        x: field('i', { optional: true }),
+      },
+    }
+    expect(extract(LIST_HTML, first)).toEqual({ name: 'Alpha Widget' })
+    expect(extract('<p>empty</p>', first)).toEqual({ name: null })
+  })
+
+  it('returns an empty array when no record matches', () => {
+    expect(extract('<p>none</p>', spec)).toEqual([])
+  })
+
+  it('treats a pattern that does not match as a missing field', () => {
+    const noMatch: HtmlExtractSpec = {
+      kind: 'html',
+      records: 'tr',
+      many: true,
+      fields: {
+        code: field('td.name', { pattern: '(\\d+)' }),
+      },
+    }
+    expect(extract(LIST_HTML, noMatch)).toEqual([
+      { code: null },
+      { code: null },
+    ])
+  })
+
+  it('throws a clear error for an invalid selector or pattern', () => {
+    expect(() => extract(LIST_HTML, { ...spec, records: 'tr[' })).toThrow(/invalid CSS selector for records/)
+    expect(() => extract(LIST_HTML, {
+      ...spec,
+      fields: {
+        a: field('td:bogus-pseudo'),
+      },
+    })).toThrow(/invalid CSS selector for field "a"/)
+    expect(() => extract(LIST_HTML, {
+      ...spec,
+      fields: {
+        a: field('td', { pattern: '(' }),
+      },
+    })).toThrow(/invalid pattern for field "a"/)
+  })
+})
+
+describe('extract (text)', () => {
+  it('reads delimited text with a header row and quoted fields', () => {
+    const spec: TextExtractSpec = {
+      kind: 'text',
+      layout: 'delimited',
+      delimiter: ',',
+      header: true,
+      pattern: null,
+      fields: {
+        name: {
+          column: 0,
+          group: null,
+          type: 'string',
+          optional: false,
+        },
+        price: {
+          column: 1,
+          group: null,
+          type: 'number',
+          optional: false,
+        },
+        note: {
+          column: 3,
+          group: null,
+          type: 'string',
+          optional: true,
+        },
+      },
+    }
+    const csv = 'name,price,qty\n"Widget, large","$1,200",3\n\nGadget,5,1\n'
+    expect(extract(csv, spec)).toEqual([
+      { name: 'Widget, large', price: 1200 },
+      { name: 'Gadget', price: 5 },
+    ])
+  })
+
+  it('defaults the delimiter to a comma and supports other delimiters', () => {
+    const fields = {
+      a: {
+        column: 0,
+        group: null,
+        type: 'integer' as const,
+        optional: false,
+      },
+      b: {
+        column: 1,
+        group: null,
+        type: 'string' as const,
+        optional: false,
+      },
+    }
+    const base: TextExtractSpec = {
+      kind: 'text',
+      layout: 'delimited',
+      delimiter: null,
+      header: false,
+      pattern: null,
+      fields,
+    }
+    expect(extract('1,x', base)).toEqual([
+      { a: 1, b: 'x' },
+    ])
+    expect(extract('2|y\r\n3|z', { ...base, delimiter: '|' })).toEqual([
+      { a: 2, b: 'y' },
+      { a: 3, b: 'z' },
+    ])
+  })
+
+  it('matches a global pattern with named groups, one record per match', () => {
+    const spec: TextExtractSpec = {
+      kind: 'text',
+      layout: 'pattern',
+      delimiter: null,
+      header: false,
+      pattern: '^(?<symbol>[A-Z]+): (?<price>[\\d.]+)(?: \\((?<note>[^)]*)\\))?$',
+      fields: {
+        symbol: {
+          column: null,
+          group: 'symbol',
+          type: 'string',
+          optional: false,
+        },
+        price: {
+          column: null,
+          group: 'price',
+          type: 'number',
+          optional: false,
+        },
+        note: {
+          column: null,
+          group: 'note',
+          type: 'string',
+          optional: true,
+        },
+      },
+    }
+    expect(extract('ABC: 1.5 (halted)\nXYZ: 20\nnoise', spec)).toEqual([
+      { symbol: 'ABC', price: 1.5, note: 'halted' },
+      { symbol: 'XYZ', price: 20 },
+    ])
+  })
+
+  it('throws when a pattern layout has no pattern', () => {
+    const spec: TextExtractSpec = {
+      kind: 'text',
+      layout: 'pattern',
+      delimiter: null,
+      header: false,
+      pattern: null,
+      fields: {},
+    }
+    expect(() => extract('x', spec)).toThrow(/needs a pattern/)
+  })
+})
