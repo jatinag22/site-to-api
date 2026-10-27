@@ -48,6 +48,10 @@
   },
   "dependencies": {
     "@site-to-api/runtime": "workspace:*",
+    "yaml": "catalog:prod",
     "zod": "catalog:prod"
+  },
+  "devDependencies": {
+    "@scalar/openapi-parser": "catalog:dev"
   }
 }

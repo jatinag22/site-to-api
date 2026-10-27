@@ -13,6 +13,7 @@ onlyBuiltDependencies:
 catalogs:
   dev:
     '@antfu/eslint-config': ^10.0.0
+    '@scalar/openapi-parser': 0.29.16
     '@types/node': ^26.6.5
     bumpp: ^12.3.0
     eslint: ^10.13.0
@@ -26,4 +27,5 @@ catalogs:
     typescript: ^6.0.3
     vitest: ^5.0.5
   prod:
+    yaml: ^2.9.1
     zod: ^4.6.7
