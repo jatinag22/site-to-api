@@ -268,11 +268,71 @@ function findExtract(operation: Operation, where: string, warnings: string[]): O
   return null
 }
 
+/**
+ * Words that cannot name an import binding (`import * as default` is a syntax error), plus the
+ * module-level names `client/index.ts` declares itself. A host such as `http://new/` would
+ * otherwise produce one of them.
+ */
+const RESERVED_IDENTIFIERS: ReadonlySet<string> = new Set([
+  'arguments',
+  'await',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'eval',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'implements',
+  'import',
+  'in',
+  'instanceof',
+  'interface',
+  'let',
+  'new',
+  'null',
+  'package',
+  'private',
+  'protected',
+  'public',
+  'return',
+  'sdks',
+  'static',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'undefined',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield',
+])
+
 /** `shop.example.com:8080` → `shop_example_com_8080`, a valid identifier and folder name. */
 export function toIdentifier(host: string): string {
   const id = host.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-  return /^\d/.test(id) || id === ''
-    ? `_${id}`
+  if (/^\d/.test(id) || id === '')
+    return `_${id}`
+  return RESERVED_IDENTIFIERS.has(id)
+    ? `${id}_`
     : id
 }
 

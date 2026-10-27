@@ -39,6 +39,12 @@ catalogs:
     knip:
       specifier: ^6.43.0
       version: 6.43.0
+    micromark:
+      specifier: ^4.0.3
+      version: 4.0.3
+    micromark-extension-gfm:
+      specifier: ^3.0.0
+      version: 3.0.0
     nano-staged:
       specifier: ^1.0.2
       version: 1.0.2
@@ -262,6 +268,12 @@ importers:
       '@scalar/openapi-parser':
         specifier: catalog:dev
         version: 0.29.16
+      micromark:
+        specifier: catalog:dev
+        version: 4.0.3
+      micromark-extension-gfm:
+        specifier: catalog:dev
+        version: 3.0.0
 
 packages:
 

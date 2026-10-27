@@ -1,0 +1,46 @@
+# Hostile fixture: every string a website controls (operation ids, paths, media types, labels,
+# parameter names, header values) tries to escape the comment or string it is written into.
+# The generated client must still parse to the same statements as for a benign spec.
+openapi: 3.1.0
+info:
+  title: 'hostile */ globalThis.pwned = 1; /*'
+  version: '1'
+servers:
+  - url: "https://h`o$s{t}'q\"x.example"
+paths:
+  "/a*/ globalThis.pwned = 1; /*\n`${globalThis.x}`'\"\u2028\u2029end":
+    get:
+      operationId: "get*/ globalThis.pwned = 1; /*\n`${x}`'\"\u2028x"
+      summary: "Sign in */ globalThis.pwned = 1; /*\n`${x}`'\"\u2028"
+      x-site-to-api-kind: page
+      parameters:
+        - name: "q*/ globalThis.pwned = 1; /*'\""
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: "x-evil*/'\""
+          in: header
+          required: false
+          x-site-to-api-constant: true
+          schema:
+            type: string
+            default: "v*/ globalThis.pwned = 1; /*\n`${x}`'\"\u2028"
+      responses:
+        '200':
+          description: "OK */ globalThis.pwned = 1; /*\n`${x}`'\"\u2028"
+          content:
+            "text/html*/ globalThis.pwned = 1; /*`${x}`'\"\u2028":
+              schema:
+                type: string
+              x-site-to-api-extract:
+                kind: html
+                records: 'tr*/ globalThis.pwned = 1; /*'
+                many: true
+                fields:
+                  "name*/ globalThis.pwned = 1; /*'\"\u2028":
+                    selector: "td*/'\"`${x}`\u2028"
+                    attr: null
+                    pattern: "(\\d+)*/'\"\u2028"
+                    type: string
+                    optional: false
