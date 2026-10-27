@@ -8,6 +8,8 @@
  * 2. Values under secret-looking names (`x-csrf-token`, `apiKey`, `password`) are replaced too,
  *    unless the same value appeared in every session (at least two): then it is a constant the
  *    site ships to everyone, such as a public API key, and the client needs it.
+ *    Path segments that are tokens (`/magic/<jwt>`, `/reset/<long token>`, see `path-tokens.ts`)
+ *    count as rule 1.
  * 3. Every value found by rules 1 and 2 is also removed wherever else it appears (echoed in a
  *    response, inside a URL), as are JWTs embedded in text.
  * 4. Personal data (email, phone, card, PAN, Aadhaar, configured patterns) is masked keeping its
@@ -20,6 +22,7 @@ import type { Body, Exchange, RedactContext, Redactor } from '../../model'
 import type { PersonalDataPattern } from './personal-data'
 import { SiteToApiError } from '../../errors'
 import { describeShape, inspectJwt } from '../shape'
+import { isSecretPathSegment } from './path-tokens'
 import { isPhoneField, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { CREDENTIAL_HEADERS, isSecretName } from './secret-names'
 
@@ -42,6 +45,8 @@ interface Located {
   value: string
   in: RedactContext['in']
   name: string | null
+  /** For path segments: whether the segment is a token (`/magic/<jwt>`, `/reset/<token>`). */
+  pathToken?: boolean
 }
 
 function isQueryLike(where: RedactContext['in']): boolean {
@@ -90,8 +95,15 @@ function* bodyValues(body: Body | null, where: 'body' | 'response-body'): Genera
 /** Every string value in an exchange, including values nested in JSON strings and forms. */
 function* valuesOf(exchange: Exchange): Generator<Located> {
   const { request, response } = exchange
-  for (const segment of request.path.split('/'))
-    yield* expand({ value: safeDecode(segment) ?? segment, in: 'path', name: null }, 0)
+  const segments = request.path.split('/')
+  for (const [index, segment] of segments.entries()) {
+    yield* expand({
+      value: safeDecode(segment) ?? segment,
+      in: 'path',
+      name: null,
+      pathToken: isSecretPathSegment(segment, segments[index - 1]),
+    }, 0)
+  }
   for (const item of request.query)
     yield* expand({ value: item.value, in: 'query', name: item.name }, 0)
   for (const item of request.headers)
@@ -202,7 +214,7 @@ export function createRedactor(input: RedactorInput): Redactor {
       sessions.add(exchange.sessionId)
       if (item.value === '')
         continue
-      if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value))
+      if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true)
         always.add(item.value)
       else if (isSecretName(item.name, isQueryLike(item.in)))
         unlessConstant.add(item.value)
@@ -285,6 +297,10 @@ export function createRedactor(input: RedactorInput): Redactor {
     if (text === '')
       return text
     if (isAlwaysSecret(context.in, context.name) || inspectJwt(text) || secrets.has(text))
+      return placeholder(text)
+    // Without the previous segment only the context-free rules apply; the learnt secrets above
+    // already cover `/reset/<token>` seen in the capture.
+    if (context.in === 'path' && isSecretPathSegment(text))
       return placeholder(text)
     if (isSecretName(context.name, isQueryLike(context.in)) && !isConstant(text))
       return placeholder(text)
