@@ -1,6 +1,6 @@
 # 0004 Redact by default; keep shapes, origins and constants
 
-Status: Accepted (2026-10-28)
+Status: Accepted (2026-10-28), refined by 0015
 
 ## Context
 Captures contain session cookies, tokens and personal data. The handoff folder is meant to be
