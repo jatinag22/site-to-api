@@ -1,3 +1,4 @@
 import process from 'node:process'
+import { run } from './program'
 
-process.stdout.write('site-to-api: CLI not implemented yet\n')
+await run(process.argv)
