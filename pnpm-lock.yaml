@@ -61,6 +61,9 @@ catalogs:
     '@hey-api/openapi-ts':
       specifier: 0.99.0
       version: 0.99.0
+    '@hey-api/shared':
+      specifier: 0.5.0
+      version: 0.5.0
     commander:
       specifier: ^15.0.0
       version: 15.0.0
@@ -180,6 +183,9 @@ importers:
       '@hey-api/openapi-ts':
         specifier: catalog:prod
         version: 0.99.0(typescript@6.0.3)
+      '@hey-api/shared':
+        specifier: catalog:prod
+        version: 0.5.0
       '@site-to-api/runtime':
         specifier: workspace:*
         version: link:../runtime

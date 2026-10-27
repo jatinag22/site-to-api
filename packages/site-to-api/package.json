@@ -48,6 +48,7 @@
   },
   "dependencies": {
     "@hey-api/openapi-ts": "catalog:prod",
+    "@hey-api/shared": "catalog:prod",
     "@site-to-api/runtime": "workspace:*",
     "commander": "catalog:prod",
     "consola": "catalog:prod",
