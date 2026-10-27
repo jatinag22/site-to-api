@@ -214,6 +214,9 @@ function collectConstantHeaders(parameters: unknown[], values: Map<string, Set<s
   }
 }
 
+/** Headers that name the page a request came from: differing per operation is normal, not worth a warning. */
+const PER_PAGE_HEADERS: ReadonlySet<string> = new Set(['referer', 'origin'])
+
 /** Headers with a single default across the host; a header with several is left to the caller. */
 function settleHeaders(values: Map<string, Set<string>>, file: string, warnings: string[]): Record<string, string> {
   const headers: Record<string, string> = {}
@@ -221,7 +224,7 @@ function settleHeaders(values: Map<string, Set<string>>, file: string, warnings:
     const all = [...set].sort()
     if (all.length === 1 && all[0] !== undefined)
       headers[name] = all[0]
-    else
+    else if (!PER_PAGE_HEADERS.has(name.toLowerCase()))
       warnings.push(`specs/${file}: constant header ${name} has different defaults across operations (${all.join(', ')}); it is not sent by default`)
   }
   return headers
@@ -265,11 +268,71 @@ function findExtract(operation: Operation, where: string, warnings: string[]): O
   return null
 }
 
+/**
+ * Words that cannot name an import binding (`import * as default` is a syntax error), plus the
+ * module-level names `client/index.ts` declares itself. A host such as `http://new/` would
+ * otherwise produce one of them.
+ */
+const RESERVED_IDENTIFIERS: ReadonlySet<string> = new Set([
+  'arguments',
+  'await',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'eval',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'implements',
+  'import',
+  'in',
+  'instanceof',
+  'interface',
+  'let',
+  'new',
+  'null',
+  'package',
+  'private',
+  'protected',
+  'public',
+  'return',
+  'sdks',
+  'static',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'undefined',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield',
+])
+
 /** `shop.example.com:8080` → `shop_example_com_8080`, a valid identifier and folder name. */
 export function toIdentifier(host: string): string {
   const id = host.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-  return /^\d/.test(id) || id === ''
-    ? `_${id}`
+  if (/^\d/.test(id) || id === '')
+    return `_${id}`
+  return RESERVED_IDENTIFIERS.has(id)
+    ? `${id}_`
     : id
 }
 

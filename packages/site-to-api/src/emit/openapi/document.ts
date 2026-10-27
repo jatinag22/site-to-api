@@ -2,7 +2,8 @@
  * Builds one OpenAPI 3.1 document per host from an {@link Analysis} (docs/output-format.md).
  * Objects are built with a fixed key order so the YAML is byte-identical for the same analysis.
  */
-import type { Analysis, FlowsDocument, JsonSchema, Operation, ParamInfo, ResponseInfo, SourceRef, ValueOrigin } from '../../model'
+import type { Analysis, JsonSchema, Operation, ParamInfo, ResponseInfo, SourceRef, ValueOrigin } from '../../model'
+import { createStepResolver, operationKey } from '../steps'
 
 const OPENAPI_VERSION = '3.1.0'
 
@@ -84,20 +85,23 @@ function schemaObject(schema: JsonSchema): Json {
   return result
 }
 
-/** First origin per operation input across all flows, in flow order. */
-function originsByOperation(flows: FlowsDocument): Map<string, Map<string, ValueOrigin>> {
+/**
+ * First origin per operation input across all flows, in flow order, keyed by
+ * {@link operationKey}: two hosts can share an operation id, and each must keep its own inputs.
+ */
+function originsByOperation(analysis: Analysis): Map<string, Map<string, ValueOrigin>> {
+  const resolver = createStepResolver(analysis.operations, analysis.flows)
   const result = new Map<string, Map<string, ValueOrigin>>()
-  for (const flow of flows.flows) {
-    for (const step of flow.steps) {
-      let inputs = result.get(step.operationId)
-      if (!inputs) {
-        inputs = new Map()
-        result.set(step.operationId, inputs)
-      }
-      for (const [input, origin] of Object.entries(step.inputs)) {
-        if (!inputs.has(input))
-          inputs.set(input, origin)
-      }
+  for (const step of analysis.flows.flows.flatMap(flow => flow.steps)) {
+    const operation = resolver.operation(step)
+    if (!operation)
+      continue
+    const key = operationKey(operation.host, operation.operationId)
+    const inputs = result.get(key) ?? new Map<string, ValueOrigin>()
+    result.set(key, inputs)
+    for (const [input, origin] of Object.entries(step.inputs)) {
+      if (!inputs.has(input))
+        inputs.set(input, origin)
     }
   }
   return result
@@ -177,7 +181,9 @@ function propertyAt(schema: Json, pointer: string[]): Json | undefined {
   let target: Json | undefined = schema
   for (const part of pointer) {
     const properties: unknown = target?.properties
-    const next: unknown = isJson(properties)
+    // Own properties only: a request field named `__proto__` or `constructor` must not reach
+    // Object.prototype, which annotateBody would then write into.
+    const next: unknown = isJson(properties) && Object.hasOwn(properties, part)
       ? properties[part]
       : undefined
     target = isJson(next)
@@ -312,6 +318,9 @@ function operationObject(operation: Operation, origins: Map<string, ValueOrigin>
     ...(operation.sourceOnly
       ? { 'x-site-to-api-source-only': true }
       : {}),
+    ...(operation.requires
+      ? { 'x-site-to-api-requires': operation.requires }
+      : {}),
   }
 }
 
@@ -332,7 +341,7 @@ function hostDocument(host: string, operations: Operation[], analysis: Analysis,
       continue
     }
     const item = paths.get(operation.path) ?? {}
-    item[method] = operationObject(operation, origins.get(operation.operationId) ?? new Map())
+    item[method] = operationObject(operation, origins.get(operationKey(operation.host, operation.operationId)) ?? new Map())
     paths.set(operation.path, item)
   }
   const orderedPaths = Object.fromEntries([...paths].map(([path, item]) =>
@@ -377,7 +386,7 @@ function hostDocument(host: string, operations: Operation[], analysis: Analysis,
  * so `gen` can skip pages and bot-protection steps.
  */
 export function buildOpenApiDocuments(analysis: Analysis): Map<string, object> {
-  const origins = originsByOperation(analysis.flows)
+  const origins = originsByOperation(analysis)
   const byHost = new Map<string, Operation[]>()
   for (const operation of analysis.operations) {
     byHost.set(operation.host, [

@@ -55,7 +55,10 @@ const SECRETS: Record<'a' | 'b', SessionSecrets> = {
   },
 }
 
-/** A constant that looks like a credential: it must be written as a shape, not a value. */
+/**
+ * A public API key under a secret-looking name, identical in both sessions. Decision 0015 keeps
+ * such constants (the client needs them), so specs and flows both write it.
+ */
 export const CONSTANT_API_KEY = 'pk_constant_0001_abcdef'
 /** A constant that does not look like a credential: it is kept as-is. */
 export const CLIENT_VERSION = 'web-4.2.1'
@@ -63,10 +66,7 @@ export const ITEM_ID = 'ITM-7731-XQ'
 const PUBLIC_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtestpublickey'
 
 /** Every value that must never appear in `flows.json` or `flows.md`. */
-export const SECRET_VALUES: readonly string[] = [
-  ...Object.values(SECRETS).flatMap(secrets => Object.values(secrets)),
-  CONSTANT_API_KEY,
-]
+export const SECRET_VALUES: readonly string[] = Object.values(SECRETS).flatMap(secrets => Object.values(secrets))
 
 function frame(functionName: string, line: number): StackFrame {
   return {
@@ -296,7 +296,20 @@ function operation(operationId: string, kind: Operation['kind'], method: string,
     method,
     path,
     kind,
-    pathParams: [],
+    // Same convention as the operations stage: segment index after the leading slash.
+    pathParams: path.split('/').slice(1).flatMap((segment, index) => {
+      const name = /^\{(\w+)\}$/.exec(segment)?.[1]
+      return name
+        ? [
+            {
+              name,
+              index,
+              schema: { type: 'string' as const },
+              evidence: ['varies' as const],
+            },
+          ]
+        : []
+    }),
     query: [],
     headers: [
       ...new Set(exchanges.flatMap(entry => entry.request.headers.map(header => header.name))),

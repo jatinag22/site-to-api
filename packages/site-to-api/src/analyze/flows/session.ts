@@ -1,5 +1,6 @@
 /** Per-host session requirements: which cookies the APIs need, who sets them, bot protection. */
 import type { BotProtectionFinding, Exchange, Operation, SessionRequirement, ValueTrace } from '../../model'
+import { cookieNeedsBrowser } from '../../model'
 import { botProtectionVendor } from '../correlate'
 
 /**
@@ -24,8 +25,9 @@ export function sessionRequirements(input: {
       ...input.botProtection.map(finding => finding.host),
     ]),
   ].sort()
-  const browserCookies = new Set(input.traces.flatMap(trace =>
-    trace.location.in === 'cookie' && trace.origin.kind === 'browser'
+  // Cookies whose value a wrapper cannot derive: set by a page script with no traceable origin.
+  const opaqueCookies = new Set(input.traces.flatMap(trace =>
+    trace.location.in === 'cookie' && (trace.origin.kind === 'browser' || trace.origin.kind === 'unknown')
       ? [trace.location.name]
       : []))
 
@@ -40,11 +42,15 @@ export function sessionRequirements(input: {
       const producer = input.exchanges.find(exchange => exchange.response.setCookies.some(cookie => cookie.name === name))
       if (producer)
         return { name, setBy: input.operationOf(producer)?.operationId ?? null, source: 'response' }
-      const browser = browserCookies.has(name) || botProtectionVendor(name) !== null
+      // No response set it, so a script in the page did (document.cookie), or a reused browser
+      // profile already had it. A wrapper can set `store=pine-hill` itself, but not an opaque
+      // value or a bot-protection token.
       return {
         name,
         setBy: null,
-        source: browser ? 'browser' : 'unknown',
+        source: opaqueCookies.has(name) || botProtectionVendor(name) !== null
+          ? 'browser'
+          : 'script',
       }
     })
     const botProtection = [
@@ -58,7 +64,7 @@ export function sessionRequirements(input: {
       .sort((a, b) => a.vendor.localeCompare(b.vendor) || a.evidence.localeCompare(b.evidence))
     const needsToken = operations.some(operation => operation.headers.some(header => header.name.toLowerCase() === 'authorization'))
     let requires: SessionRequirement['requires'] = 'none'
-    if (botProtection.length > 0 || cookies.some(cookie => cookie.source === 'browser'))
+    if (botProtection.length > 0 || cookies.some(cookieNeedsBrowser))
       requires = 'browser'
     else if (needsToken)
       requires = 'token'

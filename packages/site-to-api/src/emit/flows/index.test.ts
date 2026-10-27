@@ -3,12 +3,15 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { HOSTILE, injected, renderMarkdown } from '../../../test/markdown'
 import { fakeHtmlLocator, fakeSourceResolver, SECRET_VALUES, shopCapture } from '../../../test/scenarios'
+import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { traceValues } from '../../analyze/correlate'
 import { buildFlows } from '../../analyze/flows'
+import { createRedactor } from '../../analyze/redact'
 import { SiteToApiError } from '../../errors'
 import { FlowsDocumentSchema } from '../../model'
-import { renderFlowsMarkdown, responseSchemaName, writeFlows } from './index'
+import { renderFlowsMarkdown, writeFlows } from './index'
 
 const capture = shopCapture()
 const sessions = capture.sessions.map(entry => entry.session)
@@ -25,6 +28,15 @@ const doc: FlowsDocument = buildFlows({
   }),
   sourceResolver: fakeSourceResolver,
   botProtection: capture.botProtection,
+  redactor: createRedactor({
+    exchanges: capture.exchanges,
+    config: {
+      examples: 'masked',
+      maxExamples: 3,
+      patterns: [],
+      fields: [],
+    },
+  }),
   toolVersion: '1.2.3',
 })
 
@@ -133,11 +145,90 @@ describe('renderFlowsMarkdown', () => {
     expect(rendered).toContain('### Buy \\*now\\* \\| \\<b\\>')
     expect(rendered).toContain('Trigger: load `` Buy `now` ``')
   })
-})
 
-describe('responseSchemaName', () => {
-  it('builds the Zod schema name the client generator uses', () => {
-    expect(responseSchemaName('getApiItems')).toBe('zGetApiItemsResponse')
-    expect(responseSchemaName('get_api-items')).toBe('zGetApiItemsResponse')
+  it('cannot inject links, HTML, comments, headings or table columns from site values', () => {
+    const [flow] = doc.flows
+    const [host] = doc.session
+    const [computed] = doc.computedValues
+    if (!flow || !host || !computed)
+      throw new Error('scenario changed')
+    const ref = {
+      file: HOSTILE,
+      line: 1,
+      column: 1,
+      functionName: HOSTILE,
+      original: false,
+      excerpt: HOSTILE,
+    }
+    const hostile: FlowsDocument = {
+      ...doc,
+      session: [
+        {
+          ...host,
+          cookies: [
+            { name: HOSTILE, setBy: HOSTILE, source: 'response' },
+          ],
+          botProtection: [
+            { vendor: HOSTILE, evidence: HOSTILE },
+          ],
+        },
+      ],
+      flows: [
+        {
+          ...flow,
+          id: HOSTILE,
+          name: HOSTILE,
+          trigger: { kind: 'click', label: HOSTILE, pageUrl: HOSTILE },
+          steps: flow.steps.map(step => ({
+            ...step,
+            summary: HOSTILE,
+            sentFrom: ref,
+            inputs: {
+              [HOSTILE]: {
+                kind: 'html',
+                step: `${HOSTILE}.s1`,
+                selector: HOSTILE,
+                attr: HOSTILE,
+                pattern: HOSTILE,
+                confidence: 'low',
+              },
+              'query.a': { kind: 'browser', note: HOSTILE },
+              'query.b': { kind: 'computed', computedId: HOSTILE },
+            },
+            outputs: { [HOSTILE]: HOSTILE },
+          })),
+        },
+      ],
+      computedValues: [
+        {
+          ...computed,
+          id: HOSTILE,
+          input: HOSTILE,
+          producedBy: ref,
+          calledFrom: ref,
+          api: HOSTILE,
+          details: { [HOSTILE]: HOSTILE },
+        },
+      ],
+    }
+    const rendered = renderFlowsMarkdown(hostile, capture.operations)
+    const html = renderMarkdown(rendered)
+    expect(injected(html)).toEqual([])
+    expect(html.match(/<h\d>/g)).toHaveLength(6)
+    // Anchors are slugs, so a site value cannot add attributes to the <a> tag.
+    expect(rendered).toMatch(/<a id="[a-z0-9_-]+"><\/a>/)
+    expect(rendered).not.toMatch(/<a id="[-\d_a-z]*[^-\d"_a-z][^"]*">/)
+    const rows = html.match(/<tr>[\s\S]*?<\/tr>/g) ?? []
+    expect(rows).toHaveLength(2)
+    for (const row of rows)
+      expect(row.match(/<t[dh][\s>]/g)).toHaveLength(5)
+  })
+
+  it('names the right host for steps whose operation id exists on two hosts', () => {
+    const analysis = twoHostAnalysis()
+    const rendered = renderFlowsMarkdown(analysis.flows, analysis.operations)
+    expect(rendered).toContain(`1. **\`getRoot\`** \`GET /\` on \`${WWW}\` (step \`s1\`, api)`)
+    expect(rendered).toContain(`2. **\`getRoot\`** \`GET /\` on \`${API}\` (step \`s2\`, api)`)
+    expect(rendered).toContain(`- Request value: \`header.x-sig\` of \`getRoot\` on \`${API}\``)
   })
 })

@@ -99,4 +99,10 @@ describe('safePageUrl', () => {
     expect(safePageUrl('not a url?token=abc')).toBe('not a url')
     expect(safePageUrl(null)).toBe('')
   })
+
+  it('replaces token path segments with {token}', () => {
+    expect(safePageUrl('https://www.example.test/reset/secrettokenvalue_abcdefghijklmnop?x=1')).toBe('https://www.example.test/reset/{token}')
+    expect(safePageUrl('https://www.example.test/files/aB3dE5gH7jK9mN1pQ2xY/view')).toBe('https://www.example.test/files/{token}/view')
+    expect(safePageUrl('https://www.example.test/promo/summer-sale-2026')).toBe('https://www.example.test/promo/summer-sale-2026')
+  })
 })

@@ -270,3 +270,73 @@ describe('identifiers and naming', () => {
     expect(operationIdFor('POST', '/')).toBe('postRoot')
   })
 })
+
+describe('buildOperations: slugs', () => {
+  const page = (body: string): Parameters<typeof get>[1] => ({
+    kind: 'page',
+    responseBody: textBody(body),
+  })
+  const storePage = (name: string): Parameters<typeof get>[1] => page(`<main class="store"><h1>${name}</h1><dl class="facts"><dt>Hours</dt><dd>9-5</dd></dl></main>`)
+
+  it('makes linked slugs a parameter when a listing links to several pages built from one template', () => {
+    const listing = get('/stores', page('<a href="/stores/pine-hill">Pine</a><a href="/stores/cedar-park">Cedar</a><a href="/stores/maple-cross">Maple</a>'))
+    const operations = build([
+      listing,
+      get('/stores/pine-hill', storePage('Pine Hill')),
+      get('/stores/cedar-park', storePage('Cedar Park')),
+      get('/stores/maple-cross', storePage('Maple Cross')),
+    ])
+    expect(paths(operations)).toEqual(['GET /stores', 'GET /stores/{slug}'])
+    expect(operations.find(op => op.path === '/stores/{slug}')?.pathParams[0]?.evidence).toEqual(['value-trace', 'varies'])
+  })
+
+  it('keeps root pages from a navigation menu separate', () => {
+    const home = get('/', page('<nav><a href="/about-us">About</a><a href="/contact-us">Contact</a><a href="/privacy-policy">Privacy</a></nav>'))
+    const operations = build([
+      home,
+      get('/about-us', page('<p>about</p>')),
+      get('/contact-us', page('<form></form>')),
+      get('/privacy-policy', page('<p>p</p>')),
+    ])
+    expect(paths(operations)).toEqual([
+      'GET /',
+      'GET /about-us',
+      'GET /contact-us',
+      'GET /privacy-policy',
+    ])
+  })
+
+  it('ignores endpoint names that only appear inside page scripts', () => {
+    const shell = get('/', page('<script>fetch("/api/all-upcoming-issues");fetch("/api/past-issues-list");fetch("/api/live-ofs-active")</script>'))
+    const operations = build([
+      shell,
+      get('/api/all-upcoming-issues'),
+      get('/api/past-issues-list'),
+      get('/api/live-ofs-active'),
+    ])
+    expect(paths(operations)).toContain('GET /api/all-upcoming-issues')
+    expect(paths(operations)).not.toContain('GET /api/{slug}')
+  })
+
+  it('needs pages that share a structure, not just links', () => {
+    const listing = get('/help', page('<a href="/help/getting-started">a</a><a href="/help/billing-faq">b</a><a href="/help/contact-form">c</a>'))
+    const operations = build([
+      listing,
+      get('/help/getting-started', page('<article><h1>x</h1><ol><li>1</li></ol><video></video></article>')),
+      get('/help/billing-faq', page('<section class="faq"><details><summary>q</summary></details></section>')),
+      get('/help/contact-form', page('<form class="contact"><input><textarea></textarea><button></button></form>')),
+    ])
+    expect(paths(operations)).not.toContain('GET /help/{slug}')
+  })
+
+  it('matches whole paths, not prefixes', () => {
+    const listing = get('/stores', page('<a href="/stores/pine-hills">P</a><a href="/stores/cedar-parks">C</a><a href="/stores/maple-crosses">M</a>'))
+    const operations = build([
+      listing,
+      get('/stores/pine-hill', storePage('a')),
+      get('/stores/cedar-park', storePage('b')),
+      get('/stores/maple-cross', storePage('c')),
+    ])
+    expect(paths(operations)).not.toContain('GET /stores/{slug}')
+  })
+})

@@ -5,6 +5,7 @@ import type { Exchange, Operation, PathParam, SourceRoute } from '../../model'
 import type { Evidence, Marks } from './templates'
 import { inferStringSchema } from '../schema'
 import { isSlug } from './identifiers'
+import { linkedSlugs } from './links'
 import { camelCase, operationIdFor, pathPhrase, singular, words } from './naming'
 import { markParameters, parseTemplate, segmentsOf, templateMatches } from './templates'
 
@@ -199,7 +200,7 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Opera
     const { host, method } = members[0]!.request
     const marks = markParameters([
       ...new Set(members.map(exchange => exchange.request.path)),
-    ], routesFor(routes, host, method))
+    ], routesFor(routes, host, method), linkedSlugs(members, relevant))
     for (const exchange of members) {
       classified.push({
         exchange,

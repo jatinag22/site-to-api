@@ -155,6 +155,17 @@ describe('createRedactor: rules', () => {
     expect(r.value('user%3Djane.doe%40mail.test', { in: 'body' })).toBe('user=xxxx.xxx@xxxx.xxxx')
   })
 
+  it('treats token path segments as secrets, here and wherever they are echoed', () => {
+    const token = 'secrettokenvalue_abcdefghijklmnop'
+    const r2 = redactor(['s1', 's2'].map(sessionId => exchange({ sessionId, url: `https://shop.test/api/reset/${token}` })))
+    expect(r2.value(token, { in: 'path', name: 'resetId' })).toBe('<redacted: 33 base64 chars>')
+    expect(r2.value(`https://shop.test/api/reset/${token}`, { in: 'text' })).toBe('https://shop.test/api/reset/<redacted: 33 base64 chars>')
+    expect(r2.examples([token], { in: 'path', name: 'resetId' })).toEqual(['<redacted: 33 base64 chars>'])
+    // Random-looking segments are recognised even when the capture never had them.
+    expect(r2.value('aB3dE5gH7jK9mN1pQ2xY', { in: 'path', name: 'fileId' })).toBe('<redacted: 20 base64 chars>')
+    expect(r2.value('summer-sale-2026', { in: 'path', name: 'slug' })).toBe('summer-sale-2026')
+  })
+
   it('removes known secrets wherever they are echoed', () => {
     expect(r.value(`echo ${SECRETS.sessionCookie} end`, { in: 'response-body' })).toBe('echo <redacted: 25 base64 chars> end')
     expect(r.value(SECRETS.setCookie, { in: 'body', name: 'value' })).toMatch(/^<redacted/)

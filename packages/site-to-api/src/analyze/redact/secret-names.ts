@@ -61,7 +61,8 @@ const SECRET_JOINED = [
   'csrfmiddlewaretoken',
 ]
 
-function words(name: string): string[] {
+/** Lower-case words of a name: `x-csrf-token` → `[x, csrf, token]`, `accessToken` → `[access, token]`. */
+export function nameWords(name: string): string[] {
   return name
     .replace(/([a-z\d])([A-Z])/g, '$1 $2')
     .toLowerCase()
@@ -76,7 +77,7 @@ function words(name: string): string[] {
 export function isSecretName(name: string | null | undefined, inQuery = false): boolean {
   if (name === null || name === undefined || name === '')
     return false
-  const parts = words(name)
+  const parts = nameWords(name)
   if (parts.some(part => SECRET_WORDS.has(part) || (inQuery && QUERY_SECRET_WORDS.has(part))))
     return true
   const joined = parts.join('')

@@ -25,6 +25,56 @@ describe('sanitizeSegment', () => {
     expect(a).not.toBe(b)
   })
 
+  it('prefixes Windows device names, with or without an extension, in any case', () => {
+    expect([
+      'CON',
+      'prn',
+      'Aux',
+      'NUL.js',
+      'nul.tar.gz',
+      'COM1',
+      'com9.map',
+      'LPT1',
+      'lpt9.txt',
+    ].map(sanitizeSegment))
+      .toEqual([
+        '_CON',
+        '_prn',
+        '_Aux',
+        '_NUL.js',
+        '_nul.tar.gz',
+        '_COM1',
+        '_com9.map',
+        '_LPT1',
+        '_lpt9.txt',
+      ])
+  })
+
+  it('leaves names that only start like a device name alone', () => {
+    expect([
+      'console.js',
+      'nullable.ts',
+      'com10.js',
+      'auxiliary',
+      'a.nul',
+    ].map(sanitizeSegment))
+      .toEqual([
+        'console.js',
+        'nullable.ts',
+        'com10.js',
+        'auxiliary',
+        'a.nul',
+      ])
+  })
+
+  it('replaces trailing dots and spaces, which Windows strips', () => {
+    expect(sanitizeSegment('app.js.')).toBe('app.js_')
+    expect(sanitizeSegment('name..')).toBe('name__')
+    expect(sanitizeSegment('name  ')).toBe('name__')
+    expect(sanitizeSegment('name. .')).toBe('name.__')
+    expect(sanitizeSegment('NUL.')).toBe('NUL_')
+  })
+
   it('decodes an encoded slash into a safe character instead of a separator', () => {
     expect(sanitizeSegment('..%2F..%2Fetc')).toBe('.._.._etc')
   })
@@ -127,5 +177,10 @@ describe('session ids', () => {
   it('sanitises given ids', () => {
     expect(sanitizeSessionId('../my session/1')).toBe('my-session-1')
     expect(() => sanitizeSessionId('///')).toThrow(SiteToApiError)
+  })
+
+  it('keeps session ids valid directory names on Windows', () => {
+    expect(sanitizeSessionId('con')).toBe('_con')
+    expect(sanitizeSessionId('run.')).toBe('run_')
   })
 })

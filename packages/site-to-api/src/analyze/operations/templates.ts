@@ -55,12 +55,17 @@ function bestSourceMatch(templates: ParsedTemplate[], segments: string[]): Parse
  * Finds parameter positions for the distinct paths of one host + method.
  *
  * 1. A source route template that matches the path wins and names its parameters.
- * 2. Strong identifiers (UUIDs, long numbers, long hex or random tokens) are parameters on sight.
- * 3. Paths that agree on every segment that is not identifier-like are grouped; in a group an
+ * 2. Strong identifiers (UUIDs, long numbers, long hex or random tokens, JWTs and other secrets
+ *    in the path) are parameters on sight.
+ * 3. Paths that agree on every segment that is not identifier-like (or a slug some other
+ *    response links to) are grouped; in a group an
  *    identifier position is a parameter once two distinct values are seen there (or one, when a
  *    strong identifier already made it a parameter). Plain words never are.
  */
-export function markParameters(paths: string[], routes: SourceRoute[]): Map<string, Marks> {
+export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set()): Map<string, Marks> {
+  // A hyphenated slug (`pine-hill`) only counts when another response links to it: plain-word
+  // endpoint names (`/api/all-upcoming-issues`) appear in bundles, never as links in data.
+  const isCandidate = (segment: string): boolean => isIdentifierLike(segment) || linkedSlugs.has(segment)
   const templates = routes.map(parseTemplate)
   const result = new Map<string, Marks>()
   const free: Array<{ path: string, segments: string[], marks: Marks }> = []
@@ -82,7 +87,7 @@ export function markParameters(paths: string[], routes: SourceRoute[]): Map<stri
       continue
     }
     segments.forEach((segment, index) => {
-      if (isStrongIdentifier(segment)) {
+      if (isStrongIdentifier(segment, segments[index - 1])) {
         marks.set(index, {
           evidence: ['looks-like-id'],
           sourceName: null,
@@ -93,11 +98,19 @@ export function markParameters(paths: string[], routes: SourceRoute[]): Map<stri
     result.set(path, marks)
   }
 
-  // Group by the segments that are not identifier-like: within a group only identifier
-  // positions differ, so every such position with two or more distinct values is a parameter.
+  markVaryingPositions(free, isCandidate)
+  return result
+}
+
+/**
+ * Groups paths by their segments that are not parameter candidates: within a group only
+ * candidate positions differ, so every such position with two or more distinct values (or one,
+ * when a strong identifier already made it a parameter) becomes a parameter.
+ */
+function markVaryingPositions(free: Array<{ segments: string[], marks: Marks }>, isCandidate: (segment: string) => boolean): void {
   const groups = new Map<string, typeof free>()
   for (const item of free) {
-    const key = `${item.segments.length}|${item.segments.map((segment, index) => item.marks.has(index) || isIdentifierLike(segment)
+    const key = `${item.segments.length}|${item.segments.map((segment, index) => item.marks.has(index) || isCandidate(segment)
       ? '*'
       : segment).join('/')}`
     groups.set(key, [
@@ -109,17 +122,19 @@ export function markParameters(paths: string[], routes: SourceRoute[]): Map<stri
     const length = group[0]!.segments.length
     for (let index = 0; index < length; index++) {
       const alreadyParam = group.some(item => item.marks.has(index))
-      const candidates = group.filter(item => !item.marks.has(index) && isIdentifierLike(item.segments[index]!))
+      const candidates = group.filter(item => !item.marks.has(index) && isCandidate(item.segments[index]!))
       const distinct = new Set(candidates.map(item => item.segments[index]))
       if (candidates.length === 0 || (distinct.size < 2 && !alreadyParam))
         continue
       for (const item of candidates) {
+        const segment = item.segments[index]!
         item.marks.set(index, {
-          evidence: ['varies', 'looks-like-id'],
+          evidence: isIdentifierLike(segment)
+            ? ['varies', 'looks-like-id']
+            : ['varies', 'value-trace'],
           sourceName: null,
         })
       }
     }
   }
-  return result
 }

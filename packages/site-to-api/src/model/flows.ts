@@ -143,8 +143,17 @@ export const SessionRequirementSchema = z.object({
   cookies: z.array(z.object({
     name: z.string(),
     setBy: z.string().nullable(),
-    /** `browser` when a script (often bot protection) sets it instead of a response. */
-    source: z.enum(['response', 'browser', 'unknown']),
+    /**
+     * Who sets it: `response` (a `Set-Cookie` header), `script` (a page script, with a value a
+     * wrapper can derive and set itself, such as a store slug from a response), or `browser`
+     * (a page script, often bot protection, with an opaque value only a real browser produces).
+     */
+    source: z.enum([
+      'response',
+      'browser',
+      'script',
+      'unknown',
+    ]),
   })),
   botProtection: z.array(z.object({
     vendor: z.string(),
@@ -153,6 +162,14 @@ export const SessionRequirementSchema = z.object({
   probed: z.boolean(),
 })
 export type SessionRequirement = z.infer<typeof SessionRequirementSchema>
+
+/**
+ * True when a cookie can only come from a real browser (`source: 'browser'`). Shared by `build`
+ * and `probe`, so a derivable script-set cookie never turns a host into "needs a browser".
+ */
+export function cookieNeedsBrowser(cookie: Pick<SessionRequirement['cookies'][number], 'source'>): boolean {
+  return cookie.source === 'browser'
+}
 
 export const FlowsDocumentSchema = z.object({
   $schema: z.string().optional(),

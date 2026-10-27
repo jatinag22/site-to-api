@@ -22,6 +22,14 @@ e2e/
 
 ## Running
 
+Try the tool by hand against the shop (serves on `http://localhost:4173`, `PORT` to change):
+
+```sh
+pnpm --filter @site-to-api/e2e run fixture
+```
+
+Tests:
+
 ```sh
 pnpm --filter @site-to-api/e2e exec playwright install chromium   # once
 pnpm exec vitest --run --project e2e

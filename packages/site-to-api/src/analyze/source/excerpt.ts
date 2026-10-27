@@ -5,6 +5,7 @@
 import type { Program } from 'oxc-parser'
 import type { LoadedSession, SourceRef } from '../../model'
 import { Visitor } from 'oxc-parser'
+import { commentText } from '../../emit/escape'
 import { LineIndex, parseCode, walkWithFunctions } from './ast'
 import { findUnpacked, readSessionFile, urlHost, urlPath } from './files'
 
@@ -36,10 +37,15 @@ function withSuffix(path: string, suffix: string): string {
   return `${stem}.${suffix}${ext}`
 }
 
+/**
+ * The header comment style for an excerpt. The header quotes the file path and URL, which come
+ * from the site (sourcemap `sources`, script URLs), so the text is flattened to one line and
+ * cannot close the comment early.
+ */
 function commentFor(path: string): (line: string) => string {
   return /\.(?:vue|svelte|html?|astro)$/i.test(path)
-    ? line => `<!-- ${line} -->`
-    : line => `// ${line}`
+    ? line => `<!-- ${commentText(line)} -->`
+    : line => `// ${commentText(line)}`
 }
 
 function describe(ref: SourceRef): string {

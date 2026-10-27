@@ -48,6 +48,7 @@
   },
   "dependencies": {
     "@hey-api/openapi-ts": "catalog:prod",
+    "@hey-api/shared": "catalog:prod",
     "@jridgewell/trace-mapping": "catalog:prod",
     "@site-to-api/runtime": "workspace:*",
     "commander": "catalog:prod",
@@ -66,6 +67,8 @@
   },
   "devDependencies": {
     "@jridgewell/gen-mapping": "catalog:dev",
-    "@scalar/openapi-parser": "catalog:dev"
+    "@scalar/openapi-parser": "catalog:dev",
+    "micromark": "catalog:dev",
+    "micromark-extension-gfm": "catalog:dev"
   }
 }

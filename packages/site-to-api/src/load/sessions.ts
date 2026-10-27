@@ -1,13 +1,14 @@
 /**
  * Reads raw capture sessions from disk (format: `src/model/capture.ts`).
  */
-import type { CaptureEvent, Exchange, LoadedSession, RequestEvent, SessionMeta } from '../model'
+import type { CaptureEvent, Exchange, LoadedSession, RequestEvent, ResponseEvent, SessionMeta } from '../model'
 import type { HarEntry } from './har'
 import type { MatchableEntry } from './initiator'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { SiteToApiError } from '../errors'
 import { CaptureEventSchema, SessionMetaSchema } from '../model'
+import { fillMissingBodies } from './bodies'
 import { buildExchange } from './exchange'
 import { HarEntrySchema, HarFileSchema } from './har'
 import { matchRequestEvents, urlWithoutFragment } from './initiator'
@@ -105,15 +106,19 @@ function toMatchable(entries: Array<HarEntry | null>): MatchableEntry[] {
   return matchable
 }
 
-async function loadSession(dir: string, warnings: string[]): Promise<{ session: LoadedSession, exchanges: Exchange[] } | null> {
+/**
+ * `dir` is absolute; warnings name the folder by its name inside the raw directory instead,
+ * because they are copied into the committed `AGENT.md` and must not reveal local paths.
+ */
+async function loadSession(dir: string, name: string, warnings: string[]): Promise<{ session: LoadedSession, exchanges: Exchange[] } | null> {
   const metaText = await readText(join(dir, 'meta.json'))
   if (metaText === null) {
-    warnings.push(`${dir}: no meta.json; not a capture session, skipped`)
+    warnings.push(`${name}: no meta.json; not a capture session, skipped`)
     return null
   }
   const meta = SessionMetaSchema.safeParse(parseJson(metaText))
   if (!meta.success) {
-    warnings.push(`${dir}: meta.json is invalid (${zodMessage(meta.error)}); session skipped. Capture it again with this version of site-to-api.`)
+    warnings.push(`${name}: meta.json is invalid (${zodMessage(meta.error)}); session skipped. Capture it again with this version of site-to-api.`)
     return null
   }
   const events = await readEvents(dir, meta.data, warnings)
@@ -136,6 +141,7 @@ async function loadSession(dir: string, warnings: string[]): Promise<{ session: 
     else
       warnings.push(`${meta.data.sessionId}: HAR entry ${harIndex} skipped (invalid URL)`)
   })
+  fillMissingBodies(exchanges, events.filter((event): event is ResponseEvent => event.t === 'response'))
   exchanges.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id, 'en', { numeric: true }))
   exchanges.forEach((exchange, seq) => {
     exchange.seq = seq
@@ -171,7 +177,7 @@ export async function loadSessions(rawDir: string): Promise<LoadResult> {
   const warnings: string[] = []
   const loaded: Array<{ session: LoadedSession, exchanges: Exchange[] }> = []
   for (const name of names) {
-    const result = await loadSession(join(root, name), warnings)
+    const result = await loadSession(join(root, name), name, warnings)
     if (result)
       loaded.push(result)
   }

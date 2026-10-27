@@ -1,11 +1,31 @@
-import type { CaptureEvent, Exchange, FlowsDocument, LoadedSession, Operation, ValueTrace } from '../../model'
+import type { ResolvedConfig } from '../../config/schema'
+import type { CaptureEvent, Exchange, FlowsDocument, LoadedSession, Operation, Redactor, ValueTrace } from '../../model'
 import type { BuildFlowsInput } from './index'
 import { describe, expect, it } from 'vitest'
 import { exchange, jsonBody } from '../../../test/helpers'
 import { CLIENT_VERSION, CONSTANT_API_KEY, fakeHtmlLocator, fakeSourceResolver, HOST, SECRET_VALUES, shopCapture } from '../../../test/scenarios'
 import { FlowsDocumentSchema } from '../../model'
 import { traceValues } from '../correlate'
+import { createRedactor } from '../redact'
 import { buildFlows } from './index'
+
+/** The default redaction settings (`redact.examples: masked`). */
+const REDACT: ResolvedConfig['redact'] = {
+  examples: 'masked',
+  maxExamples: 3,
+  patterns: [],
+  fields: [],
+}
+
+function redactorFor(exchanges: Exchange[], config: Partial<ResolvedConfig['redact']> = {}): Redactor {
+  return createRedactor({
+    exchanges,
+    config: {
+      ...REDACT,
+      ...config,
+    },
+  })
+}
 
 function shopFlows(capture = shopCapture(), reverse = false): { doc: FlowsDocument, capture: ReturnType<typeof shopCapture> } {
   const order = <T>(items: T[]): T[] => (reverse
@@ -27,6 +47,7 @@ function shopFlows(capture = shopCapture(), reverse = false): { doc: FlowsDocume
     traces,
     sourceResolver: fakeSourceResolver,
     botProtection: capture.botProtection,
+    redactor: redactorFor(exchanges),
     toolVersion: '1.2.3',
   })
   return { doc, capture }
@@ -91,7 +112,8 @@ describe('buildFlows: shop scenario', () => {
     const login = flow(doc, 'sign-in').steps[0]!
     expect(login.inputs).toEqual({
       'header.x-client-version': { kind: 'constant', value: CLIENT_VERSION },
-      'header.x-api-key': { kind: 'unknown', shape: '23 base64 chars' },
+      // Secret-named but identical in both sessions: kept, as the redactor and the specs keep it.
+      'header.x-api-key': { kind: 'constant', value: CONSTANT_API_KEY },
       'header.x-csrf-token': {
         kind: 'html',
         step: 'load-login.s1',
@@ -110,7 +132,7 @@ describe('buildFlows: shop scenario', () => {
       'body./username': { kind: 'user-input', field: 'username' },
       'body./password': { kind: 'computed', computedId: 'postapilogin-body-password' },
     })
-    expect(login.summary).toBe('Sign in with email and password, after submitting "Sign in"')
+    expect(login.summary).toBe('After submitting "Sign in": Sign in with email and password')
     expect(login.sentFrom).toMatchObject({ file: 'src/submitLogin.ts', line: 42, functionName: 'submitLogin' })
   })
 
@@ -203,7 +225,6 @@ describe('buildFlows: shop scenario', () => {
     const json = JSON.stringify(doc)
     for (const secret of SECRET_VALUES)
       expect(json).not.toContain(secret)
-    expect(json).not.toContain(CONSTANT_API_KEY)
   })
 
   it('is deterministic, whatever order the inputs come in', () => {
@@ -261,6 +282,7 @@ function build(exchanges: Exchange[], operations: Operation[], sessions: LoadedS
     traces,
     sourceResolver: fakeSourceResolver,
     botProtection: [],
+    redactor: redactorFor(exchanges),
     toolVersion: 'test',
   }
   return buildFlows(input)
@@ -292,7 +314,7 @@ describe('buildFlows: segments and merging', () => {
       ['go', 1],
       ['go-2', 1],
     ])
-    expect(doc.flows[0]?.steps[0]?.summary).toBe('GET /one, after clicking "Go!"')
+    expect(doc.flows[0]?.steps[0]?.summary).toBe('After clicking "Go!": GET /one.')
   })
 
   it('drops segments without steps and skips exchanges without an operation or of other kinds', () => {
@@ -417,10 +439,176 @@ describe('buildFlows: segments and merging', () => {
       [
         'cookie.example.test',
         'cookies',
-        ['sid:unknown'],
+        ['sid:script'],
       ],
       ['plain.example.test', 'none', []],
       ['token.example.test', 'token', []],
     ])
   })
 })
+
+describe('buildFlows: cookies set by page scripts', () => {
+  function sessionOf(cookies: Record<string, string>): FlowsDocument['session'][number] | undefined {
+    const config = exchange({
+      url: 'https://script.example.test/api/config',
+      startedAt: 1,
+      responseBody: jsonBody({ defaultStore: 'pine-hill' }),
+    })
+    const call = exchange({
+      url: 'https://script.example.test/api/stock',
+      startedAt: 2,
+      cookies,
+      responseBody: jsonBody({ ok: true }),
+    })
+    const exchanges = [config, call]
+    const sessions = [
+      loaded('s1', []),
+    ]
+    const traces = traceValues({
+      exchanges,
+      sessions,
+      htmlLocator: fakeHtmlLocator,
+      staticStrings: new Set(),
+      minValueLength: 4,
+    })
+    const operations = [
+      op('getApiConfig', [config]),
+      op('getApiStock', [call], {
+        cookies: Object.keys(cookies).map(name => ({ name, required: true, schema: {} })),
+      }),
+    ]
+    return build(exchanges, operations, sessions, traces).session[0]
+  }
+
+  it('marks a cookie whose value a response provides as script-set, needing no browser', () => {
+    const session = sessionOf({ store: 'pine-hill' })
+    expect(session?.cookies).toEqual([
+      { name: 'store', setBy: null, source: 'script' },
+    ])
+    expect(session?.requires).toBe('cookies')
+  })
+
+  it('needs a browser for opaque or bot-protection cookies', () => {
+    const opaque = sessionOf({ store: 'pine-hill', vid: 'Qm9vdHN0cmFwcGVkVmFsdWU5' })
+    expect(opaque?.cookies.map(cookie => `${cookie.name}:${cookie.source}`)).toEqual(['store:script', 'vid:browser'])
+    expect(opaque?.requires).toBe('browser')
+    const bot = sessionOf({ _px3: 'abc' })
+    expect(bot?.cookies).toEqual([
+      { name: '_px3', setBy: null, source: 'browser' },
+    ])
+    expect(bot?.requires).toBe('browser')
+  })
+})
+
+describe('buildFlows: what counts as an input', () => {
+  it('skips literal path segments and bot-protection payloads, keeps real path parameters', () => {
+    const list = exchange({
+      url: `https://${HOST}/api/items`,
+      responseBody: jsonBody([
+        { id: 'X81234567' },
+      ]),
+      startedAt: 1_000,
+    })
+    const file = exchange({ url: `https://${HOST}/api/stock.txt`, startedAt: 2_000 })
+    const item = exchange({ url: `https://${HOST}/api/items/X81234567`, startedAt: 3_000 })
+    const sensor = exchange({
+      method: 'POST',
+      url: `https://${HOST}/shield/collect`,
+      requestBody: jsonBody({ sensor_data: '3;0;1;0;abcdefghij' }),
+      kind: 'bot-protection',
+      startedAt: 4_000,
+    })
+    const operations: Operation[] = [
+      {
+        ...operationStub('getApiItems', '/api/items'),
+        exchanges: [list],
+      },
+      {
+        ...operationStub('getApiStockTxt', '/api/stock.txt'),
+        exchanges: [file],
+      },
+      {
+        ...operationStub('getApiItemsByItemId', '/api/items/{itemId}'),
+        pathParams: [
+          {
+            name: 'itemId',
+            index: 2,
+            schema: { type: 'string' },
+            evidence: ['varies'],
+          },
+        ],
+        exchanges: [item],
+      },
+      {
+        ...operationStub('postShieldCollect', '/shield/collect'),
+        method: 'POST',
+        kind: 'bot-protection',
+        exchanges: [sensor],
+      },
+    ]
+    const exchanges = [list, file, item, sensor]
+    const sessions: LoadedSession[] = [
+      {
+        dir: '/tmp/s1',
+        events: [],
+        meta: sessionMeta('s1'),
+      },
+    ]
+    const traces = traceValues({
+      exchanges,
+      sessions,
+      htmlLocator: fakeHtmlLocator,
+      staticStrings: new Set(),
+      minValueLength: 4,
+    })
+    const doc = buildFlows({
+      exchanges,
+      operations,
+      sessions,
+      traces,
+      sourceResolver: fakeSourceResolver,
+      botProtection: [],
+      redactor: redactorFor(exchanges),
+      toolVersion: 'test',
+    })
+    const steps = doc.flows.flatMap(entry => entry.steps)
+    expect(steps.find(step => step.operationId === 'getApiStockTxt')?.inputs).toEqual({})
+    expect(steps.find(step => step.operationId === 'postShieldCollect')?.inputs).toEqual({})
+    expect(steps.find(step => step.operationId === 'getApiItemsByItemId')?.inputs['path.2']?.kind).toBe('step')
+  })
+})
+
+function operationStub(operationId: string, path: string): Operation {
+  return {
+    operationId,
+    host: HOST,
+    method: 'GET',
+    path,
+    kind: 'api',
+    pathParams: [],
+    query: [],
+    headers: [],
+    cookies: [],
+    requestBody: null,
+    responses: [],
+    sentFrom: [],
+    sourceOnly: false,
+    summary: '',
+    exchanges: [],
+  }
+}
+
+function sessionMeta(sessionId: string): LoadedSession['meta'] {
+  return {
+    formatVersion: 1,
+    sessionId,
+    toolVersion: 'test',
+    startUrl: null,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    completedAt: '2026-01-01T00:01:00.000Z',
+    browser: { channel: null, headless: true, userAgent: 'test' },
+    har: 'traffic.har',
+    events: 'events.jsonl',
+    scripts: [],
+  }
+}

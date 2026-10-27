@@ -1,5 +1,6 @@
 /** Splits a session's traffic into the segments started by each of the person's actions. */
 import type { CaptureEvent, Exchange, Flow, Operation } from '../../model'
+import { redactPathTokens } from '../redact'
 import { safePageUrl } from './locations'
 
 export type Trigger = Flow['trigger']
@@ -41,7 +42,8 @@ function loadTrigger(startUrl: string | null, exchanges: readonly Exchange[]): T
   }
   return {
     kind: 'load',
-    label: `Load ${path}`,
+    // The path names the flow (`load-login`); a magic-link token must not end up in it.
+    label: `Load ${redactPathTokens(path)}`,
     pageUrl: safePageUrl(url),
   }
 }

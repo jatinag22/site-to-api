@@ -1,6 +1,7 @@
 import type { SessionRequirement } from '../model'
 import type { ExtractOperation, HostSpec } from './spec'
 import { describe, expect, it } from 'vitest'
+import { HOSTILE, injected, renderMarkdown } from '../../test/markdown'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
 
 const listExtract: ExtractOperation = {
@@ -197,7 +198,7 @@ describe('renderReadme', () => {
     ])
     expect(readme).toContain('Use `browserSession`')
     expect(readme).toContain('session: browserSession({')
-    expect(readme).toContain('- Bot protection: akamai (cookie _abck).')
+    expect(readme).toContain('- Bot protection: akamai (cookie \\_abck).')
   })
 
   it('shows tokenSession for token hosts and a fallback when flows.json has no entry', () => {
@@ -219,5 +220,83 @@ describe('renderReadme', () => {
     ], [], [
       session('unknown'),
     ])).toContain('unknown (inferred from captured traffic, not probed)')
+  })
+})
+
+describe('hostile operation ids, labels and headers', () => {
+  // A host name cannot hold spaces or newlines, but operation ids, header values, cookie names
+  // and bot-protection evidence can.
+  const breakout = `x\n\`\`\`\n# Pwned\n\`\`\`\n${HOSTILE}`
+  const hostile = host({
+    host: 'a`b$c.example',
+    operationIds: [breakout],
+    defaultHeaders: { [`x-${breakout}`]: breakout },
+    extracts: [
+      {
+        ...listExtract,
+        operationId: breakout,
+        path: `/${breakout}`,
+        mimeType: `text/html ${breakout}`,
+      },
+    ],
+  })
+
+  it('keeps the README structure intact', () => {
+    const readme = renderReadme([hostile], nameExtracts([hostile], []), [
+      session('cookies', {
+        host: 'a`b$c.example',
+        cookies: [
+          { name: breakout, setBy: breakout, source: 'response' },
+        ],
+        botProtection: [
+          { vendor: breakout, evidence: breakout },
+        ],
+      }),
+    ])
+    const html = renderMarkdown(readme)
+    expect(injected(html)).toEqual([])
+    expect(html).not.toMatch(/<h\d>\s*Pwned/)
+    expect(html.match(/<h\d>/g)).toHaveLength(4)
+    expect(html.match(/<pre>/g)).toHaveLength(1)
+    // The example call falls back to a placeholder rather than an id that is not an identifier.
+    expect(readme).toContain('a_example_com.someOperation(')
+  })
+
+  it('names parsers with identifiers even when the id has no letters or starts with a digit', () => {
+    const named = nameExtracts([
+      host({
+        extracts: [
+          { ...listExtract, operationId: '***' },
+          { ...listExtract, operationId: '1st-page' },
+          { ...listExtract, operationId: 'get-list' },
+          { ...listExtract, operationId: 'getList' },
+        ],
+      }),
+    ], [])
+    const identifier = /^[A-Z_$][\w$]*$/i
+    for (const entry of named) {
+      for (const name of [
+        entry.functionName,
+        entry.schemaName,
+        entry.typeName,
+        entry.specName,
+      ])
+        expect(name).toMatch(identifier)
+    }
+    expect(named.map(entry => entry.functionName)).toEqual([
+      'extractGetList',
+      'extractGetList2',
+      'extractOp1stPage',
+      'extractOperation',
+    ])
+    expect(named.find(entry => entry.functionName === 'extractOp1stPage')?.specName).toBe('op1stPageSpec')
+  })
+
+  it('keeps host-prefixed names identifiers when the host starts with a digit', () => {
+    const named = nameExtracts([
+      host(),
+      host({ host: '1.example', identifier: '_1_example' }),
+    ], [])
+    expect(named.map(entry => entry.typeName)).toEqual(['AExampleComGetListRecord', 'Op1ExampleGetListRecord'])
   })
 })

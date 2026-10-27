@@ -85,6 +85,16 @@ describe('loadConfig', () => {
     })).rejects.toThrow(/maxRps/)
   })
 
+  it('loads a config that imports defineConfig from site-to-api, even without a local install', async () => {
+    // The temp project has no node_modules: the import must resolve to the running copy.
+    await writeFile(join(dir, 'site-to-api.config.ts'), `
+      import { defineConfig } from 'site-to-api'
+      export default defineConfig({ outDir: 'typed' })
+    `)
+    const { config } = await loadConfig({ cwd: dir })
+    expect(config.outDir).toBe('typed')
+  })
+
   it('fails clearly for a missing explicit config file', async () => {
     await expect(loadConfig({ cwd: dir, configFile: 'nope.config.ts' })).rejects.toThrow(/Config file not found/)
   })

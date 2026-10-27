@@ -22,3 +22,9 @@ or `Proposed`.
 | [0012](0012-probe-safety.md) | Probe only safe methods by default, rate limited | Accepted |
 | [0013](0013-deterministic-pipeline.md) | No LLM inside the pipeline | Accepted |
 | [0014](0014-name.md) | Name: `site-to-api` | Accepted |
+| [0015](0015-redaction-refinements.md) | Redaction refinements from the implementation (refines 0004) | Accepted |
+| [0016](0016-capture-response-bodies-in-page.md) | Read response bodies inside the page | Accepted |
+| [0017](0017-call-sites-and-key-origins.md) | Skip request wrappers, follow imported keys | Accepted |
+| [0018](0018-build-runs-gen.md) | `build` also generates the client; `probe` rebuilds | Accepted |
+| [0019](0019-capture-trust-boundary.md) | Treat the captured site as untrusted input | Accepted |
+| [0020](0020-redaction-of-flows-and-paths.md) | Redact flows and URL paths like the specs; script-set cookies | Accepted |

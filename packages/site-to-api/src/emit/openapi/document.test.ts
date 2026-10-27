@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 import { exchange, jsonBody, textBody } from '../../../test/helpers'
 import { CONFIG, fixtureExchanges, SECRETS } from '../../../test/secret-fixture'
+import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { classifyExchanges } from '../../analyze/classify'
 import { buildOperations } from '../../analyze/operations'
 import { createRedactor } from '../../analyze/redact'
@@ -363,6 +364,99 @@ describe('buildOpenApiDocuments', () => {
       { url: 'http://legacy.test' },
     ])
     expect(document['x-site-to-api-unsupported-methods']).toEqual(['PROPFIND /dav'])
+  })
+})
+
+describe('operation ids shared by two hosts', () => {
+  it('gives each host the origins of its own steps', () => {
+    const documents = buildOpenApiDocuments(twoHostAnalysis())
+    const parameters = (host: string): unknown => {
+      const yaml: unknown = parse(toYaml(documents.get(host) ?? {}))
+      return yaml
+    }
+    expect(parameters(WWW)).toMatchObject({
+      paths: {
+        '/': {
+          get: {
+            parameters: [
+              {
+                'name': 'lang',
+                'x-site-to-api-origin': { kind: 'user-input', field: 'lang' },
+              },
+            ],
+          },
+        },
+      },
+    })
+    expect(parameters(API)).toMatchObject({
+      paths: {
+        '/': {
+          get: {
+            parameters: [
+              {
+                'name': 'lang',
+                'x-site-to-api-origin': { kind: 'constant', value: 'en' },
+              },
+              { 'name': 'x-sig', 'x-site-to-api-computed': 'c1' },
+              {
+                'name': 'x-token',
+                'x-site-to-api-origin': {
+                  kind: 'step',
+                  step: 's1',
+                  output: 'body./token',
+                  transform: 'none',
+                },
+              },
+            ],
+          },
+        },
+      },
+    })
+  })
+})
+
+describe('request body origins', () => {
+  it('never writes through a field named __proto__ into Object.prototype', () => {
+    const analysis = analyse([
+      page(),
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: jsonBody({ a: 1 }),
+        responseBody: jsonBody({ ok: true }),
+      }),
+    ], {
+      ...NO_FLOWS,
+      flows: [
+        {
+          id: 'f',
+          name: 'f',
+          trigger: { kind: 'load', label: 'f', pageUrl: 'https://shop.test/' },
+          seenInSessions: 1,
+          steps: [
+            {
+              id: 's1',
+              operationId: 'postApiX',
+              kind: 'api',
+              browserOnly: false,
+              summary: '',
+              sentFrom: null,
+              inputs: {
+                'body./__proto__': { kind: 'user-input', field: 'x' },
+                'body./constructor/prototype': { kind: 'user-input', field: 'y' },
+              },
+              outputs: {},
+              observedIn: [],
+            },
+          ],
+        },
+      ],
+    })
+    expect(analysis.operations.map(operation => operation.operationId)).toContain('postApiX')
+    buildOpenApiDocuments(analysis)
+    const probe: Record<string, unknown> = {}
+    expect(probe['x-site-to-api-origin']).toBeUndefined()
+    expect(Object.hasOwn(Object.prototype, 'x-site-to-api-origin')).toBe(false)
   })
 })
 

@@ -14,8 +14,8 @@
 | Command | Reads | Writes | Network |
 |---|---|---|---|
 | `capture [url]` | config | `<rawDir>/<session>/` | the target site, through a real browser |
-| `build` | all raw sessions | `<outDir>/` except `client/` | none |
-| `probe` | raw sessions + `<outDir>/` | updates `<outDir>/` | the target site, rate limited |
+| `build` | all raw sessions, `probe.json` | `<outDir>/` including `client/` | none |
+| `probe` | raw sessions | `probe.json`, then rebuilds `<outDir>/` | the target site, rate limited |
 | `gen` | `<outDir>/specs`, `flows.json` | `<outDir>/client/` | none |
 | `config` | config sources | stdout | none |
 | `init` | nothing | `site-to-api.config.ts`, `.gitignore` entries | none |
@@ -26,7 +26,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
 
 1. **load** (`src/load`): reads `meta.json`, `traffic.har` and `events.jsonl` of every session,
    validates them with Zod, and produces `Exchange[]`. Instrumentation `request` events are matched
-   to HAR entries (method + URL + time window + body preview) to attach the initiator stack.
+   to HAR entries (method + URL + time window + body preview) to attach the initiator stack, and
+   `response` events fill bodies the HAR lost when the page navigated (decision 0016).
 2. **classify** (`src/analyze/classify`): labels each exchange `api`, `page`, `bot-protection`,
    `asset` or `noise` using resource type, media type, host lists and bot-protection signatures
    (Akamai, Cloudflare, PerimeterX, DataDome, Imperva, Kasada, reCAPTCHA, hCaptcha, Turnstile).
@@ -42,7 +43,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
 6. **flows** (`src/analyze/flows`): splits the timeline at the person's actions (click, submit,
    navigate), turns each segment into a flow of steps with typed inputs and outputs, merges flows
    seen in several sessions, and derives per-host session requirements.
-7. **source** (`src/analyze/source`): maps stack frames through sourcemaps to original files,
+7. **source** (`src/analyze/source`): maps stack frames through sourcemaps to original files
+   (skipping shared request wrappers, decision 0017),
    parses original sources or bundles with oxc to find request call sites and endpoints that were
    never called, and selects excerpts for computed values and call sites.
 8. **html** (`src/analyze/html`): infers extraction specs for HTML and text responses by comparing
@@ -50,7 +52,9 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
 9. **redact** (`src/analyze/redact`): decides, per value, whether it is a cross-session constant
    (kept), a secret or personal value (replaced by a shape description or a masked example that
    keeps the format), or ordinary data.
-10. **emit** (`src/emit`): writes the handoff folder.
+10. **emit** (`src/emit`): writes the handoff folder; extraction specs are first checked against
+    the runtime's `extract()` and the client is generated (decision 0018). Orchestration lives in
+    `src/build/index.ts`.
 
 ## Handoff folder
 

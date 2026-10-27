@@ -1,31 +1,9 @@
 /** Renders `flows.json` as `flows.md` for coding agents and people. */
 import type { ComputedValue, Flow, FlowsDocument, FlowStep, Operation, SourceRef, ValueOrigin } from '../../model'
-
-/** Name of the generated Zod schema for an operation's response, e.g. `zGetApiItemsResponse`. */
-export function responseSchemaName(operationId: string): string {
-  const pascal = operationId
-    .split(/[^a-z0-9]+/i)
-    .filter(Boolean)
-    .map(part => part[0]?.toUpperCase() + part.slice(1))
-    .join('')
-  return `z${pascal}Response`
-}
-
-/** Inline text: one line, Markdown punctuation escaped so labels from the site cannot break the page. */
-function text(value: string): string {
-  return value.replace(/\s+/g, ' ').trim().replace(/[\\`*_[\]<>|#]/g, match => `\\${match}`)
-}
-
-/** Inline code; uses a longer fence when the content itself has backticks. */
-function code(value: string): string {
-  const flat = value.replace(/\s+/g, ' ').trim()
-  const fence = flat.includes('`')
-    ? '``'
-    : '`'
-  return `${fence}${flat.includes('`')
-    ? ` ${flat} `
-    : flat}${fence}`
-}
+import type { StepResolver } from '../steps'
+import { anchor, cellCode, code, text } from '../escape'
+import { responseSchemaName, sdkFunctionName } from '../naming'
+import { createStepResolver } from '../steps'
 
 function sourceRef(ref: SourceRef): string {
   const location = `${ref.file}:${ref.line}${ref.functionName
@@ -43,9 +21,9 @@ function stepLink(step: string, flowId: string): string {
   if (dot === -1)
     return `step ${code(step)}`
   const flow = step.slice(0, dot)
-  return `step ${code(step.slice(dot + 1))} of [${code(flow)}](#${flow === flowId
+  return `step ${code(step.slice(dot + 1))} of [${code(flow)}](#${anchor(flow === flowId
     ? flowId
-    : flow})`
+    : flow)})`
 }
 
 function describeOrigin(origin: ValueOrigin, flowId: string): string {
@@ -81,7 +59,7 @@ function describeOrigin(origin: ValueOrigin, flowId: string): string {
 }
 
 function computedAnchor(id: string): string {
-  return `computed-${id}`
+  return anchor(`computed-${id}`)
 }
 
 function operationLine(step: FlowStep, operation: Operation | undefined): string {
@@ -94,8 +72,8 @@ function operationLine(step: FlowStep, operation: Operation | undefined): string
   return `**${code(step.operationId)}**${endpoint}${host}`
 }
 
-function renderStep(step: FlowStep, index: number, flow: Flow, operations: ReadonlyMap<string, Operation>): string[] {
-  const operation = operations.get(step.operationId)
+function renderStep(step: FlowStep, index: number, flow: Flow, resolver: StepResolver): string[] {
+  const operation = resolver.operation(step) ?? undefined
   const lines = [`${index + 1}. ${operationLine(step, operation)} (step ${code(step.id)}, ${step.kind})`]
   const item = (line: string): void => {
     lines.push(`   - ${line}`)
@@ -104,7 +82,7 @@ function renderStep(step: FlowStep, index: number, flow: Flow, operations: Reado
   if (step.browserOnly)
     item('Browser only: a real browser must run this step; it is not a client function.')
   else
-    item(`SDK function ${code(`${step.operationId}()`)}, response schema ${code(responseSchemaName(step.operationId))}`)
+    item(`SDK function ${code(`${sdkFunctionName(step.operationId)}()`)}, response schema ${code(responseSchemaName(step.operationId))}`)
   item(`Sent from: ${step.sentFrom
     ? sourceRef(step.sentFrom)
     : 'unknown (no initiator stack)'}`)
@@ -123,7 +101,7 @@ function renderStep(step: FlowStep, index: number, flow: Flow, operations: Reado
   return lines
 }
 
-function renderFlow(flow: Flow, operations: ReadonlyMap<string, Operation>): string[] {
+function renderFlow(flow: Flow, resolver: StepResolver): string[] {
   const where = flow.trigger.pageUrl
     ? ` on ${code(flow.trigger.pageUrl)}`
     : ''
@@ -131,24 +109,29 @@ function renderFlow(flow: Flow, operations: ReadonlyMap<string, Operation>): str
     ? '1 session'
     : `${flow.seenInSessions} sessions`
   return [
-    `<a id="${flow.id}"></a>`,
+    `<a id="${anchor(flow.id)}"></a>`,
     '',
     `### ${text(flow.name)}`,
     '',
     `Trigger: ${flow.trigger.kind} ${code(flow.trigger.label)}${where}. Seen in ${sessions}.`,
     '',
-    ...flow.steps.flatMap((step, index) => renderStep(step, index, flow, operations)),
+    ...flow.steps.flatMap((step, index) => renderStep(step, index, flow, resolver)),
     '',
   ]
 }
 
-function renderComputed(value: ComputedValue): string[] {
+function renderComputed(value: ComputedValue, resolver: StepResolver): string[] {
+  const host = resolver.ambiguous(value.operationId)
+    ? resolver.computedHost(value)
+    : null
   const lines = [
     `<a id="${computedAnchor(value.id)}"></a>`,
     '',
     `### ${code(value.id)}`,
     '',
-    `- Request value: ${code(value.input)} of ${code(value.operationId)}`,
+    `- Request value: ${code(value.input)} of ${code(value.operationId)}${host === null
+      ? ''
+      : ` on ${code(host)}`}`,
     `- Port: ${value.producedBy
       ? `${code(value.producedBy.file)}, function ${code(value.producedBy.functionName ?? '(anonymous)')} at line ${value.producedBy.line}`
       : 'source location unknown'}${value.producedBy?.excerpt
@@ -177,13 +160,14 @@ function renderSessionTable(session: FlowsDocument['session']): string[] {
   if (session.length === 0)
     return ['No API hosts found.', '']
   const rows = session.map((host) => {
+    // Table cells: cellCode escapes the pipes a cookie name could use to add columns.
     const cookies = host.cookies
-      .map(cookie => `${code(cookie.name)} (${cookie.setBy
-        ? code(cookie.setBy)
+      .map(cookie => `${cellCode(cookie.name)} (${cookie.setBy
+        ? cellCode(cookie.setBy)
         : cookie.source})`)
       .join(', ') || 'none'
     const bots = host.botProtection.map(bot => text(bot.vendor)).join(', ') || 'none'
-    return `| ${code(host.host)} | ${host.requires} | ${cookies} | ${bots} | ${host.probed ? 'yes' : 'no'} |`
+    return `| ${cellCode(host.host)} | ${host.requires} | ${cookies} | ${bots} | ${host.probed ? 'yes' : 'no'} |`
   })
   return [
     '| Host | Requires | Cookies (set by) | Bot protection | Probed |',
@@ -197,19 +181,15 @@ function renderContents(flows: readonly Flow[]): string[] {
   if (flows.length === 0)
     return ['No flows found.', '']
   return [
-    ...flows.map(flow => `- [${text(flow.name)}](#${flow.id}): ${flow.steps.map(step => code(step.operationId)).join(' → ')}`),
+    ...flows.map(flow => `- [${text(flow.name)}](#${anchor(flow.id)}): ${flow.steps.map(step => code(step.operationId)).join(' → ')}`),
     '',
   ]
 }
 
 /** `flows.md`: session needs, a table of contents, one section per flow and the computed values. */
 export function renderFlowsMarkdown(doc: FlowsDocument, operations: readonly Operation[]): string {
-  const byId = new Map<string, Operation>()
-  // Operation ids are unique per host; a step only names the id, so the first host wins.
-  for (const operation of [...operations].sort((a, b) => a.host.localeCompare(b.host) || a.operationId.localeCompare(b.operationId))) {
-    if (!byId.has(operation.operationId))
-      byId.set(operation.operationId, operation)
-  }
+  // Operation ids are unique per host only; the resolver finds a step's host from its exchanges.
+  const resolver = createStepResolver(operations, doc)
   const sessions = `${doc.sessions.length === 1
     ? 'session'
     : 'sessions'} ${doc.sessions.map(code).join(', ')}`
@@ -227,12 +207,12 @@ export function renderFlowsMarkdown(doc: FlowsDocument, operations: readonly Ope
     '## Flows',
     '',
     ...renderContents(doc.flows),
-    ...doc.flows.flatMap(flow => renderFlow(flow, byId)),
+    ...doc.flows.flatMap(flow => renderFlow(flow, resolver)),
     '## Computed values',
     '',
     computedIntro,
     '',
-    ...doc.computedValues.flatMap(renderComputed),
+    ...doc.computedValues.flatMap(value => renderComputed(value, resolver)),
   ]
   return `${lines.join('\n').replace(/\n+$/, '')}\n`
 }
