@@ -142,4 +142,62 @@ describe('buildExcerpt', () => {
     const excerpt = await buildExcerpt(ref({ file: 'src/we ird/<x>.js', line: 2, column: 3 }), [odd], 's2')
     expect(excerpt?.path).toBe('src/we_ird/_x_.L1-3.js')
   })
+
+  it('keeps names and URLs from the site inside the header comment', async () => {
+    const hostile = await writeSession('s3', [
+      {
+        url: 'https://shop.test/w.js',
+        file: 'scripts/w.js',
+        content: '',
+        sourceMap: {
+          url: 'https://shop.test/w.js.map',
+          file: 'maps/w.map',
+          map: {},
+          sources: {
+            'sources/shop.test/src/Widget-->.vue': '<script>\nfunction f(){\n  return 1\n}\n</script>',
+            'sources/shop.test/src/w.ts': 'function f(){\n  return 1\n}',
+          },
+        },
+      },
+      { url: 'https://shop.test/b.js?x=\n*/ evil() /*\u2028', file: 'scripts/b.js', content: 'a()\nb()\nc()' },
+    ])
+    const name = 'f\n--> <script>evil()</script> <!--\r\n*/ evil() /*\u2028x'
+    const vue = await buildExcerpt(ref({
+      file: 'src/Widget-->.vue',
+      line: 3,
+      column: 3,
+      functionName: name,
+    }), [hostile], 's3')
+    const ts = await buildExcerpt(ref({
+      file: 'src/w.ts',
+      line: 2,
+      column: 3,
+      functionName: name,
+    }), [hostile], 's3')
+    const bundle = await buildExcerpt(ref({
+      file: '/b.js',
+      line: 2,
+      column: 1,
+      functionName: name,
+      original: false,
+    }), [hostile], 's3')
+    for (const excerpt of [vue, ts, bundle]) {
+      const lines = excerpt?.content.split('\n') ?? []
+      // Two header lines, each one complete comment, then the code itself.
+      for (const header of lines.slice(0, 2)) {
+        expect(header).not.toMatch(/[\r\u2028\u2029]/)
+        expect(header.slice(2)).not.toContain('*/')
+      }
+    }
+    const vueHeader = vue?.content.split('\n').slice(0, 2) ?? []
+    for (const header of vueHeader) {
+      expect(header).toMatch(/^<!-- .* -->$/)
+      // The only comment end is the one at the end of the line.
+      expect(header.slice(0, -3)).not.toMatch(/--!?>/)
+    }
+    expect(vue?.content.split('\n')[2]).toBe('<script>')
+    expect(ts?.content.split('\n')[2]).toBe('function f(){')
+    expect(ts?.content.split('\n')[0]).toBe('// site-to-api excerpt of src/w.ts:2:3 (function f -\\-> <script>evil()</script> <!-- *\\/ evil() /* x)')
+    expect(bundle?.content.split('\n')[0]).toBe('// site-to-api excerpt of /b.js:2:1 (function f -\\-> <script>evil()</script> <!-- *\\/ evil() /* x) in https://shop.test/b.js?x= *\\/ evil() /*')
+  })
 })
