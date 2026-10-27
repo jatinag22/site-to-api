@@ -47,7 +47,16 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
+    "@jridgewell/trace-mapping": "catalog:prod",
     "@site-to-api/runtime": "workspace:*",
+    "css-select": "catalog:prod",
+    "domhandler": "catalog:prod",
+    "domutils": "catalog:prod",
+    "htmlparser2": "catalog:prod",
+    "oxc-parser": "catalog:prod",
     "zod": "catalog:prod"
+  },
+  "devDependencies": {
+    "@jridgewell/gen-mapping": "catalog:dev"
   }
 }

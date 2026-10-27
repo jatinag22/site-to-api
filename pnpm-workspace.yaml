@@ -13,6 +13,7 @@ onlyBuiltDependencies:
 catalogs:
   dev:
     '@antfu/eslint-config': ^10.0.0
+    '@jridgewell/gen-mapping': 0.3.13
     '@types/node': ^26.6.5
     bumpp: ^12.3.0
     eslint: ^10.13.0
@@ -26,4 +27,10 @@ catalogs:
     typescript: ^6.0.3
     vitest: ^5.0.5
   prod:
+    '@jridgewell/trace-mapping': 0.3.31
+    css-select: ^7.0.0
+    domhandler: ^6.0.1
+    domutils: ^4.0.2
+    htmlparser2: ^12.0.0
+    oxc-parser: 0.155.0
     zod: ^4.6.7
