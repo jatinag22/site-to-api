@@ -1,0 +1,1 @@
+export { createRedactor } from './redactor'
