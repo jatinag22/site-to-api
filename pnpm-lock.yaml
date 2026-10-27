@@ -46,6 +46,18 @@ catalogs:
       specifier: ^5.0.5
       version: 5.0.5
   prod:
+    commander:
+      specifier: ^15.0.0
+      version: 15.0.0
+    consola:
+      specifier: ^3.4.2
+      version: 3.4.2
+    jiti:
+      specifier: ^2.7.0
+      version: 2.7.0
+    pathe:
+      specifier: ^2.0.3
+      version: 2.0.3
     zod:
       specifier: ^4.6.7
       version: 4.6.7
@@ -103,6 +115,18 @@ importers:
       '@site-to-api/runtime':
         specifier: workspace:*
         version: link:../runtime
+      commander:
+        specifier: catalog:prod
+        version: 15.0.0
+      consola:
+        specifier: catalog:prod
+        version: 3.4.2
+      jiti:
+        specifier: catalog:prod
+        version: 2.7.0
+      pathe:
+        specifier: catalog:prod
+        version: 2.0.3
       zod:
         specifier: catalog:prod
         version: 4.6.7
@@ -996,6 +1020,10 @@ packages:
     resolution: {integrity: sha512-77PSwercCZU2Fc4sX94eF8k8Pxte6JAwL4/ICZLFjJLqegs7kCuAsqqj/70NQF6TvDpgFjkubQB2FW2ZZddvQg==}
     engines: {node: '>=8'}
 
+  commander@15.0.0:
+    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
+    engines: {node: '>=22.12.0'}
+
   commander@8.3.0:
     resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
     engines: {node: '>= 12'}
@@ -1017,6 +1045,10 @@ packages:
 
   confbox@0.3.1:
     resolution: {integrity: sha512-cKUSoKa8YxFZZSmraVi7onONx3amu77ngK3kGpsYHDH7drPwCRkQE1RYMPlLRrMtnciRj274XNRxcHxnKmDSnA==}
+
+  consola@3.4.2:
+    resolution: {integrity: sha512-5IKcdX0nnYavi6G7TtOhwkYzyjfJlatbjMjuLSfE2kYT5pMDOilZ4OvMhi637CcDICTmz3wARPoyhqyX1Y+XvA==}
+    engines: {node: ^14.18.0 || >=16.10.0}
 
   core-js-compat@3.51.0:
     resolution: {integrity: sha512-52r6fkXgxv4GLMjmFcMWRx7X9bw071xTTdrDcdyPGRqU2oE+9pCG0bAOMifSBdLw0JRBZKEF0q3B55qPlLuE8g==}
@@ -3090,6 +3122,8 @@ snapshots:
 
   ci-info@4.4.0: {}
 
+  commander@15.0.0: {}
+
   commander@8.3.0: {}
 
   comment-parser@1.4.1: {}
@@ -3101,6 +3135,8 @@ snapshots:
   confbox@0.1.8: {}
 
   confbox@0.3.1: {}
+
+  consola@3.4.2: {}
 
   core-js-compat@3.51.0:
     dependencies:

@@ -1,4 +1,8 @@
+export { run as runCli } from './cli/program'
+export { loadConfig } from './config/load'
+export type { ConfigSource, LoadConfigOptions, LoadedConfig } from './config/load'
 export { ConfigSchema, defineConfig } from './config/schema'
 export type { ResolvedConfig, UserConfig } from './config/schema'
 export { SiteToApiError } from './errors'
 export * from './model'
+export { VERSION } from './version'
