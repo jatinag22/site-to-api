@@ -4,5 +4,12 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/ws": "catalog:dev",
+    "esbuild": "catalog:dev",
+    "playwright": "catalog:prod",
+    "ws": "catalog:dev",
+    "zod": "catalog:prod"
   }
 }
