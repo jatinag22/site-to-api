@@ -47,7 +47,10 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
+    "@hey-api/openapi-ts": "catalog:prod",
     "@site-to-api/runtime": "workspace:*",
+    "typescript": "catalog:dev",
+    "yaml": "catalog:prod",
     "zod": "catalog:prod"
   }
 }

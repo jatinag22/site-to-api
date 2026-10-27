@@ -1,4 +1,6 @@
 export { ConfigSchema, defineConfig } from './config/schema'
 export type { ResolvedConfig, UserConfig } from './config/schema'
 export { SiteToApiError } from './errors'
+export { generateClient } from './gen'
+export type { GenerateClientInput, GenerateClientResult } from './gen'
 export * from './model'

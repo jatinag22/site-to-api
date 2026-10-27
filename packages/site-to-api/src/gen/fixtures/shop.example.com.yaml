@@ -1,0 +1,119 @@
+# Hand-written fixture in the format docs/output-format.md describes. The host is a reserved
+# example domain; tests point the client at a local server instead.
+openapi: 3.1.0
+info:
+  title: shop.example.com
+  version: '1'
+servers:
+  - url: https://shop.example.com
+paths:
+  /api/session:
+    post:
+      operationId: postApiSession
+      x-site-to-api-kind: api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username:
+                  type: string
+      responses:
+        '200':
+          description: Signed in; sets the `session` cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+  /api/items/{itemId}:
+    get:
+      operationId: getApiItem
+      x-site-to-api-kind: api
+      x-site-to-api-source:
+        - file: src/api/items.ts
+          line: 12
+          function: loadItem
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: currency
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [INR, USD]
+        - name: session
+          in: cookie
+          required: true
+          schema:
+            type: string
+        - name: x-requested-with
+          in: header
+          required: false
+          x-site-to-api-constant: true
+          schema:
+            type: string
+            default: XMLHttpRequest
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, name, price]
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                  price:
+                    type: number
+                  tags:
+                    type: array
+                    items:
+                      type: string
+  /prices:
+    get:
+      operationId: getPrices
+      x-site-to-api-kind: page
+      responses:
+        '200':
+          description: Price list page.
+          content:
+            text/html:
+              schema:
+                type: string
+              x-site-to-api-extract:
+                kind: html
+                records: table.prices tbody tr
+                many: true
+                fields:
+                  name:
+                    selector: td.name
+                    attr: null
+                    pattern: null
+                    type: string
+                    optional: false
+                  price:
+                    selector: td.price
+                    attr: null
+                    pattern: null
+                    type: number
+                    optional: false
+                  link:
+                    selector: a
+                    attr: href
+                    pattern: null
+                    type: string
+                    optional: true
