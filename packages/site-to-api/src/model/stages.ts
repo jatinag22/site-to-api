@@ -65,3 +65,23 @@ export interface ValueTrace {
     | { kind: 'browser', note: string }
     | { kind: 'unknown' }
 }
+
+/** Where a value being redacted sits. The name decides whether it is a secret (`authorization`). */
+export interface RedactContext {
+  in: 'path' | 'query' | 'header' | 'cookie' | 'set-cookie' | 'body' | 'form' | 'response-header' | 'response-body' | 'text'
+  /** Parameter, header, cookie or field name; for JSON the nearest property name. */
+  name?: string | null
+}
+
+/**
+ * Applies `config.redact` to values before they are written to the handoff folder
+ * (implemented in `analyze/redact`, decision 0004).
+ */
+export interface Redactor {
+  /** Redacts one string value, including values nested in JSON strings and URL-encoded text. */
+  value: (raw: string, context: RedactContext) => string
+  /** Redacts every string (and personal-data number) inside a JSON value; returns a copy. */
+  json: (value: unknown, context: RedactContext) => unknown
+  /** Redacted, de-duplicated examples, at most `redact.maxExamples`; empty when examples are `none`. */
+  examples: (values: unknown[], context: RedactContext) => unknown[]
+}
