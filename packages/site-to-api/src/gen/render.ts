@@ -300,6 +300,8 @@ function renderHostSection(host: HostSpec, session: SessionRequirement | null): 
     const cookies = session.cookies.map((cookie) => {
       if (cookie.source === 'browser')
         return `${code(cookie.name)} (set by the browser, not by an API response)`
+      if (cookie.source === 'script')
+        return `${code(cookie.name)} (set by a page script; derive its value and set it yourself)`
       return cookie.setBy
         ? `${code(cookie.name)} (set by ${code(cookie.setBy)})`
         : code(cookie.name)

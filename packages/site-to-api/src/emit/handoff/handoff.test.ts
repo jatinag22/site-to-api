@@ -225,7 +225,7 @@ describe('renderAgentGuide', () => {
   it('explains session needs, bot protection and cookie origins', () => {
     expect(guide).toContain('a real browser is needed to establish the session')
     expect(guide).toContain('Bot protection: Akamai')
-    expect(guide).toContain('Cookie `_abck`: set by a script in the page.')
+    expect(guide).toContain('Cookie `_abck`: set by a script in the page; only a real browser produces its value.')
     expect(guide).toContain('Cookie `pm_session`: set by `postApiAuthLogin`.')
     expect(guide).toContain('specs/shop.example.yaml')
   })

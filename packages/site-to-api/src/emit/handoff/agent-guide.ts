@@ -39,6 +39,21 @@ function operationName(operationId: string, host: string | null, resolver: StepR
     : code(operationId)
 }
 
+function cookieOrigin(cookie: SessionRequirement['cookies'][number]): string {
+  switch (cookie.source) {
+    case 'browser':
+      return 'set by a script in the page; only a real browser produces its value'
+    case 'script':
+      return 'set by a script in the page; the wrapper can set its value itself'
+    case 'response':
+      return cookie.setBy
+        ? `set by ${code(cookie.setBy)}`
+        : 'set by a response'
+    case 'unknown':
+      return 'origin unknown'
+  }
+}
+
 function sessionSection(analysis: Analysis): string[] {
   const lines = ['## Session requirements', '']
   if (analysis.flows.session.length === 0) {
@@ -51,11 +66,7 @@ function sessionSection(analysis: Analysis): string[] {
     for (const finding of entry.botProtection)
       lines.push(`- Bot protection: ${text(finding.vendor)} (${text(finding.evidence)}). Do not try to reproduce it; let a real browser run it (\`browserSession\` in \`@site-to-api/runtime\`).`)
     for (const cookie of [...entry.cookies].sort((a, b) => a.name.localeCompare(b.name))) {
-      const origin = cookie.source === 'browser'
-        ? 'set by a script in the page'
-        : cookie.setBy
-          ? `set by ${code(cookie.setBy)}`
-          : 'origin unknown'
+      const origin = cookieOrigin(cookie)
       lines.push(`- Cookie ${code(cookie.name)}: ${origin}.`)
     }
     lines.push(`- Spec: ${code(`specs/${specFileName(entry.host)}`)}.`, '')
