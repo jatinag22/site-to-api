@@ -48,10 +48,16 @@
   },
   "dependencies": {
     "@hey-api/openapi-ts": "catalog:prod",
+    "@jridgewell/trace-mapping": "catalog:prod",
     "@site-to-api/runtime": "workspace:*",
     "commander": "catalog:prod",
     "consola": "catalog:prod",
+    "css-select": "catalog:prod",
+    "domhandler": "catalog:prod",
+    "domutils": "catalog:prod",
+    "htmlparser2": "catalog:prod",
     "jiti": "catalog:prod",
+    "oxc-parser": "catalog:prod",
     "pathe": "catalog:prod",
     "playwright": "catalog:prod",
     "typescript": "catalog:dev",
@@ -59,6 +65,7 @@
     "zod": "catalog:prod"
   },
   "devDependencies": {
+    "@jridgewell/gen-mapping": "catalog:dev",
     "@scalar/openapi-parser": "catalog:dev"
   }
 }
