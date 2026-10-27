@@ -9,7 +9,7 @@ import { parseSync, Visitor } from 'oxc-parser'
 type Lang = NonNullable<ParserOptions['lang']>
 
 /** Picks the parser language from the file extension; bundles are always plain JavaScript. */
-export function langFor(path: string, bundle: boolean): Lang | null {
+function langFor(path: string, bundle: boolean): Lang | null {
   if (bundle)
     return 'js'
   const ext = /\.([a-z]+)$/i.exec(path)?.[1]?.toLowerCase()

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { removeSessions, writeSession } from '../../../test/sessions'
-import { findSourceEndpoints } from './endpoints'
+import { findSourceEndpoints } from './index'
 
 afterAll(removeSessions)
 

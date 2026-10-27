@@ -5,5 +5,4 @@ export { findSourceEndpoints } from './endpoints'
  */
 export { buildExcerpt } from './excerpt'
 export { createSourceResolver } from './resolver'
-export type { LoadedSourceResolver } from './resolver'
-export { collectStaticStrings, MAX_STATIC_STRINGS } from './strings'
+export { collectStaticStrings } from './strings'

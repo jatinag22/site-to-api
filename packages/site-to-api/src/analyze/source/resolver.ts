@@ -63,7 +63,7 @@ interface LoadedScript {
 }
 
 /** A {@link SourceResolver} plus the problems met while loading sourcemaps. */
-export interface LoadedSourceResolver extends SourceResolver {
+interface LoadedSourceResolver extends SourceResolver {
   /** Sourcemaps that were listed but missing or unreadable; frames in them resolve to the bundle. */
   warnings: string[]
 }

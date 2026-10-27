@@ -2,7 +2,7 @@ import type { LoadedSession, StackFrame } from '../../model'
 import { addMapping, GenMapping, setSourceContent, toEncodedMap } from '@jridgewell/gen-mapping'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { removeSessions, writeSession } from '../../../test/sessions'
-import { createSourceResolver } from './resolver'
+import { createSourceResolver } from './index'
 
 /**
  * Concatenates original files into one bundle, one bundle line per original line, with a mapping

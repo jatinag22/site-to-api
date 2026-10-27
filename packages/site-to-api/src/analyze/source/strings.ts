@@ -11,7 +11,7 @@ const MIN_LENGTH = 6
 /** Longer strings are templates, markup or data blobs, not constants a request would carry. */
 const MAX_LENGTH = 1024
 /** Upper bound on the set so a multi-megabyte bundle cannot make correlation slow. */
-export const MAX_STATIC_STRINGS = 50_000
+const MAX_STATIC_STRINGS = 50_000
 
 /**
  * String literals (and template literals without interpolation) of 6 to 1,024 characters from

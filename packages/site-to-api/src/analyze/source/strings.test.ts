@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { removeSessions, writeSession } from '../../../test/sessions'
-import { collectStaticStrings } from './strings'
+import { collectStaticStrings } from './index'
 
 afterAll(removeSessions)
 

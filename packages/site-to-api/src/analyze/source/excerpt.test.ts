@@ -1,7 +1,7 @@
 import type { LoadedSession, SourceRef } from '../../model'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { removeSessions, writeSession } from '../../../test/sessions'
-import { buildExcerpt } from './excerpt'
+import { buildExcerpt } from './index'
 
 const cartTs = [
   'import { sign } from \'./sign\'', // 1
