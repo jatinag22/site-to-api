@@ -13,6 +13,7 @@ onlyBuiltDependencies:
 catalogs:
   dev:
     '@antfu/eslint-config': ^10.0.0
+    '@jridgewell/gen-mapping': 0.3.13
     '@scalar/openapi-parser': 0.29.16
     '@types/node': ^26.6.5
     '@types/ws': ^8.18.2
@@ -32,6 +33,7 @@ catalogs:
   prod:
     '@hey-api/openapi-ts': 0.99.0
     '@hey-api/shared': 0.5.0
+    '@jridgewell/trace-mapping': 0.3.31
     commander: ^15.0.0
     consola: ^3.4.2
     css-select: ^7.0.0
@@ -39,6 +41,7 @@ catalogs:
     domutils: ^4.0.2
     htmlparser2: ^12.0.0
     jiti: ^2.7.0
+    oxc-parser: 0.155.0
     pathe: ^2.0.3
     playwright: ^1.64.1
     yaml: ^2.9.1
