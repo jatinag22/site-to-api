@@ -6,7 +6,7 @@ import type { ResolvedConfig } from '../config/schema'
 import type { Analysis, LoadedSession, Operation, ResponseInfo, SourceRef, SourceResolver } from '../model'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'pathe'
+import { dirname, isAbsolute, join, relative, resolve } from 'pathe'
 import { classifyExchanges } from '../analyze/classify'
 import { traceValues } from '../analyze/correlate'
 import { buildFlows } from '../analyze/flows'
@@ -43,8 +43,11 @@ function isTextResponse(response: ResponseInfo): boolean {
   return response.schema === null && TEXT_MEDIA.test(response.mimeType)
 }
 
-/** Fills `extract` on HTML/text responses from every captured sample of that status and type. */
-function addExtraction(operations: Operation[], minSamples: number): Operation[] {
+/**
+ * Fills `extract` on HTML/text responses from every captured sample of that status and type.
+ * Specs the runtime rejects are dropped with a warning, so the mismatch is visible.
+ */
+function addExtraction(operations: Operation[], minSamples: number, warnings: string[]): Operation[] {
   return operations.map(operation => ({
     ...operation,
     responses: operation.responses.map((response) => {
@@ -60,14 +63,16 @@ function addExtraction(operations: Operation[], minSamples: number): Operation[]
       const inferred = samples.length > 0
         ? inferExtraction(samples, { minSamples })
         : null
+      if (!inferred)
+        return { ...response, extract: null }
       // Generated clients run the runtime's extract(); make sure it reads the spec the same way.
-      const spec = inferred
-        ? alignWithRuntime(inferred.spec, samples.map(sample => sample.text))
-        : null
+      const aligned = alignWithRuntime(inferred.spec, samples.map(sample => sample.text))
+      if (aligned.error !== null)
+        warnings.push(`${operation.operationId}: the inferred record layout was rejected by the runtime's extract() (${aligned.error}); no extraction spec was written.`)
       return {
         ...response,
-        extract: inferred && spec
-          ? { ...inferred, spec }
+        extract: aligned.spec
+          ? { ...inferred, spec: aligned.spec }
           : null,
       }
     }),
@@ -150,8 +155,10 @@ async function addExcerpts(analysis: Analysis, sessions: LoadedSession[]): Promi
 async function writeExcerpts(outDir: string, excerpts: Map<string, string>): Promise<string[]> {
   const files: string[] = []
   for (const [path, content] of [...excerpts].sort(([a], [b]) => a.localeCompare(b))) {
-    const target = join(outDir, 'source', path)
-    if (!target.startsWith(join(outDir, 'source')))
+    const root = join(outDir, 'source')
+    const target = join(root, path)
+    const inside = relative(root, target)
+    if (inside === '' || inside.startsWith('..') || isAbsolute(inside))
       continue
     await mkdir(dirname(target), { recursive: true })
     await writeFile(target, content)
@@ -179,7 +186,8 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   const redactor = createRedactor({ exchanges: classified.exchanges, config: config.redact })
   let operations = buildOperations(classified.exchanges, { sourceRoutes })
   operations = inferOperationSchemas(operations, redactor)
-  operations = addExtraction(operations, config.build.minExtractSamples)
+  const warnings = [...loaded.warnings]
+  operations = addExtraction(operations, config.build.minExtractSamples, warnings)
   const operationIdByExchange = new Map(operations.flatMap(operation => operation.exchanges.map(exchange => [exchange.id, operation.operationId] as const)))
   const callSites = createWrapperAwareResolver(resolver, classified.exchanges, exchange => operationIdByExchange.get(exchange.id) ?? null)
   operations = addCallSites(operations, callSites)
@@ -215,7 +223,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     flows,
     botProtection: classified.botProtection,
     excerpts: new Map(),
-    warnings: loaded.warnings,
+    warnings,
   }
   if (config.build.excerpts)
     await addExcerpts(analysis, loaded.sessions)
@@ -248,17 +256,26 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     ...await writeExcerpts(outDir, analysis.excerpts),
   ]
   const warnings = [...analysis.warnings]
+  let hasClient = false
   if (options.config.gen.client && analysis.operations.length > 0) {
     const generated = await generateClient({ handoffDir: outDir, flows: analysis.flows })
     files.push(...generated.files.map(file => join(outDir, file)))
     warnings.push(...generated.warnings)
+    hasClient = true
+  }
+  else if (analysis.operations.length === 0) {
+    // Nothing left to describe: a client from an earlier build would point at operations that are gone.
+    await rm(join(outDir, 'client'), { recursive: true, force: true })
+  }
+  else if (existsSync(join(outDir, 'client', 'index.ts'))) {
+    warnings.push('client/ is from an earlier build and was not regenerated (--no-client); run `site-to-api gen` to bring it up to date.')
   }
   files.push(
     ...await writeHandoffDocs(outDir, analysis, {
       toolVersion: VERSION,
       examples: options.config.redact.examples,
       probed: analysis.flows.session.some(entry => entry.probed),
-      hasClient: existsSync(join(outDir, 'client', 'index.ts')),
+      hasClient,
     }),
   )
   log(`Wrote ${files.length} files to ${outDir}`)

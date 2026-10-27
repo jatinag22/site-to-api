@@ -22,25 +22,38 @@ function normalise(value: unknown): unknown {
     : value
 }
 
-function fieldsThatDisagree(spec: ExtractSpec, samples: string[]): Set<string> {
+interface Disagreement {
+  fields: Set<string>
+  /** Set when the runtime rejected the spec outright (an invalid selector, for example). */
+  error: string | null
+}
+
+function fieldsThatDisagree(spec: ExtractSpec, samples: string[]): Disagreement {
+  const all = new Set(Object.keys(spec.fields))
   const disagree = new Set<string>()
   for (const sample of samples) {
-    const expected: Records = applyExtractSpec(sample, spec)
+    let expected: Records
     let actual: Records
     try {
+      expected = applyExtractSpec(sample, spec)
       actual = asRecords(extract(sample, spec))
     }
-    catch {
-      return new Set(Object.keys(spec.fields))
+    catch (error) {
+      return {
+        fields: all,
+        error: error instanceof Error
+          ? error.message
+          : String(error),
+      }
     }
     if (actual.length !== expected.length)
-      return new Set(Object.keys(spec.fields))
+      return { fields: all, error: null }
     for (const name of Object.keys(spec.fields)) {
       if (expected.some((record, index) => normalise(record[name]) !== normalise(actual[index]?.[name])))
         disagree.add(name)
     }
   }
-  return disagree
+  return { fields: disagree, error: null }
 }
 
 function withFields(spec: ExtractSpec, change: (name: string) => 'keep' | 'string' | 'drop'): ExtractSpec {
@@ -55,19 +68,32 @@ function withFields(spec: ExtractSpec, change: (name: string) => 'keep' | 'strin
   return copy
 }
 
-/** Returns a spec the runtime reads exactly like inference did, or `null` if no field survives. */
-export function alignWithRuntime(spec: ExtractSpec, samples: string[]): ExtractSpec | null {
+export interface AlignedSpec {
+  spec: ExtractSpec | null
+  /** Why the runtime rejected the spec, for a build warning; `null` when it did not. */
+  error: string | null
+}
+
+/** Returns a spec the runtime reads exactly like inference did (`null` if no field survives). */
+export function alignWithRuntime(spec: ExtractSpec, samples: string[]): AlignedSpec {
   const first = fieldsThatDisagree(spec, samples)
-  if (first.size === 0)
-    return spec
-  const downgraded = withFields(spec, name => first.has(name)
+  if (first.error !== null)
+    return { spec: null, error: first.error }
+  if (first.fields.size === 0)
+    return { spec, error: null }
+  const downgraded = withFields(spec, name => first.fields.has(name)
     ? 'string'
     : 'keep')
   const second = fieldsThatDisagree(downgraded, samples)
-  const aligned = withFields(downgraded, name => second.has(name)
+  if (second.error !== null)
+    return { spec: null, error: second.error }
+  const aligned = withFields(downgraded, name => second.fields.has(name)
     ? 'drop'
     : 'keep')
-  return Object.keys(aligned.fields).length > 0
-    ? aligned
-    : null
+  return {
+    spec: Object.keys(aligned.fields).length > 0
+      ? aligned
+      : null,
+    error: null,
+  }
 }

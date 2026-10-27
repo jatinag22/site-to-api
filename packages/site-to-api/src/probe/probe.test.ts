@@ -165,3 +165,63 @@ describe('resemblesCapture', () => {
     expect(resemblesCapture(html, 302, 'text/html', '')).toBe(false)
   })
 })
+
+describe('probeOperations: failures and data-changing requests', () => {
+  it('says the host is unreachable instead of blaming the session', async () => {
+    // A port that was just free: nothing listens there.
+    const closed = createServer()
+    await new Promise<void>(resolve => closed.listen(0, '127.0.0.1', resolve))
+    const port = (closed.address() as AddressInfo).port
+    await new Promise(resolve => closed.close(resolve))
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getDown', 'GET', '/api/x', {
+          url: `http://127.0.0.1:${port}/api/x`,
+          responseBody: jsonBody({ a: 1 }),
+        }),
+      ],
+    })
+    expect(report.operations[0]).toMatchObject({ replay: 'failed', bare: 'skipped', requires: null })
+    expect(report.operations[0]?.note).toMatch(/Could not reach .*ECONNREFUSED/)
+    expect(report.operations[0]?.note).not.toContain('expired')
+  })
+
+  it('sends an allowed POST exactly once: never bare, never during minimization', async () => {
+    const before = requests
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config: { ...config, unsafeMethods: true },
+      operations: [
+        op('postOpen', 'POST', '/api/open', {
+          method: 'POST',
+          url: `${origin}/api/open`,
+          cookies: { sid: 'good', theme: 'dark' },
+          responseBody: jsonBody({
+            items: [1],
+          }),
+        }),
+      ],
+    })
+    expect(requests - before).toBe(1)
+    expect(report.operations[0]).toMatchObject({ bare: 'skipped', requires: null })
+    expect(report.operations[0]?.note).toContain('replayed once only')
+  })
+
+  it('never replays GETs whose path suggests they change state', async () => {
+    const before = requests
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getLogout', 'GET', '/account/logout', {
+          url: `${origin}/account/logout`,
+          responseBody: textBody('<html>bye</html>'),
+        }),
+      ],
+    })
+    expect(requests).toBe(before)
+    expect(report.skipped[0]?.reason).toContain('changes state')
+  })
+})

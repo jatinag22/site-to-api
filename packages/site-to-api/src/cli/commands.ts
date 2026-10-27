@@ -3,14 +3,19 @@
  * API, so the CLI and library behave identically.
  */
 import type { Command } from 'commander'
+import type { FlowsDocument } from '../model'
 import type { CommandRegistrar } from './program'
+import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import process from 'node:process'
 import { InvalidArgumentError } from 'commander'
 import { consola } from 'consola'
-import { resolve } from 'pathe'
+import { join, resolve } from 'pathe'
 import { analyzeCaptures, buildHandoff } from '../build'
 import { runCapture } from '../capture'
+import { SiteToApiError } from '../errors'
 import { generateClient } from '../gen'
+import { FlowsDocumentSchema } from '../model'
 import { probeOperations, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { resolveConfig } from './program'
@@ -148,17 +153,32 @@ const probeCommand: CommandRegistrar = (program) => {
     })
 }
 
+async function readFlowsDocument(handoffDir: string): Promise<FlowsDocument> {
+  const path = join(handoffDir, 'flows.json')
+  if (!existsSync(path))
+    throw new SiteToApiError(`${path} not found. Run \`site-to-api build\` first; gen regenerates the client from an existing handoff folder.`)
+  let data: unknown
+  try {
+    data = JSON.parse(await readFile(path, 'utf8'))
+  }
+  catch (error) {
+    throw new SiteToApiError(`${path} is not valid JSON. Run \`site-to-api build\` to rewrite it.`, { cause: error })
+  }
+  const parsed = FlowsDocumentSchema.safeParse(data)
+  if (!parsed.success)
+    throw new SiteToApiError(`${path} does not match the flows format of this version. Run \`site-to-api build\` to rewrite it.`)
+  return parsed.data
+}
+
 const genCommand: CommandRegistrar = (program) => {
   program
     .command('gen')
     .description('regenerate only the TypeScript client from the specs in the handoff folder')
     .action(async (_flags: unknown, command: Command) => {
       const { config, cwd } = await resolveConfig(command)
-      const analysis = await analyzeCaptures({ config, cwd })
-      const result = await generateClient({
-        handoffDir: resolve(cwd, config.outDir),
-        flows: analysis.flows,
-      })
+      // Works from the committed handoff folder alone: raw captures are not needed (or present) in a fresh clone.
+      const handoffDir = resolve(cwd, config.outDir)
+      const result = await generateClient({ handoffDir, flows: await readFlowsDocument(handoffDir) })
       printWarnings(result.warnings)
       consola.success(`Generated ${result.files.length} client files`)
     })

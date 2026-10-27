@@ -31,7 +31,7 @@ describe('alignWithRuntime', () => {
         ['Tea'],
         ['Rice'],
       ]),
-    ])).toEqual(s)
+    ])).toEqual({ spec: s, error: null })
   })
 
   it('downgrades fields the runtime coerces differently, so clients match the verified output', () => {
@@ -58,11 +58,31 @@ describe('alignWithRuntime', () => {
         ['Rice', '05/06/2026'],
       ]),
     ]
-    const aligned = alignWithRuntime(s, samples)
+    const { spec: aligned, error } = alignWithRuntime(s, samples)
+    expect(error).toBeNull()
     expect(aligned).not.toBeNull()
     for (const sample of samples) {
       const runtime = extract(sample, aligned!)
       expect(runtime).toEqual(applyExtractSpec(sample, aligned!))
     }
+  })
+
+  it('reports why the runtime rejected a spec instead of dropping it silently', () => {
+    const s = spec({
+      name: {
+        selector: 'td:nth-child(',
+        attr: null,
+        pattern: null,
+        type: 'string',
+        optional: false,
+      },
+    })
+    const result = alignWithRuntime(s, [
+      page([
+        ['Tea'],
+      ]),
+    ])
+    expect(result.spec).toBeNull()
+    expect(result.error).toMatch(/.+/)
   })
 })

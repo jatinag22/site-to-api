@@ -14,6 +14,8 @@ export const ProbeOutcomeSchema = z.enum([
   'rejected',
   /** Network error or timeout. */
   'failed',
+  /** Not sent: the request can change data, or an earlier variant already failed. */
+  'skipped',
 ])
 export type ProbeOutcome = z.infer<typeof ProbeOutcomeSchema>
 

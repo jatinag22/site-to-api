@@ -72,7 +72,7 @@ function isHtml(exchange: Exchange): boolean {
 }
 
 /** Same-host paths a response links to: `href`/`src`/`action` attributes, or JSON string values. */
-export function linkedPaths(exchange: Exchange): Set<string> {
+function linkedPaths(exchange: Exchange): Set<string> {
   const body = exchange.response.body
   const paths = new Set<string>()
   if (!body)

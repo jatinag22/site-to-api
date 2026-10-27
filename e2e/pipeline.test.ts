@@ -5,7 +5,8 @@
  */
 import type { Analysis, ResolvedConfig } from '../packages/site-to-api/src'
 import type { FixtureSite } from './fixture-site/server'
-import { readdir, readFile, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { cp, readdir, readFile, rm } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join, relative } from 'pathe'
 import { chromium } from 'playwright'
@@ -14,6 +15,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ConfigSchema } from '../packages/site-to-api/src'
 import { buildHandoff } from '../packages/site-to-api/src/build'
 import { runCapture } from '../packages/site-to-api/src/capture'
+import { pipelineCommands } from '../packages/site-to-api/src/cli/commands'
+import { run as runCli } from '../packages/site-to-api/src/cli/program'
 import { probeOperations, writeProbeReport } from '../packages/site-to-api/src/probe'
 import { startFixtureSite } from './fixture-site/server'
 
@@ -261,6 +264,23 @@ describe('generated client', () => {
     })
     const response = await siteFetch(`${site.origin}/api/categories`)
     expect(response.status).toBe(200)
+  }, 120_000)
+})
+
+describe('gen', () => {
+  it('regenerates the client from a committed handoff folder, with no raw captures present', async () => {
+    const clone = join(work, 'fresh-clone')
+    await rm(clone, { recursive: true, force: true })
+    await cp(outDir, join(clone, 'api-handoff'), { recursive: true })
+    await rm(join(clone, 'api-handoff', 'client'), { recursive: true, force: true })
+    await runCli([
+      'node',
+      'site-to-api',
+      '--cwd',
+      clone,
+      'gen',
+    ], pipelineCommands)
+    expect(existsSync(join(clone, 'api-handoff', 'client', 'index.ts'))).toBe(true)
   }, 120_000)
 })
 

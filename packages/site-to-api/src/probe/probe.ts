@@ -134,8 +134,31 @@ class RateLimiter {
   }
 }
 
+interface SendResult {
+  outcome: ProbeOutcome
+  status: number | null
+  /** Why the request could not be sent (DNS, TLS, timeout, connection refused). */
+  error: string | null
+}
+
+/** A short, actionable reason for a network failure, e.g. `ECONNREFUSED` or `timed out`. */
+function failureReason(error: unknown): string {
+  if (error instanceof Error) {
+    if (error.name === 'TimeoutError' || error.name === 'AbortError')
+      return 'timed out'
+    const cause: unknown = error.cause
+    if (cause instanceof Error) {
+      return 'code' in cause && typeof cause.code === 'string'
+        ? cause.code
+        : cause.message
+    }
+    return error.message
+  }
+  return String(error)
+}
+
 interface Runner {
-  send: (exchange: Exchange, variant: Variant) => Promise<{ outcome: ProbeOutcome, status: number | null }>
+  send: (exchange: Exchange, variant: Variant) => Promise<SendResult>
 }
 
 function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sleep'>> & { config: ResolvedConfig['probe'] }): Runner {
@@ -162,10 +185,15 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
         return {
           outcome: ok ? 'ok' : 'rejected',
           status: response.status,
+          error: null,
         }
       }
-      catch {
-        return { outcome: 'failed', status: null }
+      catch (error) {
+        return {
+          outcome: 'failed',
+          status: null,
+          error: failureReason(error),
+        }
       }
     },
   }
@@ -197,9 +225,14 @@ async function minimize(runner: Runner, exchange: Exchange, full: Variant, maxVa
   return required.sort()
 }
 
+/** Words in a path that suggest a GET changes state; such requests are never replayed. */
+const STATE_CHANGING = /logout|log-out|signout|sign-out|unsubscribe|delete|remove|cancel|confirm|activate|verify|reset|revoke/i
+
 function skipReason(operation: Operation, config: ResolvedConfig['probe']): string | null {
   if (operation.kind === 'bot-protection')
     return 'bot-protection step: needs a real browser by design'
+  if (STATE_CHANGING.test(operation.path))
+    return 'its path suggests it changes state (logout, unsubscribe, delete...), so it is never replayed'
   if (!SAFE_METHODS.has(operation.method) && !config.unsafeMethods)
     return `${operation.method} can change data; pass --unsafe-methods to include it`
   if (!representative(operation))
@@ -218,35 +251,38 @@ interface ProbeContext {
 async function probeOne(operation: Operation, exchange: Exchange, context: ProbeContext): Promise<OperationProbe> {
   const statuses: number[] = []
   const full = captured(exchange)
-  const replay = await context.runner.send(exchange, full)
-  const plain = await context.runner.send(exchange, bare(full))
-  for (const result of [replay, plain]) {
+  const record = (result: SendResult): SendResult => {
     if (result.status !== null)
       statuses.push(result.status)
+    return result
   }
-
-  let requires: string[] | null = null
-  let note: string | null = null
-  if (plain.outcome === 'ok')
-    requires = []
-  else if (replay.outcome !== 'ok')
-    note = 'The captured session was not accepted any more (expired cookies or token?). Capture again shortly before probing.'
-  else if (context.takeMinimizeSlot(operation.host))
-    requires = await minimize(context.runner, exchange, full, context.maxVariants, statuses)
-  else
-    note = `Not minimized: limit of ${context.minimizePerHost} operations per host reached.`
-
-  return {
+  const replay = record(await context.runner.send(exchange, full))
+  const result = (bareOutcome: ProbeOutcome, requires: string[] | null, note: string | null): OperationProbe => ({
     operationId: operation.operationId,
     host: operation.host,
     method: operation.method,
     exchangeId: exchange.id,
     replay: replay.outcome,
-    bare: plain.outcome,
+    bare: bareOutcome,
     requires,
     statuses,
     note,
-  }
+  })
+
+  if (replay.outcome === 'failed')
+    return result('skipped', null, `Could not reach ${operation.host} (${replay.error ?? 'network error'}). Check the site is up and reachable from this machine; nothing was concluded.`)
+  // Requests that can change data are sent once, never repeated bare or during minimization.
+  if (!SAFE_METHODS.has(operation.method))
+    return result('skipped', null, `${operation.method} was replayed once only: it can change data, so it was not repeated without cookies or minimized.`)
+
+  const plain = record(await context.runner.send(exchange, bare(full)))
+  if (plain.outcome === 'ok')
+    return result(plain.outcome, [], null)
+  if (replay.outcome !== 'ok')
+    return result(plain.outcome, null, 'The captured session was not accepted any more (expired cookies or token?). Capture again shortly before probing.')
+  if (!context.takeMinimizeSlot(operation.host))
+    return result(plain.outcome, null, `Not minimized: limit of ${context.minimizePerHost} operations per host reached.`)
+  return result(plain.outcome, await minimize(context.runner, exchange, full, context.maxVariants, statuses), null)
 }
 
 /** Probes every operation that has a successful captured sample and is allowed by the config. */
