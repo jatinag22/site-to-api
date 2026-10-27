@@ -36,6 +36,7 @@ export const SessionMetaSchema = z.object({
     /** Saved bundle, relative to the session directory. */
     file: z.string(),
     sourceMap: z.object({
+      /** Where the map was fetched from, or `inline` when the script embedded it as a `data:` URI. */
       url: z.string(),
       file: z.string(),
       /** Files unpacked from the map, relative to the session directory. */
