@@ -1,0 +1,15 @@
+name: Feature request
+description: Suggest something the tool should detect or produce
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to build, and what is missing from the output?
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: A site or traffic pattern where this matters (redact any secrets).

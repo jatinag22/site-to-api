@@ -1,0 +1,20 @@
+*.log
+*.tgz
+.cache
+.DS_Store
+.eslintcache
+.idea
+.env
+.env.*
+!.env.example
+.temp
+.turbo
+coverage
+dist
+node_modules
+temp
+
+# Raw captures contain real cookies, tokens and personal data. Never commit them.
+site-to-api-raw/
+**/.site-to-api/raw/
+e2e/.output/

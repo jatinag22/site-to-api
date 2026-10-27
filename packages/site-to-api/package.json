@@ -1,0 +1,53 @@
+{
+  "name": "site-to-api",
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Capture a website's traffic once and get OpenAPI specs, request flows and a typed client that a coding agent can build a wrapper from.",
+  "author": "Jatin <agrawaljatin22@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/jatinag22/site-to-api#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jatinag22/site-to-api.git",
+    "directory": "packages/site-to-api"
+  },
+  "bugs": "https://github.com/jatinag22/site-to-api/issues",
+  "keywords": [
+    "reverse-engineering",
+    "api",
+    "openapi",
+    "har",
+    "sourcemap",
+    "playwright",
+    "zod",
+    "codegen",
+    "ai-agents"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./cli": "./dist/cli/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.mts",
+  "bin": {
+    "site-to-api": "./bin/site-to-api.mjs"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "typecheck": "tsc --noEmit",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@site-to-api/runtime": "workspace:*",
+    "zod": "catalog:prod"
+  }
+}

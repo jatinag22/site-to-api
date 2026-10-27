@@ -1,0 +1,75 @@
+# Architecture
+
+```
+ capture ──► raw session ──► build ─────────────────────────────► handoff folder ──► gen
+ (browser)   (gitignored)    load → classify → operations →        (committed)        (client/)
+                             schema → correlate → flows →
+                             source → html → redact → emit
+                                                     ▲
+                                        probe ───────┘ (optional, live, updates specs + flows)
+```
+
+## Commands
+
+| Command | Reads | Writes | Network |
+|---|---|---|---|
+| `capture [url]` | config | `<rawDir>/<session>/` | the target site, through a real browser |
+| `build` | all raw sessions | `<outDir>/` except `client/` | none |
+| `probe` | raw sessions + `<outDir>/` | updates `<outDir>/` | the target site, rate limited |
+| `gen` | `<outDir>/specs`, `flows.json` | `<outDir>/client/` | none |
+| `config` | config sources | stdout | none |
+| `init` | nothing | `site-to-api.config.ts`, `.gitignore` entries | none |
+
+## Stages of `build`
+
+All stages are pure functions over the data contracts in `packages/site-to-api/src/model/`.
+
+1. **load** (`src/load`): reads `meta.json`, `traffic.har` and `events.jsonl` of every session,
+   validates them with Zod, and produces `Exchange[]`. Instrumentation `request` events are matched
+   to HAR entries (method + URL + time window + body preview) to attach the initiator stack.
+2. **classify** (`src/analyze/classify`): labels each exchange `api`, `page`, `bot-protection`,
+   `asset` or `noise` using resource type, media type, host lists and bot-protection signatures
+   (Akamai, Cloudflare, PerimeterX, DataDome, Imperva, Kasada, reCAPTCHA, hCaptcha, Turnstile).
+3. **operations** (`src/analyze/operations`): groups exchanges into operations by host + method +
+   path template. Path parameters come from source route templates, value tracing, variation
+   across samples and ID-like segments (UUID, hex, base58, numbers, upper-case slugs).
+4. **schema** (`src/analyze/schema`): infers JSON Schema for query, headers, request bodies and
+   JSON responses from all samples: required vs optional, enums, formats, constants.
+5. **correlate** (`src/analyze/correlate`): indexes every response value (JSON leaves, Set-Cookie,
+   headers, HTML attributes and text) and finds each request value's earliest producer, including
+   URL-encoded, base64, JSON-string and substring variants. Values with no producer are matched
+   against `transform` events (computed by the page) and form typing (`user-input`).
+6. **flows** (`src/analyze/flows`): splits the timeline at the person's actions (click, submit,
+   navigate), turns each segment into a flow of steps with typed inputs and outputs, merges flows
+   seen in several sessions, and derives per-host session requirements.
+7. **source** (`src/analyze/source`): maps stack frames through sourcemaps to original files,
+   parses original sources or bundles with oxc to find request call sites and endpoints that were
+   never called, and selects excerpts for computed values and call sites.
+8. **html** (`src/analyze/html`): infers extraction specs for HTML and text responses by comparing
+   samples (template vs data), detecting repeated records, labels and types.
+9. **redact** (`src/analyze/redact`): decides, per value, whether it is a cross-session constant
+   (kept), a secret or personal value (replaced by a shape description or a masked example that
+   keeps the format), or ordinary data.
+10. **emit** (`src/emit`): writes the handoff folder.
+
+## Handoff folder
+
+See `docs/output-format.md` for the full specification.
+
+```
+<outDir>/
+  AGENT.md          start here: session needs, flows, reading order
+  API_MAP.md        one row per operation
+  flows.json        source of truth for flows, computed values, session needs
+  flows.md          readable rendering of flows.json
+  specs/<host>.yaml OpenAPI 3.1, with x-site-to-api-* extensions
+  source/           code excerpts referenced by flows and specs
+  client/           generated TypeScript client (gen)
+```
+
+## Packages
+
+- `site-to-api`: the CLI and engine. Depends on Playwright (capture), oxc-parser (source),
+  source-map tooling, hey-api (gen). Heavy, used at development time.
+- `@site-to-api/runtime`: what generated clients import at run time. No Node-only APIs, small
+  dependencies, runs on Node, Bun, Deno and edge workers.

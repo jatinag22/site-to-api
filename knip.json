@@ -1,0 +1,22 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/*.mjs"
+      ]
+    },
+    "packages/site-to-api": {
+      "entry": [
+        "bin/*.mjs",
+        "test/**/*.ts"
+      ]
+    },
+    "packages/runtime": {},
+    "e2e": {
+      "entry": [
+        "**/*.test.ts"
+      ]
+    }
+  }
+}

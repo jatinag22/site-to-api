@@ -1,0 +1,8 @@
+{
+  "name": "@site-to-api/e2e",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

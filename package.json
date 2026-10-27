@@ -1,0 +1,47 @@
+{
+  "name": "site-to-api-monorepo",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.14.0",
+  "description": "Capture a website's traffic once and get OpenAPI specs, request flows and a typed client that a coding agent can build a wrapper from.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/*\" run build",
+    "dev": "pnpm -r --parallel --filter \"./packages/*\" run dev",
+    "lint": "eslint . --cache --concurrency=auto",
+    "lint:fix": "eslint . --cache --concurrency=auto --fix",
+    "typecheck": "pnpm -r --filter \"./packages/*\" --filter ./e2e run typecheck",
+    "knip": "knip",
+    "test": "vitest",
+    "test:e2e": "pnpm run build && vitest --project e2e",
+    "ci": "pnpm run lint && pnpm run typecheck && pnpm run knip && pnpm run build && vitest --run",
+    "release": "bumpp -r",
+    "prepare": "simple-git-hooks"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "catalog:dev",
+    "@types/node": "catalog:dev",
+    "bumpp": "catalog:dev",
+    "eslint": "catalog:dev",
+    "eslint-plugin-slop": "catalog:dev",
+    "eslint-plugin-sonarjs": "catalog:dev",
+    "knip": "catalog:dev",
+    "nano-staged": "catalog:dev",
+    "publint": "catalog:dev",
+    "simple-git-hooks": "catalog:dev",
+    "tsdown": "catalog:dev",
+    "typescript": "catalog:dev",
+    "vitest": "catalog:dev"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm exec nano-staged",
+    "commit-msg": "node scripts/check-commit-msg.mjs \"$1\""
+  },
+  "nano-staged": {
+    "*": "eslint --fix --no-warn-ignored"
+  }
+}
