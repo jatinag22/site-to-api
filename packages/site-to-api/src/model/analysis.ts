@@ -22,6 +22,8 @@ export interface JsonSchema {
   'anyOf'?: JsonSchema[]
   'description'?: string
   'examples'?: unknown[]
+  /** Value a client can send when it has no other: set on constant headers (already redacted). */
+  'default'?: string | number | boolean | null
   /** Extension: the value never changed across sessions. */
   'x-constant'?: boolean
 }

@@ -13,6 +13,7 @@ onlyBuiltDependencies:
 catalogs:
   dev:
     '@antfu/eslint-config': ^10.0.0
+    '@scalar/openapi-parser': 0.29.16
     '@types/node': ^26.6.5
     '@types/ws': ^8.18.2
     bumpp: ^12.3.0
