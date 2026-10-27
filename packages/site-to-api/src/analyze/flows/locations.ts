@@ -1,5 +1,6 @@
 /** Text forms of value locations as they appear in `flows.json`. */
 import type { ValueLocation } from '../../model'
+import { redactPathTokens } from '../redact'
 
 /**
  * A location as text: `path.0`, `query.symbol`, `header.x-csrf-token`, `cookie.session`,
@@ -28,7 +29,8 @@ export function formatLocation(location: ValueLocation): string {
   }
 }
 
-function lastPointerToken(pointer: string): string | null {
+/** The last property name in a JSON pointer, skipping array indexes: `/items/0/id` → `id`. */
+export function lastPointerToken(pointer: string): string | null {
   const token = pointer.split('/').slice(1).filter(part => !/^\d+$/.test(part)).at(-1)
   return token === undefined
     ? null
@@ -79,15 +81,18 @@ export function uniqueName(base: string, taken: Set<string>): string {
   return name
 }
 
-/** A page URL without query or fragment, which can carry tokens. */
+/**
+ * A page URL without query or fragment, which can carry tokens, and with token path segments
+ * (`/magic/<jwt>`) replaced by `{token}`.
+ */
 export function safePageUrl(url: string | null): string {
   if (!url)
     return ''
   try {
     const parsed = new URL(url)
-    return `${parsed.origin}${parsed.pathname}`
+    return `${parsed.origin}${redactPathTokens(parsed.pathname)}`
   }
   catch {
-    return url.replace(/[?#].*$/, '')
+    return redactPathTokens(url.replace(/[?#].*$/, ''))
   }
 }

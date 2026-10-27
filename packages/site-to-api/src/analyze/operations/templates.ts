@@ -55,7 +55,8 @@ function bestSourceMatch(templates: ParsedTemplate[], segments: string[]): Parse
  * Finds parameter positions for the distinct paths of one host + method.
  *
  * 1. A source route template that matches the path wins and names its parameters.
- * 2. Strong identifiers (UUIDs, long numbers, long hex or random tokens) are parameters on sight.
+ * 2. Strong identifiers (UUIDs, long numbers, long hex or random tokens, JWTs and other secrets
+ *    in the path) are parameters on sight.
  * 3. Paths that agree on every segment that is not identifier-like (or a slug some other
  *    response links to) are grouped; in a group an
  *    identifier position is a parameter once two distinct values are seen there (or one, when a
@@ -86,7 +87,7 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
       continue
     }
     segments.forEach((segment, index) => {
-      if (isStrongIdentifier(segment)) {
+      if (isStrongIdentifier(segment, segments[index - 1])) {
         marks.set(index, {
           evidence: ['looks-like-id'],
           sourceName: null,
