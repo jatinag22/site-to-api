@@ -350,7 +350,7 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
       probe: probe
         ? {
             minimizePerHost: minimizeLimit(probe),
-            notMinimized: notMinimized(probe),
+            notMinimized: notMinimized(probe, analysis.operations),
           }
         : null,
     }),

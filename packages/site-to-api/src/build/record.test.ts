@@ -52,6 +52,15 @@ describe('build.json', () => {
       gen: { client: false },
       described: ['--include *.shop.test', '--examples none', '--no-client'],
     })
+    // A value set now by an environment variable or flag is not overridden by the last build.
+    expect(stickyOptions(record, { 'redact.examples': 'env', 'gen.client': 'flag', 'hosts.include': 'file' })).toEqual({
+      hosts: {
+        include: ['*.shop.test'],
+      },
+      redact: {},
+      gen: {},
+      described: ['--include *.shop.test'],
+    })
     expect(stickyOptions(null)).toEqual({
       hosts: {},
       redact: {},

@@ -115,7 +115,7 @@ api-handoff/
   source/             excerpts of the site's own code referenced above
   client/             typed client: hey-api SDK + Zod schemas, wired to @site-to-api/runtime
   probe.json          after `probe`: what each request needs (names only)
-  build.json          the options of the last build, which `probe` and `gen` reuse
+  build.json          the options of the last build, which `probe` reuses
 ```
 
 An excerpt of the `AGENT.md` generated from the fixture shop walkthrough above:
@@ -189,7 +189,7 @@ Environment variables name a config key in upper snake case, with `__` between n
 (`true`, `0.5`, `["*.example.com"]`), otherwise as text.
 
 The flags and variables a `build` ran with (`--examples`, `--include`, `--exclude`,
-`--no-client`) are recorded in `build.json` and reused by `probe`, so probing does not undo them.
+`--no-client`) are recorded in `build.json` and reused by `probe`, so probing does not undo them; flags and variables given to `probe` win.
 
 ## Using the generated client
 

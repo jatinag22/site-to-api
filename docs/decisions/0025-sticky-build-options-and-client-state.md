@@ -18,7 +18,8 @@ committed folder, without the raw captures the analysis needs.
   it can be committed with the folder.
 - `probe` reuses only the sticky options. Config-file values are read again, so an edited config
   still takes effect; `probe` accepts the same flags (`--include`, `--exclude`, `--examples`,
-  `--no-client`) to override them, and those become sticky in turn. A plain `build` starts over
+  `--no-client`) to override them, and so do `SITE_TO_API_*` variables set for the `probe` run;
+  those become sticky in turn. A plain `build` starts over
   from the config. Reusing every effective value instead would let a stale `build.json` silently
   override a config edit.
 - The client has three states: `current`, `stale` (kept by `--no-client` from an earlier build)

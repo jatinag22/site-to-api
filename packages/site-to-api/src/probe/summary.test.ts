@@ -59,6 +59,13 @@ describe('probe summary', () => {
       { host: 'shop.test', operationId: 'getMore' },
       { host: 'shop.test', operationId: 'getEvenMore' },
     ])
+    expect(notMinimized(report, [
+      { host: 'shop.test', operationId: 'getMore' },
+      { host: 'other.test', operationId: 'getEvenMore' },
+    ])).toEqual([
+      { host: 'shop.test', operationId: 'getMore' },
+    ])
+    expect(notMinimized(report, [])).toEqual([])
     expect(minimizeLimit(report)).toBe(2)
     expect(minimizeLimit({ ...report, minimizePerHost: undefined })).toBe(5)
   })

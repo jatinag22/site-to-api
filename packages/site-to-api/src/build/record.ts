@@ -14,7 +14,7 @@ import { SiteToApiError } from '../errors'
 
 const BUILD_RECORD_FILE = 'build.json'
 
-/** Options `probe` and `gen` can reuse, as dotted config paths. */
+/** Options `probe` reuses, as dotted config paths (`gen` only updates `gen.client`). */
 const STICKY_PATHS = [
   'gen.client',
   'hosts.exclude',
@@ -88,9 +88,13 @@ export interface StickyOptions {
   described: string[]
 }
 
-/** The options of the last build that `probe` and `gen` reuse unless their own flags override them. */
-export function stickyOptions(record: BuildRecord | null): StickyOptions {
-  const sticky = new Set(record?.sticky ?? [])
+/**
+ * The options of the last build that `probe` reuses. `current` holds where each value of the
+ * config resolved now comes from; options set by an environment variable or flag are not reused.
+ */
+export function stickyOptions(record: BuildRecord | null, current: Record<string, ConfigSource> = {}): StickyOptions {
+  // A value the user sets now (environment variable or flag) beats the one the last build used.
+  const sticky = new Set((record?.sticky ?? []).filter(path => current[path] !== 'env' && current[path] !== 'flag'))
   const result: StickyOptions = {
     hosts: {},
     redact: {},

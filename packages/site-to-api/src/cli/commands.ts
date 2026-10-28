@@ -160,9 +160,9 @@ const probeCommand: CommandRegistrar = (program) => {
   )
     .action(async (flags: ProbeFlags, command: Command) => {
       // The rebuild must look like the last build: `probe` after `build --examples none` must
-      // not write masked examples. Flags given here still win.
+      // not write masked examples. Flags and SITE_TO_API_* variables given now still win.
       const located = await resolveConfig(command)
-      const sticky = stickyOptions(await readBuildRecord(resolve(located.cwd, located.config.outDir)))
+      const sticky = stickyOptions(await readBuildRecord(resolve(located.cwd, located.config.outDir)), located.sources)
       const { config, cwd, sources } = await resolveConfig(command, {
         hosts: {
           include: flags.include ?? sticky.hosts.include,
@@ -221,6 +221,8 @@ const genCommand: CommandRegistrar = (program) => {
       const { config, cwd } = await resolveConfig(command)
       // Works from the committed handoff folder alone: raw captures are not needed (or present) in a fresh clone.
       const handoffDir = resolve(cwd, config.outDir)
+      // Fails on an unreadable build.json before anything in the folder is rewritten.
+      await readBuildRecord(handoffDir)
       const result = await generateClient({ handoffDir, flows: await readFlowsDocument(handoffDir) })
       // AGENT.md and API_MAP.md were written when the client was missing or stale; say it exists now.
       printWarnings([

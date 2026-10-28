@@ -78,7 +78,7 @@ See `docs/output-format.md` for the full specification.
   source/           code excerpts referenced by flows and specs
   client/           generated TypeScript client (gen)
   probe.json        probe results (names only)
-  build.json        options of the last build, reused by probe and gen
+  build.json        options of the last build, reused by probe (gen updates its client entry)
 ```
 
 ## Packages

@@ -38,10 +38,20 @@ export function minimizeLimit(report: ProbeReport): number {
   return report.minimizePerHost ?? LEGACY_MINIMIZE_PER_HOST
 }
 
-/** Operations that replayed fine but were not minimized because their host hit the limit. */
-export function notMinimized(report: ProbeReport): Array<{ host: string, operationId: string }> {
+/**
+ * Operations that replayed fine but were not minimized because their host hit the limit. With
+ * `current` (the operations of the build now being written), only those still in it: `probe.json`
+ * outlives builds, and a host excluded since or an operation renamed by a new capture must not
+ * show up as a gap the rest of the folder knows nothing about.
+ */
+export function notMinimized(
+  report: ProbeReport,
+  current?: ReadonlyArray<{ host: string, operationId: string }>,
+): Array<{ host: string, operationId: string }> {
+  const keep = current && new Set(current.map(operation => `${operation.host} ${operation.operationId}`))
   return report.operations
     .filter(probe => probeResultKind(probe) === 'limit')
+    .filter(probe => !keep || keep.has(`${probe.host} ${probe.operationId}`))
     .map(probe => ({ host: probe.host, operationId: probe.operationId }))
 }
 

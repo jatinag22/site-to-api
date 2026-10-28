@@ -175,6 +175,6 @@ Written by every `build` (and the rebuild `probe` runs): the options it ran with
 `sticky` lists the options that came from CLI flags or `SITE_TO_API_*` variables. `probe` reuses
 exactly those for its rebuild, so `probe` after `build --examples none --no-client` writes no
 examples and no client; values from the config file are read again as usual. Flags given to
-`probe` (`--include`, `--exclude`, `--examples`, `--no-client`) override them and become sticky
-in turn. A plain `build` starts over from the config. `gen` sets `client` to `true` and drops a
+`probe` (`--include`, `--exclude`, `--examples`, `--no-client`) and `SITE_TO_API_*` variables
+set for the `probe` run override them and become sticky in turn. A plain `build` starts over from the config. `gen` sets `client` to `true` and drops a
 sticky `--no-client`, since the folder now has a current client.
