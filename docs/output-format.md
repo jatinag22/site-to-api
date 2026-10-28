@@ -135,7 +135,8 @@ and `createSiteClient({ host, session?, auth?, jar?, fetch?, baseUrl?, retry?, h
 to `@site-to-api/runtime` (one shared configuration per host), `extract.ts` with
 `extract<Operation>(text)` and a record schema per HTML/text operation plus
 `extract<Input>From<Operation>(html)` per value `flows.json` traces to an HTML page, and
-`README.md` with setup, the session and auth each host needs and, when there are AsyncAPI
+`README.md` with setup, the session and auth each host needs (with the same cookie lines as
+`AGENT.md`, read from `x-site-to-api-requires` after `probe`) and, when there are AsyncAPI
 files, each WebSocket channel's URL and the message to send after connecting (the code itself is
 HTTP only). Relative imports end in `.js`, so
 the client works under `moduleResolution` `bundler` and `nodenext`. The generated code needs
@@ -152,8 +153,8 @@ the cookies and headers it needs (`requires`, names only; `null` when not worked
 
 `probe` writes `probe.json` and then rebuilds the handoff folder. Every `build`, including that
 rebuild, reads `probe.json` when it exists and folds it into `flows.json` session requirements,
-`x-site-to-api-requires`, the Needs column of `API_MAP.md` and the cookie lines and gaps of
-`AGENT.md`. At the end, `probe` prints a summary: operations probed, needs found, not minimized
+`x-site-to-api-requires`, the Needs column of `API_MAP.md`, the cookie lines and gaps of
+`AGENT.md` and the cookie lines of `client/README.md`. At the end, `probe` prints a summary: operations probed, needs found, not minimized
 and why (per-host limit, data-changing method, session no longer accepted, host unreachable), and
 skipped and why.
 

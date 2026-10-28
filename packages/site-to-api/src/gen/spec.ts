@@ -69,10 +69,12 @@ const ResponseSchema = z.looseObject({
 const SecurityRequirementsSchema = z.array(z.record(z.string(), z.unknown()))
 
 const OperationSchema = z.looseObject({
-  operationId: z.string().optional(),
-  security: SecurityRequirementsSchema.optional(),
-  parameters: z.array(z.unknown()).optional(),
-  responses: z.record(z.string(), z.unknown()).optional(),
+  'operationId': z.string().optional(),
+  'security': SecurityRequirementsSchema.optional(),
+  // What `probe` found this operation needs (`cookie:<name>`, ...); absent when not minimized.
+  'x-site-to-api-requires': z.array(z.string()).optional(),
+  'parameters': z.array(z.unknown()).optional(),
+  'responses': z.record(z.string(), z.unknown()).optional(),
 })
 
 const METHODS = [
@@ -221,6 +223,21 @@ export interface HostSpec {
   auth: AuthScheme[]
   /** Operations that declare a security requirement (theirs or the document's), sorted. */
   securedOperationIds: string[]
+  /**
+   * `x-site-to-api-requires` of every operation `probe` minimized, so the client README can say
+   * which cookies probe confirmed (see emit/cookies). Empty before probing.
+   */
+  probedRequires: string[][]
+}
+
+/** `x-site-to-api-requires` of every operation that has one, in spec order. */
+function probedRequiresOf(document: OpenApiDocument): string[][] {
+  return Object.values(document.paths ?? {}).flatMap(item => METHODS.flatMap((method) => {
+    const requires = item[method]?.['x-site-to-api-requires']
+    return requires
+      ? [requires]
+      : []
+  }))
 }
 
 /**
@@ -273,6 +290,7 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
     extracts: extracts.sort((a, b) => a.operationId.localeCompare(b.operationId)),
     auth: readAuthSchemes(file, document, warnings),
     securedOperationIds: securedOperationIds.sort(),
+    probedRequires: probedRequiresOf(document),
   }
 }
 

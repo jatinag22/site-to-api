@@ -73,6 +73,7 @@ function host(overrides: Partial<HostSpec> = {}): HostSpec {
     extracts: [listExtract],
     auth: [],
     securedOperationIds: [],
+    probedRequires: [],
     ...overrides,
   }
 }
@@ -237,9 +238,33 @@ describe('renderReadme', () => {
       }),
     ])
     expect(readme).toContain('- Session: cookies set by the site\'s own responses (confirmed by `probe`).')
-    expect(readme).toContain('`sid` (set by `postLogin`), `_abck` (set by the browser, not by an API response), `device` (present in the browser profile; origin unknown)')
+    expect(readme).toContain('- Cookie `sid`: set by `postLogin` (seen in capture).')
+    expect(readme).toContain('- Cookie `_abck`: set by a script in the page; only a real browser produces its value (seen in capture).')
+    expect(readme).toContain('- Cookie `device`: present in the browser profile; origin unknown')
+    expect(readme).not.toContain('Cookies the API needs')
     expect(readme).toContain('createSiteClient({ host: "a.example.com", jar })')
     expect(readme).toContain('`extractGetList(text)` → `GetListRecord[]`')
+  })
+
+  it('says which cookies probe found necessary, as AGENT.md does', () => {
+    const readme = renderReadme([
+      host({
+        probedRequires: [
+          ['cookie:sid'],
+          [],
+        ],
+      }),
+    ], [], [
+      session('cookies', {
+        probed: true,
+        cookies: [
+          { name: 'sid', setBy: 'postLogin', source: 'response' },
+          { name: 'bm_sz', setBy: null, source: 'browser' },
+        ],
+      }),
+    ])
+    expect(readme).toContain('- Cookie `sid`: set by `postLogin`. Needed by 1 request (confirmed by probe).')
+    expect(readme).toContain('- Cookie `bm_sz`: set by a script in the page; only a real browser produces its value. Seen in capture, but none of the 2 requests probe tested needed it.')
   })
 
   it('shows browserSession for browser-only hosts and lists the bot protection', () => {

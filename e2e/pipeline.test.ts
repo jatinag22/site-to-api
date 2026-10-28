@@ -153,6 +153,11 @@ async function browserCookies() {
   }
 }
 
+/** The per-cookie lines of AGENT.md or client/README.md, which must say the same thing. */
+function cookieLines(markdown: string): string[] {
+  return markdown.split('\n').filter(line => line.startsWith('- Cookie `')).sort()
+}
+
 function operation(method: string, path: string): Analysis['operations'][number] {
   const found = analysis.operations.find(op => op.host === host && op.method === method && op.path === path)
   if (!found)
@@ -302,6 +307,13 @@ describe('flows and session needs', () => {
     const guide = files.get('AGENT.md') ?? ''
     expect(guide).not.toMatch(/`body\.\/sensor_data` of/)
     expect(guide).not.toMatch(/`path\.\d+` of `getApiStockTxt`/)
+  })
+
+  it('gives the same cookie facts in the client README as in AGENT.md before probe', () => {
+    const guide = cookieLines(files.get('AGENT.md') ?? '')
+    expect(guide.length).toBeGreaterThan(0)
+    expect(cookieLines(files.get('client/README.md') ?? '')).toEqual(guide)
+    expect(files.get('client/README.md')).not.toContain('Cookies the API needs')
   })
 
   it('reports the script-set store cookie as set by the page, with a value a wrapper can derive', () => {
@@ -561,6 +573,12 @@ describe('probe', () => {
     await writeProbeReport(outDir, report)
     const rebuilt = await buildHandoff({ config, cwd: work })
     expect(rebuilt.analysis.flows.session.find(entry => entry.host === host)?.probed).toBe(true)
+
+    // The client README repeats AGENT.md's probe results, including cookies no request needed.
+    const guide = await readFile(join(outDir, 'AGENT.md'), 'utf8')
+    const readme = await readFile(join(outDir, 'client', 'README.md'), 'utf8')
+    expect(cookieLines(readme)).toEqual(cookieLines(guide))
+    expect(readme).toMatch(/Cookie `bm_sz`: [^\n]*Seen in capture, but none of the \d+ requests probe tested needed it/)
   }, 180_000)
 })
 

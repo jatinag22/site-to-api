@@ -269,6 +269,27 @@ describe('describeHost security', () => {
   })
 })
 
+describe('describeHost probedRequires', () => {
+  it('collects the requires lists of operations probe minimized, keeping empty ones', () => {
+    const host = describeHost('a.yaml', doc({
+      '/a': {
+        get: {
+          'operationId': 'getA',
+          'x-site-to-api-requires': ['cookie:sid'],
+        },
+        post: { 'operationId': 'postA', 'x-site-to-api-requires': [] },
+      },
+      '/b': {
+        get: { operationId: 'getB' },
+      },
+    }), [])
+    expect(host.probedRequires).toEqual([
+      ['cookie:sid'],
+      [],
+    ])
+  })
+})
+
 describe('openApiDocumentSchema', () => {
   it('rejects documents without an openapi version', () => {
     expect(OpenApiDocumentSchema.safeParse({ swagger: '2.0' }).success).toBe(false)

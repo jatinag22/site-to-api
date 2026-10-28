@@ -7,6 +7,7 @@
 import type { Analysis, Operation, SessionRequirement, ValueOrigin } from '../../model'
 import type { StepResolver } from '../steps'
 import type { ClientState } from './client'
+import { cookieLines } from '../cookies'
 import { anchor, code, text } from '../escape'
 import { specFileName } from '../openapi/write'
 import { createStepResolver } from '../steps'
@@ -52,50 +53,11 @@ function operationName(operationId: string, host: string | null, resolver: StepR
     : code(operationId)
 }
 
-function cookieOrigin(cookie: SessionRequirement['cookies'][number]): string {
-  switch (cookie.source) {
-    case 'browser':
-      return 'set by a script in the page; only a real browser produces its value'
-    case 'script':
-      return 'set by a script in the page; the wrapper can set its value itself'
-    case 'response':
-      return cookie.setBy
-        ? `set by ${code(cookie.setBy)}`
-        : 'set by a response'
-    case 'unknown':
-      return 'present in the browser profile; origin unknown (no captured response or page script set it, so check with `probe` whether the API needs it)'
-  }
-}
-
-/**
- * One line per cookie. When `probe` minimized requests on this host, each cookie says whether
- * any of them needed it (confirmed by probe); otherwise it was only seen in the capture.
- */
-function cookieLines(entry: SessionRequirement, analysis: Analysis): string[] {
-  const tested = analysis.operations.filter(operation => operation.host === entry.host && Array.isArray(operation.requires))
-  const needed = new Map<string, number>()
-  for (const operation of tested) {
-    for (const item of operation.requires ?? []) {
-      if (item.startsWith('cookie:'))
-        needed.set(item.slice('cookie:'.length), (needed.get(item.slice('cookie:'.length)) ?? 0) + 1)
-    }
-  }
-  const known = new Set(entry.cookies.map(cookie => cookie.name))
-  const requests = (count: number): string => `${count} request${count === 1
-    ? ''
-    : 's'}`
-  const lines = [...entry.cookies].sort((a, b) => a.name.localeCompare(b.name)).map((cookie) => {
-    const origin = cookieOrigin(cookie)
-    if (tested.length === 0)
-      return `- Cookie ${code(cookie.name)}: ${origin} (seen in capture).`
-    const count = needed.get(cookie.name) ?? 0
-    return count > 0
-      ? `- Cookie ${code(cookie.name)}: ${origin}. Needed by ${requests(count)} (confirmed by probe).`
-      : `- Cookie ${code(cookie.name)}: ${origin}. Seen in capture, but none of the ${requests(tested.length)} probe tested needed it.`
-  })
-  for (const [name, count] of [...needed].filter(([name]) => !known.has(name)).sort(([a], [b]) => a.localeCompare(b)))
-    lines.push(`- Cookie ${code(name)}: needed by ${requests(count)} (confirmed by probe); no captured step was found to set it.`)
-  return lines
+/** Operations on the entry's host that `probe` minimized, by their `requires` lists. */
+function probedRequires(entry: SessionRequirement, analysis: Analysis): string[][] {
+  return analysis.operations.flatMap(operation => operation.host === entry.host && Array.isArray(operation.requires)
+    ? [operation.requires]
+    : [])
 }
 
 function sessionSection(analysis: Analysis): string[] {
@@ -109,7 +71,7 @@ function sessionSection(analysis: Analysis): string[] {
     lines.push(`- Needs: ${REQUIREMENT_TEXT[entry.requires]}${entry.probed ? ' (confirmed by probe)' : ' (inferred from the capture, not yet probed)'}.`)
     for (const finding of entry.botProtection)
       lines.push(`- Bot protection: ${text(finding.vendor)} (${text(finding.evidence)}). Do not try to reproduce it; let a real browser run it (\`browserSession\` in \`@site-to-api/runtime\`).`)
-    lines.push(...cookieLines(entry, analysis))
+    lines.push(...cookieLines(entry, probedRequires(entry, analysis)))
     lines.push(`- Spec: ${code(`specs/${specFileName(entry.host)}`)}.`, '')
   }
   return lines
