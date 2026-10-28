@@ -154,10 +154,15 @@ function inferHeaders(exchanges: Exchange[], redactor: ValueRedactor): HeaderInf
   })
 }
 
-function inferCookies(exchanges: Exchange[]): ParamInfo[] {
+/**
+ * Cookie names, through the redactor: some sites put an id in the name itself
+ * (`https://www.shop.com_<uuid>$$<account>$$session_state`), and API_MAP.md, flows.json and the
+ * specs must all write it the same, redacted way.
+ */
+function inferCookies(exchanges: Exchange[], redactor: ValueRedactor): ParamInfo[] {
   const lists = exchanges.map(exchange => exchange.request.cookies)
   return namesInOrder(lists).map(name => ({
-    name,
+    name: redactor.value(name, { in: 'text' }),
     required: lists.every(list => list.some(item => item.name === name)),
     schema: { type: 'string' },
   }))
@@ -317,7 +322,7 @@ export function inferOperationSchemas(operations: Operation[], redactor: Redacto
       pathParams: enrichPathParams(operation, values),
       query: inferParams(exchanges, exchange => exchange.request.query, 'query', values),
       headers: inferHeaders(exchanges, values),
-      cookies: inferCookies(exchanges),
+      cookies: inferCookies(exchanges, redactor),
       requestBody: inferRequestBody(exchanges, values),
       responses: inferResponses(exchanges, values),
     }
