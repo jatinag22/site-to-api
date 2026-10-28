@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatLocation, outputName, safePageUrl, slugify, uniqueName } from './locations'
+import { anyItemPointer, formatLocation, outputName, positionSkeleton, repeatedSelector, safePageUrl, slugify, uniqueName } from './locations'
 
 describe('formatLocation', () => {
   it.each([
@@ -62,6 +62,8 @@ describe('outputName', () => {
   it('uses the last named pointer segment, the cookie or header name, or the HTML name', () => {
     expect(outputName({ in: 'body', pointer: '/items/0/id' })).toBe('id')
     expect(outputName({ in: 'body', pointer: '/0' })).toBe('body')
+    expect(outputName({ in: 'body', pointer: '/items/*/id' })).toBe('id')
+    expect(outputName({ in: 'body', pointer: '/tags/*' })).toBe('tags')
     expect(outputName({ in: 'body', pointer: '/a~1b' })).toBe('a/b')
     expect(outputName({ in: 'set-cookie', name: 'sid' })).toBe('cookie.sid')
     expect(outputName({ in: 'response-header', name: 'x-token' })).toBe('header.x-token')
@@ -104,5 +106,56 @@ describe('safePageUrl', () => {
     expect(safePageUrl('https://www.example.test/reset/secrettokenvalue_abcdefghijklmnop?x=1')).toBe('https://www.example.test/reset/{token}')
     expect(safePageUrl('https://www.example.test/files/aB3dE5gH7jK9mN1pQ2xY/view')).toBe('https://www.example.test/files/{token}/view')
     expect(safePageUrl('https://www.example.test/promo/summer-sale-2026')).toBe('https://www.example.test/promo/summer-sale-2026')
+  })
+})
+
+describe('anyItemPointer', () => {
+  it('replaces array indexes with `*` along the pointer', () => {
+    expect(anyItemPointer([
+      { slug: 'a' },
+      { slug: 'b' },
+    ], '/1/slug')).toBe('/*/slug')
+    expect(anyItemPointer({
+      items: [
+        {
+          tags: ['x', 'y'],
+        },
+      ],
+    }, '/items/0/tags/1')).toBe('/items/*/tags/*')
+  })
+
+  it('keeps numeric object keys, escaped keys and paths the body does not have', () => {
+    expect(anyItemPointer({
+      2024: { total: 1 },
+    }, '/2024/total')).toBe('/2024/total')
+    expect(anyItemPointer({
+      'a/b': [
+        { id: 1 },
+      ],
+    }, '/a~1b/0/id')).toBe('/a~1b/*/id')
+    expect(anyItemPointer(undefined, '/0/id')).toBe('/0/id')
+    expect(anyItemPointer([], '')).toBe('')
+  })
+})
+
+describe('repeatedSelector', () => {
+  it('drops the positions that differ and keeps the shared ones', () => {
+    expect(repeatedSelector([
+      '#store-list > li:nth-of-type(1) > a:nth-of-type(1)',
+      '#store-list > li:nth-of-type(2) > a:nth-of-type(1)',
+    ])).toBe('#store-list > li > a:nth-of-type(1)')
+    expect(repeatedSelector([
+      'table > tr:nth-of-type(1) > td:nth-of-type(2)',
+      'table > tr:nth-of-type(3) > td:nth-of-type(4)',
+    ])).toBe('table > tr > td')
+  })
+
+  it('refuses selectors that differ by more than position', () => {
+    expect(repeatedSelector(['#a > li:nth-of-type(1)', '#b > li:nth-of-type(2)'])).toBeNull()
+    expect(repeatedSelector([])).toBeNull()
+  })
+
+  it('gives a skeleton shared by selectors that differ only by position', () => {
+    expect(positionSkeleton('ul > li:nth-of-type(3) > a')).toBe('ul > li:nth-of-type(#) > a')
   })
 })

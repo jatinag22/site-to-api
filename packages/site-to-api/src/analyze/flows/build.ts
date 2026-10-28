@@ -18,9 +18,11 @@ import type { DraftStep, Segment, Trigger } from './segments'
 import { FLOWS_FORMAT_VERSION } from '../../model'
 import { responseText, responseValues } from '../correlate'
 import { describeShape } from '../shape'
+import { createLocationGeneralizer } from './items'
 import { formatLocation, lastPointerToken, outputName, slugify, uniqueName } from './locations'
 import { splitSession } from './segments'
 import { sessionRequirements } from './session'
+import { looksTyped, typedInputField } from './typed-input'
 
 /** Input of {@link buildFlows}. */
 export interface BuildFlowsInput {
@@ -204,6 +206,9 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       operationByExchange.set(exchange.id, operation)
   }
   const operationOf = (exchange: Exchange): Operation | undefined => operationByExchange.get(exchange.id)
+  const exchangeById = new Map(input.exchanges.map(exchange => [exchange.id, exchange]))
+
+  const generalLocation = createLocationGeneralizer(input.traces, exchangeById, id => operationByExchange.get(id))
   const sessionById = new Map(input.sessions.map(session => [session.meta.sessionId, session]))
   const sessionIds = [
     ...new Set([
@@ -289,7 +294,8 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
   }
 
   const responseOrigin = (producerId: string, rawLocation: ValueLocation, transform: Extract<ValueOrigin, { kind: 'step' }>['transform'], value: string, currentFlow: string | null): ValueOrigin => {
-    const location = safeLocation(rawLocation)
+    const general = generalLocation(producerId, rawLocation)
+    const location = safeLocation(general.location)
     const step = reference(producerId, location, currentFlow)
     if (step === null) {
       return {
@@ -308,6 +314,9 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
         attr: location.attr,
         pattern: location.pattern,
         confidence,
+        ...(general.repeated && location.selector !== ''
+          ? { repeated: true }
+          : {}),
       }
     }
     return {
@@ -326,31 +335,56 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
   }
 
   // Response values the transform read: a public key, a nonce, a salt from an earlier response.
-  const usesOf = (event: TransformEvent, sessionId: string): ValueOrigin[] => {
-    const producers = (exchangesBySession.get(sessionId) ?? []).filter(exchange => exchange.startedAt <= event.ts && stepOf.has(exchange.id))
-    const uses = new Map<string, ValueOrigin>()
-    for (const preview of event.inputs.filter(text => text.length >= MIN_USE_LENGTH)) {
-      for (const exchange of producers) {
-        const values = responseValues(exchange)
-        const exact = values.find(value => value.value === preview || (preview.length >= MIN_PREFIX_LENGTH && value.value.startsWith(preview)))
-        const contained = exact ?? values.find(value => value.value.length >= MIN_USE_LENGTH && preview.includes(value.value))
-        let origin: ValueOrigin | null = null
-        if (contained) {
-          origin = responseOrigin(exchange.id, contained.location, exact ? 'none' : 'substring', contained.value, null)
-        }
-        else if (responseText(exchange)?.includes(preview)) {
-          origin = responseOrigin(exchange.id, {
-            in: 'html',
-            selector: '',
-            attr: null,
-            pattern: null,
-          }, 'none', preview, null)
-        }
-        if (origin) {
-          uses.set(JSON.stringify(origin), origin)
-          break
-        }
+  const responseUse = (preview: string, producers: readonly Exchange[]): ValueOrigin | null => {
+    for (const exchange of producers) {
+      const values = responseValues(exchange)
+      const exact = values.find(value => value.value === preview || (preview.length >= MIN_PREFIX_LENGTH && value.value.startsWith(preview)))
+      const contained = exact ?? values.find(value => value.value.length >= MIN_USE_LENGTH && preview.includes(value.value))
+      if (contained)
+        return responseOrigin(exchange.id, contained.location, exact ? 'none' : 'substring', contained.value, null)
+      if (responseText(exchange)?.includes(preview)) {
+        return responseOrigin(exchange.id, {
+          in: 'html',
+          selector: '',
+          attr: null,
+          pattern: null,
+        }, 'none', preview, null)
       }
+    }
+    return null
+  }
+
+  /** Whether any response holds the text, without recording it as a step output. */
+  const foundInResponses = (preview: string, exchanges: readonly Exchange[]): boolean => exchanges.some(exchange =>
+    responseValues(exchange).some(value => value.value === preview) || (responseText(exchange)?.includes(preview) ?? false))
+
+  const usesOf = (event: TransformEvent, sessionId: string, consumer: Exchange, inputKey: string): ValueOrigin[] => {
+    const producers = (exchangesBySession.get(sessionId) ?? []).filter(exchange => exchange.startedAt <= event.ts && stepOf.has(exchange.id))
+    const everyResponse = exchangesBySession.get(sessionId) ?? []
+    const uses = new Map<string, ValueOrigin>()
+    const add = (origin: ValueOrigin): void => {
+      uses.set(JSON.stringify(origin), origin)
+    }
+    for (const preview of event.inputs) {
+      const fromResponse = preview.length >= MIN_USE_LENGTH
+        ? responseUse(preview, producers)
+        : null
+      if (fromResponse) {
+        add(fromResponse)
+        continue
+      }
+      // Not produced by any response, earlier or later: it may be what the person typed.
+      if (!looksTyped(preview) || foundInResponses(preview, everyResponse))
+        continue
+      const field = typedInputField({
+        preview,
+        event,
+        events: sessionById.get(sessionId)?.events ?? [],
+        requestTraces: tracesByExchange.get(consumer.id) ?? [],
+        inputKey,
+      })
+      if (field !== null)
+        add({ kind: 'user-input', field })
     }
     return [
       ...uses.values(),
@@ -388,7 +422,7 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
             name,
             redactor.value(value, { in: 'text', name }),
           ])),
-      uses: usesOf(event, sessionId),
+      uses: usesOf(event, sessionId, exchange, inputKey),
       evidence: 'transform-hook',
     })
     return { kind: 'computed', computedId: id }

@@ -32,7 +32,11 @@ export const ValueOriginSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('step'),
     step: z.string(),
-    /** Response location, e.g. `body./0/symbol`, `set-cookie.session`, `header.x-token`. */
+    /**
+     * Response location, e.g. `body./symbol`, `set-cookie.session`, `header.x-token`. Array
+     * indexes are written as `*` tokens (`/items`, `*`, `/id`: the `id` of any item), because
+     * the value comes from one of the items.
+     */
     output: z.string(),
     /** How the value was encoded between response and request, if it changed. */
     transform: z.enum([
@@ -51,6 +55,11 @@ export const ValueOriginSchema = z.discriminatedUnion('kind', [
     attr: z.string().nullable(),
     pattern: z.string().nullable(),
     confidence: z.enum(['high', 'low']),
+    /**
+     * True when the selector matches a repeated element (each `li` of a list) because the
+     * samples took the value from different positions: the value comes from one of them.
+     */
+    repeated: z.boolean().optional(),
   }),
   /** Typed by the person into a form field. */
   z.object({
