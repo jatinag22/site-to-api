@@ -37,9 +37,14 @@ const MAX_WORD_LENGTH = 20
 const MIN_WORD_VOWEL_RATIO = 0.2
 
 const HEX = /^[0-9a-f]+$/i
-const SEPARATOR = /[-_.~]+/
-/** Unreserved URL characters plus the standard base64 alphabet and its `=` padding. */
-const SEGMENT_CHARS = /^[\w.~+/=-]+$/
+/**
+ * Characters that join the runs of a segment: unreserved punctuation plus the sub-delimiters and
+ * `:`/`@` a path segment may hold unencoded. Cloudflare's challenge path packs a token into
+ * `<float>:<epoch>:<token>`, so a segment with `:` must still be read run by run.
+ */
+const SEPARATOR = /[-_.~:;,!*@$&'()]+/
+/** Characters a path segment may hold unencoded, plus the base64 alphabet and its `=` padding. */
+const SEGMENT_CHARS = /^[\w.~+/=:;,!*@$&'()-]+$/
 const BASE64 = /^[\w+/-]+={0,2}$/
 /** `getAllUpcomingIssues`, `MarketStatus`: words joined in camelCase, not random. */
 const CAMEL_WORDS = /^[a-z]+(?:[A-Z][a-z]+)*\d{0,4}$|^(?:[A-Z][a-z]+)+\d{0,4}$/

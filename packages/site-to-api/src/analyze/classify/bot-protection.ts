@@ -12,8 +12,12 @@ import { hostMatchesDomain } from './noise-hosts'
 
 interface BotProtectionSignature {
   vendor: string
-  /** Vendor hosts (domain suffix) and/or path patterns; every given part must match. */
-  endpoints: Array<{ domain?: string, path?: RegExp }>
+  /**
+   * Vendor hosts (domain suffix) and/or path patterns; every given part must match. A path comes
+   * with the label evidence shows instead of the captured path, whose segments can hold challenge
+   * tokens (`$1` is the pattern's first group).
+   */
+  endpoints: Array<{ domain?: string } | { domain?: string, path: RegExp, label: string }>
   /** Request body contents that only sensor or challenge submissions carry. */
   bodies: RegExp[]
   /** Response headers that mark a challenge response. */
@@ -32,7 +36,7 @@ const BOT_PROTECTION_SIGNATURES: readonly BotProtectionSignature[] = [
   {
     vendor: AKAMAI,
     endpoints: [
-      { path: /^\/akam\/\d+\// },
+      { path: /^\/akam\/\d+\//, label: '/akam/<n>/…' },
     ],
     bodies: [/sensor_data/],
     challengeHeaders: [],
@@ -62,7 +66,7 @@ const BOT_PROTECTION_SIGNATURES: readonly BotProtectionSignature[] = [
   {
     vendor: 'Cloudflare',
     endpoints: [
-      { path: /^\/cdn-cgi\/challenge-platform\// },
+      { path: /^\/cdn-cgi\/challenge-platform\//, label: '/cdn-cgi/challenge-platform/…' },
     ],
     bodies: [],
     challengeHeaders: [
@@ -80,7 +84,7 @@ const BOT_PROTECTION_SIGNATURES: readonly BotProtectionSignature[] = [
       { domain: 'px-cdn.net' },
       { domain: 'px-client.net' },
       { domain: 'pxchk.net' },
-      { path: /\/api\/v2\/collector/ },
+      { path: /\/api\/v2\/collector/, label: '…/api/v2/collector' },
     ],
     bodies: [],
     challengeHeaders: [],
@@ -103,7 +107,7 @@ const BOT_PROTECTION_SIGNATURES: readonly BotProtectionSignature[] = [
   {
     vendor: 'Imperva',
     endpoints: [
-      { path: /\/_Incapsula_Resource/ },
+      { path: /\/_Incapsula_Resource/, label: '/_Incapsula_Resource' },
     ],
     bodies: [],
     challengeHeaders: [],
@@ -123,7 +127,7 @@ const BOT_PROTECTION_SIGNATURES: readonly BotProtectionSignature[] = [
     // sensor post (`tl`) and the proof-of-work config fetch (`mfc`). The `x-kpsdk-*` headers also
     // ride on the protected API calls, so they are evidence only.
     endpoints: [
-      { path: /^\/[0-9a-f-]{36}\/[0-9a-f-]{36}\/(?:fp|tl|mfc|p\.js|ips\.js)$/i },
+      { path: /^\/[0-9a-f-]{36}\/[0-9a-f-]{36}\/(fp|tl|mfc|p\.js|ips\.js)$/i, label: '/<uuid>/<uuid>/$1' },
     ],
     bodies: [],
     challengeHeaders: [],
@@ -151,8 +155,8 @@ const BOT_PROTECTION_SIGNATURES: readonly BotProtectionSignature[] = [
     vendor: 'reCAPTCHA',
     endpoints: [
       { domain: 'recaptcha.net' },
-      { domain: 'www.google.com', path: /^\/recaptcha\// },
-      { domain: 'www.gstatic.com', path: /^\/recaptcha\// },
+      { domain: 'www.google.com', path: /^\/recaptcha\//, label: '/recaptcha/…' },
+      { domain: 'www.gstatic.com', path: /^\/recaptcha\//, label: '/recaptcha/…' },
     ],
     bodies: [],
     challengeHeaders: [],
@@ -214,10 +218,16 @@ function trafficEvidence(signature: BotProtectionSignature, exchange: Exchange, 
   const { request, response } = exchange
   const found: Found[] = []
   for (const endpoint of signature.endpoints) {
-    const hostOk = endpoint.domain === undefined || hostMatchesDomain(request.host, endpoint.domain)
-    const pathOk = endpoint.path === undefined || endpoint.path.test(request.path)
-    if (hostOk && pathOk)
-      found.push({ evidence: `request to ${request.host}${endpoint.path ? request.path : ''}`, isTraffic: true, thirdParty: endpoint.domain !== undefined })
+    if (endpoint.domain !== undefined && !hostMatchesDomain(request.host, endpoint.domain))
+      continue
+    let label = ''
+    if ('path' in endpoint) {
+      const match = endpoint.path.exec(request.path)
+      if (!match)
+        continue
+      label = endpoint.label.replace('$1', match[1] ?? '')
+    }
+    found.push({ evidence: `request to ${request.host}${label}`, isTraffic: true, thirdParty: endpoint.domain !== undefined })
   }
   for (const pattern of signature.bodies.filter(pattern => pattern.test(body)))
     found.push({ evidence: `request body matches ${pattern.source}`, isTraffic: true, thirdParty: false })

@@ -164,3 +164,21 @@ describe('redactPathTokens', () => {
     expect(redactPathTokens('/')).toBe('/')
   })
 })
+
+describe('path segments joined by colons', () => {
+  /** Shaped like a Cloudflare challenge segment: `<float>:<epoch>:<token>`, made-up values. */
+  const CHALLENGE = '0.418273645509182:1700000000:Hq7ZpL2xVb9KmR4tWc8NyD3fJs6GaE1uYo5Tk0Xi'
+
+  it('treats a random run between colons as an opaque token', () => {
+    expect(isRandomPathSegment(CHALLENGE)).toBe(true)
+    expect(isOpaquePathSegment(CHALLENGE)).toBe(true)
+    expect(redactPathTokens(`/cdn-cgi/challenge-platform/h/g/jsd/oneshot/0a1b2c3d4e5f/${CHALLENGE}/9f8e7d6c5b4a3210`))
+      .toBe('/cdn-cgi/challenge-platform/h/g/jsd/oneshot/0a1b2c3d4e5f/{token}/9f8e7d6c5b4a3210')
+  })
+
+  it('keeps words and times joined by colons', () => {
+    expect(isRandomPathSegment('urn:isbn:0451450523')).toBe(false)
+    expect(isRandomPathSegment('2026-10-28T12:30:00')).toBe(false)
+    expect(isRandomPathSegment('spotify:track:playlist')).toBe(false)
+  })
+})

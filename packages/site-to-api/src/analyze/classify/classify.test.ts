@@ -447,6 +447,28 @@ describe('classifyExchanges: bot protection', () => {
     expect(result.botProtection.map(finding => finding.vendor)).toEqual([vendor])
   })
 
+  it('describes vendor paths by a label, never by the captured path', () => {
+    const token = 'Hq7ZpL2xVb9KmR4tWc8NyD3fJs6GaE1uYo5Tk0Xi'
+    const result = classify([
+      page(),
+      on({
+        method: 'POST',
+        url: `https://shop.test/cdn-cgi/challenge-platform/h/g/jsd/oneshot/0a1b2c3d4e5f/0.4182736455:1700000000:${token}/9f8e7d6c5b4a3210`,
+        responseBody: textBody('x', 'text/plain'),
+      }),
+      on({
+        url: 'https://shop.test/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/mfc',
+        responseBody: jsonBody({}),
+      }),
+    ])
+    expect(result.exchanges[1]!.kindReason).toBe('Cloudflare: request to shop.test/cdn-cgi/challenge-platform/…')
+    expect(result.botProtection.map(finding => finding.evidence)).toEqual([
+      'request to shop.test/cdn-cgi/challenge-platform/…',
+      'request to shop.test/<uuid>/<uuid>/mfc',
+    ])
+    expect(JSON.stringify(result.botProtection)).not.toContain(token)
+  })
+
   it('keeps vendor scripts out of the specs, still reports the vendor, and skips findings on hosts outside the analysis', () => {
     const result = classify([
       page(),
