@@ -34,3 +34,4 @@ or `Proposed`.
 | [0024](0024-client-usability.md) | Generated client: request validation, `.js` imports, auth and HTML values | Accepted |
 | [0025](0025-sticky-build-options-and-client-state.md) | Sticky build options in `build.json`; `gen` rewrites the client state in place | Accepted |
 | [0026](0026-fitting-and-credential-rules.md) | Fit output to the site, not the samples; credentials are never constants (refines 0015) | Accepted |
+| [0027](0027-html-records-and-field-names.md) | HTML records that span siblings, ranked by coverage; names from the markup | Accepted |

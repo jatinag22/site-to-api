@@ -78,7 +78,10 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
 - Required cookies are `in: cookie` parameters, names only.
 - Constant headers are parameters with `x-site-to-api-constant: true` and a `default`.
 - HTML/text data responses use `content: text/html` (or `text/plain`, `text/csv`) with
-  `x-site-to-api-extract` holding the extraction spec.
+  `x-site-to-api-extract` holding the extraction spec. An HTML spec may carry `recordsName`, what
+  its records are (`submissions`), which names the generated parser
+  (`extractSubmissionsFromGetRoot`). Field selectors starting with `:scope +` read the sibling
+  elements of a record that spans several (decision 0027).
 - Extensions:
   - `x-site-to-api-kind`: `api` | `page` | `bot-protection`
   - `x-site-to-api-source`: list of source references (`file`, `line`, `function`)
