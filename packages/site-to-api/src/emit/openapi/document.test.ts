@@ -155,7 +155,8 @@ describe('buildOpenApiDocuments', () => {
       {
         'name': 'x-app-version',
         'in': 'header',
-        'required': true,
+        // Captured on every request, but the client sends the constant itself.
+        'required': false,
         'schema': {
           'type': 'string',
           'x-constant': true,
