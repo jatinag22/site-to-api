@@ -87,6 +87,91 @@ export interface Operation {
   exchanges: Exchange[]
 }
 
+/** Where a value that a WebSocket client sends came from (decision 0023). */
+export type ChannelValueOrigin
+  = | {
+    kind: 'response'
+    /** Operation whose response held the value. */
+    operationId: string
+    host: string
+    /** Response location as in `flows.json`, e.g. `body./items/0/id`. Redacted. */
+    output: string
+    transform: 'none' | 'url-encoded' | 'base64' | 'json-string' | 'substring'
+  }
+  | {
+    kind: 'html'
+    operationId: string
+    host: string
+    /** CSS selector of the element; empty when the value is in the page but no rule was found. */
+    selector: string
+    attr: string | null
+  }
+  | { kind: 'user-input', field: string }
+
+/** One traced input of a channel: a field of a client message, or a part of the connection URL. */
+export interface ChannelValueLink {
+  /** `body./productId` inside a message, `query.room` or `path.roomId` on the connection URL. */
+  input: string
+  origin: ChannelValueOrigin
+  /** How many captured values were traced to this origin. */
+  samples: number
+}
+
+/** A group of WebSocket messages that share a direction and a discriminator value. */
+export interface ChannelMessage {
+  /** Unique within the channel and usable as an AsyncAPI key: `sendSubscribe`, `receiveTick`. */
+  id: string
+  /** From the client's point of view: `send` is client → server, `receive` server → client. */
+  direction: 'send' | 'receive'
+  /**
+   * The top-level field and value that tell this group apart (`type: tick`). Null when the
+   * direction's JSON messages share no such field, and for text and binary frames.
+   */
+  discriminator: { field: string, value: string } | null
+  format: 'json' | 'text' | 'binary'
+  /** Frames seen across all connections. */
+  count: number
+  /** JSON Schema of the message, for JSON messages; null otherwise. */
+  schema: JsonSchema | null
+  /** For text frames: value-free shape descriptions of the frames, most common first. */
+  shapes: string[]
+  /** Redacted examples, at most `config.redact.maxExamples`; empty for binary frames. */
+  examples: unknown[]
+  /** Values in this message traced to earlier HTTP responses or typing (client messages only). */
+  links: ChannelValueLink[]
+}
+
+/** A WebSocket endpoint seen during capture, with its messages grouped by direction and type. */
+export interface WebSocketChannel {
+  /** Unique per host and usable as an AsyncAPI key, e.g. `wsTicker`. */
+  id: string
+  host: string
+  scheme: 'ws' | 'wss'
+  /** Connection path with parameters, templated by the same rules as HTTP paths. */
+  path: string
+  pathParams: PathParam[]
+  query: ParamInfo[]
+  /** Connections opened during capture, across all sessions. */
+  connections: number
+  /** Where the page's code opens the socket, when the capture recorded a stack for it. */
+  sentFrom: SourceRef | null
+  messages: ChannelMessage[]
+  /**
+   * What the client sends right after connecting (subscription, authentication), in order: the
+   * most common opening sequence across connections, with a redacted example of each message.
+   */
+  handshake: Array<{ message: string, example: unknown }>
+  /**
+   * Cookies on the HTTP upgrade request: `sent` (names listed), `none`, or `unknown` when the
+   * HAR has no upgrade request for the channel.
+   */
+  cookies: { status: 'sent' | 'none' | 'unknown', names: string[] }
+  /** Path and query values of the connection URL traced to earlier responses. */
+  links: ChannelValueLink[]
+  /** One-line description built from the path and the message names, without an LLM. */
+  summary: string
+}
+
 export interface BotProtectionFinding {
   vendor: string
   host: string
@@ -100,6 +185,8 @@ export interface Analysis {
   operations: Operation[]
   flows: FlowsDocument
   botProtection: BotProtectionFinding[]
+  /** WebSocket channels, sorted by host then path. Absent when the build did not look at them. */
+  channels?: WebSocketChannel[]
   /** Source excerpts to write into the handoff folder, keyed by their path under `source/`. */
   excerpts: Map<string, string>
   warnings: string[]

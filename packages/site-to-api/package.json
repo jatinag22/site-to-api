@@ -66,6 +66,7 @@
     "zod": "catalog:prod"
   },
   "devDependencies": {
+    "@asyncapi/parser": "catalog:dev",
     "@jridgewell/gen-mapping": "catalog:dev",
     "@scalar/openapi-parser": "catalog:dev",
     "micromark": "catalog:dev",

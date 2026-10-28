@@ -18,9 +18,9 @@ import { z } from 'zod'
 import pkg from '../../package.json' with { type: 'json' }
 import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
+import { InstrumentBinding } from './binding'
 import { EventWriter } from './events'
-import { effectiveOrigin, isFrameInScope } from './frames'
-import { BINDING_NAME, instrumentSource, pageMessageToEvent } from './instrument'
+import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
 import { ScriptCollector } from './scripts'
 
@@ -216,20 +216,22 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
   const ignoredFrames = new Map<string, number>()
 
   try {
+    // Every document can call the binding; only the site's own are listened to (frames.ts).
+    const binding = capture.instrument
+      ? new InstrumentBinding(context, options.url, {
+          accept: (text, origin) => {
+            const result = pageMessageToEvent(text, origin)
+            if ('event' in result)
+              events.write(result.event)
+            else
+              events.reject(result.error)
+          },
+          ignore: (origin) => {
+            ignoredFrames.set(origin, (ignoredFrames.get(origin) ?? 0) + 1)
+          },
+        })
+      : null
     if (capture.instrument) {
-      await context.exposeBinding(BINDING_NAME, (source, payload: unknown) => {
-        // Every frame can call the binding; only the site's own frames are listened to (frames.ts).
-        const origin = effectiveOrigin(source.frame)
-        if (source.frame !== source.page.mainFrame() && !isFrameInScope(origin, effectiveOrigin(source.page.mainFrame()))) {
-          ignoredFrames.set(origin, (ignoredFrames.get(origin) ?? 0) + 1)
-          return
-        }
-        const result = pageMessageToEvent(payload, origin)
-        if ('event' in result)
-          events.write(result.event)
-        else
-          events.reject(result.error)
-      })
       await context.addInitScript({
         content: instrumentSource(),
       })
@@ -237,6 +239,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     if (capture.saveScripts || capture.sourcemaps)
       context.on('response', response => collector.onResponse(response))
 
+    let nextSocket = 0
     const watchPage = (page: Page): void => {
       page.on('framenavigated', (frame) => {
         if (frame !== page.mainFrame())
@@ -256,12 +259,19 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
         }))
       })
       if (capture.websockets)
-        page.on('websocket', ws => recordWebSocket(ws, page, event => events.write(event)))
+        page.on('websocket', ws => recordWebSocket(ws, page, nextSocket++, event => events.write(event)))
     }
     context.pages().forEach(watchPage)
     context.on('page', watchPage)
 
     const page = context.pages()[0] ?? await context.newPage()
+    if (binding !== null) {
+      // Attached before the first navigation, so the first page never misses an event.
+      await binding.attach(page, true)
+      context.on('page', p => track(binding.attach(p, false)))
+      for (const other of context.pages())
+        track(binding.attach(other, false))
+    }
     const userAgent = browser.userAgent ?? await page.evaluate(() => navigator.userAgent)
 
     if (script === null)
@@ -335,11 +345,12 @@ async function navigationLabel(page: Page, url: string): Promise<string> {
   }
 }
 
-function recordWebSocket(ws: WebSocket, page: Page, write: (event: CaptureEvent) => void): void {
-  const base = (): { ts: number, pageUrl: string, url: string } => ({
+function recordWebSocket(ws: WebSocket, page: Page, socket: number, write: (event: CaptureEvent) => void): void {
+  const base = (): { ts: number, pageUrl: string, url: string, socket: number } => ({
     ts: Date.now(),
     pageUrl: page.url(),
     url: ws.url(),
+    socket,
   })
   const frameData = (payload: string | Buffer): string => typeof payload === 'string'
     ? payload
@@ -355,12 +366,14 @@ function recordWebSocket(ws: WebSocket, page: Page, write: (event: CaptureEvent)
     t: 'ws',
     direction: 'sent',
     data: frameData(frame.payload),
+    binary: typeof frame.payload !== 'string',
   }))
   ws.on('framereceived', frame => write({
     ...base(),
     t: 'ws',
     direction: 'received',
     data: frameData(frame.payload),
+    binary: typeof frame.payload !== 'string',
   }))
   ws.on('close', () => write({
     ...base(),

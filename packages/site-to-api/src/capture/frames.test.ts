@@ -1,13 +1,6 @@
-import type { FrameLike } from './frames'
+import type { FrameCall } from './frames'
 import { describe, expect, it } from 'vitest'
-import { effectiveOrigin, isFrameInScope, registrableHost } from './frames'
-
-function frame(url: string, parent: FrameLike | null = null): FrameLike {
-  return {
-    url: () => url,
-    parentFrame: () => parent,
-  }
-}
+import { acceptsCall, isFrameInScope, normalizeOrigin, registrableHost } from './frames'
 
 describe('registrableHost', () => {
   it('keeps the last two labels of ordinary hosts', () => {
@@ -35,21 +28,56 @@ describe('registrableHost', () => {
   })
 })
 
-describe('effectiveOrigin', () => {
-  it('uses the frame URL origin', () => {
-    expect(effectiveOrigin(frame('https://example.com/a?b=1'))).toBe('https://example.com')
+describe('normalizeOrigin', () => {
+  it('keeps tuple origins in URL.origin form', () => {
+    expect(normalizeOrigin('https://example.com')).toBe('https://example.com')
+    expect(normalizeOrigin('http://127.0.0.1:3000')).toBe('http://127.0.0.1:3000')
+    expect(normalizeOrigin('HTTPS://Example.COM:443')).toBe('https://example.com')
   })
 
-  it('inherits the creator origin for about:blank and srcdoc frames', () => {
-    const top = frame('https://example.com/')
-    expect(effectiveOrigin(frame('about:blank', top))).toBe('https://example.com')
-    expect(effectiveOrigin(frame('about:srcdoc', frame('about:blank', top)))).toBe('https://example.com')
+  it('maps opaque and unparsable origins to null', () => {
+    expect(normalizeOrigin('://')).toBe('null')
+    expect(normalizeOrigin('null')).toBe('null')
+    expect(normalizeOrigin('')).toBe('null')
+    expect(normalizeOrigin('chrome-extension://abc')).toBe('null')
+  })
+})
+
+describe('acceptsCall', () => {
+  const shop = 'https://www.shop.com'
+  const call = (overrides: Partial<FrameCall>): FrameCall => ({
+    frameOrigin: shop,
+    mainFrame: false,
+    firstPage: true,
+    topOrigin: shop,
+    siteOrigin: shop,
+    ...overrides,
   })
 
-  it('uses the origin inside blob: URLs and null for data: URLs', () => {
-    expect(effectiveOrigin(frame('blob:https://example.com/0b1c'))).toBe('https://example.com')
-    expect(effectiveOrigin(frame('data:text/html,hi', frame('https://example.com/')))).toBe('null')
-    expect(effectiveOrigin(frame('about:blank'))).toBe('null')
+  it('always accepts the top frame of the first page, wherever the person browses', () => {
+    expect(acceptsCall(call({ mainFrame: true, frameOrigin: 'https://elsewhere.org', topOrigin: 'https://elsewhere.org' }))).toBe(true)
+    expect(acceptsCall(call({ mainFrame: true, frameOrigin: 'null', topOrigin: 'null' }))).toBe(true)
+  })
+
+  it('judges frames of the first page against its current top frame', () => {
+    expect(acceptsCall(call({ frameOrigin: 'https://auth.shop.com' }))).toBe(true)
+    expect(acceptsCall(call({ frameOrigin: 'https://ads.tracker.net' }))).toBe(false)
+    // A third party's about:blank document has the third party's origin, whatever its parent.
+    expect(acceptsCall(call({ frameOrigin: 'null' }))).toBe(false)
+    expect(acceptsCall(call({ frameOrigin: shop, topOrigin: 'null' }))).toBe(false)
+  })
+
+  it('accepts a popup only when it belongs to the capture\'s site', () => {
+    expect(acceptsCall(call({ firstPage: false, mainFrame: true }))).toBe(true)
+    expect(acceptsCall(call({ firstPage: false, mainFrame: true, frameOrigin: 'https://checkout.shop.com' }))).toBe(true)
+    expect(acceptsCall(call({
+      firstPage: false,
+      mainFrame: true,
+      frameOrigin: 'https://ads.tracker.net',
+      topOrigin: 'https://ads.tracker.net',
+    }))).toBe(false)
+    expect(acceptsCall(call({ firstPage: false, mainFrame: false, frameOrigin: 'https://ads.tracker.net' }))).toBe(false)
+    expect(acceptsCall(call({ firstPage: false, mainFrame: true, siteOrigin: 'null' }))).toBe(false)
   })
 })
 

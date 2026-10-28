@@ -29,3 +29,5 @@ or `Proposed`.
 | [0019](0019-capture-trust-boundary.md) | Treat the captured site as untrusted input | Accepted |
 | [0020](0020-redaction-of-flows-and-paths.md) | Redact flows and URL paths like the specs; script-set cookies | Accepted |
 | [0021](0021-path-token-tiers-and-cookie-origins.md) | Three tiers of path segments; cookie origins from evidence | Accepted |
+| [0022](0022-binding-scope-by-security-origin.md) | Judge instrumentation calls by the caller's security origin | Accepted |
+| [0023](0023-websocket-channels.md) | WebSocket channels in `build`, as AsyncAPI 3.0 | Accepted |
