@@ -68,13 +68,53 @@ const ResponseSchema = z.looseObject({
 // extension) does not reject the whole spec.
 const SecurityRequirementsSchema = z.array(z.record(z.string(), z.unknown()))
 
+/** `x-site-to-api-graphql` as `build` writes it (decision 0027). */
+const GraphqlExtensionSchema = z.object({
+  endpoint: z.string(),
+  operationName: z.string().nullable(),
+  operationType: z.enum([
+    'query',
+    'mutation',
+    'subscription',
+    'unknown',
+  ]),
+  operationTypeFrom: z.enum(['document', 'get', 'source']).nullable(),
+  persistedQuery: z.object({
+    version: z.number().nullable(),
+    sha256Hash: z.string(),
+  }).nullable(),
+  hashes: z.array(z.string()).optional(),
+  document: z.string().nullable(),
+  batched: z.boolean(),
+  sent: z.object({
+    body: z.array(z.string()),
+    query: z.array(z.string()),
+  }),
+})
+
+const RequiredFlagSchema = z.looseObject({
+  required: z.boolean().optional(),
+})
+
+const RequiredListSchema = z.looseObject({
+  required: z.array(z.string()).optional(),
+})
+
+const RequestBodySchema = z.looseObject({
+  content: z.record(z.string(), z.looseObject({
+    schema: RequiredListSchema.optional(),
+  })).optional(),
+})
+
 const OperationSchema = z.looseObject({
   'operationId': z.string().optional(),
   'security': SecurityRequirementsSchema.optional(),
   // What `probe` found this operation needs (`cookie:<name>`, ...); absent when not minimized.
   'x-site-to-api-requires': z.array(z.string()).optional(),
   'parameters': z.array(z.unknown()).optional(),
+  'requestBody': z.unknown().optional(),
   'responses': z.record(z.string(), z.unknown()).optional(),
+  'x-site-to-api-graphql': z.unknown().optional(),
 })
 
 const METHODS = [
@@ -192,6 +232,20 @@ export interface ExtractOperation {
   spec: ExtractSpec
 }
 
+/** A GraphQL operation the generated client gets a `{ variables }` function for (decision 0027). */
+export interface GraphqlClientOperation extends z.infer<typeof GraphqlExtensionSchema> {
+  operationId: string
+  method: string
+  /** Spec path; `<endpoint>#<name>` when several operations share the endpoint. */
+  path: string
+  /** Where `variables` go, or null when the operation was sent without any. */
+  variablesIn: 'body' | 'query' | null
+  /** The caller must pass `variables` (they were in every sample, with required fields). */
+  variablesRequired: boolean
+  /** Query parameters that are not GraphQL fields (`locale`), which the caller passes as `query`. */
+  otherQuery: Array<{ name: string, required: boolean }>
+}
+
 /** A security scheme from `components.securitySchemes`, as the generated client applies it. */
 export interface AuthScheme {
   /** Key in `components.securitySchemes`. */
@@ -228,6 +282,8 @@ export interface HostSpec {
    * which cookies probe confirmed (see emit/cookies). Empty before probing.
    */
   probedRequires: string[][]
+  /** GraphQL operations, sorted by operation id. */
+  graphql: GraphqlClientOperation[]
 }
 
 /** `x-site-to-api-requires` of every operation that has one, in spec order. */
@@ -236,6 +292,26 @@ function probedRequiresOf(document: OpenApiDocument): string[][] {
     const requires = item[method]?.['x-site-to-api-requires']
     return requires
       ? [requires]
+      : []
+  }))
+}
+
+/** Every operation of the document in spec order, with its path item's parameters before its own. */
+function operationsOf(document: OpenApiDocument): Array<{ path: string, method: (typeof METHODS)[number], operation: Operation, parameters: unknown[] }> {
+  return Object.entries(document.paths ?? {}).flatMap(([path, item]) => METHODS.flatMap((method) => {
+    const operation = item[method]
+    return operation
+      ? [
+          {
+            path,
+            method,
+            operation,
+            parameters: [
+              ...(item.parameters ?? []),
+              ...(operation.parameters ?? []),
+            ],
+          },
+        ]
       : []
   }))
 }
@@ -250,33 +326,29 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
   const operationIds: string[] = []
   const securedOperationIds: string[] = []
   const extracts: ExtractOperation[] = []
-  for (const [path, item] of Object.entries(document.paths ?? {})) {
-    for (const method of METHODS) {
-      const operation = item[method]
-      if (!operation)
-        continue
-      const where = `specs/${file}: ${method.toUpperCase()} ${path}`
-      if (operation.operationId === undefined) {
-        warnings.push(`${where} has no operationId; its SDK function is named by hey-api and it gets no extract parser`)
-        continue
-      }
-      operationIds.push(operation.operationId)
-      // An empty list (`security: []`) is how an operation opts out of the document's default.
-      if ((operation.security ?? document.security ?? []).some(requirement => Object.keys(requirement).length > 0))
-        securedOperationIds.push(operation.operationId)
-      collectConstantHeaders([
-        ...(item.parameters ?? []),
-        ...(operation.parameters ?? []),
-      ], headerValues, where, warnings)
-      const extract = findExtract(operation, where, warnings)
-      if (extract) {
-        extracts.push({
-          operationId: operation.operationId,
-          method: method.toUpperCase(),
-          path,
-          ...extract,
-        })
-      }
+  const graphqlOperations: GraphqlClientOperation[] = []
+  for (const { path, method, operation, parameters } of operationsOf(document)) {
+    const where = `specs/${file}: ${method.toUpperCase()} ${path}`
+    if (operation.operationId === undefined) {
+      warnings.push(`${where} has no operationId; its SDK function is named by hey-api and it gets no extract parser`)
+      continue
+    }
+    operationIds.push(operation.operationId)
+    // An empty list (`security: []`) is how an operation opts out of the document's default.
+    if ((operation.security ?? document.security ?? []).some(requirement => Object.keys(requirement).length > 0))
+      securedOperationIds.push(operation.operationId)
+    collectConstantHeaders(parameters, headerValues, where, warnings)
+    const graphql = readGraphql(operation, method, path, parameters, where, warnings)
+    if (graphql)
+      graphqlOperations.push(graphql)
+    const extract = findExtract(operation, where, warnings)
+    if (extract) {
+      extracts.push({
+        operationId: operation.operationId,
+        method: method.toUpperCase(),
+        path,
+        ...extract,
+      })
     }
   }
 
@@ -291,6 +363,51 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
     auth: readAuthSchemes(file, document, warnings),
     securedOperationIds: securedOperationIds.sort(),
     probedRequires: probedRequiresOf(document),
+    graphql: graphqlOperations.sort((a, b) => a.operationId.localeCompare(b.operationId)),
+  }
+}
+
+const GRAPHQL_FIELDS: ReadonlySet<string> = new Set([
+  'extensions',
+  'operationName',
+  'query',
+  'variables',
+])
+
+/** The GraphQL facts of one operation, or null when it has none (or they cannot be read). */
+function readGraphql(operation: Operation, method: string, path: string, parameters: unknown[], where: string, warnings: string[]): GraphqlClientOperation | null {
+  const raw = operation['x-site-to-api-graphql']
+  if (raw === undefined || operation.operationId === undefined)
+    return null
+  const parsed = GraphqlExtensionSchema.safeParse(raw)
+  if (!parsed.success) {
+    warnings.push(`${where}: x-site-to-api-graphql could not be read (${z.prettifyError(parsed.error).replaceAll('\n', '; ')}); it gets no GraphQL function. Run \`site-to-api build\` again`)
+    return null
+  }
+  const queryParams = parameters.flatMap((raw) => {
+    const parameter = ParameterSchema.safeParse(raw).data
+    return parameter !== undefined && parameter.in === 'query'
+      ? [
+          { name: parameter.name, required: RequiredFlagSchema.safeParse(raw).data?.required === true },
+        ]
+      : []
+  })
+  const variablesIn = parsed.data.sent.body.includes('variables')
+    ? 'body'
+    : parsed.data.sent.query.includes('variables')
+      ? 'query'
+      : null
+  const bodyRequired = Object.values(RequestBodySchema.safeParse(operation.requestBody).data?.content ?? {})[0]?.schema?.required ?? []
+  return {
+    ...parsed.data,
+    operationId: operation.operationId,
+    method: method.toUpperCase(),
+    path,
+    variablesIn,
+    variablesRequired: variablesIn === 'body'
+      ? bodyRequired.includes('variables')
+      : variablesIn === 'query' && queryParams.some(parameter => parameter.name === 'variables' && parameter.required),
+    otherQuery: queryParams.filter(parameter => !GRAPHQL_FIELDS.has(parameter.name)),
   }
 }
 

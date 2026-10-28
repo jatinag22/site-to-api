@@ -312,3 +312,93 @@ describe('toIdentifier and toPascalCase', () => {
     expect(toIdentifier('h`o$s{t}\'q"x.example')).toBe('h_o_s_t_q_x_example')
   })
 })
+
+describe('describeHost: GraphQL operations', () => {
+  const graphql = {
+    endpoint: '/graphql',
+    operationName: 'StoreHours',
+    operationType: 'query',
+    operationTypeFrom: 'get',
+    persistedQuery: {
+      version: 1,
+      sha256Hash: 'c'.repeat(64),
+    },
+    document: null,
+    batched: false,
+    sent: {
+      body: [],
+      query: ['extensions', 'operationName', 'variables'],
+    },
+  }
+
+  it('reads x-site-to-api-graphql with where the variables go and the other query parameters', () => {
+    const host = describeHost('api.example.com.yaml', doc({
+      '/graphql#StoreHours': {
+        get: {
+          'operationId': 'storeHours',
+          'parameters': [
+            {
+              name: 'operationName',
+              in: 'query',
+              required: true,
+              schema: { const: 'StoreHours' },
+            },
+            {
+              name: 'locale',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' },
+            },
+            {
+              name: 'page',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+            },
+            {
+              name: 'variables',
+              in: 'query',
+              required: true,
+              content: {
+                'application/json': {
+                  schema: { type: 'object' },
+                },
+              },
+            },
+          ],
+          'responses': {},
+          'x-site-to-api-graphql': graphql,
+        },
+      },
+    }), [])
+    expect(host.graphql).toEqual([
+      {
+        ...graphql,
+        operationId: 'storeHours',
+        method: 'GET',
+        path: '/graphql#StoreHours',
+        variablesIn: 'query',
+        variablesRequired: true,
+        otherQuery: [
+          { name: 'locale', required: true },
+          { name: 'page', required: false },
+        ],
+      },
+    ])
+  })
+
+  it('warns about an unreadable extension and gives the operation no GraphQL function', () => {
+    const warnings: string[] = []
+    const host = describeHost('api.example.com.yaml', doc({
+      '/graphql': {
+        post: {
+          'operationId': 'x',
+          'responses': {},
+          'x-site-to-api-graphql': { endpoint: 1 },
+        },
+      },
+    }), warnings)
+    expect(host.graphql).toEqual([])
+    expect(warnings[0]).toMatch(/x-site-to-api-graphql could not be read/)
+  })
+})
