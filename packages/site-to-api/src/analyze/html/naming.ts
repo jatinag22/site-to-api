@@ -42,4 +42,37 @@ export class NameAllocator {
       ? base
       : `${base}${count}`
   }
+
+  /**
+   * The first hint whose name is still free; when all are taken, the first hint numbered
+   * (`price2`), and `field<N>` when no hint is usable.
+   */
+  takeFree(hints: Array<string | null | undefined>): string {
+    const free = hints.map(hint => hint
+      ? camelCase(hint)
+      : null).find(name => name !== null && !this.used.has(name))
+    return free === undefined || free === null
+      ? this.take(...hints)
+      : this.take(free)
+  }
+}
+
+/** `entry` → `entries`, `box` → `boxes`, `story` → `stories`. */
+export function plural(word: string): string {
+  if (/[^aeiou]y$/i.test(word))
+    return `${word.slice(0, -1)}ies`
+  if (/(?:[sxz]|ch|sh)$/i.test(word))
+    return `${word}es`
+  return `${word}s`
+}
+
+/** `stories` → `story`, `boxes` → `box`, `deals` → `deal`; other words unchanged. */
+export function singular(word: string): string {
+  if (/[^aeiou]ies$/i.test(word))
+    return `${word.slice(0, -3)}y`
+  if (/(?:[sxz]|ch|sh)es$/i.test(word))
+    return word.slice(0, -2)
+  if (/[^su]s$/i.test(word))
+    return word.slice(0, -1)
+  return word
 }

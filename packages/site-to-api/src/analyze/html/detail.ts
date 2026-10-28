@@ -8,8 +8,9 @@ import type { Document, Element } from './dom'
 import type { Draft } from './records'
 import type { ExtractedValue } from './values'
 import { readRaw } from './apply'
-import { attr, childElements, contentElements, cssString, ownText, parentElement, select, text } from './dom'
+import { attr, childElements, contentElements, cssString, holdsText, parentElement, select, text } from './dom'
 import { afterLabel, typeField } from './fields'
+import { classHint, linkWord } from './hints'
 import { NameAllocator } from './naming'
 import { capture } from './pattern'
 import { isStableId, selectorCandidates, stableClasses, uniqueSelector } from './selector'
@@ -31,6 +32,8 @@ const MAX_LABEL = 40
 const PROSE_CHARS = 160
 const PROSE_WORDS = 25
 const MAX_POSITIONS = 400
+/** Elements whose trailing colon starts a sentence's continuation, not a value. */
+const PROSE_LABELS = /^(?:p|li|h[1-6]|blockquote|figcaption)$/
 
 function nextElement(element: Element): Element | null {
   const parent = element.parent
@@ -83,7 +86,9 @@ function labelPairs(document: Document): Pair[] {
   }
   for (const element of contentElements(document)) {
     const label = text(element)
-    if (childElements(element).length === 0 && label.endsWith(':') && label.length <= MAX_LABEL)
+    // A paragraph or heading ending in `:` introduces what follows (`Install it:` before a code
+    // block); it labels a value only in a table, a definition list or a short inline label.
+    if (childElements(element).length === 0 && label.endsWith(':') && label.length <= MAX_LABEL && !PROSE_LABELS.test(element.name))
       push(pairFromSiblings(element, nextElement(element), label))
     push(inlinePair(element))
   }
@@ -140,10 +145,19 @@ function isProse(values: string[]): boolean {
 
 function positionHint(element: Element): string | null {
   const id = attr(element, 'id')
+  const href = element.name === 'a'
+    ? attr(element, 'href')
+    : null
+  const link = href === null
+    ? null
+    : linkWord(href.replace(/[^/?=&]*$/, ''))
   for (let current: Element | null = element; current; current = parentElement(current)) {
-    const named = attr(current, 'itemprop') ?? stableClasses(current)[0]
+    const itemprop = attr(current, 'itemprop')
+    if (itemprop)
+      return itemprop
+    const named = stableClasses(current).map(name => classHint(name, [], link)).find(hint => hint !== null)
     if (named !== undefined && named !== null)
-      return named.split('__').at(-1) ?? named
+      return named
     if (current.name === 'body')
       break
   }
@@ -160,7 +174,7 @@ function varyingFields(samples: Document[], used: Set<Element>): DetailField[] {
   if (!first)
     return []
   const fields: DetailField[] = []
-  const points = contentElements(first).filter(element => ownText(element) !== '' && !used.has(element)).slice(0, MAX_POSITIONS)
+  const points = contentElements(first).filter(element => holdsText(element) && !used.has(element)).slice(0, MAX_POSITIONS)
   for (const element of points) {
     const selector = selectorCandidates(element, first).find(candidate => uniqueEverywhere(candidate, samples) && select(candidate, first)[0] === element)
     if (selector === undefined)

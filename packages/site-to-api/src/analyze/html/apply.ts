@@ -15,7 +15,8 @@ type ExtractedRecord = Record<string, ExtractedValue | null>
 
 /**
  * The text a field reads before type coercion: the element (empty selector: the root itself),
- * its trimmed text or attribute, then the pattern's first group. `null` when any step finds nothing.
+ * its text with whitespace collapsed (as the runtime's `extract()` reads it) or an attribute,
+ * then the pattern's first group. `null` when any step finds nothing.
  */
 export function readRaw(root: Document | Element, selector: string, attrName: string | null, pattern: string | null): string | null {
   const element = selector === ''
@@ -25,7 +26,8 @@ export function readRaw(root: Document | Element, selector: string, attrName: st
     return null
   let raw: string | null
   if (attrName === null) {
-    raw = text(element)
+    // A comment that spans lines must read the same here as in a generated client.
+    raw = text(element).replace(/\s+/g, ' ')
   }
   else {
     raw = isTag(element)
@@ -147,8 +149,8 @@ function applyText(input: string, spec: TextExtractSpec): ExtractedRecord[] {
  *
  * HTML: with `many`, every element matching `records` is a record; otherwise `:root` means the
  * whole document and any other selector its first match. A field's `selector` is matched among
- * the record's descendants (empty string: the record itself), `attr: null` reads the trimmed text
- * content, `pattern` keeps its first capture group, and the result is coerced to `type`
+ * the record's descendants (empty string: the record itself), `attr: null` reads the text
+ * content with whitespace collapsed, `pattern` keeps its first capture group, and the result is coerced to `type`
  * (see `coerce`). Text: `delimited` splits non-blank lines by `delimiter` (double quotes group,
  * the first line is skipped when `header`), `pattern` is matched with the `g` flag and named
  * groups give the fields.

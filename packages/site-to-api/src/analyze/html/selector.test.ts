@@ -11,6 +11,11 @@ describe('selectors', () => {
     expect(element && stableClasses(element)).toEqual(['price', 'col-2'])
   })
 
+  it('rejects CSS-module hashes but keeps BEM elements', () => {
+    const [element] = select('span', parseHtml('<span class="NarrowOnly__KfauzV withMetadata__klorrw OverviewTable__rPbUfl prc-Token-Token-A5-r7 card__title card__priceValue Link--primary"></span>'))
+    expect(element && stableClasses(element)).toEqual(['card__title', 'card__priceValue', 'Link--primary'])
+  })
+
   it('prefers id, then name, then a unique class, then an anchored path', () => {
     const document = parseHtml('<div id="main"><form><input name="q"><span class="a">1</span><span class="a">2</span><em>x</em><em>y</em></form></div>')
     const [input, , second, , em] = select('input, span, em', document)
