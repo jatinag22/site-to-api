@@ -7,7 +7,7 @@ const CONFIG_TEMPLATE = `import { defineConfig } from 'site-to-api'
 export default defineConfig({
   // Raw captures hold real cookies, tokens and personal data. Keep this folder out of git.
   rawDir: '.site-to-api/raw',
-  // The handoff folder for your coding agent. Redacted by default, safe to commit.
+  // The handoff folder for your coding agent. Redacted by default; review it before publishing.
   outDir: 'api-handoff',
   hosts: {
     // Leave empty to analyse every host the site's pages talk to (minus analytics and ads).
@@ -24,6 +24,8 @@ export default defineConfig({
   probe: {
     // Be polite to the site: requests per second when replaying.
     maxRps: 1,
+    // Operations per host whose required cookies and headers are worked out one by one.
+    minimizePerHost: 5,
   },
 })
 `
