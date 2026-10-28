@@ -29,3 +29,4 @@ or `Proposed`.
 | [0019](0019-capture-trust-boundary.md) | Treat the captured site as untrusted input | Accepted |
 | [0020](0020-redaction-of-flows-and-paths.md) | Redact flows and URL paths like the specs; script-set cookies | Accepted |
 | [0021](0021-path-token-tiers-and-cookie-origins.md) | Three tiers of path segments; cookie origins from evidence | Accepted |
+| [0022](0022-client-usability.md) | Generated client: request validation, `.js` imports, auth and HTML values | Accepted |
