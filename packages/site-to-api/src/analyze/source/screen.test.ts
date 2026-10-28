@@ -8,6 +8,8 @@ function route(host: string | null, pathTemplate: string): SourceRoute {
     host,
     pathTemplate,
     params: [],
+    evidence: 'call',
+    scriptHosts: [],
     ref: {
       file: 'src/api.ts',
       line: 1,

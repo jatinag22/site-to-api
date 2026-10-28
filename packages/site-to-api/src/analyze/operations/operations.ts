@@ -295,12 +295,34 @@ function sourceOnlyOperation(route: SourceRoute, host: string, template: ReturnT
   })
 }
 
+/** Hosts of the pages that loaded scripts from each script host, from the captured script requests. */
+function pagesByScriptHost(exchanges: readonly Exchange[]): Map<string, Set<string>> {
+  const result = new Map<string, Set<string>>()
+  for (const exchange of exchanges) {
+    if (exchange.resourceType !== 'script' || exchange.pageUrl === null)
+      continue
+    let page: string
+    try {
+      page = new URL(exchange.pageUrl).host
+    }
+    catch {
+      continue
+    }
+    result.set(exchange.request.host, (result.get(exchange.request.host) ?? new Set()).add(page))
+  }
+  return result
+}
+
 /**
- * Source routes never observed become `sourceOnly` operations. Relative routes belong to the hosts
- * that served pages (the browser resolves them against the page), or to every observed host when
- * no page was captured.
+ * Source routes never observed, and passed to a request call in the code, become `sourceOnly`
+ * operations; a URL-like string alone is not evidence of an endpoint. A relative route belongs to
+ * the page hosts that loaded the script it was found in (the browser resolves it against the
+ * page), when the capture shows those; otherwise to the hosts that served pages, or to every
+ * observed host when no page was captured.
  */
-function sourceOnlyOperations(routes: SourceRoute[], observed: Operation[]): Operation[] {
+function sourceOnlyOperations(allRoutes: SourceRoute[], observed: Operation[], exchanges: readonly Exchange[]): Operation[] {
+  const routes = allRoutes.filter(route => route.evidence === 'call')
+  const scriptPages = pagesByScriptHost(exchanges)
   // A page answered with a challenge (every page, on a site that blocked the capture) is still
   // where the site's relative routes point.
   const servesPages = (operation: Operation): boolean => operation.kind === 'page'
@@ -324,8 +346,18 @@ function sourceOnlyOperations(routes: SourceRoute[], observed: Operation[]): Ope
   for (const route of ordered) {
     const template = parseTemplate(route)
     const method = (route.method ?? 'GET').toUpperCase()
+    const loadedBy = [
+      ...new Set(route.scriptHosts.flatMap(host => [
+        ...(scriptPages.get(host) ?? []),
+      ])),
+    ]
+      .filter(host => fallbackHosts.includes(host))
+      .sort()
+    const relativeHosts = loadedBy.length > 0
+      ? loadedBy
+      : fallbackHosts
     for (const host of route.host === null
-      ? fallbackHosts
+      ? relativeHosts
       : [route.host]) {
       const key = `${host} ${method} ${route.pathTemplate}`
       // A method-less route to a path the code also calls with a known method is that call.
@@ -375,6 +407,6 @@ export function buildOperations(exchanges: Exchange[], options: BuildOperationsO
   const observed = observedOperations(exchanges, options.sourceRoutes)
   return assignOperationIds([
     ...observed,
-    ...sourceOnlyOperations(options.sourceRoutes, observed),
+    ...sourceOnlyOperations(options.sourceRoutes, observed, exchanges),
   ])
 }

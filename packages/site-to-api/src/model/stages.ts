@@ -37,6 +37,14 @@ export interface SourceRoute {
   /** Placeholder names in order, taken from the interpolated variable names. */
   params: string[]
   ref: SourceRef
+  /**
+   * `call`: passed to a request call (`fetch`, `axios`, `xhr.open`, a request-named function).
+   * `string`: only seen as a URL-like string or `new URL(...)`. Only a call is evidence enough
+   * for an operation nobody saw being called; a string still helps name path parameters.
+   */
+  evidence: 'call' | 'string'
+  /** Hosts of the scripts the route was found in, sorted; relative routes belong to their pages. */
+  scriptHosts: string[]
 }
 
 /** Finds where a value appears inside an HTML or text document (implemented in `analyze/html`). */

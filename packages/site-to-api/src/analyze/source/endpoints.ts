@@ -71,6 +71,8 @@ interface Found {
   pathTemplate: string
   params: string[]
   ref: SourceRef
+  evidence: SourceRoute['evidence']
+  scriptHost: string
 }
 
 function hasApiSegment(path: string): boolean {
@@ -423,6 +425,10 @@ class FileRoutes {
       pathTemplate: template.pathTemplate,
       params: template.params,
       ref,
+      evidence: context === 'request'
+        ? 'call'
+        : 'string',
+      scriptHost: this.file.host,
     })
   }
 }
@@ -548,9 +554,16 @@ function deduplicate(all: Found[]): SourceRoute[] {
   const pathKey = (route: Found): string => `${route.host ?? ''} ${route.pathTemplate}`
   const byKey = new Map<string, Found>()
   const withMethod = new Set<string>()
+  // Evidence and script hosts of every copy of a route, by path: a string in one file and a
+  // fetch in another is a call, and a route in two scripts belongs to the pages of both.
+  const called = new Set<string>()
+  const scriptHosts = new Map<string, Set<string>>()
   for (const route of all) {
     if (route.method !== null)
       withMethod.add(pathKey(route))
+    if (route.evidence === 'call')
+      called.add(pathKey(route))
+    scriptHosts.set(pathKey(route), (scriptHosts.get(pathKey(route)) ?? new Set()).add(route.scriptHost))
     const key = `${route.method ?? ''} ${pathKey(route)}`
     if (!byKey.has(key))
       byKey.set(key, route)
@@ -560,11 +573,17 @@ function deduplicate(all: Found[]): SourceRoute[] {
   ]
     .filter(route => route.method !== null || !withMethod.has(pathKey(route)))
     .sort((a, b) => compare(a.host ?? '', b.host ?? '') || compare(a.pathTemplate, b.pathTemplate) || compare(a.method ?? '', b.method ?? ''))
-    .map(({ method, host, pathTemplate, params, ref }) => ({
-      method,
-      host,
-      pathTemplate,
-      params,
-      ref,
+    .map((route): SourceRoute => ({
+      method: route.method,
+      host: route.host,
+      pathTemplate: route.pathTemplate,
+      params: route.params,
+      ref: route.ref,
+      evidence: called.has(pathKey(route))
+        ? 'call'
+        : 'string',
+      scriptHosts: [
+        ...(scriptHosts.get(pathKey(route)) ?? []),
+      ].sort(compare),
     }))
 }

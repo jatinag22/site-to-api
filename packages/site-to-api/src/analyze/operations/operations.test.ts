@@ -26,6 +26,8 @@ function route(pathTemplate: string, init: Partial<SourceRoute> = {}): SourceRou
       original: true,
       excerpt: null,
     },
+    evidence: 'call',
+    scriptHosts: ['shop.test'],
     ...init,
   }
 }
@@ -168,6 +170,41 @@ describe('buildOperations: grouping, ids and summaries', () => {
     ])
     expect(operations.map(operation => [operation.operationId, operation.kind, operation.summary])).toEqual([
       ['getTrade', 'page', 'Page trade.'],
+    ])
+  })
+
+  it('makes code-only operations only from request calls, on the pages that loaded the script', () => {
+    const pageOn = (host: string): Exchange => exchange({
+      url: `https://${host}/`,
+      kind: 'page',
+      resourceType: 'document',
+      responseBody: textBody('<html>'),
+    })
+    const script = {
+      ...exchange({ url: 'https://cdn.shop.test/app.js', kind: 'asset', resourceType: 'script' }),
+      pageUrl: 'https://www.shop.test/',
+    }
+    const operations = build([
+      pageOn('www.shop.test'),
+      pageOn('sgtm.shop.test'),
+      script,
+    ], [
+      route('/api/cart', {
+        method: 'PUT',
+        scriptHosts: ['cdn.shop.test'],
+      }),
+      route('/api/plans', {
+        evidence: 'string',
+        scriptHosts: ['cdn.shop.test'],
+      }),
+      route('/api/elsewhere', {
+        scriptHosts: ['other.test'],
+      }),
+    ])
+    expect(operations.filter(item => item.sourceOnly).map(item => `${item.method} ${item.host}${item.path}`)).toEqual([
+      'GET sgtm.shop.test/api/elsewhere',
+      'PUT www.shop.test/api/cart',
+      'GET www.shop.test/api/elsewhere',
     ])
   })
 
