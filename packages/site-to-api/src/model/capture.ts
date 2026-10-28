@@ -3,7 +3,9 @@
  *
  * Layout of `<rawDir>/<sessionId>/`:
  * - `meta.json`        {@link SessionMeta}
- * - `traffic.har`      HAR 1.2 recorded by Playwright with bodies embedded
+ * - `traffic.har`      HAR 1.2 recorded by Playwright with bodies embedded, compacted after the
+ *                      session: no asset bodies (images, fonts, CSS, media, scripts; the scripts
+ *                      are under `scripts/`) and no WebSocket frames (they are `ws` events), decision 0031
  * - `events.jsonl`     one {@link CaptureEvent} per line, from the injected instrumentation
  * - `scripts/<host>/<path>`   every JavaScript file the pages loaded (saved even without a sourcemap)
  * - `sourcemaps/<host>/<path>.map`  sourcemaps that were found

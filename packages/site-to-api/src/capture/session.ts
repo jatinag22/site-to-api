@@ -8,6 +8,7 @@ import type { BrowserContext, Page, WebSocket } from 'playwright'
 import type { ResolvedConfig } from '../config/schema'
 import type { CaptureEvent, SessionMeta } from '../model'
 import type { EventLimits } from './events'
+import type { HarCompaction } from './har'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -20,6 +21,7 @@ import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { EventWriter } from './events'
+import { compactHar } from './har'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
 import { ScriptCollector } from './scripts'
@@ -110,7 +112,8 @@ function onStop(signal: AbortSignal | undefined, stop: () => void): () => void {
   }
 }
 
-async function validateHar(file: string): Promise<number> {
+/** Checks the HAR the browser wrote, then compacts it in place (decision 0031). */
+async function finishHar(file: string): Promise<HarCompaction> {
   let size = 0
   try {
     size = (await stat(file)).size
@@ -120,10 +123,18 @@ async function validateHar(file: string): Promise<number> {
   }
   if (size === 0)
     throw new SiteToApiError(`${file} is empty. Capture again and end the session by closing the browser window or pressing Ctrl+C.`)
-  const parsed = HarSchema.safeParse(JSON.parse(await readFile(file, 'utf8')))
-  if (!parsed.success)
+  const har: unknown = JSON.parse(await readFile(file, 'utf8'))
+  // The document itself, not Zod's copy: that one drops every field the schema does not list.
+  if (!isHarDocument(har))
     throw new SiteToApiError(`${file} is not a valid HAR file. Capture again.`)
-  return parsed.data.log.entries.length
+  const compaction = compactHar(har)
+  if (compaction.bodiesOmitted > 0 || compaction.framesOmitted > 0)
+    await writeFile(file, JSON.stringify(har))
+  return compaction
+}
+
+function isHarDocument(value: unknown): value is { log: { entries: unknown[] } } {
+  return HarSchema.safeParse(value).success
 }
 
 type BrowserConfig = ResolvedConfig['capture']['browser']
@@ -283,7 +294,10 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     await collector.settle()
     await context.close()
 
-    const entries = await validateHar(harPath)
+    const har = await finishHar(harPath)
+    const { entries } = har
+    if (har.bodiesOmitted > 0 || har.framesOmitted > 0)
+      log(`Left ${har.bodiesOmitted} asset bodies and ${har.framesOmitted} WebSocket frames out of the HAR (the frames are in ${EVENTS_FILE}, the scripts under scripts/).`)
     if (entries === 0)
       warnings.push('The HAR has no requests. Did the page load?')
     warnings.push(...collector.warnings, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
