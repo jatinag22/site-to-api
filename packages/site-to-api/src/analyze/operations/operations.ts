@@ -171,7 +171,11 @@ function kindOf(members: Classified[]): OperationKind {
   return 'page'
 }
 
-function emptyOperation(init: Pick<Operation, 'host' | 'method' | 'path' | 'kind' | 'pathParams' | 'summary' | 'exchanges' | 'sourceOnly'>): Operation {
+function capitalize(phrase: string): string {
+  return phrase.charAt(0).toUpperCase() + phrase.slice(1)
+}
+
+function emptyOperation(init: Pick<Operation, 'host' | 'method' | 'path' | 'kind' | 'pathParams' | 'summary' | 'exchanges' | 'sourceOnly' | 'methodUnknown'>): Operation {
   return {
     operationId: '',
     query: [],
@@ -250,6 +254,41 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Opera
   return operations
 }
 
+/** The operation for a route found in code and never called. */
+function sourceOnlyOperation(route: SourceRoute, host: string, template: ReturnType<typeof parseTemplate>): Operation {
+  // The spec needs some method; `methodUnknown` marks it as a placeholder, not evidence.
+  const method = (route.method ?? 'GET').toUpperCase()
+  const names = new Map<number, string>()
+  template.segments.forEach((part, index) => {
+    if ('param' in part)
+      names.set(index, camelCase(part.param) || `param${names.size + 1}`)
+  })
+  const segments = template.segments.map(part => 'literal' in part
+    ? part.literal
+    : '')
+  const path = templateFor(segments, names)
+  return emptyOperation({
+    host,
+    method,
+    path,
+    kind: 'api',
+    pathParams: [...names].map(([index, name]) => ({
+      name,
+      index,
+      schema: { type: 'string' },
+      evidence: ['source-template'],
+    })),
+    summary: route.method === null
+      ? `${capitalize(pathPhrase(path) || 'root')} (method unknown). Found in source code; not called during capture.`
+      : `${capitalize(method.toLowerCase())} ${pathPhrase(path) || 'root'}. Found in source code; not called during capture.`,
+    exchanges: [],
+    sourceOnly: true,
+    ...(route.method === null
+      ? { methodUnknown: true }
+      : {}),
+  })
+}
+
 /**
  * Source routes never observed become `sourceOnly` operations. Relative routes belong to the hosts
  * that served pages (the browser resolves them against the page), or to every observed host when
@@ -266,45 +305,31 @@ function sourceOnlyOperations(routes: SourceRoute[], observed: Operation[]): Ope
       ]
   const seen = new Set<string>()
   const result: Operation[] = []
-  for (const route of routes) {
+  // Routes with a known method first, so a `fetch(url)` without a method never claims the slot
+  // of a `POST` to the same path found elsewhere in the code.
+  const ordered = [
+    ...routes.filter(route => route.method !== null),
+    ...routes.filter(route => route.method === null),
+  ]
+  for (const route of ordered) {
     const template = parseTemplate(route)
     const method = (route.method ?? 'GET').toUpperCase()
     for (const host of route.host === null
       ? fallbackHosts
       : [route.host]) {
       const key = `${host} ${method} ${route.pathTemplate}`
-      if (seen.has(key))
+      // A method-less route to a path the code also calls with a known method is that call.
+      const anyMethod = `${host} * ${route.pathTemplate}`
+      if (seen.has(key) || (route.method === null && seen.has(anyMethod)))
         continue
       seen.add(key)
+      seen.add(anyMethod)
       const matched = observed.some(operation => operation.host === host
         && (route.method === null || operation.method === method)
         && templateMatches(template, segmentsOf(operation.path)))
       if (matched)
         continue
-      const names = new Map<number, string>()
-      template.segments.forEach((part, index) => {
-        if ('param' in part)
-          names.set(index, camelCase(part.param) || `param${names.size + 1}`)
-      })
-      const segments = template.segments.map(part => 'literal' in part
-        ? part.literal
-        : '')
-      const path = templateFor(segments, names)
-      result.push(emptyOperation({
-        host,
-        method,
-        path,
-        kind: 'api',
-        pathParams: [...names].map(([index, name]) => ({
-          name,
-          index,
-          schema: { type: 'string' },
-          evidence: ['source-template'],
-        })),
-        summary: `${method.charAt(0)}${method.slice(1).toLowerCase()} ${pathPhrase(path) || 'root'}. Found in source code; not called during capture.`,
-        exchanges: [],
-        sourceOnly: true,
-      }))
+      result.push(sourceOnlyOperation(route, host, template))
     }
   }
   return result

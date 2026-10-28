@@ -212,6 +212,27 @@ describe('buildOperations: grouping, ids and summaries', () => {
     ])
     expect(sourceOnly[1]!.summary).toBe('Post api ipo by symbol bids. Found in source code; not called during capture.')
     expect(operations.every(operation => operation.sentFrom.length === 0)).toBe(true)
+    expect(sourceOnly.map(operation => operation.methodUnknown)).toEqual([true, undefined])
+  })
+
+  it('marks a source-only route without a method as method unknown instead of presenting a guess', () => {
+    const operations = build(
+      [
+        get('/', { kind: 'page', resourceType: 'document' }),
+      ],
+      [
+        route('/api/auth/login'),
+        route('/api/cart', { method: 'POST' }),
+        route('/api/cart'),
+      ],
+    )
+    const login = operations.find(operation => operation.path === '/api/auth/login')
+    expect(login).toMatchObject({ method: 'GET', sourceOnly: true, methodUnknown: true })
+    expect(login?.summary).toBe('Api auth login (method unknown). Found in source code; not called during capture.')
+    // The route with a known method wins the shared slot, whatever order the code listed them in.
+    expect(operations.filter(operation => operation.path === '/api/cart').map(operation => [operation.method, operation.methodUnknown])).toEqual([
+      ['POST', undefined],
+    ])
   })
 
   it('is deterministic regardless of input order', () => {

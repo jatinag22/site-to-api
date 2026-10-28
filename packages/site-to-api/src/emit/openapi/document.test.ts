@@ -279,6 +279,7 @@ describe('buildOpenApiDocuments', () => {
         method: 'GET',
         kind: 'api',
         sourceOnly: true,
+        methodUnknown: true,
         exchanges: [],
         responses: [],
         query: [],
@@ -307,6 +308,8 @@ describe('buildOpenApiDocuments', () => {
     expect(document.paths['/report'].get.responses['200'].content['text/csv']['x-site-to-api-extract']).toMatchObject({ kind: 'text', delimiter: ',' })
     const hidden = document.paths['/api/hidden/{id}'].get
     expect(hidden['x-site-to-api-source-only']).toBe(true)
+    expect(hidden['x-site-to-api-method-unknown']).toBe(true)
+    expect(login['x-site-to-api-method-unknown']).toBeUndefined()
     expect(hidden.responses).toEqual({
       default: { description: 'Not observed during capture.' },
     })
