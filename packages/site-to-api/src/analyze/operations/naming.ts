@@ -36,6 +36,30 @@ export function singular(word: string): string {
   return word
 }
 
+/** Path words after which a value is a title or a search query rather than a thing's name. */
+const NOUNS: Record<string, string> = {
+  page: 'title',
+  q: 'query',
+  s: 'query',
+  search: 'query',
+  summary: 'title',
+  title: 'title',
+  wiki: 'title',
+}
+
+/**
+ * Parameter name for a word value after `previous`: `tagged` → `tag` (a doubled consonant before
+ * `ed`), `categories` → `category`,
+ * `summary` → `title`, `search` → `query`.
+ */
+export function nounFor(previous: string): string {
+  const lower = previous.toLowerCase()
+  if (Object.hasOwn(NOUNS, lower))
+    return NOUNS[lower]!
+  const stem = lower.replace(/([b-df-hj-np-tv-z])\1ed$/, '$1')
+  return camelCase(singular(stem)) || 'value'
+}
+
 /** `/api/products/{productId}` + GET → `getApiProductsByProductId`. */
 export function operationIdFor(method: string, template: string): string {
   const parts = template.split('/').filter(segment => segment !== '').map((segment) => {

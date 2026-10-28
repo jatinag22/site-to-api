@@ -6,7 +6,8 @@ import type { Evidence, Marks } from './templates'
 import { inferStringSchema } from '../schema'
 import { isSlug } from './identifiers'
 import { linkedSlugs } from './links'
-import { camelCase, operationIdFor, pathPhrase, singular, words } from './naming'
+import { camelCase, nounFor, operationIdFor, pathPhrase, singular, words } from './naming'
+import { siblingFacts } from './siblings'
 import { markParameters, parseTemplate, segmentsOf, templateMatches } from './templates'
 
 interface BuildOperationsOptions {
@@ -51,8 +52,80 @@ function decode(segment: string): string {
   }
 }
 
+/** Names the site's own code gave to path values: host → value → name → count. */
+type SourceNames = Map<string, Map<string, Map<string, number>>>
+
+function sourceNamesOf(classified: Classified[]): SourceNames {
+  const result: SourceNames = new Map()
+  for (const item of classified) {
+    for (const [index, mark] of item.marks) {
+      if (!mark.sourceName)
+        continue
+      const byValue = result.get(item.exchange.request.host) ?? new Map<string, Map<string, number>>()
+      result.set(item.exchange.request.host, byValue)
+      const value = item.segments[index] ?? ''
+      const names = byValue.get(value) ?? new Map<string, number>()
+      byValue.set(value, names)
+      const name = camelCase(mark.sourceName) || mark.sourceName
+      names.set(name, (names.get(name) ?? 0) + 1)
+    }
+  }
+  return result
+}
+
+/**
+ * The name a source route gave to the same values on the same host (`/{owner}/{repo}/_file_tree`
+ * names `expressjs` in `/expressjs/express/latest-commit`): the most used one, then the shortest.
+ */
+function borrowedName(values: string[], byValue: Map<string, Map<string, number>> | undefined): string | null {
+  if (!byValue)
+    return null
+  const counts = new Map<string, number>()
+  for (const value of new Set(values)) {
+    for (const [name, count] of byValue.get(value) ?? [])
+      counts.set(name, (counts.get(name) ?? 0) + count)
+  }
+  const ranked = [
+    ...counts,
+  ].sort(([a, x], [b, y]) => y - x || a.length - b.length || a.localeCompare(b))
+  return ranked[0]?.[0] ?? null
+}
+
+interface NameInput {
+  sourceName: string | undefined
+  borrowed: string | null
+  previous: string | undefined
+  values: string[]
+  /** Words rather than ids (`Alan_Turing`, `python`): named after what they are, not `…Id`. */
+  wordValues: boolean
+  ordinal: number
+}
+
+function nameFor({ sourceName, borrowed, previous, values, wordValues, ordinal }: NameInput): string {
+  if (sourceName)
+    return camelCase(sourceName) || sourceName
+  if (borrowed)
+    return borrowed
+  const previousWords = previous
+    ? words(previous).length
+    : 0
+  if (values.every(isSlug)) {
+    return previousWords > 0 || wordValues
+      ? 'slug'
+      : `param${ordinal + 1}`
+  }
+  if (!previous || previousWords === 0)
+    return `param${ordinal + 1}`
+  if (!wordValues)
+    return `${camelCase(singular(previous))}Id`
+  // A one-word section names the thing (`tagged` → `tag`); a phrase (`getting-started`) does not.
+  return previousWords === 1
+    ? nounFor(previous)
+    : 'slug'
+}
+
 /** Names the parameters of one structural path, shared by every method on that path. */
-function nameParameters(members: Classified[]): Map<number, string> {
+function nameParameters(members: Classified[], sourceNames: SourceNames): Map<number, string> {
   const positions = [
     ...new Set(members.flatMap(member => [
       ...member.marks.keys(),
@@ -60,24 +133,19 @@ function nameParameters(members: Classified[]): Map<number, string> {
   ].sort((a, b) => a - b)
   const names = new Map<number, string>()
   const used = new Set<string>()
+  const byValue = sourceNames.get(members[0]!.exchange.request.host)
   positions.forEach((index, ordinal) => {
-    const sourceName = members.map(member => member.marks.get(index)?.sourceName).find(name => name)
-    const previous = index > 0 && !positions.includes(index - 1)
-      ? members[0]!.segments[index - 1]
-      : undefined
     const values = members.map(member => member.segments[index] ?? '')
-    let name: string
-    if (sourceName) {
-      name = camelCase(sourceName) || sourceName
-    }
-    else if (previous && words(previous).length > 0) {
-      name = values.every(isSlug)
-        ? 'slug'
-        : `${camelCase(singular(previous))}Id`
-    }
-    else {
-      name = `param${ordinal + 1}`
-    }
+    const name = nameFor({
+      sourceName: members.map(member => member.marks.get(index)?.sourceName ?? undefined).find(found => found),
+      borrowed: borrowedName(values, byValue),
+      previous: index > 0 && !positions.includes(index - 1)
+        ? members[0]!.segments[index - 1]
+        : undefined,
+      values,
+      wordValues: !members.some(member => member.marks.get(index)?.evidence.includes('looks-like-id')),
+      ordinal,
+    })
     let unique = name
     for (let suffix = 2; used.has(unique); suffix++)
       unique = `${name}${suffix}`
@@ -204,7 +272,7 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Opera
     const { host, method } = members[0]!.request
     const marks = markParameters([
       ...new Set(members.map(exchange => exchange.request.path)),
-    ], routesFor(routes, host, method), linkedSlugs(members, relevant))
+    ], routesFor(routes, host, method), linkedSlugs(members, relevant), siblingFacts(members, relevant))
     for (const exchange of members) {
       classified.push({
         exchange,
@@ -226,8 +294,9 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Opera
 
   // 3. One operation per host + method + template.
   const operations: Operation[] = []
+  const sourceNames = sourceNamesOf(classified)
   for (const members of byStructure.values()) {
-    const names = nameParameters(members)
+    const names = nameParameters(members, sourceNames)
     const byMethod = new Map<string, Classified[]>()
     for (const member of members) {
       byMethod.set(member.exchange.request.method, [

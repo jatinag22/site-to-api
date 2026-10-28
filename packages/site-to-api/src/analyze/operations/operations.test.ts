@@ -361,3 +361,166 @@ describe('buildOperations: slugs', () => {
     expect(paths(operations)).not.toContain('GET /stores/{slug}')
   })
 })
+
+describe('buildOperations: sibling paths (decision 0031)', () => {
+  const article = (title: string): Parameters<typeof get>[1] => ({
+    kind: 'page',
+    responseBody: textBody(`<header class="top"><nav class="menu"></nav></header><main class="article"><h1 class="title">${title}</h1><p class="lead">x</p></main><footer class="foot"></footer>`),
+  })
+  const summary = (title: string): Parameters<typeof get>[1] => ({
+    responseBody: jsonBody({
+      title,
+      extract: 'text',
+      thumbnail: { source: 'x', width: 1 },
+    }),
+  })
+
+  it('templates titles when many distinct values share one response structure', () => {
+    const operations = build([
+      'Cipher',
+      'Lord_Byron',
+      'Machine',
+      'Finite_set',
+      'Writer',
+    ].map(title => get(`/api/rest_v1/page/summary/${title}`, summary(title))))
+    expect(paths(operations)).toEqual(['GET /api/rest_v1/page/summary/{title}'])
+    expect(operations[0]!.pathParams[0]!.evidence).toEqual(['varies'])
+  })
+
+  it('templates tags that a listing links to, even when only two were opened', () => {
+    const listing = get('/questions', article('<a href="/questions/tagged/python">p</a><a href="/questions/tagged/javascript">j</a><a href="/questions/tagged/rust">r</a>'))
+    const operations = build([
+      listing,
+      get('/questions/tagged/python', article('python')),
+      get('/questions/tagged/javascript', article('javascript')),
+    ])
+    expect(paths(operations)).toEqual(['GET /questions', 'GET /questions/tagged/{tag}'])
+  })
+
+  it('templates the slug after an id', () => {
+    const listing = get('/questions', article('<a href="/questions/80013191/how-do-i-fly">a</a><a href="/questions/80013112/why-is-pyright-angry">b</a><a href="/questions/80013188/how-can-i-unregister">c</a>'))
+    expect(paths(build([
+      listing,
+      get('/questions/80013191/how-do-i-fly', article('a')),
+      get('/questions/80013112/why-is-pyright-angry', article('b')),
+    ]))).toEqual(['GET /questions', 'GET /questions/{questionId}/{slug}'])
+  })
+
+  it('templates an owner/repo pair that recurs under several paths, one repo per session', () => {
+    const repo = (owner: string, name: string, sessionId: string): Exchange[] => [
+      get(`/${owner}/${name}/latest-commit`, {
+        sessionId,
+        responseBody: jsonBody({
+          oid: 'a',
+          author: { login: 'x' },
+        }),
+      }),
+      get(`/${owner}/${name}/refs`, {
+        sessionId,
+        responseBody: jsonBody({
+          refs: ['main'],
+          cacheKey: 'k',
+        }),
+      }),
+      get(`/${owner}/${name}/issues/1/timeline`, {
+        sessionId,
+        responseBody: jsonBody({ items: [] }),
+      }),
+      get(`/${owner}/${name}/_file_tree`, {
+        sessionId,
+        method: 'POST',
+        responseBody: jsonBody({ tree: [] }),
+      }),
+    ]
+    const operations = build([
+      ...repo('expressjs', 'express', 's1'),
+      ...repo('koajs', 'koa', 's2').slice(0, 2),
+    ], [
+      route('/{owner}/{repo}/_file_tree', { method: 'POST' }),
+    ])
+    expect(paths(operations)).toEqual([
+      'POST /{owner}/{repo}/_file_tree',
+      'GET /{owner}/{repo}/issues/1/timeline',
+      'GET /{owner}/{repo}/latest-commit',
+      'GET /{owner}/{repo}/refs',
+    ])
+  })
+
+  it('keeps `/api/users/me` apart from `/api/users/123`, even across sessions', () => {
+    const user = jsonBody({ id: 123, name: 'Ann' })
+    expect(paths(build([
+      get('/api/users/me', { sessionId: 's1', responseBody: user }),
+      get('/api/users/123', { sessionId: 's2', responseBody: user }),
+    ]))).toEqual(['GET /api/users/123', 'GET /api/users/me'])
+  })
+
+  it('keeps different endpoints apart when their responses differ', () => {
+    expect(paths(build([
+      get('/api/v1/users', {
+        sessionId: 's1',
+        responseBody: jsonBody({
+          users: [
+            { id: 1, email: 'a' },
+          ],
+        }),
+      }),
+      get('/api/v1/orders', {
+        sessionId: 's2',
+        responseBody: jsonBody({
+          orders: [
+            { id: 1, total: 2 },
+          ],
+        }),
+      }),
+      get('/api/v1/stats', {
+        sessionId: 's3',
+        responseBody: jsonBody({ visits: 1 }),
+      }),
+    ]))).toEqual(['GET /api/v1/orders', 'GET /api/v1/stats', 'GET /api/v1/users'])
+  })
+
+  it('templates docs pages under a section and keeps the section names literal', () => {
+    const sidebar = '<a href="/docs/app/getting-started/caching">c</a><a href="/docs/app/getting-started/css">s</a><a href="/docs/app/getting-started/fonts">f</a><a href="/docs/app/guides">g</a><a href="/docs/app/api-reference">a</a>'
+    const operations = build([
+      get('/docs/app/getting-started', article(sidebar)),
+      get('/docs/app/guides', article(sidebar)),
+      get('/docs/app/api-reference', article(sidebar)),
+      get('/docs/app/getting-started/caching', article('caching')),
+      get('/docs/app/getting-started/css', article('css')),
+      get('/docs/app/guides/server-boundary', article('b')),
+      get('/docs/app/api-reference/cli/create-app', article('cli')),
+    ])
+    expect(paths(operations)).toEqual([
+      'GET /docs/app/api-reference',
+      'GET /docs/app/api-reference/cli/create-app',
+      'GET /docs/app/getting-started',
+      'GET /docs/app/getting-started/{slug}',
+      'GET /docs/app/guides',
+      'GET /docs/app/guides/server-boundary',
+    ])
+  })
+
+  it('templates a value that each session chose differently, and decodes it once', () => {
+    const page = (sessionId: string): Parameters<typeof get>[1] => ({
+      sessionId,
+      ...article('results'),
+    })
+    const operations = build([
+      get('/s/Lisbon--Portugal/homes', page('s1')),
+      get('/s/Porto--Portugal/homes', page('s2')),
+      get('/search/radiohead', page('s1')),
+      get('/search/daft%20punk', page('s2')),
+    ])
+    expect(paths(operations)).toEqual(['GET /s/{query}/homes', 'GET /search/{query}'])
+    const search = operations.find(operation => operation.path === '/search/{query}')
+    expect(search!.exchanges.map(item => item.request.path)).toContain('/search/daft%20punk')
+    expect(JSON.stringify(search!.pathParams[0]!.schema)).not.toContain('%25')
+  })
+
+  it('keeps two different words in one session literal', () => {
+    expect(paths(build([
+      get('/help/contact', article('a')),
+      get('/help/shipping', article('b')),
+    ]))).toEqual(['GET /help/contact', 'GET /help/shipping'])
+  })
+})

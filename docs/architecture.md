@@ -33,7 +33,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    (Akamai, Cloudflare, PerimeterX, DataDome, Imperva, Kasada, reCAPTCHA, hCaptcha, Turnstile).
 3. **operations** (`src/analyze/operations`): groups exchanges into operations by host + method +
    path template. Path parameters come from source route templates, value tracing, variation
-   across samples and ID-like segments (UUID, hex, base58, numbers, upper-case slugs).
+   across samples, ID-like segments (UUID, hex, base58, numbers, upper-case slugs) and sibling
+   paths whose word values the capture shows are data (decision 0031).
 4. **schema** (`src/analyze/schema`): infers JSON Schema for query, headers, request bodies and
    JSON responses from all samples: required vs optional, enums, formats, constants.
 5. **correlate** (`src/analyze/correlate`): indexes every response value (JSON leaves, Set-Cookie,
