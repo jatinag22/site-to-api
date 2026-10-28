@@ -137,9 +137,10 @@ describe('buildOpenApiDocuments', () => {
         name: 'productId',
         in: 'path',
         required: true,
+        // An id in the path stays a string, though it is digits.
         schema: {
-          type: 'integer',
-          examples: [12, 13],
+          type: 'string',
+          examples: ['12', '13'],
         },
       },
       {

@@ -88,6 +88,10 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
   (`x-site-to-api-requires`); being sent in every captured request is not enough. Tracing
   headers (`baggage`, `sentry-trace`, `traceparent`, `tracestate`, `b3`, `x-b3-*`,
   `x-datadog-*`) are never required and never get a default.
+- Query, form and path values that are all digits become `integer` unless they are codes:
+  a value with a leading zero, a name like `id`, `no`, `itemNos`, `code`, `sku`, `number`,
+  `zip`, `pin` or `otp` (`totp`), or digits of one fixed length of six or more. Codes stay
+  `string`.
 - A request body field is `required` only when every sample has it and it took more than one
   value; a field sent with the same value every time is optional.
 - String `format`s (`date-time`, `date`, `uuid`, `email`, `uri`) are written only when every

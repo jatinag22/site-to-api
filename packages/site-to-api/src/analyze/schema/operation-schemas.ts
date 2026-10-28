@@ -98,7 +98,7 @@ function inferParams(exchanges: Exchange[], pick: (exchange: Exchange) => NameVa
         samples.push({ value, sessionId: exchanges[index]!.sessionId })
     })
     const item = inferStringSchema(samples, enumGuard(redactor, context))
-    const examples = redactor.examples(coerceStrings(samples.map(sample => sample.value)), context)
+    const examples = redactor.examples(coerceStrings(samples.map(sample => sample.value), name), context)
     return {
       name,
       required: present === exchanges.length,
@@ -346,10 +346,11 @@ function enrichPathParams(operation: Operation, redactor: Redactor): Operation['
     // Path values identify one resource; an enum would wrongly limit the client to those seen.
     const schema = inferStringSchema(samples, {
       allowEnumValue: () => false,
+      name: param.name,
     })
     return {
       ...param,
-      schema: withExamples(schema, redactor.examples(coerceStrings(samples.map(sample => sample.value)), context)),
+      schema: withExamples(schema, redactor.examples(coerceStrings(samples.map(sample => sample.value), param.name), context)),
     }
   })
 }

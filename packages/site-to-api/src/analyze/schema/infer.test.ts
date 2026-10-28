@@ -251,6 +251,25 @@ describe('coerceStrings / inferStringSchema', () => {
     expect(coerceStrings(['true', 'false'])).toEqual([true, false])
     expect(coerceStrings(['1', 'x'])).toEqual(['1', 'x'])
     expect(coerceStrings(['007'])).toEqual(['007'])
+    expect(coerceStrings(['007', '120'], 'page')).toEqual(['007', '120'])
+  })
+
+  it('keeps digit codes as strings and real numbers as numbers', () => {
+    // IKEA `itemNos`, Spotify `totp`: codes by name, and by a fixed length of six or more digits.
+    expect(coerceStrings(['90529469'], 'itemNos')).toEqual(['90529469'])
+    expect(coerceStrings(['12', '345'], 'userId')).toEqual(['12', '345'])
+    expect(coerceStrings(['560001'], 'pincode')).toEqual(['560001'])
+    expect(coerceStrings(['123456', '654321'], 'totp')).toEqual(['123456', '654321'])
+    expect(coerceStrings(['123456', '654321'], 'value')).toEqual(['123456', '654321'])
+    expect(inferStringSchema([
+      { value: '90529469', sessionId: 's1' },
+    ], { name: 'itemNos' })).toMatchObject({ type: 'string' })
+    // Amounts, counts and pages stay numbers.
+    expect(coerceStrings(['1', '20'], 'page')).toEqual([1, 20])
+    expect(coerceStrings(['1500', '250000'], 'price')).toEqual([1500, 250000])
+    expect(coerceStrings(['2.5'], 'productId')).toEqual([2.5])
+    expect(coerceStrings(['3'], 'width')).toEqual([3])
+    expect(coerceStrings(['1', '2'], 'notes')).toEqual([1, 2])
     expect(inferStringSchema([
       { value: '10', sessionId: 's1' },
     ])).toEqual({ type: 'integer' })

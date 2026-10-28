@@ -536,8 +536,26 @@ describe('inferOperationSchemas', () => {
       ],
     })
     expect(result.pathParams[0]!.schema).toEqual({
+      type: 'string',
+      examples: ['12', '13'],
+    })
+    const page = infer([
+      exchange({ url: 'https://shop.test/api/pages/2' }),
+      exchange({ url: 'https://shop.test/api/pages/3' }),
+    ], {
+      path: '/api/pages/{page}',
+      pathParams: [
+        {
+          name: 'page',
+          index: 2,
+          schema: { type: 'string' },
+          evidence: ['varies'],
+        },
+      ],
+    })
+    expect(page.pathParams[0]!.schema).toEqual({
       type: 'integer',
-      examples: [12, 13],
+      examples: [2, 3],
     })
   })
 

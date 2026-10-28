@@ -387,11 +387,56 @@ const INTEGER = /^-?(?:0|[1-9]\d{0,14})$/
 const DECIMAL = /^-?(?:0|[1-9]\d{0,14})\.\d+$/
 
 /**
- * Typed versions of string values (query, form, path): all integers → numbers, all booleans →
- * booleans, otherwise the strings unchanged. Leading zeros (`007`) stay strings: they are ids.
+ * Name words of codes written in digits. `id` and `no` must be whole words (`userId`, `item_no`,
+ * `itemNos`); the longer ones may end a word (`totp`, `zipcode`, `pincode`).
  */
-export function coerceStrings(values: string[]): Array<string | number | boolean> {
-  if (values.length > 0 && values.every(value => INTEGER.test(value) || DECIMAL.test(value)))
+const DIGIT_CODE_WORDS = ['id', 'no']
+const DIGIT_CODE_SUFFIXES = [
+  'code',
+  'sku',
+  'number',
+  'zip',
+  'pin',
+  'otp',
+]
+/** Digit strings of one length this long or longer are codes (a TOTP, an item number), not amounts. */
+const MIN_CODE_DIGITS = 6
+
+function isDigitCodeName(name: string | null): boolean {
+  if (name === null)
+    return false
+  return nameWords(name).some((word) => {
+    const singular = word.endsWith('s') && word.length > 2
+      ? word.slice(0, -1)
+      : word
+    return [word, singular].some(candidate => DIGIT_CODE_WORDS.includes(candidate)
+      || DIGIT_CODE_SUFFIXES.some(suffix => candidate.endsWith(suffix)))
+  })
+}
+
+/**
+ * Whether integer-looking text is a code that must stay a string: IKEA item numbers and Spotify's
+ * `totp` are digits, but typed as `number` they lose leading zeros and invite arithmetic. Codes
+ * are values under a code-like name (`itemNos`, `userId`, `zip`), or digit strings that all have
+ * the same length of six or more. Leading zeros already keep a value a string.
+ */
+function isDigitCode(values: string[], name: string | null): boolean {
+  if (!values.every(value => INTEGER.test(value)))
+    return false
+  if (isDigitCodeName(name))
+    return true
+  const lengths = new Set(values.map(value => value.replace(/^-/, '').length))
+  const [length] = lengths
+  return lengths.size === 1 && length !== undefined && length >= MIN_CODE_DIGITS
+}
+
+/**
+ * Typed versions of string values (query, form, path): all integers → numbers, all booleans →
+ * booleans, otherwise the strings unchanged. Leading zeros (`007`) and digit codes (see
+ * {@link isDigitCode}; `name` is the parameter or field name) stay strings: they are ids.
+ */
+export function coerceStrings(values: string[], name: string | null = null): Array<string | number | boolean> {
+  if (values.length > 0 && values.every(value => INTEGER.test(value) || DECIMAL.test(value)) && !isDigitCode(values, name))
     return values.map(Number)
   if (values.length > 0 && values.every(value => value === 'true' || value === 'false'))
     return values.map(value => value === 'true')
@@ -400,6 +445,6 @@ export function coerceStrings(values: string[]): Array<string | number | boolean
 
 /** {@link inferSchema} over string values after {@link coerceStrings}. */
 export function inferStringSchema(samples: Array<{ value: string, sessionId: string }>, options: InferOptions = {}): JsonSchema {
-  const coerced = coerceStrings(samples.map(sample => sample.value))
+  const coerced = coerceStrings(samples.map(sample => sample.value), options.name ?? null)
   return inferSchema(samples.map((sample, index) => ({ value: coerced[index], sessionId: sample.sessionId })), options)
 }
