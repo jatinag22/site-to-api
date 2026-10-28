@@ -29,9 +29,9 @@ export function formatLocation(location: ValueLocation): string {
   }
 }
 
-/** The last property name in a JSON pointer, skipping array indexes: `/items/0/id` → `id`. */
+/** The last property name in a JSON pointer, skipping array indexes and `*`: `/items/0/id` → `id`. */
 export function lastPointerToken(pointer: string): string | null {
-  const token = pointer.split('/').slice(1).filter(part => !/^\d+$/.test(part)).at(-1)
+  const token = pointer.split('/').slice(1).filter(part => !/^(?:\d+|\*)$/.test(part)).at(-1)
   return token === undefined
     ? null
     : token.replace(/~1/g, '/').replace(/~0/g, '~')
@@ -95,4 +95,65 @@ export function safePageUrl(url: string | null): string {
   catch {
     return redactPathTokens(url.replace(/[?#].*$/, ''))
   }
+}
+
+/**
+ * The pointer with every array index replaced by a `*` token: `/items/0/id` reads "the `id` of
+ * any element of `items`". Which element a sample used is an accident of the capture; the value
+ * comes from one of the items. Only tokens that index an array in `json` change, so an object
+ * key that happens to be a number (`/2024/total`) stays.
+ */
+export function anyItemPointer(json: unknown, pointer: string): string {
+  if (pointer === '' || !pointer.startsWith('/'))
+    return pointer
+  const tokens = pointer.split('/').slice(1)
+  let current: unknown = json
+  const out: string[] = []
+  for (const token of tokens) {
+    if (Array.isArray(current) && /^\d+$/.test(token)) {
+      out.push('*')
+      current = current[Number(token)]
+    }
+    else {
+      out.push(token)
+      const key = token.replace(/~1/g, '/').replace(/~0/g, '~')
+      current = current !== null && typeof current === 'object' && !Array.isArray(current)
+        ? Object.entries(current).find(([name]) => name === key)?.[1]
+        : undefined
+    }
+  }
+  return `/${out.join('/')}`
+}
+
+const POSITION = /:nth-of-type\((\d+)\)/g
+
+/** The selector with every position replaced by a placeholder: what stays the same across items. */
+export function positionSkeleton(selector: string): string {
+  return selector.replace(POSITION, ':nth-of-type(#)')
+}
+
+/**
+ * One selector for several that differ only by `:nth-of-type` positions: positions that differ
+ * are dropped, positions shared by all are kept. `#list > li:nth-of-type(1) > a:nth-of-type(1)`
+ * and `#list > li:nth-of-type(2) > a:nth-of-type(1)` → `#list > li > a:nth-of-type(1)`. `null`
+ * when the selectors do not share one skeleton.
+ */
+export function repeatedSelector(selectors: readonly string[]): string | null {
+  const [first] = selectors
+  if (first === undefined)
+    return null
+  const skeleton = positionSkeleton(first)
+  if (selectors.some(selector => positionSkeleton(selector) !== skeleton))
+    return null
+  const positions = selectors.map(selector => [
+    ...selector.matchAll(POSITION),
+  ].map(match => match[1]))
+  let index = 0
+  return first.replace(POSITION, (whole) => {
+    const at = index++
+    const shared = positions.every(list => list[at] === positions[0]?.[at])
+    return shared
+      ? whole
+      : ''
+  })
 }

@@ -106,7 +106,7 @@ describe('renderFlowsMarkdown', () => {
 
   it('renders input origins readably', () => {
     expect(markdown).toContain('- `header.authorization`: from step `s1` response `body./token` (substring)')
-    expect(markdown).toContain('- `path.2`: from step `s2` of [`sign-in`](#sign-in) response `body./items/0/id`')
+    expect(markdown).toContain('- `path.2`: from step `s2` of [`sign-in`](#sign-in) response `body./items/*/id`')
     expect(markdown).toContain('- `header.x-csrf-token`: from the HTML of step `s1` of [`load-login`](#load-login): `meta[name="csrf-token"]` attribute `content` (confidence high)')
     expect(markdown).toContain('- `body./username`: typed by the person into field `username`')
     expect(markdown).toContain('- `body./password`: computed by the page, see [`postapilogin-body-password`](#computed-postapilogin-body-password)')

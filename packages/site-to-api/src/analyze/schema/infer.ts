@@ -15,13 +15,88 @@ export interface InferOptions {
    * enums of values the redactor would change (personal data must not leak through `enum`).
    */
   allowEnumValue?: (value: string) => boolean
+  /**
+   * Name of the value being inferred (query parameter, header, form field). Object properties
+   * use their own key; array items use the array's name. Enums need a code-like name or
+   * code-like values, so the name matters.
+   */
+  name?: string | null
 }
 
 /** Nesting deeper than this becomes an untyped schema. */
 export const MAX_SCHEMA_DEPTH = 10
 const ENUM_MIN_SAMPLES = 3
 const ENUM_MAX_VALUES = 10
-const ENUM_MAX_LENGTH = 40
+const ENUM_MAX_LENGTH = 32
+/** Each distinct value must be seen this many times on average: a few values, many samples. */
+const ENUM_MIN_SAMPLES_PER_VALUE = 2
+
+/** Name words that say a field holds a code from a fixed set rather than free data. */
+const CODE_NAME_WORDS: ReadonlySet<string> = new Set([
+  'code',
+  'codes',
+  'status',
+  'statuses',
+  'state',
+  'type',
+  'types',
+  'kind',
+  'kinds',
+  'category',
+  'categories',
+  'currency',
+  'currencies',
+  'unit',
+  'units',
+])
+
+/**
+ * Name words of identifiers and labels. Their values can look like tokens (`masala-makhana-250-g`)
+ * but every new record brings a new one, so token-shaped values alone do not make them enums.
+ */
+const IDENTITY_NAME_WORDS: ReadonlySet<string> = new Set([
+  'id',
+  'ids',
+  'uuid',
+  'slug',
+  'slugs',
+  'sku',
+  'handle',
+  'key',
+  'ref',
+  'name',
+  'title',
+  'label',
+  'description',
+])
+
+/** `PAID`, `IN_STOCK`, `out-of-stock`, `credit_card`: tokens a program defines, not prose. */
+const CODE_TOKEN = [
+  /^[A-Z][A-Z\d]*(?:_[A-Z\d]+)*$/,
+  /^[a-z][a-z\d]*(?:-[a-z\d]+)+$/,
+  /^[a-z][a-z\d]*(?:_[a-z\d]+)+$/,
+]
+
+/** Lower-case words of a field name: `orderStatus` → `[order, status]`, `currency_code` → `[currency, code]`. */
+function nameWords(name: string): string[] {
+  return name
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z\d]+/)
+    .filter(word => word !== '')
+}
+
+function isCodeName(name: string | null): boolean {
+  return name !== null && nameWords(name).some(word => CODE_NAME_WORDS.has(word))
+}
+
+function isIdentityName(name: string | null): boolean {
+  return name !== null && nameWords(name).some(word => IDENTITY_NAME_WORDS.has(word))
+}
+
+function isCodeToken(value: string): boolean {
+  return CODE_TOKEN.some(pattern => pattern.test(value))
+}
 
 const FORMATS: ReadonlyArray<[string, RegExp]> = [
   ['uuid', /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i],
@@ -142,7 +217,26 @@ function add(node: Node, value: unknown, sessionId: string, depth: number): void
   }
 }
 
-function stringKeywords(node: Node, options: InferOptions): JsonSchema {
+/**
+ * Whether the observed strings are a closed set of codes. A wrong enum is worse than none: Zod
+ * validation in generated clients rejects every value not seen in the capture. So only short,
+ * space-free values qualify, seen repeatedly, and only under a code-like name (`status`,
+ * `currency`) or when every value is a program token (`IN_STOCK`, `out-of-stock`) under a name
+ * that is not an identifier (`slug`, `id`). Names, titles and other free text never become enums.
+ */
+function isEnumWorthy(node: Node, values: string[], name: string | null, options: InferOptions): boolean {
+  if (node.stringOverflow || values.length < 2)
+    return false
+  if (node.stringCount < ENUM_MIN_SAMPLES || node.stringCount < values.length * ENUM_MIN_SAMPLES_PER_VALUE)
+    return false
+  if (!values.every(value => value.length > 0 && value.length <= ENUM_MAX_LENGTH && !/\s/.test(value)))
+    return false
+  if (!isCodeName(name) && (isIdentityName(name) || !values.every(isCodeToken)))
+    return false
+  return values.every(value => options.allowEnumValue?.(value) ?? true)
+}
+
+function stringKeywords(node: Node, name: string | null, options: InferOptions): JsonSchema {
   const schema: JsonSchema = {}
   const format = node.formats && FORMATS.map(([name]) => name).find(name => node.formats?.has(name))
   if (format) {
@@ -152,18 +246,12 @@ function stringKeywords(node: Node, options: InferOptions): JsonSchema {
   const values = [
     ...node.strings.keys(),
   ]
-  const enumWorthy = !node.stringOverflow
-    && node.stringCount >= ENUM_MIN_SAMPLES
-    && values.length >= 2
-    && values.length < node.stringCount
-    && values.every(value => value.length > 0 && value.length <= ENUM_MAX_LENGTH)
-    && values.every(value => options.allowEnumValue?.(value) ?? true)
-  if (enumWorthy)
+  if (isEnumWorthy(node, values, name, options))
     schema.enum = values.sort()
   return schema
 }
 
-function finalize(node: Node, options: InferOptions, totalSessions: number): JsonSchema {
+function finalize(node: Node, name: string | null, options: InferOptions, totalSessions: number): JsonSchema {
   if (node.tooDeep)
     return { description: 'Not inferred: nested too deep' }
   const types = new Set(node.types)
@@ -187,7 +275,7 @@ function finalize(node: Node, options: InferOptions, totalSessions: number): Jso
   if (containers.length > 0 && nonNull.length > 1) {
     // Mixed containers and scalars do not fit one `type` keyword with sensible keywords.
     return {
-      anyOf: list.map(type => finalizeAs(node, type, options, totalSessions)),
+      anyOf: list.map(type => finalizeAs(node, type, name, options, totalSessions)),
     }
   }
   const schema: JsonSchema = {
@@ -195,7 +283,7 @@ function finalize(node: Node, options: InferOptions, totalSessions: number): Jso
       ? list[0]
       : list,
   }
-  Object.assign(schema, ...nonNull.map(type => keywordsFor(node, type, options, totalSessions)))
+  Object.assign(schema, ...nonNull.map(type => keywordsFor(node, type, name, options, totalSessions)))
   if (schema.enum && list.includes('null'))
     schema.enum.push(null)
   if (!node.hasContainer && node.scalars.size === 1 && totalSessions >= 2 && node.sessions.size >= totalSessions)
@@ -203,27 +291,27 @@ function finalize(node: Node, options: InferOptions, totalSessions: number): Jso
   return schema
 }
 
-function finalizeAs(node: Node, type: JsonSchemaType, options: InferOptions, totalSessions: number): JsonSchema {
+function finalizeAs(node: Node, type: JsonSchemaType, name: string | null, options: InferOptions, totalSessions: number): JsonSchema {
   return {
     type,
-    ...keywordsFor(node, type, options, totalSessions),
+    ...keywordsFor(node, type, name, options, totalSessions),
   }
 }
 
-function keywordsFor(node: Node, type: JsonSchemaType, options: InferOptions, totalSessions: number): JsonSchema {
+function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, options: InferOptions, totalSessions: number): JsonSchema {
   if (type === 'string')
-    return stringKeywords(node, options)
+    return stringKeywords(node, name, options)
   if (type === 'array') {
     return {
       items: node.items
-        ? finalize(node.items, options, totalSessions)
+        ? finalize(node.items, name, options, totalSessions)
         : {},
     }
   }
   if (type === 'object') {
     const properties: Record<string, JsonSchema> = {}
     for (const [key, child] of node.properties)
-      properties[key] = finalize(child, options, totalSessions)
+      properties[key] = finalize(child, key, options, totalSessions)
     const required = [...node.keyCounts]
       .filter(([, count]) => count === node.objectCount)
       .map(([key]) => key)
@@ -236,8 +324,9 @@ function keywordsFor(node: Node, type: JsonSchemaType, options: InferOptions, to
 
 /**
  * Infers one JSON Schema describing every sample: `integer` vs `number`, nullable values as type
- * arrays, `required` for keys present in every object, formats shared by all strings, enums when
- * there is enough evidence (≥ 3 samples, 2-10 distinct short strings, some repeated) and
+ * arrays, `required` for keys present in every object, formats shared by all strings, enums for
+ * code-like values only (see `isEnumWorthy`: ≤ 32 characters, no whitespace, 2-10 distinct values
+ * each seen twice on average, under a code-like name or all program tokens) and
  * `x-constant` for scalars identical in every sample across two or more sessions.
  */
 export function inferSchema(samples: Sample[], options: InferOptions = {}): JsonSchema {
@@ -245,7 +334,7 @@ export function inferSchema(samples: Sample[], options: InferOptions = {}): Json
   for (const sample of samples)
     add(root, sample.value, sample.sessionId, 0)
   const totalSessions = new Set(samples.map(sample => sample.sessionId)).size
-  return finalize(root, options, totalSessions)
+  return finalize(root, options.name ?? null, options, totalSessions)
 }
 
 const INTEGER = /^-?(?:0|[1-9]\d{0,14})$/

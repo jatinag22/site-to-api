@@ -5,16 +5,22 @@
  * 1. Cookie and Set-Cookie values, `Authorization`-style headers, configured `fields` and JWTs are
  *    always replaced by `<redacted: shape>`, even when identical across sessions: with a reused
  *    browser profile a login cookie or token stays the same between captures.
- * 2. Values under secret-looking names (`x-csrf-token`, `apiKey`, `password`) are replaced too,
- *    unless the same value appeared in every session (at least two): then it is a constant the
- *    site ships to everyone, such as a public API key, and the client needs it.
+ * 2. Values under secret-looking names (`x-csrf-token`, `password`, `pwd`, `otp`) are replaced
+ *    too, constant or not. Only publishable-key names (`x-api-key`, `clientId`, `publishableKey`,
+ *    `siteKey`, `?key=`) are kept when the same value appeared in every session (at least two):
+ *    then it is a key the site ships to everyone, and the client needs it.
  *    Path segments that are credentials (`/magic/<jwt>`, `/reset/<token>`, see `path-tokens.ts`)
  *    count as rule 1; opaque random segments with no credential word (a signed download link)
  *    count as rule 2. Other random ids in paths (ObjectIds, SHAs) are public, like UUIDs.
  * 3. Every value found by rules 1 and 2 is also removed wherever else it appears (echoed in a
  *    response, inside a URL), as are JWTs embedded in text.
  * 4. Personal data (email, phone, card, PAN, Aadhaar, configured patterns) is masked keeping its
- *    format, constant or not.
+ *    format, constant or not. So are values under personal field names (`username`, `displayName`,
+ *    `firstName`, `address`, `city`, `zip`, `dob`, `userId`, see `personal-data.ts`), and `name`
+ *    and `id` inside an object that describes a person (under `user`, `account`, `profile`,
+ *    `customer`, or holding a `username`/`email` itself).
+ * Well-known auth scheme words (`Bearer`, `Basic`) under secret names (`tokenType`) are kept:
+ * they say how to authenticate and are the same for everyone.
  * Values inside JSON strings, URLs, URL-encoded text and percent-encoded text are handled
  * recursively.
  */
@@ -24,8 +30,8 @@ import type { PersonalDataPattern } from './personal-data'
 import { SiteToApiError } from '../../errors'
 import { describeShape, inspectJwt } from '../shape'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
-import { isPhoneField, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
-import { CREDENTIAL_HEADERS, isSecretName } from './secret-names'
+import { isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
+import { CREDENTIAL_HEADERS, isAuthScheme, isPublishableKeyName, isSecretName } from './secret-names'
 
 interface RedactorInput {
   /** Every exchange of the build, used to find cross-session constants and known secrets. */
@@ -177,6 +183,21 @@ function* expand(item: Located, depth: number): Generator<Located> {
   }
 }
 
+/**
+ * Masks a value whose field name says it is personal: a phone number, a person's name, account
+ * or address, or `name`/`id` inside a person's record. `null` when the name says nothing.
+ */
+function maskByName(text: string, name: string | null | undefined, personRecord: boolean): string | null {
+  if (isPhoneField(name)) {
+    const masked = maskPhoneField(text)
+    if (masked !== null)
+      return masked
+  }
+  return isPersonalField(name) || (personRecord && isPersonRecordField(name))
+    ? maskKeepingFormat(text)
+    : null
+}
+
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -233,10 +254,17 @@ function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: Red
       }
       if (item.value === '')
         continue
-      if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true)
+      if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true) {
         forms.forEach(form => learnt.always.add(form))
-      else if (isSecretName(item.name, isQueryLike(item.in)) || item.pathOpaque === true)
+      }
+      else if (isSecretName(item.name, isQueryLike(item.in)) && !isAuthScheme(item.value)) {
+        forms.forEach(form => (isPublishableKeyName(item.name, isQueryLike(item.in))
+          ? learnt.unlessConstant
+          : learnt.always).add(form))
+      }
+      else if (item.pathOpaque === true) {
         forms.forEach(form => learnt.unlessConstant.add(form))
+      }
     }
   }
   return learnt
@@ -267,6 +295,10 @@ export function createRedactor(input: RedactorInput): Redactor {
 
   const isConstant = (value: string): boolean =>
     sessionCount >= 2 && (sessionsByValue.get(value)?.size ?? 0) === sessionCount
+  // Only a publishable key (embedded in the page for everyone) survives by being constant; a
+  // password typed the same way in two captures is still the person's password.
+  const keptAsPublicKey = (value: string, context: RedactContext): boolean =>
+    isPublishableKeyName(context.name, isQueryLike(context.in)) && isConstant(value)
 
   // Short values ("1", "en") are too common to hunt for elsewhere; they are still redacted where
   // they sit because their context (cookie, secret name) says so.
@@ -337,7 +369,11 @@ export function createRedactor(input: RedactorInput): Redactor {
     return null
   }
 
-  function redactString(text: string, context: RedactContext, depth: number): string {
+  /**
+   * `personRecord`: the value sits directly in an object describing a person (`user.name`,
+   * the `id` of `GET /api/me`), where otherwise ordinary names identify them.
+   */
+  function redactString(text: string, context: RedactContext, depth: number, personRecord = false): string {
     if (text === '')
       return text
     if (isAlwaysSecret(context.in, context.name) || inspectJwt(text) || secrets.has(text))
@@ -347,13 +383,12 @@ export function createRedactor(input: RedactorInput): Redactor {
     // capture is not known to be constant, so it is redacted.
     if (context.in === 'path' && isOpaquePathSegment(text) && !isConstant(text))
       return placeholder(text)
-    if (isSecretName(context.name, isQueryLike(context.in)) && !isConstant(text))
+    // `tokenType: "Bearer"` names the auth scheme; hiding it hides how to authenticate.
+    if (isSecretName(context.name, isQueryLike(context.in)) && !isAuthScheme(text) && !keptAsPublicKey(text, context))
       return placeholder(text)
-    if (isPhoneField(context.name)) {
-      const masked = maskPhoneField(text)
-      if (masked !== null)
-        return masked
-    }
+    const byName = maskByName(text, context.name, personRecord)
+    if (byName !== null)
+      return byName
     if (depth < MAX_DEPTH) {
       const nested = redactNested(text, context, depth)
       if (nested !== null)
@@ -362,11 +397,13 @@ export function createRedactor(input: RedactorInput): Redactor {
     return scanText(text)
   }
 
-  function redactNumber(value: number, context: RedactContext): number | string {
+  function redactNumber(value: number, context: RedactContext, personRecord: boolean): number | string {
     const text = String(value)
-    if (isAlwaysSecret(context.in, context.name) || (isSecretName(context.name) && !isConstant(text)))
+    if (isAlwaysSecret(context.in, context.name) || (isSecretName(context.name) && !keptAsPublicKey(text, context)))
       return placeholder(text)
     if (isPhoneField(context.name) && maskPhoneField(text) !== null)
+      return maskKeepingFormat(text)
+    if (isPersonalField(context.name) || (personRecord && isPersonRecordField(context.name)))
       return maskKeepingFormat(text)
     const masked = maskPersonalData(text, patterns)
     return masked === text
@@ -374,20 +411,22 @@ export function createRedactor(input: RedactorInput): Redactor {
       : masked
   }
 
-  function redactJson(value: unknown, context: RedactContext, depth: number): unknown {
+  function redactJson(value: unknown, context: RedactContext, depth: number, personRecord = false): unknown {
     if (depth > MAX_DEPTH)
       return '<redacted: nested too deep>'
     if (typeof value === 'string')
-      return redactString(value, context, depth)
+      return redactString(value, context, depth, personRecord)
     if (typeof value === 'number')
-      return redactNumber(value, context)
+      return redactNumber(value, context, personRecord)
     if (Array.isArray(value))
-      return value.map(item => redactJson(item, context, depth + 1))
+      return value.map(item => redactJson(item, context, depth + 1, personRecord))
     if (value !== null && typeof value === 'object') {
-      return Object.fromEntries(Object.entries(value).map(([key, item]) =>
+      const entries = Object.entries(value)
+      const person = isPersonObject(context.name, entries.map(([key]) => key))
+      return Object.fromEntries(entries.map(([key, item]) =>
         [
           key,
-          redactJson(item, { in: context.in, name: key }, depth + 1),
+          redactJson(item, { in: context.in, name: key }, depth + 1, person),
         ]))
     }
     return value

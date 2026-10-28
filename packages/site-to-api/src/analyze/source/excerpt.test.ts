@@ -25,6 +25,10 @@ const longFunction = [
 
 const statements = Array.from({ length: 300 }, (_, i) => `var v${i}=compute(${i});`).join('')
 const minified = `!function(){${statements}function send(t){return fetch("/api/orders/"+t,{method:"POST"})}${statements}}();`
+/** A small minified script: one line of a few hundred characters, well under the long-line limit. */
+const sensor = '"use strict";(()=>{function e(){return["2","toy-sensor",location.pathname].join(";")}async function t(){let o=await fetch("/shield/collect",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sensor_data:e()}),credentials:"same-origin"});if(await o.text(),!o.ok)throw new Error("collector failed")}window.pmShield={ready:t()};})();'
+/** Packed code that does not parse (a truncated bundle): split by `;`, `{` and `}` instead. */
+const broken = `var a=1;var b={x:"a;b{c}"};function f(){g();h();/* ; { */if(a){b()}}; var c=\`t;{a}\`;f(;`
 
 let session: LoadedSession
 
@@ -57,6 +61,12 @@ beforeAll(async () => {
       },
     },
     { url: 'https://shop.test/static/app.min.js?v=3', file: 'scripts/shop.test/static/app.min.js', content: minified },
+    { url: 'https://shop.test/shield/sensor.js', file: 'scripts/shop.test/shield/sensor.js', content: sensor },
+    {
+      url: 'https://shop.test/static/broken.js',
+      file: 'scripts/shop.test/static/broken.js',
+      content: [broken, broken, broken].join(' '),
+    },
     {
       url: 'https://shop.test/static/plain.js',
       file: 'scripts/shop.test/static/plain.js',
@@ -100,12 +110,63 @@ describe('buildExcerpt', () => {
     const lines = excerpt?.content.split('\n') ?? []
     expect(lines[0]).toBe(`// site-to-api excerpt of /static/app.min.js:1:${column} (function send) in https://shop.test/static/app.min.js?v=3`)
     expect(lines).toContain('function send(t){')
-    expect(lines).toContain(`  return /* <-- 1:${column} */ fetch("/api/orders/"+t,{method:"POST"})}`)
+    expect(lines).toContain(`  return /* <-- 1:${column} */ fetch("/api/orders/"+t,{method:"POST"})`)
+    // The closing brace of `send` goes back to the function's own depth.
+    expect(lines[lines.indexOf('function send(t){') + 2]).toBe('}')
     const body = lines.slice(2)
     expect(body.every(line => line.length < 200)).toBe(true)
     // Every line of the body starts at a statement, never in the middle of one.
     expect(body.filter(line => line.trim() !== '').every(line => /^\s*(?:var v\d+=compute\(\d+\);|function send|return|\})/.test(line))).toBe(true)
     expect(excerpt?.content.length).toBeLessThan(3700)
+  })
+
+  it('breaks a short minified script at statements and closing braces, indented by nesting', async () => {
+    const column = sensor.indexOf('fetch(') + 1
+    const excerpt = await buildExcerpt(ref({
+      file: '/shield/sensor.js',
+      line: 1,
+      column,
+      functionName: 't',
+      original: false,
+    }), [session], '2026-01-01-abc')
+    const body = excerpt?.content.split('\n').slice(2, -1) ?? []
+    expect(body).toEqual([
+      '"use strict";',
+      '(()=>{',
+      '  function e(){',
+      '    return["2","toy-sensor",location.pathname].join(";")',
+      '  }',
+      '  async function t(){',
+      `    let o=await /* <-- 1:${column} */ fetch("/shield/collect",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sensor_data:e()}),credentials:"same-origin"});`,
+      '    if(await o.text(),!o.ok)',
+      '      throw new Error("collector failed")',
+      '  }',
+      '  window.pmShield={ready:t()};',
+      '})();',
+    ])
+  })
+
+  it('splits code that does not parse at `;`, `{` and `}` outside strings and comments', async () => {
+    const excerpt = await buildExcerpt(ref({
+      file: '/static/broken.js',
+      line: 1,
+      column: 9,
+      functionName: null,
+      original: false,
+    }), [session], '2026-01-01-abc')
+    const body = excerpt?.content.split('\n').slice(2, -1) ?? []
+    expect(body.slice(0, 9)).toEqual([
+      'var a=1;',
+      '/* <-- 1:9 */ var b={',
+      '  x:"a;b{c}"',
+      '};',
+      'function f(){',
+      '  g();',
+      '  h();',
+      '  /* ; { */if(a){',
+      '    b()',
+    ])
+    expect(body).toContain('var c=`t;{a}`;')
   })
 
   it('uses a line window for bundles that are not minified', async () => {

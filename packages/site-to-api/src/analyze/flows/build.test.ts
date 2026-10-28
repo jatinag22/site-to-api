@@ -151,7 +151,8 @@ describe('buildFlows: shop scenario', () => {
     expect(item.inputs['path.2']).toEqual({
       kind: 'step',
       step: 'sign-in.s2',
-      output: 'body./items/0/id',
+      // Any element: the sample's index (0) is not part of how the API works.
+      output: 'body./items/*/id',
       transform: 'none',
     })
   })
@@ -163,7 +164,7 @@ describe('buildFlows: shop scenario', () => {
     expect(config?.outputs).toEqual({ publicKey: 'body./publicKey' })
     const [login, items, poll] = flow(doc, 'sign-in').steps
     expect(login?.outputs).toEqual({ token: 'body./token' })
-    expect(items?.outputs).toEqual({ id: 'body./items/0/id' })
+    expect(items?.outputs).toEqual({ id: 'body./items/*/id' })
     expect(poll?.outputs).toEqual({})
   })
 
@@ -191,7 +192,9 @@ describe('buildFlows: shop scenario', () => {
         },
         api: 'JSEncrypt.encrypt',
         details: { padding: 'pkcs1' },
+        // The key from a response and the password the person typed (the field, never its value).
         uses: [
+          { kind: 'user-input', field: 'password' },
           {
             kind: 'step',
             step: 'load-login.s3',
@@ -649,6 +652,295 @@ describe('buildFlows: what counts as an input', () => {
     expect(steps.find(step => step.operationId === 'getApiStockTxt')?.inputs).toEqual({})
     expect(steps.find(step => step.operationId === 'postShieldCollect')?.inputs).toEqual({})
     expect(steps.find(step => step.operationId === 'getApiItemsByItemId')?.inputs['path.2']?.kind).toBe('step')
+  })
+})
+
+describe('buildFlows: values taken from one of several items', () => {
+  const page = 'https://shop.example.test/'
+
+  it('writes array indexes of producing locations as `*`, but keeps numeric object keys', () => {
+    const list = exchange({
+      url: 'https://shop.example.test/api/categories',
+      startedAt: 1,
+      responseBody: jsonBody([
+        { slug: 'pantry' },
+        { slug: 'snacks' },
+      ]),
+    })
+    const years = exchange({
+      url: 'https://shop.example.test/api/years',
+      startedAt: 2,
+      responseBody: jsonBody({
+        2024: { report: 'rep-2024-a' },
+      }),
+    })
+    const products = exchange({ url: 'https://shop.example.test/api/products?category=snacks&report=rep-2024-a', startedAt: 3 })
+    const exchanges = [list, years, products]
+    const traces: ValueTrace[] = [
+      {
+        exchangeId: products.id,
+        location: { in: 'query', name: 'category' },
+        value: 'snacks',
+        origin: {
+          kind: 'response',
+          exchangeId: list.id,
+          location: { in: 'body', pointer: '/1/slug' },
+          transform: 'none',
+        },
+      },
+      {
+        exchangeId: products.id,
+        location: { in: 'query', name: 'report' },
+        value: 'rep-2024-a',
+        origin: {
+          kind: 'response',
+          exchangeId: years.id,
+          location: { in: 'body', pointer: '/2024/report' },
+          transform: 'none',
+        },
+      },
+    ]
+    const doc = build(exchanges, [
+      op('getApiCategories', [list]),
+      op('getApiYears', [years]),
+      op('getApiProducts', [products]),
+    ], [
+      loaded('s1', [], page),
+    ], traces)
+    const steps = doc.flows.flatMap(entry => entry.steps)
+    const consumer = steps.find(step => step.operationId === 'getApiProducts')
+    expect(consumer?.inputs['query.category']).toMatchObject({ kind: 'step', output: 'body./*/slug' })
+    expect(consumer?.inputs['query.report']).toMatchObject({ kind: 'step', output: 'body./2024/report' })
+    expect(steps.find(step => step.operationId === 'getApiCategories')?.outputs).toEqual({ slug: 'body./*/slug' })
+  })
+
+  it('generalises HTML selectors that differ only by position across samples to the repeated element', () => {
+    const html = '<ul id="store-list"><li><a href="/stores/pine-hill">Pine</a></li><li><a href="/stores/cedar-park">Cedar</a></li></ul>'
+    const stores = ['s1', 's2'].map(sessionId => exchange({
+      url: 'https://shop.example.test/stores',
+      sessionId,
+      startedAt: 1,
+      responseBody: {
+        mimeType: 'text/html',
+        text: html,
+        base64: null,
+        json: undefined,
+        form: null,
+      },
+    }))
+    const stock = [
+      exchange({
+        url: 'https://shop.example.test/api/stock',
+        sessionId: 's1',
+        startedAt: 2,
+        cookies: { pm_store: 'pine-hill' },
+      }),
+      exchange({
+        url: 'https://shop.example.test/api/stock',
+        sessionId: 's2',
+        startedAt: 2,
+        cookies: { pm_store: 'cedar-park' },
+      }),
+    ]
+    const at = (position: number): ValueTrace['origin'] => ({
+      kind: 'response',
+      exchangeId: stores[position - 1]!.id,
+      location: {
+        in: 'html',
+        selector: `#store-list > li:nth-of-type(${position}) > a:nth-of-type(1)`,
+        attr: 'href',
+        pattern: '/stores/([\\w-]+)',
+      },
+      transform: 'none',
+    })
+    const traces: ValueTrace[] = [
+      {
+        exchangeId: stock[0]!.id,
+        location: { in: 'cookie', name: 'pm_store' },
+        value: 'pine-hill',
+        origin: at(1),
+      },
+      {
+        exchangeId: stock[1]!.id,
+        location: { in: 'cookie', name: 'pm_store' },
+        value: 'cedar-park',
+        origin: at(2),
+      },
+    ]
+    const doc = build([
+      ...stores,
+      ...stock,
+    ], [
+      op('getStores', stores),
+      op('getApiStock', stock),
+    ], [
+      loaded('s1', [], page),
+      loaded('s2', [], page),
+    ], traces)
+    const steps = doc.flows.flatMap(entry => entry.steps)
+    expect(steps.find(step => step.operationId === 'getApiStock')?.inputs['cookie.pm_store']).toEqual({
+      kind: 'html',
+      step: 's1',
+      selector: '#store-list > li > a:nth-of-type(1)',
+      attr: 'href',
+      pattern: '/stores/([\\w-]+)',
+      confidence: 'high',
+      repeated: true,
+    })
+    expect(steps.find(step => step.operationId === 'getStores')?.outputs).toEqual({
+      'store-list': 'html.#store-list > li > a:nth-of-type(1)@href //stores/([\\w-]+)/',
+    })
+  })
+
+  it('keeps a positional selector seen at one position only', () => {
+    const html = '<ul id="store-list"><li><a href="/stores/pine-hill">Pine</a></li></ul>'
+    const stores = exchange({
+      url: 'https://shop.example.test/stores',
+      startedAt: 1,
+      responseBody: {
+        mimeType: 'text/html',
+        text: html,
+        base64: null,
+        json: undefined,
+        form: null,
+      },
+    })
+    const stock = exchange({
+      url: 'https://shop.example.test/api/stock',
+      startedAt: 2,
+      cookies: { pm_store: 'pine-hill' },
+    })
+    const location = {
+      in: 'html' as const,
+      selector: '#store-list > li:nth-of-type(1) > a:nth-of-type(1)',
+      attr: 'href',
+      pattern: null,
+    }
+    const doc = build([stores, stock], [
+      op('getStores', [stores]),
+      op('getApiStock', [stock]),
+    ], [
+      loaded('s1', [], page),
+    ], [
+      {
+        exchangeId: stock.id,
+        location: { in: 'cookie', name: 'pm_store' },
+        value: 'pine-hill',
+        origin: {
+          kind: 'response',
+          exchangeId: stores.id,
+          location,
+          transform: 'none',
+        },
+      },
+    ])
+    const input = doc.flows.flatMap(entry => entry.steps).find(step => step.operationId === 'getApiStock')?.inputs['cookie.pm_store']
+    expect(input).toMatchObject({ kind: 'html', selector: location.selector })
+    expect(input).not.toHaveProperty('repeated')
+  })
+})
+
+describe('buildFlows: computed values that use typed input', () => {
+  const page = 'https://shop.example.test/login'
+
+  function computed(inputs: string[], changedOn = page, responseBody = jsonBody({ publicKey: 'PUBLICKEY-0123456789' })): FlowsDocument['computedValues'][number] | undefined {
+    const key = exchange({ url: 'https://shop.example.test/api/key', startedAt: 1, responseBody })
+    const login = exchange({
+      method: 'POST',
+      url: 'https://shop.example.test/api/login',
+      startedAt: 10,
+      requestBody: jsonBody({ username: 'demo', password: 'ENCRYPTED-OUTPUT' }),
+    })
+    const events: CaptureEvent[] = [
+      {
+        t: 'action',
+        ts: 2,
+        pageUrl: changedOn,
+        kind: 'change',
+        label: 'Username',
+        selector: '#username',
+        field: 'username',
+      },
+      {
+        t: 'action',
+        ts: 3,
+        pageUrl: changedOn,
+        kind: 'change',
+        label: 'Password',
+        selector: '#password',
+        field: 'password',
+      },
+      {
+        t: 'transform',
+        ts: 9,
+        pageUrl: page,
+        api: 'crypto.subtle.encrypt',
+        output: ['ENCRYPTED-OUTPUT'],
+        inputs,
+        details: null,
+        stack: [],
+      },
+    ]
+    const sessions = [
+      loaded('s1', events, page),
+    ]
+    const traces: ValueTrace[] = [
+      {
+        exchangeId: login.id,
+        location: { in: 'body', pointer: '/username' },
+        value: 'demo',
+        origin: { kind: 'user-input', field: 'username' },
+      },
+      {
+        exchangeId: login.id,
+        location: { in: 'body', pointer: '/password' },
+        value: 'ENCRYPTED-OUTPUT',
+        origin: { kind: 'transform', eventIndex: events.length - 1, sessionId: 's1' },
+      },
+    ]
+    return build([key, login], [
+      op('getApiKey', [key]),
+      op('postApiLogin', [login]),
+    ], sessions, traces).computedValues[0]
+  }
+
+  it('adds the password field the person typed, next to the key from a response', () => {
+    expect(computed(['PUBLICKEY-0123456789', 'hunter2-password'])?.uses).toEqual([
+      {
+        kind: 'step',
+        step: 'load-login.s1',
+        output: 'body./publicKey',
+        transform: 'none',
+      },
+      { kind: 'user-input', field: 'password' },
+    ])
+  })
+
+  it('names the field whose value the request also sends as-is', () => {
+    expect(computed(['demo'])?.uses).toEqual([
+      { kind: 'user-input', field: 'username' },
+    ])
+  })
+
+  it('ignores bytes, previews found in a response, and fields changed on another page', () => {
+    expect(computed(['\u0001\u0002binary-bytes'])?.uses).toEqual([])
+    // Found in a response: a use of that response, not typing.
+    expect(computed(['in-response-1'], page, jsonBody({ publicKey: 'x', note: 'in-response-1' }))?.uses).toEqual([
+      {
+        kind: 'step',
+        step: 'load-login.s1',
+        output: 'body./note',
+        transform: 'none',
+      },
+    ])
+    // A cut-off preview is data, not something typed.
+    expect(computed([
+      'x'.repeat(256),
+    ])?.uses).toEqual([])
+    expect(computed(['typed-secret'], 'https://shop.example.test/register')?.uses).toEqual([])
+    expect(computed(['typed-secret'])?.uses).toEqual([
+      { kind: 'user-input', field: 'password' },
+    ])
   })
 })
 

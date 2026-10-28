@@ -328,6 +328,61 @@ describe('flows and session needs', () => {
   })
 })
 
+describe('fitted to the site, not to the captured samples', () => {
+  it('infers no enum of product names and keeps code-like enums', () => {
+    const orders = operation('GET', '/api/orders').responses.find(response => response.status === 200)?.schema
+    const item = orders?.properties?.orders?.items?.properties?.items?.items
+    expect(item?.properties?.name).toBeDefined()
+    expect(item?.properties?.name?.enum).toBeUndefined()
+    expect(operation('GET', '/api/products').query.find(param => param.name === 'category')?.schema.enum).toEqual(['beverages', 'snacks'])
+  })
+
+  it('keeps per-session and browser-identity headers out of constant defaults', () => {
+    const csrf = operation('POST', '/api/auth/login').headers.find(header => header.name === 'x-csrf-token')
+    expect(csrf?.constant).toBe(false)
+    expect(csrf?.schema.default).toBeUndefined()
+    for (const op of analysis.operations.filter(entry => entry.host === host)) {
+      const agent = op.headers.find(header => header.name === 'user-agent')
+      expect(agent?.constant ?? false).toBe(false)
+      expect(agent?.schema.default).toBeUndefined()
+    }
+  })
+
+  it('names any item of a list as the producer, never the index or position one sample used', () => {
+    const inputs = analysis.flows.flows.flatMap(flow => flow.steps.flatMap(step => Object.values(step.inputs)))
+    const outputs = inputs.flatMap(origin => origin.kind === 'step'
+      ? [origin.output]
+      : [])
+    expect(outputs).toContain('body./*/slug')
+    expect(outputs.filter(output => /\/\d+\//.test(output))).toEqual([])
+    const stores = inputs.filter(origin => origin.kind === 'html' && origin.selector.startsWith('#store-list'))
+    expect(stores.length).toBeGreaterThan(0)
+    for (const origin of stores)
+      expect(origin).toMatchObject({ selector: '#store-list > li > a:nth-of-type(1)', repeated: true })
+  })
+
+  it('lists the typed password among the values the encryption uses', () => {
+    const computed = analysis.flows.computedValues.find(value => value.input === 'body./password')
+    expect(computed?.uses).toContainEqual({ kind: 'user-input', field: 'password' })
+  })
+
+  it('masks account fields and keeps the auth scheme in examples', () => {
+    const spec = [...files].find(([name]) => name.startsWith('specs/') && !name.endsWith('.asyncapi.yaml'))?.[1] ?? ''
+    expect(spec).toContain('tokenType: Bearer')
+    expect(spec).toContain('displayName: Xxxx Xxxxxxx')
+    for (const [name, content] of files) {
+      for (const personal of ['Demo Shopper', 'usr_demo_0001'])
+        expect(content.includes(personal), `${name} contains ${personal}`).toBe(false)
+    }
+  })
+
+  it('writes the minified sensor excerpt one statement per line', () => {
+    const excerpt = [...files].find(([name]) => name.includes('shield/sensor'))?.[1] ?? ''
+    expect(excerpt.split('\n').length).toBeGreaterThan(8)
+    expect(excerpt).toMatch(/\n {2}async function t\(\)\{\n/)
+  })
+})
+
 describe('real-time channels', () => {
   function ticker(): NonNullable<Analysis['channels']>[number] {
     const found = analysis.channels?.find(channel => channel.host === host && channel.path === '/ws/ticker')
