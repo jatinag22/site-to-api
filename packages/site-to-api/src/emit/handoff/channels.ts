@@ -142,6 +142,32 @@ function channelLines(channel: WebSocketChannel): string[] {
   return lines
 }
 
+/**
+ * Gaps of the channels: directions whose messages could not be grouped by type, and message
+ * types whose schema came from a sample of their frames.
+ */
+export function channelGaps(channels: readonly WebSocketChannel[]): string[] {
+  return channels.flatMap((channel) => {
+    const url = code(channelUrl(channel))
+    const ungrouped = channel.ungrouped.map((entry) => {
+      const side = entry.direction === 'send'
+        ? 'client'
+        : 'server'
+      const why = entry.field === null || entry.values === null
+        ? 'no field names their type'
+        : `${code(entry.field)} looks like their type but has ${entry.values} values, too many to tell types from data`
+      return `The ${side} messages of ${url} come in several shapes, but ${why}, so they are one message with a merged schema in the AsyncAPI file. Read the examples there, or look in the site's code for how it tells them apart.`
+    })
+    const sampled = channel.messages
+      .filter(message => message.schemaSamples !== null && message.schemaSamples < message.count)
+      .map(message => `The schema of ${code(messageName(message))} on ${url} was inferred from the first ${message.schemaSamples} of its ${message.count} messages; a field only later messages carry can be missing.`)
+    return [
+      ...ungrouped,
+      ...sampled,
+    ]
+  })
+}
+
 /** The "Real-time channels" section of `AGENT.md`; empty when the capture had no WebSocket. */
 export function channelsSection(channels: readonly WebSocketChannel[]): string[] {
   if (channels.length === 0)

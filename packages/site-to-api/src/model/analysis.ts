@@ -136,6 +136,11 @@ export interface ChannelMessage {
   format: 'json' | 'text' | 'binary'
   /** Frames seen across all connections. */
   count: number
+  /**
+   * Frames the JSON schema was inferred from: the first 1000 when there were more (`count`), so
+   * a field only later frames have can be missing. Null for text and binary frames.
+   */
+  schemaSamples: number | null
   /** JSON Schema of the message, for JSON messages; null otherwise. */
   schema: JsonSchema | null
   /** For text frames: value-free shape descriptions of the frames, most common first. */
@@ -180,6 +185,11 @@ export interface WebSocketChannel {
   cookies: { status: 'sent' | 'none' | 'unknown', names: string[] }
   /** Path and query values of the connection URL traced to earlier responses. */
   links: ChannelValueLink[]
+  /**
+   * Directions whose JSON messages come in several shapes but could not be grouped by type: no
+   * field names the type, or the best one (`field`) has more `values` than a message type can.
+   */
+  ungrouped: Array<{ direction: ChannelMessage['direction'], field: string | null, values: number | null }>
   /** One-line description built from the path and the message names, without an LLM. */
   summary: string
 }

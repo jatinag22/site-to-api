@@ -1,7 +1,7 @@
 /**
  * Groups the frames of one channel direction into message types and infers a schema for each.
  */
-import type { ChannelMessage, JsonSchema, RedactContext, Redactor } from '../../model'
+import type { ChannelMessage, JsonSchema, RedactContext, Redactor, WebSocketChannel } from '../../model'
 import type { Frame } from './connections'
 import { camelCase } from '../operations'
 import { inferSchema } from '../schema'
@@ -33,8 +33,13 @@ const DISCRIMINATOR_NAMES: readonly string[] = [
   'name',
   'topic',
 ]
-/** A field with more distinct values than this is data (an id, a timestamp), not a message type. */
-const MAX_GROUPS = 16
+/**
+ * A field with more distinct values than this is data (an id, a timestamp), not a message type.
+ * Real feeds have a few dozen event names (`evt0` ... `evt20` next to `tick`).
+ */
+const MAX_GROUPS = 32
+/** Share of the messages the field must be on; the rest (acknowledgements, errors) form one group. */
+const MIN_COVERAGE = 0.8
 /** Samples per message type used for schema inference; enough to see every optional field. */
 const MAX_SCHEMA_SAMPLES = 1000
 /** Longer text frames get no example, like long text request bodies. */
@@ -45,41 +50,123 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-/**
- * The top-level field that tells this direction's JSON messages apart, or null.
- *
- * Candidates are fields that hold a non-empty string in every message (so every message falls
- * into exactly one group) with at most {@link MAX_GROUPS} distinct values, each of which the
- * redactor leaves unchanged (a value that names a group is written into the output). A well-known
- * name (`type`, `event`, `op`, `action`, ...) wins in that order; otherwise the field with the
- * fewest distinct values, provided it has two or more and some value repeats. Any message that is
- * not a JSON object means no discriminator.
- */
-export function chooseDiscriminator(messages: readonly unknown[], isSafeValue: (field: string, value: string) => boolean): string | null {
-  const objects = messages.filter(isRecord)
-  if (objects.length === 0 || objects.length !== messages.length)
-    return null
-  const candidates: Array<{ field: string, distinct: number, rank: number }> = []
-  for (const field of Object.keys(objects[0]!)) {
-    const values = objects.map(object => object[field]).filter((value): value is string => typeof value === 'string' && value !== '')
-    if (values.length !== objects.length)
-      continue
-    const distinct = new Set(values)
-    if (distinct.size > MAX_GROUPS || ![...distinct].every(value => isSafeValue(field, value)))
-      continue
-    const rank = DISCRIMINATOR_NAMES.indexOf(field)
-    if (rank === -1 && (distinct.size < 2 || distinct.size === objects.length))
-      continue
-    candidates.push({
-      field,
-      distinct: distinct.size,
-      rank: rank === -1
-        ? DISCRIMINATOR_NAMES.length
-        : rank,
-    })
+/** The string at `path` (`type`, `data.e`), or undefined. */
+function stringAt(value: unknown, path: readonly string[]): string | undefined {
+  let current = value
+  for (const key of path) {
+    if (!isRecord(current))
+      return undefined
+    current = current[key]
   }
-  candidates.sort((a, b) => a.rank - b.rank || a.distinct - b.distinct || a.field.localeCompare(b.field))
-  return candidates[0]?.field ?? null
+  return typeof current === 'string' && current !== ''
+    ? current
+    : undefined
+}
+
+/** Paths of string fields of one object, top level and one object down, without dotted keys. */
+function stringPaths(object: Record<string, unknown>, depth: number): string[][] {
+  return Object.entries(object).flatMap(([key, value]) => {
+    if (key.includes('.'))
+      return []
+    if (typeof value === 'string') {
+      return [
+        [key],
+      ]
+    }
+    return depth > 1 && isRecord(value)
+      ? stringPaths(value, depth - 1).map(path => [key, ...path])
+      : []
+  })
+}
+
+/** Every path {@link stringPaths} finds in any of the messages, once each. */
+function candidatePaths(objects: ReadonlyArray<Record<string, unknown>>): string[][] {
+  const paths = new Map<string, string[]>()
+  for (const object of objects) {
+    for (const path of stringPaths(object, 2))
+      paths.set(path.join('.'), path)
+  }
+  return [
+    ...paths.values(),
+  ]
+}
+
+/** How a direction's JSON messages are told apart. */
+export interface DiscriminatorChoice {
+  /** The field, as a dotted path (`type`, `data.e`); null when none groups the messages. */
+  field: string | null
+  /** When no field was chosen: the best one left out for having more than {@link MAX_GROUPS} values. */
+  tooMany: { field: string, values: number } | null
+}
+
+interface Candidate {
+  field: string
+  present: number
+  distinct: number
+  rank: number
+  depth: number
+}
+
+function byStrength(a: Candidate, b: Candidate): number {
+  return b.present - a.present || a.rank - b.rank || a.depth - b.depth || a.distinct - b.distinct || a.field.localeCompare(b.field)
+}
+
+/**
+ * The field that tells this direction's JSON messages apart (decision 0029).
+ *
+ * Candidates are string fields at the top level or one object down (`data.e`) that hold a
+ * non-empty string in at least {@link MIN_COVERAGE} of the messages, with at most
+ * {@link MAX_GROUPS} distinct values, each of which the redactor leaves unchanged (a value that
+ * names a group is written into the output). A field with a well-known name (`type`, `event`,
+ * `op`, ...) may have a single value; any other needs two or more, some repeating. The field
+ * that groups the most messages wins; ties go to the well-known name order, then the shallower
+ * field, then the fewer values.
+ */
+export function chooseDiscriminator(messages: readonly unknown[], isSafeValue: (field: string, value: string) => boolean): DiscriminatorChoice {
+  const objects = messages.filter(isRecord)
+  const accepted: Candidate[] = []
+  const tooMany: Candidate[] = []
+  for (const path of candidatePaths(objects)) {
+    const values = objects.flatMap((object) => {
+      const value = stringAt(object, path)
+      return value === undefined
+        ? []
+        : [value]
+    })
+    if (values.length === 0 || values.length < MIN_COVERAGE * messages.length)
+      continue
+    const field = path.join('.')
+    const last = path.at(-1) ?? field
+    const distinct = new Set(values)
+    const known = DISCRIMINATOR_NAMES.indexOf(last)
+    const candidate = {
+      field,
+      present: values.length,
+      distinct: distinct.size,
+      rank: known === -1
+        ? DISCRIMINATOR_NAMES.length
+        : known,
+      depth: path.length,
+    }
+    if (known === -1 && (distinct.size < 2 || distinct.size === values.length))
+      continue
+    if (![...distinct].every(value => isSafeValue(last, value)))
+      continue
+    if (distinct.size > MAX_GROUPS)
+      tooMany.push(candidate)
+    else
+      accepted.push(candidate)
+  }
+  const best = accepted.sort(byStrength)[0]
+  if (best)
+    return { field: best.field, tooMany: null }
+  const lost = tooMany.sort((a, b) => a.rank - b.rank || byStrength(a, b))[0]
+  return {
+    field: null,
+    tooMany: lost
+      ? { field: lost.field, values: lost.distinct }
+      : null,
+  }
 }
 
 function capitalize(word: string): string {
@@ -95,14 +182,20 @@ function messageId(direction: ChannelMessage['direction'], name: string, fallbac
 }
 
 /** Pins the discriminator in the schema, so the message type is part of the contract. */
-function pinDiscriminator(schema: JsonSchema, field: string, value: string): JsonSchema {
-  if (!schema.properties?.[field])
+function pinDiscriminator(schema: JsonSchema, path: readonly string[], value: string): JsonSchema {
+  const [key, ...rest] = path
+  if (key === undefined)
+    return schema
+  const property = schema.properties?.[key]
+  if (!property)
     return schema
   return {
     ...schema,
     properties: {
       ...schema.properties,
-      [field]: { type: 'string', const: value },
+      [key]: rest.length === 0
+        ? { type: 'string', const: value }
+        : pinDiscriminator(property, rest, value),
     },
   }
 }
@@ -128,6 +221,8 @@ export interface GroupedMessages {
   messages: ChannelMessage[]
   /** Message id per {@link KeyedFrame.key}. */
   messageOf: Map<string, string>
+  /** Set when this direction's JSON messages differ in shape but no field could group them. */
+  ungrouped: WebSocketChannel['ungrouped'][number] | null
 }
 
 interface Group {
@@ -155,7 +250,9 @@ export function groupMessages(direction: ChannelMessage['direction'], frames: re
       : 'response-body',
   }
   const json = frames.filter(item => item.frame.json !== undefined)
-  const field = chooseDiscriminator(json.map(item => item.frame.json), (name, value) => redactor.value(value, { ...context, name }) === value)
+  const choice = chooseDiscriminator(json.map(item => item.frame.json), (name, value) => redactor.value(value, { ...context, name }) === value)
+  const field = choice.field
+  const path = field?.split('.') ?? []
 
   const groups = new Map<string, Group>()
   const unique = (id: string): string => {
@@ -177,8 +274,8 @@ export function groupMessages(direction: ChannelMessage['direction'], frames: re
       key = 'text'
       init = { id: `${direction}Text`, discriminator: null, format: 'text' }
     }
-    else if (field !== null && isRecord(frame.json) && typeof frame.json[field] === 'string') {
-      const value = frame.json[field]
+    else if (field !== null && stringAt(frame.json, path) !== undefined) {
+      const value = stringAt(frame.json, path) ?? ''
       key = `json:${value}`
       init = {
         id: messageId(direction, value, 'Message'),
@@ -214,6 +311,7 @@ export function groupMessages(direction: ChannelMessage['direction'], frames: re
       discriminator: group.discriminator,
       format: group.format,
       count: group.frames.length,
+      schemaSamples: null,
       links: [],
     }
     if (group.format === 'binary') {
@@ -237,12 +335,36 @@ export function groupMessages(direction: ChannelMessage['direction'], frames: re
     const inferred = inferSchema(samples, enumGuard(redactor, context))
     return {
       ...base,
+      schemaSamples: samples.length,
       schema: group.discriminator
-        ? pinDiscriminator(inferred, group.discriminator.field, group.discriminator.value)
+        ? pinDiscriminator(inferred, group.discriminator.field.split('.'), group.discriminator.value)
         : inferred,
       shapes: [],
       examples: redactor.examples(group.frames.map(item => item.frame.json), context),
     }
   })
-  return { messages, messageOf }
+  return {
+    messages,
+    messageOf,
+    ungrouped: ungroupedOf(direction, json, choice),
+  }
+}
+
+/**
+ * A direction whose JSON messages come in several shapes (different top-level fields) but share
+ * no field that names their type: they all end up in one message with a merged schema.
+ */
+function ungroupedOf(direction: ChannelMessage['direction'], json: readonly KeyedFrame[], choice: DiscriminatorChoice): GroupedMessages['ungrouped'] {
+  if (choice.field !== null || json.length < 2)
+    return null
+  const shapes = new Set(json.map(item => isRecord(item.frame.json)
+    ? Object.keys(item.frame.json).sort().join('\u0000')
+    : 'array'))
+  if (choice.tooMany === null && shapes.size < 2)
+    return null
+  return {
+    direction,
+    field: choice.tooMany?.field ?? null,
+    values: choice.tooMany?.values ?? null,
+  }
 }

@@ -12,6 +12,11 @@ the rules of 0023 did not hold up:
   answered by the server before the client subscribes lost the subscription.
 - A channel with no frames at all said "the client sent nothing after connecting: the server
   pushes on its own", then "Server → client: nothing seen".
+- Grouping needed a top-level field in every message with at most 16 values. A feed with 21 event
+  names put all 1,501 client messages into one `sendMessage`, and the `auth` message lost its name.
+  Binance's 524 server messages became one message with an `anyOf` schema because the 8 replies
+  to subscriptions lack `stream`, which every data message has. Nothing in the output said so,
+  nor that schemas came from the first 1000 frames of a type.
 
 ## Decision
 - Each client message type gets a role from the words of its name (the discriminator value):
@@ -26,6 +31,15 @@ the rules of 0023 did not hold up:
   sequence across connections is reported, as before. Each entry carries its role, in the
   AsyncAPI `x-site-to-api-handshake` extension and in `AGENT.md`, `API_MAP.md` and
   `client/README.md`.
+- Discriminator candidates are string fields at the top level or one object down (`data.e`) that
+  are on at least 80% of a direction's JSON messages and have at most 32 values (well-known names
+  may have one; others need two or more, some repeating). The field that groups the most messages
+  wins; ties go to the well-known name order of 0023, then the shallower field, then the fewer
+  values. Messages without the field form one more group.
+- When a direction's JSON messages come in several shapes and no field qualifies, the channel
+  records it (with the best field that had too many values, if any) and `AGENT.md` lists it under
+  Gaps. A message type whose schema came from its first 1000 frames says so in its AsyncAPI
+  summary and in the Gaps.
 - The text about a channel's opening says what the capture shows: no messages at all, only
   server messages, or client messages none of which set up the connection.
 

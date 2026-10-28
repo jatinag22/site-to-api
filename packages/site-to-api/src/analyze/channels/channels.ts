@@ -361,6 +361,9 @@ export function buildChannels(input: BuildChannelsInput): WebSocketChannel[] {
         handshake: handshakeOf(members, sent.messages, sent.messageOf, redactor),
         cookies: cookiesOf(members, upgrades),
         links: summarizeLinks(urlLinks),
+        ungrouped: [sent.ungrouped, received.ungrouped].flatMap(entry => entry === null
+          ? []
+          : [entry]),
         summary: summaryOf(operation.path, messages),
       }
     })

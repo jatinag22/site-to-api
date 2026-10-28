@@ -11,7 +11,7 @@ import { cookieLines } from '../cookies'
 import { anchor, code, text } from '../escape'
 import { specFileName } from '../openapi/write'
 import { createStepResolver } from '../steps'
-import { channelsSection } from './channels'
+import { channelGaps, channelsSection } from './channels'
 import { clientGap, clientReadingLine } from './client'
 import { describeSource } from './source-ref'
 
@@ -203,6 +203,7 @@ function gapsSection(analysis: Analysis, context: AgentGuideContext, resolver: S
   const gaps = [
     ...operationGaps(analysis, resolver),
     ...unknownOriginGaps(analysis, resolver),
+    ...channelGaps(analysis.channels ?? []),
   ]
   if (!context.probed)
     gaps.push('`site-to-api probe` has not been run, so session requirements are inferred, not tested.')

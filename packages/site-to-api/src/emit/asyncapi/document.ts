@@ -59,7 +59,9 @@ function messageObject(message: ChannelMessage): Json {
       ? ''
       : 's'}${message.discriminator
       ? ` (${message.discriminator.field} = ${message.discriminator.value})`
-      : ''}.`,
+      : ''}.${message.schemaSamples !== null && message.schemaSamples < message.count
+      ? ` The schema was inferred from the first ${message.schemaSamples}.`
+      : ''}`,
     'contentType': CONTENT_TYPES[message.format],
     'payload': payloadOf(message),
     ...(message.examples.length > 0

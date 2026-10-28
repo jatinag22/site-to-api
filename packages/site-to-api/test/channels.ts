@@ -10,6 +10,9 @@ export function channelMessage(init: Partial<ChannelMessage> & Pick<ChannelMessa
     discriminator: null,
     format: 'json',
     count: 1,
+    schemaSamples: init.format === 'text' || init.format === 'binary'
+      ? null
+      : init.count ?? 1,
     schema: { type: 'object', properties: {} },
     shapes: [],
     examples: [],
@@ -28,6 +31,7 @@ export function tickerChannel(overrides: Partial<WebSocketChannel> = {}): WebSoc
     pathParams: [],
     query: [],
     connections: 2,
+    ungrouped: [],
     sentFrom: {
       file: 'src/widgets/ticker.ts',
       line: 22,

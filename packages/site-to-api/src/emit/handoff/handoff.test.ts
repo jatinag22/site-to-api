@@ -647,6 +647,25 @@ describe('real-time channels', () => {
     expect(guide).toContain('the capture has no record of the upgrade request')
   })
 
+  it('lists ungrouped messages and sampled schemas as gaps', () => {
+    const ticker = tickerChannel()
+    const guide = renderAgentGuide(withChannels([
+      tickerChannel({
+        messages: ticker.messages.map(message => message.direction === 'receive'
+          ? { ...message, count: 1500, schemaSamples: 1000 }
+          : message),
+        ungrouped: [
+          { direction: 'send', field: 'op', values: 40 },
+          { direction: 'receive', field: null, values: null },
+        ],
+      }),
+    ]), context)
+    const gaps = guide.split('## Gaps')[1] ?? ''
+    expect(gaps).toContain('The client messages of `ws://shop.test:8080/ws/ticker` come in several shapes, but `op` looks like their type but has 40 values, too many to tell types from data')
+    expect(gaps).toContain('The server messages of `ws://shop.test:8080/ws/ticker` come in several shapes, but no field names their type')
+    expect(gaps).toContain('was inferred from the first 1000 of its 1500 messages')
+  })
+
   it('does not claim the server pushes when no messages were seen at all', () => {
     const guide = renderAgentGuide(withChannels([
       tickerChannel({ handshake: [], messages: [] }),
