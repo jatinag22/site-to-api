@@ -23,6 +23,7 @@ import { EventWriter } from './events'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
 import { ScriptCollector } from './scripts'
+import { launchArgs, minimizes, minimizeWindow } from './window'
 
 /** Options for {@link runCapture}. */
 export interface RunCaptureOptions {
@@ -150,6 +151,7 @@ async function launchContext(browser: BrowserConfig, cwd: string, harPath: strin
       : path.resolve(cwd, browser.userDataDir), {
       ...optional,
       headless: browser.headless,
+      args: launchArgs(browser),
       // SIGINT ends the session through onStop, which closes the context and so flushes the HAR.
       handleSIGINT: false,
       recordHar: { path: harPath, content: 'embed', mode: 'full' },
@@ -260,6 +262,13 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       })
       if (capture.websockets)
         page.on('websocket', ws => recordWebSocket(ws, page, nextSocket++, event => events.write(event)))
+      // Popups open their own window, so every new page is minimized, not only the first.
+      if (minimizes(browser)) {
+        track(minimizeWindow(page).then((warning) => {
+          if (warning !== null && !warnings.includes(warning))
+            warnings.push(warning)
+        }))
+      }
     }
     context.pages().forEach(watchPage)
     context.on('page', watchPage)

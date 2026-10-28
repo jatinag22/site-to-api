@@ -102,7 +102,8 @@ site-to-api probe      # optional: checks the session needs against the live sho
 ```
 
 `--script` drives the browser from a file so the run is repeatable; drop it (and `--headless`) to
-browse by hand. The shop's test account is `demo` / `demo-password` (fictional, local only).
+browse by hand. Sites with bot protection usually block headless browsers: for those, use
+`--channel chrome --minimized` instead, a normal browser whose windows stay minimized. The shop's test account is `demo` / `demo-password` (fictional, local only).
 
 ## What you get
 

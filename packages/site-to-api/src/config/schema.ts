@@ -25,6 +25,11 @@ export const ConfigSchema = z.strictObject({
       /** Playwright channel, e.g. `chrome`. `null` uses Playwright's bundled Chromium. */
       channel: z.string().nullable().default('chrome'),
       headless: z.boolean().default(false),
+      /**
+       * Keep the headful browser but minimize its windows, so a scripted capture does not take
+       * over the screen. Unlike `headless`, sites see an ordinary browser. Ignored when headless.
+       */
+      minimized: z.boolean().default(false),
       locale: z.string().nullable().default(null),
       timezone: z.string().nullable().default(null),
       userAgent: z.string().nullable().default(null),
