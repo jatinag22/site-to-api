@@ -49,7 +49,9 @@ never becomes an enum.
 **Constants.** A header is constant (and gets a default) only when it was sent with one value in
 every exchange of the operation and in at least two sessions. Browser-identity headers
 (`user-agent`, `accept-language`, `sec-ch-ua*`) are never constant, never defaulted and never
-required; their observed values stay as examples.
+required; their observed values stay as examples. The page context headers a browser adds
+(`origin`, `referer`) follow the constant rule but are never required, so a value seen in one
+session never becomes an SDK argument the caller must invent.
 
 **Any item, not the sample's item.** In a step `output`, every JSON-pointer token that indexes an
 array is written `*` (`body./*/slug`, `body./items/*/id`): the value comes from one of the items.

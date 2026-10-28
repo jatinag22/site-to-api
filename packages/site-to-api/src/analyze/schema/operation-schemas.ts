@@ -54,6 +54,17 @@ const BROWSER_IDENTITY_HEADERS: readonly string[] = [
   'sec-ch-ua*',
 ]
 
+/**
+ * Headers every browser fills in from the page that sends the request. A server may check them,
+ * so they stay documented (and get a default when constant), but a client that does not send them
+ * is not calling the API wrongly, so they are never required: a value seen in one session only
+ * would otherwise be a required SDK argument nobody can know.
+ */
+const BROWSER_CONTEXT_HEADERS: readonly string[] = [
+  'origin',
+  'referer',
+]
+
 /** Sessions a value must be identical in before it counts as a constant (decision 0004). */
 const MIN_CONSTANT_SESSIONS = 2
 
@@ -134,8 +145,9 @@ function inferHeaders(exchanges: Exchange[], redactor: Redactor): HeaderInfo[] {
       schema = { ...schema, default: only }
     return {
       name,
-      // Every HTTP client sends its own user agent; a generated SDK must not demand one.
-      required: present === exchanges.length && !isBrowserIdentityHeader(name),
+      // Every HTTP client sends its own user agent; a generated SDK must not demand one, nor the
+      // page context a browser adds.
+      required: present === exchanges.length && !isBrowserIdentityHeader(name) && !matchesHeaderList(BROWSER_CONTEXT_HEADERS, name.toLowerCase()),
       constant,
       schema,
     }

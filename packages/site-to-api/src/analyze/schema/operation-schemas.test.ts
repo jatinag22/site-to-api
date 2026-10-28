@@ -155,6 +155,25 @@ describe('inferOperationSchemas', () => {
     })
   })
 
+  it('never requires the page context headers a browser adds, even when sent every time', () => {
+    const result = infer([
+      exchange({
+        url: 'https://shop.test/api/x',
+        requestHeaders: { 'origin': 'https://shop.test', 'referer': 'https://shop.test/login', 'x-app': 'web' },
+      }),
+      exchange({
+        url: 'https://shop.test/api/x',
+        requestHeaders: { 'origin': 'https://shop.test', 'referer': 'https://shop.test/login', 'x-app': 'web' },
+      }),
+    ])
+    expect(result.headers.map(header => [header.name, header.required, header.constant])).toEqual([
+      ['origin', false, false],
+      ['referer', false, false],
+      ['x-app', true, false],
+    ])
+    expect(result.headers.find(header => header.name === 'referer')?.schema.examples).toEqual(['https://shop.test/login'])
+  })
+
   it('never turns the capture browser\'s identity into constant defaults', () => {
     const identity = {
       'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36',
