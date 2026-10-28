@@ -2,8 +2,11 @@
  * `build`: raw sessions → handoff folder. Runs every analysis stage in the order described in
  * docs/architecture.md. Stages are pure; this module owns ordering and file output.
  */
+import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
+import type { ClientState } from '../emit/handoff'
 import type { Analysis, LoadedSession, Operation, ResponseInfo, SourceRef, SourceResolver } from '../model'
+import type { ProbeReport } from '../model/probe'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'pathe'
@@ -16,17 +19,26 @@ import { createRedactor } from '../analyze/redact'
 import { inferOperationSchemas } from '../analyze/schema'
 import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findSourceEndpoints } from '../analyze/source'
 import { writeFlows } from '../emit/flows'
-import { writeHandoffDocs } from '../emit/handoff'
+import { clientGap, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
 import { loadSessions } from '../load'
-import { applyProbeReport, readProbeReport, requirementsByOperation } from '../probe'
+import { applyProbeReport, minimizeLimit, notMinimized, readProbeReport, requirementsByOperation } from '../probe'
 import { VERSION } from '../version'
 import { alignWithRuntime } from './extract-check'
+import { inHostFilter, unmatchedHostPatterns } from './hosts'
+import { buildRecordFor, writeBuildRecord } from './record'
+
+export { readBuildRecord, recordClientGenerated, stickyOptions } from './record'
 
 export interface BuildOptions {
   config: ResolvedConfig
   cwd: string
+  /**
+   * Where each config value came from (from `loadConfig`). Values given as flags or environment
+   * variables are recorded in `build.json` for `probe` and `gen` to reuse; none when omitted.
+   */
+  sources?: Record<string, ConfigSource>
   log?: (message: string) => void
 }
 
@@ -174,7 +186,12 @@ function hostsOf(operations: Operation[]): string[] {
   ].sort()
 }
 
-async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, log: (message: string) => void): Promise<Analysis> {
+interface Analyzed {
+  analysis: Analysis
+  probe: ProbeReport | null
+}
+
+async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, log: (message: string) => void): Promise<Analyzed> {
   const loaded = await loadSessions(rawDir)
   log(`Loaded ${loaded.sessions.length} session(s), ${loaded.exchanges.length} requests`)
   const classified = classifyExchanges(loaded.exchanges, config.hosts)
@@ -184,9 +201,14 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   const htmlLocator = createHtmlLocator()
 
   const redactor = createRedactor({ exchanges: classified.exchanges, config: config.redact })
+  const wanted = inHostFilter(config.hosts)
   let operations = buildOperations(classified.exchanges, { sourceRoutes })
+    .filter(operation => !operation.sourceOnly || wanted(operation.host))
   operations = inferOperationSchemas(operations, redactor)
-  const warnings = [...loaded.warnings]
+  const warnings = [
+    ...loaded.warnings,
+    ...unmatchedHostPatterns(loaded.exchanges, config.hosts),
+  ]
   operations = addExtraction(operations, config.build.minExtractSamples, warnings)
   const operationIdByExchange = new Map(operations.flatMap(operation => operation.exchanges.map(exchange => [exchange.id, operation.operationId] as const)))
   const callSites = createWrapperAwareResolver(resolver, classified.exchanges, exchange => operationIdByExchange.get(exchange.id) ?? null)
@@ -228,15 +250,18 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   }
   if (config.build.excerpts)
     await addExcerpts(analysis, loaded.sessions)
-  return analysis
+  return { analysis, probe }
 }
 
-/** Runs the whole analysis and writes the handoff folder. `client/` and `probe.json` are kept. */
+/**
+ * Runs the whole analysis and writes the handoff folder, including `build.json` with the options
+ * used. `client/` (with `--no-client`) and `probe.json` are kept.
+ */
 export async function buildHandoff(options: BuildOptions): Promise<BuildResult> {
   const log = options.log ?? (() => {})
   const rawDir = resolve(options.cwd, options.config.rawDir)
   const outDir = resolve(options.cwd, options.config.outDir)
-  const analysis = await analyze(options.config, rawDir, outDir, log)
+  const { analysis, probe } = await analyze(options.config, rawDir, outDir, log)
 
   // Remove generated files from a previous build so deleted operations do not linger.
   for (const stale of [
@@ -257,27 +282,38 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     ...await writeExcerpts(outDir, analysis.excerpts),
   ]
   const warnings = [...analysis.warnings]
-  let hasClient = false
+  let client: ClientState = 'none'
   if (options.config.gen.client && analysis.operations.length > 0) {
     const generated = await generateClient({ handoffDir: outDir, flows: analysis.flows })
     files.push(...generated.files.map(file => join(outDir, file)))
     warnings.push(...generated.warnings)
-    hasClient = true
+    client = 'current'
   }
   else if (analysis.operations.length === 0) {
     // Nothing left to describe: a client from an earlier build would point at operations that are gone.
     await rm(join(outDir, 'client'), { recursive: true, force: true })
   }
   else if (existsSync(join(outDir, 'client', 'index.ts'))) {
-    warnings.push('client/ is from an earlier build and was not regenerated (--no-client); run `site-to-api gen` to bring it up to date.')
+    client = 'stale'
+    // Same sentence as the AGENT.md gap, so the terminal and the folder say the same thing.
+    const stale = clientGap(client)
+    if (stale !== null)
+      warnings.push(stale)
   }
   files.push(
     ...await writeHandoffDocs(outDir, analysis, {
       toolVersion: VERSION,
       examples: options.config.redact.examples,
       probed: analysis.flows.session.some(entry => entry.probed),
-      hasClient,
+      client,
+      probe: probe
+        ? {
+            minimizePerHost: minimizeLimit(probe),
+            notMinimized: notMinimized(probe),
+          }
+        : null,
     }),
+    await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION)),
   )
   log(`Wrote ${files.length} files to ${outDir}`)
   return { analysis, outDir, files, warnings }
@@ -287,5 +323,5 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
 export async function analyzeCaptures(options: BuildOptions): Promise<Analysis> {
   const rawDir = resolve(options.cwd, options.config.rawDir)
   const outDir = resolve(options.cwd, options.config.outDir)
-  return analyze(options.config, rawDir, outDir, options.log ?? (() => {}))
+  return (await analyze(options.config, rawDir, outDir, options.log ?? (() => {}))).analysis
 }

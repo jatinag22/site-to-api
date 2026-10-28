@@ -111,6 +111,7 @@ api-handoff/
   source/             excerpts of the site's own code referenced above
   client/             typed client: hey-api SDK + Zod schemas, wired to @site-to-api/runtime
   probe.json          after `probe`: what each request needs (names only)
+  build.json          the options of the last build, which `probe` and `gen` reuse
 ```
 
 An excerpt of the `AGENT.md` generated from the fixture shop walkthrough above:
@@ -122,9 +123,12 @@ An excerpt of the `AGENT.md` generated from the fixture shop walkthrough above:
   calls (confirmed by probe).
 - Bot protection: Akamai (cookie \_abck; cookie bm\_sz; request body matches sensor\_data). Do
   not try to reproduce it; let a real browser run it (`browserSession` in `@site-to-api/runtime`).
-- Cookie `_abck`: set by `postShieldCollect`.
-- Cookie `pm_session`: set by `postApiAuthLogin`.
-- Cookie `pm_store`: set by a script in the page; the wrapper can set its value itself.
+- Cookie `_abck`: set by `postShieldCollect`. Needed by 5 requests (confirmed by probe).
+- Cookie `bm_sz`: set by `getRoot`. Seen in capture, but none of the 13 requests probe tested
+  needed it.
+- Cookie `pm_session`: set by `postApiAuthLogin`. Needed by 1 request (confirmed by probe).
+- Cookie `pm_store`: set by a script in the page; the wrapper can set its value itself. Seen in
+  capture, but none of the 13 requests probe tested needed it.
 
 ## Values computed in the browser
 
@@ -141,8 +145,8 @@ The full format is specified in [docs/output-format.md](docs/output-format.md).
 | `init` | Writes `site-to-api.config.ts` and gitignores `.site-to-api/` |
 | `capture [url]` | Opens a browser and records everything until you close it. `--script <file>` drives it from code instead; `--headless`; `--channel chrome\|msedge\|bundled`; `--user-data-dir` keeps logins |
 | `build` | Analyses every capture and writes the handoff folder, including the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client` |
-| `probe` | Replays captured requests against the live site, rate limited, safe methods only unless `--unsafe-methods`; folds the results into the handoff folder |
-| `gen` | Regenerates only `client/` |
+| `probe` | Replays captured requests against the live site, rate limited, safe methods only unless `--unsafe-methods`; works out the needed cookies and headers for up to `--minimize-per-host <n>` operations per host (default 5); rebuilds the handoff folder with the flags of the last `build` (from `build.json`) and prints a summary |
+| `gen` | Regenerates only `client/` and updates the client lines of `AGENT.md` and `API_MAP.md` |
 | `config` | Prints the resolved config and where each value came from |
 
 ## Configuration
@@ -162,12 +166,14 @@ export default defineConfig({
     browser: { channel: 'chrome', headless: false }
   },
   redact: { examples: 'masked' }, // 'raw' copies real values into the handoff folder
-  probe: { maxRps: 1, unsafeMethods: false },
+  probe: { maxRps: 1, unsafeMethods: false, minimizePerHost: 5 },
 })
 ```
 
 Precedence: CLI flags > `SITE_TO_API_*` environment variables (`__` nests:
-`SITE_TO_API_REDACT__EXAMPLES=raw`) > config file > defaults. Unknown keys are errors.
+`SITE_TO_API_REDACT__EXAMPLES=raw`) > config file > defaults. Unknown keys are errors. The flags
+and variables a `build` ran with (`--examples`, `--include`, `--exclude`, `--no-client`) are
+recorded in `build.json` and reused by `probe`, so probing does not undo them.
 
 ## Using the generated client
 

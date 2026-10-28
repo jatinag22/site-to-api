@@ -6,6 +6,8 @@ import { renderAgentGuide } from './agent-guide'
 import { renderApiMap } from './api-map'
 
 export type { AgentGuideContext } from './agent-guide'
+export { clientGap, updateClientState } from './client'
+export type { ClientState } from './client'
 
 /** Writes `AGENT.md` and `API_MAP.md` into the handoff folder and returns the written paths. */
 export async function writeHandoffDocs(outDir: string, analysis: Analysis, context: AgentGuideContext): Promise<string[]> {
@@ -17,7 +19,7 @@ export async function writeHandoffDocs(outDir: string, analysis: Analysis, conte
     ],
     [
       'API_MAP.md',
-      renderApiMap(analysis),
+      renderApiMap(analysis, context.client),
     ],
   ]
   for (const [name, content] of files)
