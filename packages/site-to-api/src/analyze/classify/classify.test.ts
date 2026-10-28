@@ -320,6 +320,21 @@ describe('classifyExchanges: bot protection', () => {
       }),
     ],
     [
+      'Kasada',
+      on({
+        url: 'https://shop.test/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/mfc',
+        requestHeaders: { 'x-kpsdk-h': '01', 'x-kpsdk-v': 'j-1.2.3' },
+        responseHeaders: { 'x-kpsdk-fc': 'f', 'x-kpsdk-h': '01' },
+        responseBody: {
+          mimeType: 'x-unknown',
+          text: null,
+          base64: null,
+          json: undefined,
+          form: null,
+        },
+      }),
+    ],
+    [
       'AWS WAF',
       on({
         url: 'https://a1b2c3d4e5f6.0a1b2c3d.eu-west-1.token.awswaf.com/a1b2c3d4e5f6/0a1b2c3d4e5f/6a7b8c9d0e1f/inputs?client=browser',

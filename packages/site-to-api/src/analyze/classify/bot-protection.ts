@@ -119,8 +119,11 @@ const BOT_PROTECTION_SIGNATURES: readonly BotProtectionSignature[] = [
   },
   {
     vendor: 'Kasada',
+    // `/<uuid>/<uuid>/` then the script (`p.js`, `ips.js`), the fingerprint page (`fp`), the
+    // sensor post (`tl`) and the proof-of-work config fetch (`mfc`). The `x-kpsdk-*` headers also
+    // ride on the protected API calls, so they are evidence only.
     endpoints: [
-      { path: /^\/[0-9a-f-]{36}\/[0-9a-f-]{36}\/(?:fp|tl|p\.js|ips\.js)$/i },
+      { path: /^\/[0-9a-f-]{36}\/[0-9a-f-]{36}\/(?:fp|tl|mfc|p\.js|ips\.js)$/i },
     ],
     bodies: [],
     challengeHeaders: [],
