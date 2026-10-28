@@ -106,6 +106,25 @@ describe('extract (html)', () => {
     expect(extract('<p>empty</p>', first)).toEqual({ name: null })
   })
 
+  it('reads the sibling rows of a record that spans several rows through :scope selectors', () => {
+    const page = '<table><tr class="athing" id="11"><td><a href="https://a.example">Alpha</a></td></tr><tr><td><span class="score">7 points</span></td></tr><tr class="spacer"></tr>'
+      + '<tr class="athing" id="12"><td><a href="https://b.example">Beta</a></td></tr><tr><td>job ad</td></tr><tr class="spacer"></tr></table>'
+    expect(extract(page, {
+      kind: 'html',
+      records: 'tr.athing',
+      many: true,
+      recordsName: 'submissions',
+      fields: {
+        id: field('', { attr: 'id', type: 'integer' }),
+        title: field('a'),
+        score: field(':scope + tr:not(.athing) span.score', { pattern: '(\\d+)', type: 'integer', optional: true }),
+      },
+    })).toEqual([
+      { id: 11, title: 'Alpha', score: 7 },
+      { id: 12, title: 'Beta' },
+    ])
+  })
+
   it('returns an empty array when no record matches', () => {
     expect(extract('<p>none</p>', spec)).toEqual([])
   })
