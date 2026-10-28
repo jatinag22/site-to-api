@@ -126,6 +126,7 @@ function fixture(): Analysis {
           cookies: [
             { name: 'pm_session', setBy: 'postApiAuthLogin', source: 'response' },
             { name: '_abck', setBy: null, source: 'browser' },
+            { name: 'pm_device', setBy: null, source: 'unknown' },
           ],
           botProtection: [
             { vendor: 'Akamai', evidence: 'sensor_data POST to /shield/collect' },
@@ -226,6 +227,7 @@ describe('renderAgentGuide', () => {
     expect(guide).toContain('a real browser is needed to establish the session')
     expect(guide).toContain('Bot protection: Akamai')
     expect(guide).toContain('Cookie `_abck`: set by a script in the page; only a real browser produces its value.')
+    expect(guide).toContain('Cookie `pm_device`: present in the browser profile; origin unknown (no captured response or page script set it, so check with `probe` whether the API needs it).')
     expect(guide).toContain('Cookie `pm_session`: set by `postApiAuthLogin`.')
     expect(guide).toContain('specs/shop.example.yaml')
   })

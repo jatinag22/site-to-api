@@ -50,7 +50,7 @@ function cookieOrigin(cookie: SessionRequirement['cookies'][number]): string {
         ? `set by ${code(cookie.setBy)}`
         : 'set by a response'
     case 'unknown':
-      return 'origin unknown'
+      return 'present in the browser profile; origin unknown (no captured response or page script set it, so check with `probe` whether the API needs it)'
   }
 }
 
