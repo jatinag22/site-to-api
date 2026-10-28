@@ -1,7 +1,13 @@
 # site-to-api
 
+[![CI](https://github.com/jatinag22/site-to-api/actions/workflows/ci.yml/badge.svg)](https://github.com/jatinag22/site-to-api/actions/workflows/ci.yml)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+![Node 22.12+](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen.svg)
+
 **Browse a website once. Get everything a coding agent needs to build a wrapper for its internal
 API.**
+
+![A scripted login capture on the fixture shop, then build, then the session needs and the computed password from AGENT.md](docs/assets/demo.gif)
 
 `site-to-api` records what a site's own pages do while you use it, then works out, without any
 LLM, the endpoints, their parameters and schemas, the order requests happen in, which value feeds
@@ -67,8 +73,31 @@ site-to-api probe                      # optional: checks what works with plain 
 
 Then point your coding agent at `api-handoff/AGENT.md`.
 
-To try it without touching a real site, run the fixture shop used by the tests:
-`pnpm --filter @site-to-api/e2e run fixture` (serves on `http://localhost:4173`).
+### Try it on the fixture shop first
+
+The repository includes Pinewood Market, a fictional shop the end-to-end tests run against. It
+has a login with a browser-encrypted password, a CSRF token, toy bot protection, HTML tables and a
+CSV export. From the repository root, in two terminals:
+
+```sh
+# terminal 1: the shop on http://localhost:4173
+pnpm --filter @site-to-api/e2e run fixture
+```
+
+```sh
+# terminal 2: three scripted browsing sessions, then build
+mkdir -p /tmp/pinewood && cd /tmp/pinewood
+site-to-api init
+for s in browse browse-again login; do
+  site-to-api capture http://localhost:4173 --headless --channel bundled --session $s \
+    --script "$OLDPWD/e2e/scenarios/$s.ts"
+done
+site-to-api build      # 21 operations, 19 flows → ./api-handoff
+site-to-api probe      # optional: checks the session needs against the live shop
+```
+
+`--script` drives the browser from a file so the run is repeatable; drop it (and `--headless`) to
+browse by hand.
 
 ## What you get
 
@@ -84,17 +113,18 @@ api-handoff/
   probe.json          after `probe`: what each request needs (names only)
 ```
 
-An excerpt of a generated `AGENT.md`, from the end-to-end test against the fixture shop:
+An excerpt of the `AGENT.md` generated from the fixture shop walkthrough above:
 
 ```markdown
 ### localhost:4173
 
 - Needs: a real browser is needed to establish the session; reuse its cookies for plain HTTP
   calls (confirmed by probe).
-- Bot protection: Akamai (cookie _abck; cookie bm_sz; request body matches sensor_data). Do not
-  try to reproduce it; let a real browser run it (`browserSession` in `@site-to-api/runtime`).
+- Bot protection: Akamai (cookie \_abck; cookie bm\_sz; request body matches sensor\_data). Do
+  not try to reproduce it; let a real browser run it (`browserSession` in `@site-to-api/runtime`).
+- Cookie `_abck`: set by `postShieldCollect`.
 - Cookie `pm_session`: set by `postApiAuthLogin`.
-- Cookie `pm_store`: set by a script in the page.
+- Cookie `pm_store`: set by a script in the page; the wrapper can set its value itself.
 
 ## Values computed in the browser
 
@@ -141,31 +171,45 @@ Precedence: CLI flags > `SITE_TO_API_*` environment variables (`__` nests:
 
 ## Using the generated client
 
+The client needs `@site-to-api/runtime` and `zod` 4 in your project. This runs against the
+fixture shop from the walkthrough above; the shop sits behind (toy) bot protection, so the session
+comes from a real browser:
+
 ```ts
-import { browserSession, CookieJar } from '@site-to-api/runtime'
 import { chromium } from 'playwright'
-import { createSiteClient } from './api-handoff/client'
+import { browserSession, CookieJar, createSiteClient, extractGetDeals } from './api-handoff/client'
 
 const jar = new CookieJar()
-// For hosts that need a real browser: it loads the page, its cookies are reused for plain HTTP
-// and refreshed when the site answers 401 or 403.
+// A real browser loads the site; its cookies are reused for plain HTTP and fetched again when the
+// site answers 401 or 403.
 const session = browserSession({
   jar,
   bootstrap: async () => {
     const browser = await chromium.launch()
-    const page = await browser.newPage()
-    await page.goto('https://example.com', { waitUntil: 'networkidle' })
-    const cookies = await page.context().cookies()
-    await browser.close()
-    return cookies
+    try {
+      const page = await browser.newPage()
+      await page.goto('http://localhost:4173/', { waitUntil: 'networkidle' })
+      return await page.context().cookies()
+    }
+    finally {
+      await browser.close()
+    }
   },
 })
 
-const { sdk } = createSiteClient({ host: 'example.com', session, jar })
+const { sdk } = createSiteClient({ host: 'localhost:4173', session, jar })
+
+const categories = await sdk.getApiCategories({}) // typed, validated with Zod
+console.log(categories.data)
+// [{ slug: 'pantry', name: 'Pantry', productCount: 6 }, ...]
+
+// HTML pages get a generated parser too:
+const deals = extractGetDeals(await fetch('http://localhost:4173/deals?page=1').then(r => r.text()))
+// [{ product: 'Rolled Oats 250 g', productUrl: '/products/1001', price: 1856.25, discount: 10 }, ...]
 ```
 
-Hosts that work with plain HTTP use the default cookie session, or `tokenSession` for bearer
-tokens. `client/README.md` says which one each host needs.
+Hosts that work with plain HTTP need no browser: the default cookie session, or `tokenSession`
+for bearer tokens. `client/README.md` says which one each host needs.
 
 ## How it compares
 
