@@ -22,9 +22,14 @@ declare global {
 
 const base = { ts: 1, pageUrl: 'https://example.com/' }
 
+/** The page sends each message as JSON text. */
+function messageToEvent(message: object, frameOrigin: string): ReturnType<typeof pageMessageToEvent> {
+  return pageMessageToEvent(JSON.stringify(message), frameOrigin)
+}
+
 describe('pageMessageToEvent', () => {
   it('accepts well-formed messages and records the frame origin', () => {
-    const result = pageMessageToEvent({
+    const result = messageToEvent({
       ...base,
       t: 'action',
       kind: 'click',
@@ -46,7 +51,7 @@ describe('pageMessageToEvent', () => {
   })
 
   it('parses request stacks', () => {
-    const result = pageMessageToEvent({
+    const result = messageToEvent({
       ...base,
       t: 'request',
       via: 'fetch',
@@ -227,14 +232,19 @@ describe('pageMessageToEvent', () => {
       },
     ],
   ])('rejects an oversized %s', (_name, message) => {
-    expect(pageMessageToEvent({
+    expect(messageToEvent({
       ...base,
       ...message,
     }, 'https://example.com')).toHaveProperty('error')
   })
 
+  it('rejects text that is not JSON or is longer than any valid message', () => {
+    expect(pageMessageToEvent('{"t":', 'https://example.com')).toEqual({ error: 'message is not JSON' })
+    expect(pageMessageToEvent(' '.repeat(16 * 1024 * 1024 + 1), 'https://example.com')).toHaveProperty('error', expect.stringMatching(/longer than/))
+  })
+
   it('accepts fields exactly at their limits', () => {
-    const result = pageMessageToEvent({
+    const result = messageToEvent({
       ...base,
       t: 'transform',
       api: 'btoa',
@@ -418,7 +428,9 @@ afterAll(async () => {
 })
 
 function events(): ReturnType<typeof pageMessageToEvent>[] {
-  return messages.map(message => pageMessageToEvent(message, origin))
+  return messages.map(message => typeof message === 'string'
+    ? pageMessageToEvent(message, origin)
+    : { error: 'the page sent something other than text' })
 }
 
 function responses(): Array<{ via: string, url: string, body: string, mimeType: string }> {
@@ -482,7 +494,7 @@ describe('instrumentation in the page', () => {
       new Promise(resolve => setTimeout(resolve, 5000, 'still open')),
     ])).resolves.toBe('closed')
     expect(responses().filter(r => r.url.endsWith('/sse'))).toEqual([])
-    expect(messages.some(m => typeof m === 'object' && m !== null && 't' in m && m.t === 'request' && 'url' in m && String(m.url).endsWith('/sse'))).toBe(true)
+    expect(events().some(result => 'event' in result && result.event.t === 'request' && result.event.url.endsWith('/sse'))).toBe(true)
   }, 60_000)
 
   it('stops copying an endless text body at the size limit, so the page can still close it', async () => {
