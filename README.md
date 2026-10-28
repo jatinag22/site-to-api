@@ -192,12 +192,13 @@ npm release, install the runtime from your clone:
 npm init -y && npm pkg set type=module          # ES modules
 npm install /path/to/site-to-api/packages/runtime zod@4
 npm install playwright tsx typescript            # playwright only for browser sessions
+npm install -D /path/to/site-to-api/packages/site-to-api   # types for site-to-api.config.ts
 ```
 
 `tsconfig.json`: `"module"` and `"moduleResolution"` set to `"nodenext"` (or `"esnext"` /
 `"bundler"`), `"strict": true`, and `"lib"` including `"DOM"`. Run files with `tsx`, or compile with
-`tsc` and run with `node`. Exclude `api-handoff/source/` from type checking: those are excerpts of
-the site's code for reading, not modules.
+`tsc` and run with `node`. The whole folder type-checks, `api-handoff/` included: code excerpts in
+`source/` start with `// @ts-nocheck`, because they are fragments of the site's code for reading.
 
 ### Example: log in and list orders on the fixture shop
 
