@@ -39,7 +39,8 @@
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec nano-staged",
-    "commit-msg": "node scripts/check-commit-msg.mjs \"$1\""
+    "commit-msg": "node scripts/check-commit-msg.mjs \"$1\"",
+    "pre-push": "pnpm run ci"
   },
   "nano-staged": {
     "*": "eslint --fix --no-warn-ignored"
