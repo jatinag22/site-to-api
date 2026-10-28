@@ -7,15 +7,17 @@
  * cloud metadata service such as `169.254.169.254`.
  *
  * Rule ({@link sourceMapRefusal}): a map on a public host is fetched. A map on a non-public host
- * is fetched only when it is on the script's own origin and the page itself is on a non-public
- * host, which is the case for a development server or a local fixture site. Each redirect hop is
- * checked the same way.
+ * is fetched only when the page itself is on a non-public host (a development server, a local
+ * fixture site, an intranet app) and the map is on the script's own origin or on a host of the
+ * page's own site ({@link intranetSite}: `app.corp` and `static.corp`). A public page never
+ * reaches a non-public address. Each redirect hop is checked the same way.
  *
  * Known limitation: the name is resolved here and again by Playwright when it sends the request,
  * so a DNS server that answers differently the second time (DNS rebinding) is not stopped.
  */
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { BlockList, isIP } from 'node:net'
+import { registrableHost } from './frames'
 
 /** Resolves a host name to its IP addresses. Injected in tests so they need no DNS. */
 export type Lookup = (hostname: string) => Promise<string[]>
@@ -45,9 +47,13 @@ for (const [network, prefix] of [
 ] as const)
   NON_PUBLIC.addSubnet(network, prefix, 'ipv4')
 for (const [network, prefix] of [
-  ['::', 128],
-  ['::1', 128],
+  // Unspecified, loopback and the deprecated IPv4-compatible block (RFC 4291 section 2.5.5.1).
+  ['::', 96],
   ['100::', 64],
+  // Local-use NAT64 (RFC 8215). The embedded IPv4 sits at a position set by the operator's
+  // prefix length (RFC 6052 section 2.2), so it cannot be read reliably; the block is never
+  // global anyway.
+  ['64:ff9b:1::', 48],
   ['2001:db8::', 32],
   ['fc00::', 7],
   ['fe80::', 10],
@@ -89,19 +95,32 @@ function ipv6Groups(address: string): number[] | null {
 }
 
 /**
- * The IPv4 address inside an IPv4-mapped (`::ffff:a.b.c.d`) or NAT64 (`64:ff9b::a.b.c.d`) IPv6
- * address, which reach the embedded IPv4 host and so must be judged by it.
+ * The IPv4 address an IPv6 address reaches, which it must be judged by: IPv4-mapped
+ * (`::ffff:a.b.c.d`), IPv4-translated (`::ffff:0:a.b.c.d`, RFC 2765) and well-known NAT64
+ * (`64:ff9b::a.b.c.d`) carry it in the last 32 bits, 6to4 (`2002:aabb:ccdd::`, RFC 3056) in bits
+ * 16 to 47.
  */
 function embeddedIpv4(address: string): string | null {
   const groups = ipv6Groups(address)
   if (groups === null)
     return null
-  const mapped = groups.slice(0, 5).every(group => group === 0) && groups[5] === 0xFFFF
-  const nat64 = groups[0] === 0x64 && groups[1] === 0xFF9B && groups.slice(2, 6).every(group => group === 0)
-  if (!mapped && !nat64)
+  const zero = (from: number, to: number): boolean => groups.slice(from, to).every(group => group === 0)
+  const mapped = zero(0, 5) && groups[5] === 0xFFFF
+  const translated = zero(0, 4) && groups[4] === 0xFFFF && groups[5] === 0
+  const nat64 = groups[0] === 0x64 && groups[1] === 0xFF9B && zero(2, 6)
+  let high: number
+  let low: number
+  if (mapped || translated || nat64) {
+    high = groups[6] ?? 0
+    low = groups[7] ?? 0
+  }
+  else if (groups[0] === 0x2002) {
+    high = groups[1] ?? 0
+    low = groups[2] ?? 0
+  }
+  else {
     return null
-  const high = groups[6] ?? 0
-  const low = groups[7] ?? 0
+  }
   return [
     high >> 8,
     high & 0xFF,
@@ -152,19 +171,45 @@ export async function nonPublicReason(hostname: string, lookup: Lookup = systemL
 }
 
 /**
- * Why capture must not fetch the sourcemap at `target` for a script at `scriptUrl`, or `null`
- * when it may. `pageIsLocal` says whether the page that loaded the script is itself on a
- * non-public host; see the rule at the top of this file.
+ * The site a non-public host name belongs to, for letting an intranet page reach its own other
+ * hosts, or `null` when the name never vouches for another host: IP addresses (`10.0.0.5` says
+ * nothing about `10.0.0.6`), single labels and `localhost` names, which reach this machine.
+ * Otherwise it is the {@link registrableHost}, except that a two-label name such as `app.corp`
+ * belongs to its last label (`corp`), since a private top-level name has no public suffix to keep.
+ * Shared local suffixes (`.local`, `.lan`, `.internal`) do not collapse: `printer.local` is not
+ * part of `app.local`.
  */
-export async function sourceMapRefusal(target: URL, scriptUrl: URL, pageIsLocal: boolean, lookup: Lookup = systemLookup): Promise<string | null> {
+function intranetSite(hostname: string): string | null {
+  const host = hostname.toLowerCase().replace(/\.$/, '')
+  if (isIP(host.replace(/^\[|\]$/g, '')) !== 0 || !host.includes('.') || /(?:^|\.)localhost$/.test(host))
+    return null
+  const registrable = registrableHost(host)
+  const labels = registrable.split('.')
+  return labels.length === 2 && !LOCAL_NAME.test(registrable)
+    ? labels[1] ?? registrable
+    : registrable
+}
+
+/**
+ * Why capture must not fetch the sourcemap at `target` for a script at `scriptUrl`, or `null`
+ * when it may. `localPage` is the URL of the page that loaded the script when that page is itself
+ * on a non-public host, and `null` when it is public or unknown; see the rule at the top of this
+ * file.
+ */
+export async function sourceMapRefusal(target: URL, scriptUrl: URL, localPage: URL | null, lookup: Lookup = systemLookup): Promise<string | null> {
   if (!/^https?:$/.test(target.protocol))
     return `${target.protocol} URLs are never fetched`
   const reason = await nonPublicReason(target.hostname, lookup)
   if (reason === null)
     return null
-  if (target.origin !== scriptUrl.origin)
-    return `${reason} and is not the script's own origin`
-  return pageIsLocal
-    ? null
-    : `${reason} but the page is on a public host`
+  const ownOrigin = target.origin === scriptUrl.origin
+  if (localPage === null) {
+    return ownOrigin
+      ? `${reason} but the page is on a public host`
+      : `${reason} and is not the script's own origin`
+  }
+  const site = intranetSite(target.hostname)
+  if (ownOrigin || (site !== null && site === intranetSite(localPage.hostname)))
+    return null
+  return `${reason} and is not the script's own origin or a host of the page's own site`
 }
