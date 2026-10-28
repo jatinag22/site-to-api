@@ -134,8 +134,12 @@ generating code and lists the channels and their handshake in `client/README.md`
 
 Excerpts of the site's own code: the function that computes a value, the call site that sends a
 request. Path mirrors the original source path (or `bundles/<host>/<file>` when no sourcemap was
-available, pretty-printed around the location). Each file starts with a comment naming the
-original location and the capture session.
+available, pretty-printed around the location), with the line range and `.md` added:
+`src/auth/crypto.ts` → `src/auth/crypto.L18-28.ts.md`. Each file is Markdown (decision 0028): a
+heading naming the original location, a line naming the capture session, and the code in a
+fence tagged with its language. Fragments are rarely valid code on their own, so they are never
+`.ts` or `.js` files that a project's type check would pick up. The folder exists only when at
+least one excerpt was written.
 
 ## `client/`
 
