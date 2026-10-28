@@ -270,6 +270,7 @@ function handle(seen: Seen[]) {
             name: 'Alpha',
             price: 1250,
             tags: ['new'],
+            updatedAt: '2026-10-23T16:21:08.000-05:00',
           })
       return
     }
@@ -409,6 +410,8 @@ describe('generateClient', () => {
       name: 'Alpha',
       price: 1250,
       tags: ['new'],
+      // An offset, not `Z`: response validation must accept it.
+      updatedAt: '2026-10-23T16:21:08.000-05:00',
     })
     expect(output.invalid).toBe('ZodError')
     expect(output.cookies).toEqual(['session'])

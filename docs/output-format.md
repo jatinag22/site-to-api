@@ -77,6 +77,9 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
 - `operationId` matches `flows.json` and the generated SDK function.
 - Required cookies are `in: cookie` parameters, names only.
 - Constant headers are parameters with `x-site-to-api-constant: true` and a `default`.
+- String `format`s (`date-time`, `date`, `uuid`, `email`, `uri`) are written only when every
+  captured sample passes the Zod check the generated client runs for that format;
+  `date-time` accepts offsets (`-05:00`) and values without a zone.
 - HTML/text data responses use `content: text/html` (or `text/plain`, `text/csv`) with
   `x-site-to-api-extract` holding the extraction spec.
 - Extensions:

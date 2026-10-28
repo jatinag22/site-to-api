@@ -2,6 +2,7 @@
  * JSON Schema inference merged across samples.
  */
 import type { JsonSchema, JsonSchemaType } from '../../model'
+import { z } from 'zod'
 
 /** One observed value and the session it came from (constants need two or more sessions). */
 export interface Sample {
@@ -98,12 +99,39 @@ function isCodeToken(value: string): boolean {
   return CODE_TOKEN.some(pattern => pattern.test(value))
 }
 
-const FORMATS: ReadonlyArray<[string, RegExp]> = [
-  ['uuid', /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i],
-  ['date-time', /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/],
-  ['date', /^\d{4}-\d{2}-\d{2}$/],
-  ['email', /^[^\s@]+@[^\s@][^\s.@]*\.[^\s@]+$/],
-  ['uri', /^https?:\/\/\S+$/],
+/**
+ * Formats and the Zod check the generated client runs for each (hey-api's zod plugin, configured
+ * in gen/generate.ts: `date-time` → `z.iso.datetime({ offset: true, local: true })`, `uri` →
+ * `z.url()`, ...). A format is a promise the client enforces on live data, so it is inferred only
+ * when every sample passes that same check, not just the looser shape test in front of it. The
+ * shape test keeps ordinary strings away from the Zod call and keeps `uri` to web addresses.
+ */
+const FORMATS: ReadonlyArray<[string, RegExp, z.ZodType<string>]> = [
+  [
+    'uuid',
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    z.uuid(),
+  ],
+  [
+    'date-time',
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/,
+    z.iso.datetime({ offset: true, local: true }),
+  ],
+  [
+    'date',
+    /^\d{4}-\d{2}-\d{2}$/,
+    z.iso.date(),
+  ],
+  [
+    'email',
+    /^[^\s@]+@[^\s@][^\s.@]*\.[^\s@]+$/,
+    z.email(),
+  ],
+  [
+    'uri',
+    /^https?:\/\/\S+$/,
+    z.url(),
+  ],
 ]
 
 interface Node {
@@ -152,7 +180,12 @@ function addString(node: Node, value: string): void {
     if (node.strings.size > ENUM_MAX_VALUES)
       node.stringOverflow = true
   }
-  const matching = FORMATS.filter(([, regex]) => regex.test(value)).map(([name]) => name)
+  const candidates = node.formats === null
+    ? FORMATS
+    : FORMATS.filter(([name]) => node.formats?.has(name))
+  const matching = candidates
+    .filter(([, regex, check]) => regex.test(value) && check.safeParse(value).success)
+    .map(([name]) => name)
   node.formats = node.formats === null
     ? new Set(matching)
     : new Set([...node.formats].filter(format => matching.includes(format)))

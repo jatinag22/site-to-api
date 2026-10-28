@@ -96,6 +96,18 @@ describe('inferSchema', () => {
     expect(inferSchema(s1(value, 'plain'))).toEqual({ type: 'string' })
   })
 
+  it('keeps a format only when the generated client\'s validator accepts every sample', () => {
+    // GitHub dates carry an offset; they are date-times, and the client must accept them.
+    expect(inferSchema(s1('2026-10-23T16:21:08.000-05:00', '2026-10-09T13:53:54.000+02:00'))).toEqual({ type: 'string', format: 'date-time' })
+    expect(inferSchema(s1('2026-10-23T16:21:08'))).toEqual({ type: 'string', format: 'date-time' })
+    // Shapes the regexes here accept but Zod rejects: offsets without a colon, a UUID with a
+    // non-RFC variant, an e-mail address without a real top-level domain, an impossible date.
+    expect(inferSchema(s1('2026-10-23T16:21:08+0530'))).toEqual({ type: 'string' })
+    expect(inferSchema(s1('123e4567-e89b-12d3-c456-426614174000'))).toEqual({ type: 'string' })
+    expect(inferSchema(s1('a@b.c'))).toEqual({ type: 'string' })
+    expect(inferSchema(s1('2026-02-30'))).toEqual({ type: 'string' })
+  })
+
   it('infers enums only with enough evidence', () => {
     expect(inferSchema(s1('NSE', 'BSE', 'NSE', 'BSE'))).toEqual({
       type: 'string',

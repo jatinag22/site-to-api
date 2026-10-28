@@ -106,6 +106,9 @@ paths:
                     type: array
                     items:
                       type: string
+                  updatedAt:
+                    type: string
+                    format: date-time
   /api/search:
     post:
       operationId: postApiSearch
