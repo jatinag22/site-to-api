@@ -92,6 +92,12 @@ export interface Operation {
   responses: ResponseInfo[]
   /** Where the page's code sends this request from. */
   sentFrom: SourceRef[]
+  /**
+   * True when the page did send it, but only from code no capture can show: evaluated code
+   * (`eval`, webpack's `webpack-internal:///5467` modules) or anonymous scripts. `sentFrom` is
+   * then empty, and the output says "no source available" instead of a reference that leads nowhere.
+   */
+  sourceUnavailable?: boolean
   /** True when the operation appears in source code but was never called during capture. */
   sourceOnly: boolean
   /**

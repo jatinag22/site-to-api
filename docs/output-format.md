@@ -20,7 +20,8 @@ The entry point for a coding agent. Generated from a template, no LLM. Sections,
    the message types per direction with counts, and which HTTP operation each client value comes
    from.
 4. **Computed values**: one line each, with the file and function to port.
-5. **Reading order**: `API_MAP.md` → `flows.md` → the spec for the host → `source/` excerpts →
+5. **Reading order**: `API_MAP.md` → `flows.md` → the spec for the host → `source/` excerpts
+   (only when an excerpt was written) →
    `client/` usage.
 6. **Gaps**: operations with low-confidence extraction, unresolved value origins, endpoints seen
    only in source (with "method unknown" when the code did not show the method), host patterns
@@ -45,6 +46,10 @@ abbreviated), response (JSON / extract / text), needs (cookies, token, browser),
   (`body./items/*/id`) is marked `(one of the items)`: the value comes from any item of that
   array, not the one the sample used; an HTML origin whose selector matches a repeated element
   reads `html one of the elements matching <selector>`.
+- **Source** is `file:line function` of the code that sends the request, or
+  `no source available (eval or minified)` when the page sent it only from code no capture can
+  show: evaluated code (an `eval` frame, webpack's `webpack-internal:///5467` modules) or an
+  anonymous `VM` script. `flows.md` says the same on the step's "Sent from" line.
 - **Needs** ends with `(confirmed by probe)` when it comes from `probe.json` (`requires`), and
   with `(seen in capture)` when it lists the cookies the captured request was sent with, which
   may include ones it does not need. `nothing (confirmed by probe)` means the request works with
