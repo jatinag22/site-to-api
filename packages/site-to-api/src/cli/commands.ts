@@ -158,7 +158,7 @@ const probeCommand: CommandRegistrar = (program) => {
       .command('probe')
       .description('replay captured requests against the live site to learn what plain HTTP needs (rate limited, safe methods only by default), then rebuild the handoff folder with the options of the last build')
       .option('--max-rps <n>', 'requests per second', parseNumber)
-      .option('--unsafe-methods', 'also replay POST, PUT, PATCH and DELETE (they can change data on the site)')
+      .option('--unsafe-methods', 'also replay POST, PUT, PATCH and DELETE, GraphQL mutations and GraphQL operations of unknown type (they can change data on the site)')
       .option('--minimize-per-host <n>', 'operations per host whose required cookies and headers are worked out one by one (default 5)', parseCount),
     ' (default: as in the last build)',
   )

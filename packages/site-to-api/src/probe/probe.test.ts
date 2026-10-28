@@ -19,6 +19,10 @@ const server = createServer((req, res) => {
     res.writeHead(ok ? 200 : 403, { 'content-type': 'application/json' }).end(ok ? '{"items":[1],"total":1}' : '{"error":"forbidden"}')
     return
   }
+  if (req.url?.startsWith('/graphql')) {
+    res.writeHead(200, { 'content-type': 'application/json' }).end('{"data":{"a":1}}')
+    return
+  }
   if (req.url === '/api/challenge') {
     res.writeHead(200, { 'content-type': 'text/html' }).end('<html>checking your browser</html>')
     return
@@ -263,5 +267,107 @@ describe('probeOperations: failures and data-changing requests', () => {
     })
     expect(requests).toBe(before)
     expect(report.skipped[0]?.reason).toContain('changes state')
+  })
+})
+
+describe('probeOperations: GraphQL (decision 0027)', () => {
+  function graphqlOp(operationId: string, operationType: NonNullable<Operation['graphql']>['operationType'], method = 'POST'): Operation {
+    return {
+      ...op(operationId, method, `/graphql#${operationId}`, {
+        method,
+        url: method === 'GET'
+          ? `${origin}/graphql?operationName=${operationId}`
+          : `${origin}/graphql`,
+        requestBody: method === 'GET'
+          ? null
+          : jsonBody({ operationName: operationId, variables: {} }),
+        responseBody: jsonBody({
+          data: { a: 1 },
+        }),
+      }),
+      graphql: {
+        endpoint: '/graphql',
+        operationName: operationId,
+        operationType,
+        operationTypeFrom: operationType === 'unknown'
+          ? null
+          : 'document',
+        persistedQuery: null,
+        hashes: [],
+        document: null,
+        batched: false,
+        sent: {
+          body: ['operationName', 'variables'],
+          query: [],
+        },
+      },
+    }
+  }
+
+  it('replays queries sent with POST like GETs, bare and minimized', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        graphqlOp('ProductStock', 'query'),
+      ],
+    })
+    expect(report.skipped).toEqual([])
+    expect(report.operations[0]).toMatchObject({
+      operationId: 'ProductStock',
+      replay: 'ok',
+      bare: 'ok',
+      requires: [],
+    })
+  })
+
+  it('skips mutations and operations of unknown type unless --unsafe-methods, and then sends them once', async () => {
+    const operations = [
+      graphqlOp('AddToWishlist', 'mutation'),
+      graphqlOp('getAlbum', 'unknown'),
+    ]
+    const safe = await probeOperations({ toolVersion: 'test', config, operations })
+    expect(safe.operations).toEqual([])
+    expect(safe.skipped).toEqual([
+      { operationId: 'AddToWishlist', reason: 'GraphQL mutation AddToWishlist can change data; pass --unsafe-methods to include it' },
+      {
+        operationId: 'getAlbum',
+        reason: expect.stringMatching(/^GraphQL operation getAlbum has an unknown type .*--unsafe-methods/),
+      },
+    ])
+    const before = requests
+    const unsafe = await probeOperations({
+      toolVersion: 'test',
+      config: { ...config, unsafeMethods: true },
+      operations,
+    })
+    expect(requests - before).toBe(2)
+    expect(unsafe.operations.map(result => [result.operationId, result.bare, result.note])).toEqual([
+      [
+        'AddToWishlist',
+        'skipped',
+        expect.stringContaining('GraphQL mutation was replayed once only'),
+      ],
+      [
+        'getAlbum',
+        'skipped',
+        expect.stringContaining('GraphQL operation of unknown type was replayed once only'),
+      ],
+    ])
+  })
+
+  it('never replays subscriptions, and treats a mutation sent with GET as a mutation', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config: { ...config, unsafeMethods: true },
+      operations: [
+        graphqlOp('OnTick', 'subscription'),
+        graphqlOp('Rename', 'mutation', 'GET'),
+      ],
+    })
+    expect(report.skipped).toEqual([
+      { operationId: 'OnTick', reason: 'GraphQL subscription OnTick: it streams over a long-lived connection, so it is never replayed' },
+    ])
+    expect(report.operations[0]).toMatchObject({ operationId: 'Rename', bare: 'skipped' })
   })
 })
