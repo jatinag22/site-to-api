@@ -37,8 +37,6 @@ export interface ProbeOptions {
   operations: Operation[]
   config: ResolvedConfig['probe']
   toolVersion: string
-  /** Operations per host that get the remove-one-at-a-time analysis (it costs many requests). */
-  minimizePerHost?: number
   /** Most variants tried when minimizing one operation. */
   maxVariants?: number
   fetch?: typeof fetch
@@ -231,6 +229,8 @@ const STATE_CHANGING = /logout|log-out|signout|sign-out|unsubscribe|delete|remov
 function skipReason(operation: Operation, config: ResolvedConfig['probe']): string | null {
   if (operation.kind === 'bot-protection')
     return 'bot-protection step: needs a real browser by design'
+  if (operation.sourceOnly)
+    return 'seen in code only: it was never called during capture, so there is no request to replay'
   if (STATE_CHANGING.test(operation.path))
     return 'its path suggests it changes state (logout, unsubscribe, delete...), so it is never replayed'
   if (!SAFE_METHODS.has(operation.method) && !config.unsafeMethods)
@@ -281,13 +281,13 @@ async function probeOne(operation: Operation, exchange: Exchange, context: Probe
   if (replay.outcome !== 'ok')
     return result(plain.outcome, null, 'The captured session was not accepted any more (expired cookies or token?). Capture again shortly before probing.')
   if (!context.takeMinimizeSlot(operation.host))
-    return result(plain.outcome, null, `Not minimized: limit of ${context.minimizePerHost} operations per host reached.`)
+    return result(plain.outcome, null, `Not minimized: limit of ${context.minimizePerHost} operations per host reached (probe.minimizePerHost, --minimize-per-host).`)
   return result(plain.outcome, await minimize(context.runner, exchange, full, context.maxVariants, statuses), null)
 }
 
 /** Probes every operation that has a successful captured sample and is allowed by the config. */
 export async function probeOperations(options: ProbeOptions): Promise<ProbeReport> {
-  const minimizePerHost = options.minimizePerHost ?? 5
+  const minimizePerHost = options.config.minimizePerHost
   const used = new Map<string, number>()
   const context: ProbeContext = {
     runner: createRunner({
@@ -327,6 +327,7 @@ export async function probeOperations(options: ProbeOptions): Promise<ProbeRepor
     probedAt: new Date(options.now?.() ?? Date.now()).toISOString(),
     maxRps: options.config.maxRps,
     unsafeMethods: options.config.unsafeMethods,
+    minimizePerHost,
     operations: results,
     skipped,
   }

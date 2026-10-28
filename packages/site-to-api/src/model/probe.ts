@@ -46,6 +46,11 @@ export const ProbeReportSchema = z.object({
   probedAt: z.string(),
   maxRps: z.number(),
   unsafeMethods: z.boolean(),
+  /**
+   * Operations per host that got the remove-one-at-a-time analysis (`probe.minimizePerHost`).
+   * Absent in reports written before the limit was configurable, which used 5.
+   */
+  minimizePerHost: z.number().int().optional(),
   operations: z.array(OperationProbeSchema),
   skipped: z.array(z.object({
     operationId: z.string(),
