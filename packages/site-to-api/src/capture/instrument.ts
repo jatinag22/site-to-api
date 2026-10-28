@@ -22,8 +22,18 @@ import type { CaptureEvent } from '../model'
 import { z } from 'zod'
 import { INSTRUMENT_SOURCE_URL, parseV8Stack } from './stack'
 
-/** Name of the binding the page calls; Playwright exposes it on `window`. */
+/**
+ * Name of the binding the page calls with one JSON string per message; `binding.ts` installs it
+ * on `window` through the DevTools protocol.
+ */
 export const BINDING_NAME = '__siteToApiEmit'
+
+/**
+ * Longest message text accepted, in UTF-16 code units: a 2 MB response body plus JSON escaping,
+ * which can grow control characters sixfold. Checked before parsing so a page cannot make Node
+ * parse an arbitrarily large string.
+ */
+const MAX_MESSAGE_CHARS = 16 * 1024 * 1024
 
 /**
  * Size limits for what the page sends, in UTF-16 code units for strings and entries for arrays.
@@ -71,21 +81,31 @@ const PAGE_SOURCE = String.raw`
   var INPUT_LIMIT = LIMITS.input;
   var nativeSetTimeout = window.setTimeout;
   var nativeClearTimeout = window.clearTimeout;
+  var stringify = JSON.stringify;
   var queue = [];
+  // The binding reaches a popup a moment after its first scripts ran; queued messages are retried
+  // for up to ten seconds rather than waiting for the next one to flush them.
+  var retryTimer = null;
+  var retries = 0;
   var nativeToString = Function.prototype.toString;
   var originals = new WeakMap();
   var apply = Reflect.apply;
 
+  function retry() {
+    if (retryTimer !== null || queue.length === 0 || retries >= 100) return;
+    retries++;
+    try {
+      retryTimer = apply(nativeSetTimeout, window, [function () { retryTimer = null; flush(); }, 100]);
+    } catch (e) {}
+  }
+
   function flush() {
     var fn;
     try { fn = window[BINDING]; } catch (e) { return; }
-    if (typeof fn !== 'function') return;
+    if (typeof fn !== 'function') { retry(); return; }
     while (queue.length > 0) {
       var message = queue.shift();
-      try {
-        var result = fn(message);
-        if (result && typeof result.catch === 'function') result.catch(function () {});
-      } catch (e) {}
+      try { fn(stringify(message)); } catch (e) {}
     }
   }
 
@@ -776,12 +796,21 @@ const PageMessageSchema = z.discriminatedUnion('t', [
 ])
 
 /**
- * Turns a binding payload into a capture event, parsing its stack and recording `frameOrigin`,
- * the origin of the frame that called the binding as Playwright reports it (the page cannot
- * forge it). Returns an error message instead of throwing, because a malformed message is a
- * warning, not a reason to stop capturing.
+ * Turns the JSON text the page passed to the binding into a capture event, parsing its stack and
+ * recording `frameOrigin`, the security origin of the calling document as the browser reports it
+ * (the page cannot forge it). Returns an error message instead of throwing, because a malformed
+ * message is a warning, not a reason to stop capturing.
  */
-export function pageMessageToEvent(payload: unknown, frameOrigin: string): { event: CaptureEvent } | { error: string } {
+export function pageMessageToEvent(text: string, frameOrigin: string): { event: CaptureEvent } | { error: string } {
+  if (text.length > MAX_MESSAGE_CHARS)
+    return { error: `message is longer than ${MAX_MESSAGE_CHARS} characters` }
+  let payload: unknown
+  try {
+    payload = JSON.parse(text)
+  }
+  catch {
+    return { error: 'message is not JSON' }
+  }
   const parsed = PageMessageSchema.safeParse(payload)
   if (!parsed.success) {
     return {
