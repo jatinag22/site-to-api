@@ -34,6 +34,33 @@ describe('alignWithRuntime', () => {
     ])).toEqual({ spec: s, error: null })
   })
 
+  it('keeps a field that is empty in one sample, which inference reads as null and the runtime as ""', () => {
+    const profile = (about: string): string => `<table><tr><td>user:</td><td>quill</td></tr><tr><td>about:</td><td>${about}</td></tr></table>`
+    const s: ExtractSpec = {
+      kind: 'html',
+      records: ':root',
+      many: false,
+      fields: {
+        about: {
+          selector: 'td:contains("about:") + td',
+          attr: null,
+          pattern: null,
+          type: 'string',
+          optional: true,
+        },
+      },
+    }
+    const samples = [
+      profile('Makes paper.'),
+      profile(''),
+    ]
+    expect(applyExtractSpec(samples[1] ?? '', s)).toEqual([
+      { about: null },
+    ])
+    expect(extract(samples[1] ?? '', s)).toEqual({ about: '' })
+    expect(alignWithRuntime(s, samples)).toEqual({ spec: s, error: null })
+  })
+
   it('downgrades fields the runtime coerces differently, so clients match the verified output', () => {
     const s = spec({
       name: {

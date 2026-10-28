@@ -16,8 +16,13 @@ function asRecords(value: ReturnType<typeof extract>): Records {
     : [value]
 }
 
+/**
+ * Inference reads an empty element as `null` and the runtime reads it as `""`. Both mean the
+ * element shows nothing, which a nullable string field allows either way, so they count as the
+ * same: otherwise a field one sample leaves empty (a profile with no `about`) is dropped.
+ */
 function normalise(value: unknown): unknown {
-  return value === undefined
+  return value === undefined || value === ''
     ? null
     : value
 }
