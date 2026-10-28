@@ -3,9 +3,11 @@
  *
  * - {@link CookieJar}: RFC 6265 cookie storage with JSON persistence.
  * - {@link createFetch}: `fetch` with the jar, a {@link Session}, default headers and retries.
- * - Sessions: {@link cookieSession}, {@link tokenSession}, {@link browserSession}.
+ * - Sessions: {@link cookieSession}, {@link tokenSession}, {@link browserSession}, and
+ *   {@link combineSessions} for sites that need several.
  * - {@link SiteApiError}: a failed HTTP call with its status and body.
- * - {@link extract}: records from HTML or text responses.
+ * - {@link extract}: records from HTML or text responses; {@link extractValue}: one value from HTML.
+ * - {@link requestValidationInput}: used by generated clients before validating a request.
  *
  * Uses only web-standard APIs (`fetch`, `Request`, `Headers`, `URL`), so it runs on Node 22+,
  * Bun, Deno and Cloudflare Workers.
@@ -16,9 +18,9 @@ export { CookieJar } from './cookies'
 export type { Cookie, CookieJarOptions, SerializedCookieJar, SetCookieOptions, SetCookieSource } from './cookies'
 export { isSiteApiError, SiteApiError } from './errors'
 export type { SiteApiErrorInit } from './errors'
-export { extract } from './extract'
-export type { ExtractedRecord, ExtractField, ExtractSpec, FieldType, HtmlExtractSpec, TextExtractSpec } from './extract'
-export { createFetch } from './http'
+export { extract, extractValue } from './extract'
+export type { ExtractedRecord, ExtractField, ExtractSpec, FieldType, HtmlExtractSpec, HtmlValueLocation, TextExtractSpec } from './extract'
+export { createFetch, requestValidationInput } from './http'
 export type { CreateFetchOptions, RetryOptions } from './http'
-export { browserSession, cookieSession, tokenSession } from './session'
+export { browserSession, combineSessions, cookieSession, tokenSession } from './session'
 export type { BrowserCookie, BrowserSession, BrowserSessionOptions, Session, TokenSessionOptions } from './session'

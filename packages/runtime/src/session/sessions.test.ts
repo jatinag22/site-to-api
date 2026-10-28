@@ -2,7 +2,7 @@ import type { BrowserCookie } from './sessions'
 import { describe, expect, it } from 'vitest'
 import { CookieJar } from '../cookies'
 import { createFetch } from '../http'
-import { browserSession, cookieSession, tokenSession } from './sessions'
+import { browserSession, combineSessions, cookieSession, tokenSession } from './sessions'
 
 const URL_A = 'https://www.example.com/api/data'
 
@@ -234,5 +234,95 @@ describe('browserSession', () => {
     await session.refresh()
     expect(await session.onAuthFailure(unauthorized(), request)).toBe(true)
     expect(runs).toBe(2)
+  })
+})
+
+describe('combineSessions', () => {
+  it('sends browser cookies and a bearer token on the same request', async () => {
+    const jar = new CookieJar()
+    const seen: Array<{ cookie: string | null, authorization: string | null }> = []
+    const fetch = createFetch({
+      session: combineSessions(
+        browserSession({
+          jar,
+          bootstrap: async () => [
+            { name: '_abck', value: 'shield', domain: 'www.example.com' },
+          ],
+        }),
+        tokenSession({
+          getToken: () => 't1',
+        }),
+      ),
+      retry: false,
+      fetch: async (input) => {
+        const request = new Request(input)
+        seen.push({
+          cookie: request.headers.get('cookie'),
+          authorization: request.headers.get('authorization'),
+        })
+        return new Response('{}')
+      },
+    })
+    await fetch(URL_A)
+    expect(seen).toEqual([
+      { cookie: '_abck=shield', authorization: 'Bearer t1' },
+    ])
+  })
+
+  it('uses the jar the sessions share', () => {
+    const jar = new CookieJar()
+    expect(combineSessions(cookieSession(jar), tokenSession({
+      getToken: () => 't',
+    })).jar).toBe(jar)
+    expect(combineSessions(tokenSession({
+      getToken: () => 't',
+    })).jar).toBeUndefined()
+  })
+
+  it('rejects sessions with different jars and an empty list', () => {
+    expect(() => combineSessions(cookieSession(new CookieJar()), cookieSession(new CookieJar()))).toThrow(/different cookie jars/)
+    expect(() => combineSessions()).toThrow(/at least one/)
+  })
+
+  it('lets every session refresh on a failure and re-sends once when any asked', async () => {
+    let token = 'old'
+    let browserRuns = 0
+    const jar = new CookieJar()
+    const session = combineSessions(
+      browserSession({
+        jar,
+        refreshOn: [403],
+        bootstrap: async () => {
+          browserRuns += 1
+          return []
+        },
+      }),
+      tokenSession({
+        getToken: () => token,
+        refresh: () => {
+          token = 'new'
+        },
+      }),
+    )
+    const sent: Array<string | null> = []
+    const fetch = createFetch({
+      session,
+      retry: false,
+      fetch: async (input) => {
+        const request = new Request(input)
+        sent.push(request.headers.get('authorization'))
+        return request.headers.get('authorization') === 'Bearer new'
+          ? new Response('{}')
+          : unauthorized()
+      },
+    })
+    const response = await fetch(URL_A)
+    expect(response.status).toBe(200)
+    expect(sent).toEqual(['Bearer old', 'Bearer new'])
+    // 401 is not a refresh status for this browser session, so the browser ran only once.
+    expect(browserRuns).toBe(1)
+
+    const request = await session.prepare(new Request(URL_A))
+    expect(await session.onAuthFailure(new Response('', { status: 500 }), request)).toBe(false)
   })
 })
