@@ -97,26 +97,105 @@ describe('inferSchema', () => {
   })
 
   it('infers enums only with enough evidence', () => {
-    expect(inferSchema(s1('NSE', 'BSE', 'NSE'))).toEqual({
+    expect(inferSchema(s1('NSE', 'BSE', 'NSE', 'BSE'))).toEqual({
       type: 'string',
       enum: ['BSE', 'NSE'],
     })
-    // Too few samples, no repetition, a single value, or too many distinct values.
+    // Too few samples, too little repetition, a single value, or too many distinct values.
     expect(inferSchema(s1('NSE', 'BSE'))).toEqual({ type: 'string' })
-    expect(inferSchema(s1('a', 'b', 'c'))).toEqual({ type: 'string' })
-    expect(inferSchema(s1('a', 'a', 'a'))).toEqual({ type: 'string' })
-    const many = Array.from({ length: 11 }, (_, index) => `v${index}`)
+    expect(inferSchema(s1('NSE', 'BSE', 'NSE'))).toEqual({ type: 'string' })
+    expect(inferSchema(s1('A', 'B', 'C'))).toEqual({ type: 'string' })
+    expect(inferSchema(s1('A', 'A', 'A'))).toEqual({ type: 'string' })
+    const many = Array.from({ length: 11 }, (_, index) => `V${index}`)
     expect(inferSchema(s1(...many, ...many))).toEqual({ type: 'string' })
-    expect(inferSchema(s1('x'.repeat(41), 'y', 'y'))).toEqual({ type: 'string' })
-    expect(inferSchema(s1('a', null, 'b', 'a'))).toEqual({
+    expect(inferSchema(s1('A', null, 'B', 'A', 'B'))).toEqual({
       type: ['string', 'null'],
-      enum: ['a', 'b', null],
+      enum: ['A', 'B', null],
     })
   })
 
+  it('infers enums for code-like values: UPPER_CASE, kebab and snake tokens', () => {
+    expect(inferSchema(s1('IN_STOCK', 'SOLD_OUT', 'IN_STOCK', 'SOLD_OUT'))).toMatchObject({
+      enum: ['IN_STOCK', 'SOLD_OUT'],
+    })
+    expect(inferSchema(s1('in-stock', 'out-of-stock', 'in-stock', 'out-of-stock'))).toMatchObject({
+      enum: ['in-stock', 'out-of-stock'],
+    })
+    expect(inferSchema(s1('credit_card', 'upi', 'credit_card', 'upi'), { name: 'method' })).toEqual({ type: 'string' })
+    expect(inferSchema(s1('credit_card', 'net_banking', 'credit_card', 'net_banking'))).toMatchObject({
+      enum: ['credit_card', 'net_banking'],
+    })
+  })
+
+  it('infers enums for plain words under code-like names, in nested objects and arrays too', () => {
+    const orders = s1(
+      {
+        status: 'paid',
+        currency: 'inr',
+        items: [
+          { unit: 'kg' },
+          { unit: 'pack' },
+        ],
+      },
+      {
+        status: 'shipped',
+        currency: 'usd',
+        items: [
+          { unit: 'kg' },
+        ],
+      },
+      {
+        status: 'paid',
+        currency: 'inr',
+        items: [
+          { unit: 'pack' },
+        ],
+      },
+      { status: 'shipped', currency: 'usd', items: [] },
+    )
+    const schema = inferSchema(orders)
+    expect(schema.properties?.status?.enum).toEqual(['paid', 'shipped'])
+    expect(schema.properties?.currency?.enum).toEqual(['inr', 'usd'])
+    expect(schema.properties?.items?.items?.properties?.unit?.enum).toEqual(['kg', 'pack'])
+    for (const name of [
+      'orderStatus',
+      'category',
+      'type',
+      'kind',
+      'currency_code',
+      'productCategories',
+    ]) {
+      expect(inferSchema(s1('alpha', 'beta', 'alpha', 'beta'), { name })).toMatchObject({
+        enum: ['alpha', 'beta'],
+      })
+    }
+    // Array items take the name of the array.
+    expect(inferSchema(s1(['alpha', 'beta'], ['alpha'], ['beta']), { name: 'categories' })).toMatchObject({
+      items: {
+        enum: ['alpha', 'beta'],
+      },
+    })
+  })
+
+  it('never infers enums of free text, names or identifiers', () => {
+    // Product names in an order, as captured from a shop: a closed enum would reject other products.
+    const names = ['Glass Jar Set 250 g', 'Masala Makhana 250 g', 'Rock Salt 1 kg']
+    expect(inferSchema(s1(...names, ...names, ...names), { name: 'name' })).toEqual({ type: 'string' })
+    // Single words under ordinary names are data (reviewer names, category display names).
+    expect(inferSchema(s1('Asha', 'Dev', 'Asha', 'Dev'), { name: 'author' })).toEqual({ type: 'string' })
+    expect(inferSchema(s1('beverages', 'snacks', 'beverages', 'snacks'), { name: 'slug' })).toEqual({ type: 'string' })
+    expect(inferSchema(s1('beverages', 'snacks', 'beverages', 'snacks'))).toEqual({ type: 'string' })
+    // Token-shaped identifiers are not codes either.
+    expect(inferSchema(s1('masala-makhana', 'rock-salt', 'masala-makhana', 'rock-salt'), { name: 'slug' })).toEqual({ type: 'string' })
+    expect(inferSchema(s1('USR_1', 'USR_2', 'USR_1', 'USR_2'), { name: 'userId' })).toEqual({ type: 'string' })
+    // Whitespace or length rule it out even under a code-like name.
+    expect(inferSchema(s1('1 kg', '250 g', '1 kg', '250 g'), { name: 'unit' })).toEqual({ type: 'string' })
+    expect(inferSchema(s1('X'.repeat(33), 'Y', 'X'.repeat(33), 'Y'), { name: 'status' })).toEqual({ type: 'string' })
+  })
+
   it('lets the caller veto enum values', () => {
-    expect(inferSchema(s1('a', 'b', 'a'), {
-      allowEnumValue: value => value !== 'b',
+    expect(inferSchema(s1('A', 'B', 'A', 'B'), {
+      allowEnumValue: value => value !== 'B',
     })).toEqual({ type: 'string' })
   })
 

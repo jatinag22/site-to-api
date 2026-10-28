@@ -31,9 +31,7 @@ const BROWSER_MANAGED_HEADERS: readonly string[] = [
 const MAX_TEXT_EXAMPLE_LENGTH = 2000
 
 export function isBrowserManagedHeader(name: string): boolean {
-  return BROWSER_MANAGED_HEADERS.some(entry => entry.endsWith('*')
-    ? name.startsWith(entry.slice(0, -1))
-    : name === entry)
+  return matchesHeaderList(BROWSER_MANAGED_HEADERS, name)
 }
 
 function namesInOrder(lists: NameValue[][]): string[] {
@@ -45,9 +43,35 @@ function namesInOrder(lists: NameValue[][]): string[] {
   return [...names]
 }
 
+/**
+ * Headers that describe the capture browser, not the API. Replaying them would make every
+ * generated client claim to be the capture's (often headless) Chrome, so they are never
+ * constants with a default and never required; their observed values stay as examples.
+ */
+const BROWSER_IDENTITY_HEADERS: readonly string[] = [
+  'user-agent',
+  'accept-language',
+  'sec-ch-ua*',
+]
+
+/** Sessions a value must be identical in before it counts as a constant (decision 0004). */
+const MIN_CONSTANT_SESSIONS = 2
+
+function matchesHeaderList(list: readonly string[], name: string): boolean {
+  return list.some(entry => entry.endsWith('*')
+    ? name.startsWith(entry.slice(0, -1))
+    : name === entry)
+}
+
+/** True for `user-agent`, `accept-language` and `sec-ch-ua*`: the capture browser's identity. */
+function isBrowserIdentityHeader(name: string): boolean {
+  return matchesHeaderList(BROWSER_IDENTITY_HEADERS, name.toLowerCase())
+}
+
 function enumGuard(redactor: Redactor, context: RedactContext): InferOptions {
   return {
     allowEnumValue: value => redactor.value(value, context) === value,
+    name: context.name ?? null,
   }
 }
 
@@ -94,15 +118,24 @@ function inferHeaders(exchanges: Exchange[], redactor: Redactor): HeaderInfo[] {
       .map(item => ({ value: item.value, sessionId: exchanges[index]!.sessionId })))
     const present = lists.filter(list => list.some(item => item.name === name)).length
     const distinct = new Set(samples.map(sample => sample.value))
-    const constant = present === exchanges.length && distinct.size === 1
+    const sessions = new Set(samples.map(sample => sample.sessionId))
+    // Identical in one session says nothing: a CSRF token or a referer is the same for every
+    // request of a session. Constants need two or more sessions agreeing (decision 0004).
+    const constant = present === exchanges.length
+      && distinct.size === 1
+      && sessions.size >= MIN_CONSTANT_SESSIONS
+      && !isBrowserIdentityHeader(name)
     let schema = withExamples(inferSchema(samples, enumGuard(redactor, context)), redactor.examples(samples.map(sample => sample.value), context))
+    if (isBrowserIdentityHeader(name))
+      delete schema['x-constant']
     const only = samples[0]?.value
     // A constant that the redactor would change is a secret: it must not become a default.
     if (constant && only !== undefined && redactor.value(only, context) === only)
       schema = { ...schema, default: only }
     return {
       name,
-      required: present === exchanges.length,
+      // Every HTTP client sends its own user agent; a generated SDK must not demand one.
+      required: present === exchanges.length && !isBrowserIdentityHeader(name),
       constant,
       schema,
     }
