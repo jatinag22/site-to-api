@@ -73,15 +73,25 @@ export interface RedactContext {
   name?: string | null
 }
 
-/**
- * Applies `config.redact` to values before they are written to the handoff folder
- * (implemented in `analyze/redact`, decision 0004).
- */
-export interface Redactor {
+/** Redacts the values of one kind of traffic (see {@link Redactor}). */
+export interface ValueRedactor {
   /** Redacts one string value, including values nested in JSON strings and URL-encoded text. */
   value: (raw: string, context: RedactContext) => string
   /** Redacts every string (and personal-data number) inside a JSON value; returns a copy. */
   json: (value: unknown, context: RedactContext) => unknown
   /** Redacted, de-duplicated examples, at most `redact.maxExamples`; empty when examples are `none`. */
   examples: (values: unknown[], context: RedactContext) => unknown[]
+}
+
+/**
+ * Applies `config.redact` to values before they are written to the handoff folder
+ * (implemented in `analyze/redact`, decisions 0004 and 0008).
+ */
+export interface Redactor extends ValueRedactor {
+  /**
+   * For bot-protection steps: every string and number becomes its shape (challenge inputs,
+   * solutions, sensor data), since nothing in them is for a client to reuse. Still copies
+   * values with `examples: raw` and writes none with `none`.
+   */
+  browserOnly: ValueRedactor
 }

@@ -2,9 +2,11 @@
  * Redaction of every value written to the handoff folder (decision 0004).
  *
  * Rules, in order, for `examples: 'masked'`:
- * 1. Cookie and Set-Cookie values, `Authorization`-style headers, configured `fields` and JWTs are
- *    always replaced by `<redacted: shape>`, even when identical across sessions: with a reused
- *    browser profile a login cookie or token stays the same between captures.
+ * 1. Cookie and Set-Cookie values, `Authorization`-style headers, bot-protection headers
+ *    (`x-kpsdk-*`, `x-px-*`), configured `fields` and JWTs are always replaced by
+ *    `<redacted: shape>`, even when identical across sessions: with a reused browser profile a
+ *    login cookie or token stays the same between captures. Bot-protection steps go further:
+ *    {@link Redactor.browserOnly} writes the shape of every value they carry.
  * 2. Values under secret-looking names (`x-csrf-token`, `password`, `pwd`, `otp`) are replaced
  *    too, constant or not. Only publishable-key names (`x-api-key`, `clientId`, `publishableKey`,
  *    `siteKey`, `?key=`) are kept when the same value appeared in every session (at least two):
@@ -28,6 +30,7 @@ import type { ResolvedConfig } from '../../config/schema'
 import type { Body, Exchange, RedactContext, Redactor } from '../../model'
 import type { PersonalDataPattern } from './personal-data'
 import { SiteToApiError } from '../../errors'
+import { isBotProtectionHeader } from '../classify'
 import { describeShape, inspectJwt } from '../shape'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
 import { isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
@@ -286,7 +289,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     const lower = name?.toLowerCase() ?? null
     if (lower === null)
       return false
-    if ((where === 'header' || where === 'response-header') && CREDENTIAL_HEADERS.has(lower))
+    if ((where === 'header' || where === 'response-header') && (CREDENTIAL_HEADERS.has(lower) || isBotProtectionHeader(lower)))
       return true
     return fields.has(lower)
   }
@@ -433,6 +436,25 @@ export function createRedactor(input: RedactorInput): Redactor {
   }
 
   const raw = config.examples === 'raw'
+  const examplesOf = (redact: (value: unknown) => unknown) => (values: unknown[]): unknown[] => {
+    if (config.examples === 'none')
+      return []
+    const result: unknown[] = []
+    const seen = new Set<string>()
+    for (const value of values) {
+      if (result.length >= config.maxExamples)
+        break
+      const redacted = raw
+        ? value
+        : redact(value)
+      const key = JSON.stringify(redacted) ?? 'undefined'
+      if (seen.has(key))
+        continue
+      seen.add(key)
+      result.push(redacted)
+    }
+    return result
+  }
   return {
     value: (text, context) => raw
       ? text
@@ -440,26 +462,42 @@ export function createRedactor(input: RedactorInput): Redactor {
     json: (value, context) => raw
       ? value
       : redactJson(value, context, 0),
-    examples: (values, context) => {
-      if (config.examples === 'none')
-        return []
-      const result: unknown[] = []
-      const seen = new Set<string>()
-      for (const value of values) {
-        if (result.length >= config.maxExamples)
-          break
-        const redacted = raw
-          ? value
-          : typeof value === 'string'
-            ? redactString(value, context, 0)
-            : redactJson(value, context, 0)
-        const key = JSON.stringify(redacted) ?? 'undefined'
-        if (seen.has(key))
-          continue
-        seen.add(key)
-        result.push(redacted)
-      }
-      return result
+    examples: (values, context) => examplesOf(value => typeof value === 'string'
+      ? redactString(value, context, 0)
+      : redactJson(value, context, 0))(values),
+    browserOnly: {
+      value: text => raw || text === ''
+        ? text
+        : placeholder(text),
+      json: value => raw
+        ? value
+        : maskEveryValue(value, 0),
+      examples: values => examplesOf(value => maskEveryValue(value, 0))(values),
     },
   }
+}
+
+/**
+ * Every string and number replaced by its shape, keeping the JSON structure, booleans and nulls:
+ * what a bot-protection step's challenge or sensor payload looks like, never what it says.
+ */
+function maskEveryValue(value: unknown, depth: number): unknown {
+  if (depth > MAX_DEPTH)
+    return '<redacted: nested too deep>'
+  if (typeof value === 'string') {
+    return value === ''
+      ? value
+      : placeholder(value)
+  }
+  if (typeof value === 'number')
+    return placeholder(String(value))
+  if (Array.isArray(value))
+    return value.map(item => maskEveryValue(item, depth + 1))
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key,
+      maskEveryValue(item, depth + 1),
+    ]))
+  }
+  return value
 }

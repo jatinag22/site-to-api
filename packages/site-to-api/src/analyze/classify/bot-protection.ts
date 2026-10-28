@@ -240,6 +240,19 @@ function traceEvidence(signature: BotProtectionSignature, exchange: Exchange): F
   ]
 }
 
+/**
+ * True for a header a bot-protection vendor adds to requests or responses (`x-kpsdk-ct`,
+ * `x-px-*`, `x-datadome-*`, `x-aws-waf-token`): its value is a challenge token or sensor
+ * answer only a real browser produces, so it is redacted like a cookie wherever it appears.
+ */
+export function isBotProtectionHeader(name: string): boolean {
+  const lower = name.toLowerCase()
+  return BOT_PROTECTION_SIGNATURES.some(signature => [
+    ...signature.requestHeaders,
+    ...signature.responseHeaders,
+  ].some(pattern => pattern.test(lower)))
+}
+
 /** Every signature that matches one exchange. */
 export function detectBotProtection(exchange: Exchange, akamaiHosts: ReadonlySet<string>): BotEvidence[] {
   const body = bodyText(exchange)

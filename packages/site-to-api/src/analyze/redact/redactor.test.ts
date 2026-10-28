@@ -443,6 +443,51 @@ describe('createRedactor: rules', () => {
   })
 })
 
+describe('createRedactor: bot protection', () => {
+  const answer = '{"workTime":1700000000000,"id":"c0ffee00c0ffee00c0ffee00c0ffee00","answers":[3,7]}'
+
+  it('redacts bot-protection headers on ordinary calls, even when constant', () => {
+    const items = ['s1', 's2'].map(sessionId => exchange({
+      url: 'https://shop.test/api/cart',
+      sessionId,
+      requestHeaders: { 'x-kpsdk-cd': answer, 'x-kpsdk-v': 'j-1.2.3', 'x-aws-waf-token': 'Zm9vYmFyYmF6cXV4' },
+      responseHeaders: { 'x-kpsdk-cr': 'true' },
+    }))
+    const r = redactor(items)
+    expect(r.value(answer, { in: 'header', name: 'x-kpsdk-cd' })).toMatch(/^<redacted: /)
+    expect(r.value('j-1.2.3', { in: 'header', name: 'X-Kpsdk-V' })).toMatch(/^<redacted: /)
+    expect(r.value('Zm9vYmFyYmF6cXV4', { in: 'header', name: 'x-aws-waf-token' })).toMatch(/^<redacted: /)
+    expect(r.value('true', { in: 'response-header', name: 'x-kpsdk-cr' })).toMatch(/^<redacted: /)
+    // The answer is learnt as a secret, so an echo elsewhere is scrubbed too.
+    expect(r.value(`echo ${answer}`, { in: 'text' })).not.toContain('c0ffee00')
+    expect(r.value('v-2.0.0', { in: 'header', name: 'x-app-version' })).toBe('v-2.0.0')
+  })
+
+  it('masks every value of a browser-only step by its shape, keeping the structure', () => {
+    const r = redactor([])
+    const challenge = {
+      challenge: { input: 'eyJ2ZXJzaW9uIjoxfQ', hmac: 'a1b2c3d4e5f6a7b8' },
+      difficulty: 4,
+      region: 'eu-west-1',
+      ok: true,
+      none: null,
+      empty: '',
+    }
+    expect(r.browserOnly.json(challenge, { in: 'response-body' })).toEqual({
+      challenge: { input: '<redacted: 18 base64 chars>', hmac: '<redacted: 16 hex chars>' },
+      difficulty: '<redacted: 1-digit number>',
+      region: '<redacted: 9 chars>',
+      ok: true,
+      none: null,
+      empty: '',
+    })
+    expect(r.browserOnly.value('solution', { in: 'form', name: 'solution_data' })).toBe('<redacted: 8 chars>')
+    expect(r.browserOnly.examples(['x', 'y', 'z'], { in: 'query' })).toEqual(['<redacted: 1 chars>'])
+    expect(redactor([], { examples: 'none' }).browserOnly.examples(['a'], { in: 'query' })).toEqual([])
+    expect(redactor([], { examples: 'raw' }).browserOnly.value('solution', { in: 'form' })).toBe('solution')
+  })
+})
+
 describe('createRedactor: modes and examples', () => {
   const exchanges = fixtureExchanges()
 

@@ -40,6 +40,45 @@ function infer(exchanges: Exchange[], init: Partial<Operation> = {}, examples: '
   ], redactor)[0]!
 }
 
+describe('inferOperationSchemas: bot-protection steps', () => {
+  it('writes only shapes for a challenge step: no enum, default or copied value', () => {
+    const items = ['s1', 's2'].map(sessionId => exchange({
+      method: 'POST',
+      url: 'https://abc.token.awswaf.com/a/b/c/mp_verify?client=browser',
+      sessionId,
+      requestHeaders: { 'x-client': 'web' },
+      requestBody: formBody({ solution_data: `s0lut10n-${sessionId}`, solution_metadata: '{"iterations":3}' }),
+      responseBody: jsonBody({
+        token: `t0k3n-${sessionId}`,
+        inputs: { challenge: 'Q2hhbGxlbmdl' },
+      }),
+    }))
+    const result = infer(items, {
+      kind: 'bot-protection',
+      method: 'POST',
+      host: 'abc.token.awswaf.com',
+      path: '/a/b/c/mp_verify',
+    })
+    const text = JSON.stringify(result, (key, value: unknown) => key === 'exchanges'
+      ? undefined
+      : value)
+    for (const value of [
+      'browser',
+      'web',
+      's0lut10n',
+      'iterations',
+      't0k3n',
+      'Q2hhbGxlbmdl',
+    ])
+      expect(text).not.toContain(value)
+    expect(result.query[0]?.schema).toMatchObject({
+      type: 'string',
+      examples: ['<redacted: 7 chars>'],
+    })
+    expect(result.headers.find(header => header.name === 'x-client')?.schema.default).toBeUndefined()
+  })
+})
+
 describe('inferOperationSchemas', () => {
   it('infers query parameters with types, required flags, examples and repeats', () => {
     const result = infer([
