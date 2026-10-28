@@ -275,7 +275,7 @@ describe('helpers', () => {
     expect(describeOrigin({ kind: 'constant', value: 'v1' })).toBe('constant')
     expect(describeOrigin({ kind: 'browser', note: 'set by page script' })).toBe('set by browser: set by page script')
     expect(describeOrigin({ kind: 'user-input', field: 'email' })).toBe('typed into `email`')
-    expect(describeOrigin({ kind: 'user-input', field: 'a|b' })).toBe('typed into `a\\|b`')
+    expect(describeOrigin({ kind: 'user-input', field: 'a|b' })).toBe('typed into <code>a&#124;b</code>')
   })
 })
 

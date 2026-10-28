@@ -35,13 +35,14 @@ export function commentText(value: string): string {
 /**
  * Inline Markdown text: one line, with every character that can start emphasis, a link, an image,
  * raw HTML, an entity, a code span, a table cell or a heading backslash-escaped. GFM also turns
- * bare `https://` text into links; escaping the `:` keeps a URL from the site plain text. (Bare
+ * bare `https://` text and email addresses into links; escaping the `:` and the `@` keeps them
+ * plain text. (Bare
  * `www.` links are left alone: host names start with it, and the link text shows its target.)
  * The result is safe inside a GFM table cell (pipes are escaped).
  */
 export function text(value: string): string {
   return oneLine(value)
-    .replace(/[\\`*_[\]<>|#~!&]/g, match => `\\${match}`)
+    .replace(/[\\`*_[\]<>|#~!&@]/g, match => `\\${match}`)
     .replace(/:\/\//g, '\\://')
 }
 
@@ -64,11 +65,21 @@ export function code(value: string): string {
 }
 
 /**
- * {@link code} for a GFM table cell. The table parser splits rows at `|` before it reads code
- * spans, so pipes inside the span must be escaped too.
+ * {@link code} for a GFM table cell. The table parser splits a row at every `|` that is not
+ * backslash-escaped, before it reads code spans, and a site value ending in `\` turns an escape
+ * into a real cell boundary. Values without a pipe stay a plain code span (most readable when an
+ * agent reads the raw file). A value with a pipe becomes an HTML `<code>` element whose characters
+ * are all entities except letters, digits and spaces, so nothing in it can split the row, close
+ * the element or form a link.
  */
 export function cellCode(value: string): string {
-  return code(value).replace(/\|/g, '\\|')
+  const flat = oneLine(value)
+  if (!flat.includes('|'))
+    return code(flat)
+  const encoded = [...flat].map(char => /[\w ]/.test(char) && char !== '_'
+    ? char
+    : `&#${char.codePointAt(0)};`).join('')
+  return `<code>${encoded}</code>`
 }
 
 /**
