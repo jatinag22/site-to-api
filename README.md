@@ -54,8 +54,12 @@ Requires Node 22.12+.
 git clone https://github.com/jatinag22/site-to-api
 cd site-to-api && pnpm install && pnpm run build
 pnpm --filter site-to-api exec playwright install chromium   # only if you don't use your installed Chrome
-alias site-to-api="node $PWD/packages/site-to-api/bin/site-to-api.mjs"
+# put the CLI on your PATH (works in scripts too, unlike a shell alias)
+mkdir -p ~/.local/bin && ln -sf "$PWD/packages/site-to-api/bin/site-to-api.mjs" ~/.local/bin/site-to-api
+site-to-api --version
 ```
+
+If `site-to-api` is not found, add `~/.local/bin` to your `PATH`.
 
 ## Quick start
 
@@ -97,7 +101,7 @@ site-to-api probe      # optional: checks the session needs against the live sho
 ```
 
 `--script` drives the browser from a file so the run is repeatable; drop it (and `--headless`) to
-browse by hand.
+browse by hand. The shop's test account is `demo` / `demo-password` (fictional, local only).
 
 ## What you get
 
@@ -142,8 +146,11 @@ The full format is specified in [docs/output-format.md](docs/output-format.md).
 | `capture [url]` | Opens a browser and records everything until you close it. `--script <file>` drives it from code instead; `--headless`; `--channel chrome\|msedge\|bundled`; `--user-data-dir` keeps logins |
 | `build` | Analyses every capture and writes the handoff folder, including the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client` |
 | `probe` | Replays captured requests against the live site, rate limited, safe methods only unless `--unsafe-methods`; folds the results into the handoff folder |
-| `gen` | Regenerates only `client/` |
-| `config` | Prints the resolved config and where each value came from |
+| `gen` | Regenerates only `client/` from an existing handoff folder (no raw captures needed) |
+| `config` | Prints the resolved config and where each value came from; `--json` for machine-readable output |
+
+Options every command accepts: `-c, --config <file>`, `--cwd <dir>`, `--raw-dir <dir>`,
+`--out-dir <dir>`. `probe` also takes `--max-rps <n>`. `site-to-api <command> --help` lists them.
 
 ## Configuration
 
@@ -166,8 +173,13 @@ export default defineConfig({
 })
 ```
 
-Precedence: CLI flags > `SITE_TO_API_*` environment variables (`__` nests:
-`SITE_TO_API_REDACT__EXAMPLES=raw`) > config file > defaults. Unknown keys are errors.
+Precedence: CLI flags > `SITE_TO_API_*` environment variables > config file > defaults. Unknown
+keys are errors, and `site-to-api config` shows which source set each value.
+
+Environment variables name a config key in upper snake case, with `__` between nesting levels:
+`rawDir` → `SITE_TO_API_RAW_DIR`, `redact.examples` → `SITE_TO_API_REDACT__EXAMPLES`,
+`probe.maxRps` → `SITE_TO_API_PROBE__MAX_RPS`. Values are read as JSON when they parse
+(`true`, `0.5`, `["*.example.com"]`), otherwise as text.
 
 ## Using the generated client
 
