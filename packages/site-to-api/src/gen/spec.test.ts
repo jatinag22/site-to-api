@@ -195,6 +195,80 @@ describe('describeHost', () => {
   })
 })
 
+describe('describeHost security', () => {
+  it('reads security schemes and the operations that declare security', () => {
+    const document = OpenApiDocumentSchema.parse({
+      openapi: '3.1.0',
+      servers: [
+        { url: 'https://api.example.com' },
+      ],
+      security: [
+        { bearer: [] },
+      ],
+      components: {
+        securitySchemes: {
+          key: { type: 'apiKey', in: 'header', name: 'Authorization' },
+          bearer: { type: 'http', scheme: 'Bearer' },
+          broken: { in: 'header' },
+        },
+      },
+      paths: {
+        '/a': {
+          get: {
+            operationId: 'getA',
+            security: [
+              { key: [] },
+            ],
+          },
+        },
+        '/b': {
+          get: { operationId: 'getB' },
+        },
+        '/public': {
+          get: { operationId: 'getPublic', security: [] },
+        },
+        '/optional': {
+          get: {
+            operationId: 'getOptional',
+            security: [{}],
+          },
+        },
+      },
+    })
+    const warnings: string[] = []
+    const host = describeHost('api.example.com.yaml', document, warnings)
+    expect(host.auth).toEqual([
+      {
+        name: 'bearer',
+        type: 'http',
+        in: null,
+        parameter: null,
+        scheme: 'bearer',
+      },
+      {
+        name: 'key',
+        type: 'apiKey',
+        in: 'header',
+        parameter: 'Authorization',
+        scheme: null,
+      },
+    ])
+    // `security: []` opts out, and `[{}]` means credentials are optional.
+    expect(host.securedOperationIds).toEqual(['getA', 'getB'])
+    expect(warnings).toEqual(['specs/api.example.com.yaml: security scheme broken has no type and is not described in the client README'])
+  })
+
+  it('has no auth for a spec without security', () => {
+    const host = describeHost('a.yaml', doc({
+      '/a': {
+        get: { operationId: 'getA' },
+      },
+    }), [])
+    expect(host.auth).toEqual([])
+    expect(host.securedOperationIds).toEqual([])
+  })
+})
+
 describe('openApiDocumentSchema', () => {
   it('rejects documents without an openapi version', () => {
     expect(OpenApiDocumentSchema.safeParse({ swagger: '2.0' }).success).toBe(false)

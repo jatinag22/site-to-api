@@ -1,5 +1,7 @@
 import type { SessionRequirement } from '../model'
+import type { NamedHtmlValue } from './html-values'
 import type { ExtractOperation, HostSpec } from './spec'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { HOSTILE, injected, renderMarkdown } from '../../test/markdown'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
@@ -69,6 +71,8 @@ function host(overrides: Partial<HostSpec> = {}): HostSpec {
     defaultHeaders: {},
     operationIds: ['getList'],
     extracts: [listExtract],
+    auth: [],
+    securedOperationIds: [],
     ...overrides,
   }
 }
@@ -151,6 +155,53 @@ describe('renderExtractModule', () => {
   })
 })
 
+describe('renderExtractModule with HTML values', () => {
+  const csrf: NamedHtmlValue = {
+    functionName: 'extractCsrfTokenFromGetLogin',
+    sourceOperationId: 'getLogin',
+    input: 'header.x-csrf-token',
+    usedBy: ['postApiAuthLogin'],
+    location: { selector: 'meta[name="csrf-token"]', attr: 'content', pattern: null },
+    confidence: 'high',
+    alternatives: [],
+  }
+
+  it('writes a reader that calls extractValue with the location from flows.json', () => {
+    const code = renderExtractModule([], [csrf])
+    expect(code).toContain(`import { extractValue } from '@site-to-api/runtime'`)
+    expect(code).not.toContain('zod')
+    expect(code).toContain('export function extractCsrfTokenFromGetLogin(html: string): string | null {')
+    expect(code).toContain('return extractValue(html, {"selector":"meta[name=\\"csrf-token\\"]","attr":"content","pattern":null})')
+    expect(code).toContain('Reads `header.x-csrf-token` for `postApiAuthLogin` from the HTML of')
+  })
+
+  it('imports both runtime helpers when there are records and values', () => {
+    const code = renderExtractModule(nameExtracts([
+      host(),
+    ], []), [
+      {
+        ...csrf,
+        confidence: 'low',
+        alternatives: [
+          { selector: 'input[name=_csrf]', attr: 'value', pattern: null },
+        ],
+      },
+    ])
+    expect(code).toContain(`import { extract, extractValue } from '@site-to-api/runtime'`)
+    expect(code).toContain('low confidence')
+    expect(code).toContain('flows.json also saw `input[name=_csrf]`, attribute `value`.')
+  })
+
+  it('exports the readers from index.ts and lists them in the README', () => {
+    expect(renderIndexModule([
+      host(),
+    ], [], [csrf])).toContain(`export { extractCsrfTokenFromGetLogin } from './extract.js'`)
+    expect(renderReadme([
+      host(),
+    ], [], [], [csrf])).toContain('- `extractCsrfTokenFromGetLogin(html)` → `string | null`: `header.x-csrf-token` for `postApiAuthLogin`, read from the HTML of `getLogin` (`meta[name="csrf-token"]`, attribute `content`).')
+  })
+})
+
 describe('renderIndexModule', () => {
   it('imports each host namespace and its client and writes the defaults', () => {
     const code = renderIndexModule([
@@ -158,10 +209,14 @@ describe('renderIndexModule', () => {
         defaultHeaders: { 'x-a': '1' },
       }),
     ], [])
-    expect(code).toContain(`import * as a_example_com from './a_example_com/index'`)
-    expect(code).toContain(`import { client as a_example_comClient } from './a_example_com/client.gen'`)
+    expect(code).toContain(`import * as a_example_com from './a_example_com/index.js'`)
+    expect(code).toContain(`import { client as a_example_comClient } from './a_example_com/client.gen.js'`)
     expect(code).toContain('    headers: {\n      "x-a": "1",\n    },')
-    expect(code).not.toContain(`from './extract'`)
+    expect(code).not.toContain(`from './extract.js'`)
+    expect(code).toContain('auth: options.auth')
+    // Every relative specifier carries an extension, so `nodenext` resolution accepts it.
+    for (const [, specifier] of code.matchAll(/from '(\.[^']*)'/g))
+      expect(specifier).toMatch(/\.js$/)
   })
 })
 
@@ -224,6 +279,96 @@ describe('renderReadme', () => {
   })
 })
 
+describe('renderReadme auth and usage', () => {
+  const secured = host({
+    operationIds: ['getList', 'getOrders'],
+    auth: [
+      {
+        name: 'authorization',
+        type: 'apiKey',
+        in: 'header',
+        parameter: 'Authorization',
+        scheme: null,
+      },
+    ],
+    securedOperationIds: ['getOrders'],
+  })
+
+  it('uses the sdk returned by createSiteClient and says the configuration is per host', () => {
+    const readme = renderReadme([
+      host(),
+    ], [], [
+      session('cookies'),
+    ])
+    expect(readme).toContain('const { sdk } = createSiteClient({ host: "a.example.com", jar })')
+    expect(readme).toContain('const { data, error } = await sdk.getList(')
+    expect(readme).not.toContain('a_example_com.getList(')
+    expect(readme).toContain('calling it twice for\nthe same host replaces the first configuration')
+    expect(readme).toContain(`from './client/index.js'`)
+  })
+
+  it('says build and probe regenerate the client and gen only regenerates this folder', () => {
+    const readme = renderReadme([
+      host(),
+    ], [], [])
+    expect(readme).toContain('`site-to-api build` and\n`site-to-api probe` regenerate them, and `site-to-api gen` regenerates only this folder')
+    expect(readme).not.toContain('again after `build` or `probe`')
+  })
+
+  it('explains auth for an API key in Authorization and adds it to the example', () => {
+    const readme = renderReadme([secured], [], [
+      session('browser'),
+    ])
+    expect(readme).toContain(`- Auth: \`getOrders\` declare security. Pass \`auth\` to \`createSiteClient\`: \`authorization\` is an API key in header \`Authorization\`, sent as-is, so return the full value (for example \`\` \`Bearer \${token}\` \`\`).`)
+    expect(readme).toContain(`  auth: () => token && \`Bearer \${token}\`,`)
+    expect(readme).toContain('combineSessions(...)')
+  })
+
+  it('describes bearer, basic and unsupported schemes and leaves auth out without secured operations', () => {
+    const readme = renderReadme([
+      host({
+        operationIds: ['a', 'b', 'c', 'd', 'e', 'f'],
+        securedOperationIds: ['a', 'b', 'c', 'd', 'e', 'f'],
+        auth: [
+          {
+            name: 'basic',
+            type: 'http',
+            in: null,
+            parameter: null,
+            scheme: 'basic',
+          },
+          {
+            name: 'bearer',
+            type: 'http',
+            in: null,
+            parameter: null,
+            scheme: 'bearer',
+          },
+          {
+            name: 'oauth',
+            type: 'oauth2',
+            in: null,
+            parameter: null,
+            scheme: null,
+          },
+        ],
+      }),
+    ], [], [
+      session('none'),
+    ])
+    expect(readme).toContain('`a`, `b`, `c`, `d`, `e` and 1 more declare security')
+    expect(readme).toContain('`basic` is HTTP basic auth')
+    expect(readme).toContain('`bearer` is an HTTP bearer token: return the token and the client adds `Bearer `')
+    expect(readme).toContain('`oauth` has type `oauth2`, which the client does not apply')
+    expect(readme).toContain('  auth: () => token,')
+    expect(renderReadme([
+      host(),
+    ], [], [
+      session('none'),
+    ])).not.toContain('- Auth:')
+  })
+})
+
 describe('hostile operation ids, labels and headers', () => {
   // A host name cannot hold spaces or newlines, but operation ids, header values, cookie names
   // and bot-protection evidence can.
@@ -231,6 +376,16 @@ describe('hostile operation ids, labels and headers', () => {
   const hostile = host({
     host: 'a`b$c.example',
     operationIds: [breakout],
+    auth: [
+      {
+        name: breakout,
+        type: breakout,
+        in: null,
+        parameter: null,
+        scheme: null,
+      },
+    ],
+    securedOperationIds: [breakout],
     defaultHeaders: { [`x-${breakout}`]: breakout },
     extracts: [
       {
@@ -240,6 +395,25 @@ describe('hostile operation ids, labels and headers', () => {
         mimeType: `text/html ${breakout}`,
       },
     ],
+  })
+
+  const hostileValue: NamedHtmlValue = {
+    functionName: 'extractTokenFromGetPage',
+    sourceOperationId: breakout,
+    input: `header.${breakout}`,
+    usedBy: [breakout],
+    location: { selector: breakout, attr: breakout, pattern: breakout },
+    confidence: 'low',
+    alternatives: [
+      { selector: `*/ ${breakout}`, attr: null, pattern: null },
+    ],
+  }
+
+  it('keeps the HTML value readers to one function each, with the site strings as data', () => {
+    const code = renderExtractModule([], [hostileValue])
+    const file = ts.createSourceFile('extract.ts', code, ts.ScriptTarget.ES2023, true, ts.ScriptKind.TS)
+    expect(file.statements.map(statement => ts.SyntaxKind[statement.kind])).toEqual(['ImportDeclaration', 'FunctionDeclaration'])
+    expect(code).toContain('# Pwned')
   })
 
   it('keeps the README structure intact', () => {
@@ -253,14 +427,14 @@ describe('hostile operation ids, labels and headers', () => {
           { vendor: breakout, evidence: breakout },
         ],
       }),
-    ])
+    ], [hostileValue])
     const html = renderMarkdown(readme)
     expect(injected(html)).toEqual([])
     expect(html).not.toMatch(/<h\d>\s*Pwned/)
-    expect(html.match(/<h\d>/g)).toHaveLength(4)
+    expect(html.match(/<h\d>/g)).toHaveLength(7)
     expect(html.match(/<pre>/g)).toHaveLength(1)
     // The example call falls back to a placeholder rather than an id that is not an identifier.
-    expect(readme).toContain('a_example_com.someOperation(')
+    expect(readme).toContain('sdk.someOperation(')
   })
 
   it('names parsers with identifiers even when the id has no letters or starts with a digit', () => {

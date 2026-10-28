@@ -7,10 +7,33 @@ info:
 servers:
   - url: https://shop.example.com
 paths:
+  /login:
+    get:
+      operationId: getLogin
+      x-site-to-api-kind: page
+      responses:
+        '200':
+          description: Login page with the CSRF token in a meta tag.
+          content:
+            text/html:
+              schema:
+                type: string
   /api/session:
     post:
       operationId: postApiSession
       x-site-to-api-kind: api
+      parameters:
+        - name: x-csrf-token
+          in: header
+          required: true
+          schema:
+            type: string
+        # Mixed case on purpose: the request validator must still find it.
+        - name: X-Api-Version
+          in: header
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -83,6 +106,23 @@ paths:
                     type: array
                     items:
                       type: string
+  /api/me:
+    get:
+      operationId: getApiMe
+      x-site-to-api-kind: api
+      security:
+        - authorization: []
+      responses:
+        '200':
+          description: The signed-in user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name]
+                properties:
+                  name:
+                    type: string
   /prices:
     get:
       operationId: getPrices
@@ -117,3 +157,9 @@ paths:
                     pattern: null
                     type: string
                     optional: true
+components:
+  securitySchemes:
+    authorization:
+      type: apiKey
+      in: header
+      name: Authorization
