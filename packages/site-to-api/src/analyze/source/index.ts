@@ -4,6 +4,7 @@ export { findSourceEndpoints } from './endpoints'
  * that code, collects its string constants and cuts excerpts for the handoff folder.
  */
 export { buildExcerpt } from './excerpt'
+export { findGraphqlTypes } from './graphql'
 export { createSourceResolver } from './resolver'
 export { collectStaticStrings } from './strings'
 export { createWrapperAwareResolver } from './wrappers'

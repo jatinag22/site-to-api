@@ -22,7 +22,10 @@ async function waitForLivePricePolls(page: Page, count: number): Promise<void> {
     await page.waitForResponse(response => new URL(response.url()).pathname === '/api/live-price' && response.ok())
 }
 
-/** Runs the journey: home → category → product → reviews → live prices → deals → stores → CSV. */
+/**
+ * Runs the journey: home → category → product → reviews → wishlist → live prices → deals →
+ * stores → CSV.
+ */
 export async function shoppingJourney(page: Page, baseUrl: string, choices: JourneyChoices): Promise<void> {
   await page.goto(baseUrl)
   await page.waitForLoadState('networkidle')
@@ -37,6 +40,9 @@ export async function shoppingJourney(page: Page, baseUrl: string, choices: Jour
   await page.locator('#product-name').filter({ hasNotText: 'Loading' }).waitFor()
   await page.getByRole('button', { name: 'Read reviews' }).click()
   await page.locator('#reviews li').first().waitFor()
+  await page.locator('#product-stock').filter({ hasText: 'in' }).waitFor()
+  await page.getByRole('button', { name: 'Add to wishlist' }).click()
+  await page.locator('#wishlist-status').filter({ hasText: 'Saved' }).waitFor()
   await waitForLivePricePolls(page, 2)
 
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Deals' }).click()
@@ -50,6 +56,7 @@ export async function shoppingJourney(page: Page, baseUrl: string, choices: Jour
     await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Stores' }).click()
     await page.getByRole('link', { name: store }).click()
     await page.locator('#store-stock li').first().waitFor()
+    await page.locator('#store-hours-live').filter({ hasText: 'Open now' }).waitFor()
   }
 
   const download = page.waitForEvent('download')

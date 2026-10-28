@@ -214,11 +214,17 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
   const imports = hosts.flatMap(host => [
     `import * as ${host.identifier} from './${host.identifier}/index.js'`,
     `import { client as ${host.identifier}Client } from './${host.identifier}/client.gen.js'`,
+    ...(host.graphql.length > 0
+      ? [`import * as ${host.identifier}Graphql from './${host.identifier}/graphql.js'`]
+      : []),
   ])
+  // GraphQL functions take `{ variables }` and replace the raw SDK functions of the same name.
   const entries = hosts.map(host => [
     `  ${literal(host.host)}: {`,
     `    client: ${host.identifier}Client,`,
-    `    sdk: ${host.identifier},`,
+    host.graphql.length > 0
+      ? `    sdk: { ...${host.identifier}, ...${host.identifier}Graphql },`
+      : `    sdk: ${host.identifier},`,
     `  },`,
   ].join('\n'))
   const defaults = hosts.map(host => [
@@ -465,11 +471,33 @@ function renderHostSection(host: HostSpec, session: SessionRequirement | null): 
   const auth = authLine(host)
   if (auth !== null)
     lines.push(auth)
+  lines.push(...graphqlLines(host))
   lines.push('', ...codeBlock(sessionExample(host, session?.requires ?? 'unknown', example), 'ts'))
   return lines.join('\n')
 }
 
 const LISTED_OPERATIONS = 5
+
+/**
+ * One line per GraphQL endpoint: its operations as the `{ variables }` functions `sdk` has, each
+ * sending its operation name, persisted-query hash or document itself (decision 0027).
+ */
+function graphqlLines(host: HostSpec): string[] {
+  const byEndpoint = new Map<string, HostSpec['graphql']>()
+  for (const operation of host.graphql) {
+    const key = `${operation.method} ${operation.endpoint}`
+    byEndpoint.set(key, [
+      ...(byEndpoint.get(key) ?? []),
+      operation,
+    ])
+  }
+  return [...byEndpoint].sort(([a], [b]) => a.localeCompare(b)).map(([endpoint, operations]) => {
+    const calls = operations.map(operation => `${code(`sdk.${sdkFunctionName(operation.operationId)}(${operation.variablesIn === null
+      ? '{}'
+      : '{ variables }'})`)} (${text(operation.operationType)})`)
+    return `- GraphQL on ${code(endpoint)}: ${calls.join(', ')}. Each sends its operation name, persisted-query hash or document itself; \`variables\` are typed from the capture.`
+  })
+}
 
 function authLine(host: HostSpec): string | null {
   if (host.securedOperationIds.length === 0)

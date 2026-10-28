@@ -75,7 +75,7 @@ export const ConfigSchema = z.strictObject({
   probe: z.strictObject({
     /** Requests per second against the live site. */
     maxRps: z.number().positive().max(10).default(1),
-    /** Replay POST, PUT, PATCH and DELETE too. Off by default: they can change data. */
+    /** Replay POST, PUT, PATCH and DELETE, GraphQL mutations and GraphQL operations of unknown type too. Off by default: they can change data. */
     unsafeMethods: z.boolean().default(false),
     timeoutMs: z.number().int().positive().default(15_000),
     /**
