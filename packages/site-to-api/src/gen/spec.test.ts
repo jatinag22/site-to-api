@@ -1,6 +1,6 @@
 import type { OpenApiDocument } from './spec'
 import { describe, expect, it } from 'vitest'
-import { describeHost, OpenApiDocumentSchema, toIdentifier, toPascalCase } from './spec'
+import { describeHost, OpenApiDocumentSchema, toIdentifier, toPascalCase, withoutBrowserOnlySteps } from './spec'
 
 const HTML_EXTRACT = {
   kind: 'html',
@@ -287,6 +287,38 @@ describe('describeHost probedRequires', () => {
       ['cookie:sid'],
       [],
     ])
+  })
+})
+
+describe('withoutBrowserOnlySteps', () => {
+  const op = (operationId: string, kind: string): Record<string, unknown> => ({ operationId, 'x-site-to-api-kind': kind, 'responses': {} })
+
+  it('drops bot-protection steps and path items left empty, keeping pages and calls', () => {
+    const result = withoutBrowserOnlySteps(doc({
+      '/': {
+        get: op('getRoot', 'page'),
+      },
+      '/api/items': {
+        get: op('getApiItems', 'api'),
+        post: op('postApiItems', 'bot-protection'),
+      },
+      '/{a}/{b}/mfc': {
+        get: op('getByAByBMfc', 'bot-protection'),
+      },
+    }))
+    expect(result && describeHost('api.example.com.yaml', result, []).operationIds).toEqual(['getApiItems', 'getRoot'])
+    expect(Object.keys(result?.paths ?? {})).toEqual(['/', '/api/items'])
+  })
+
+  it('returns null when only bot-protection steps are left', () => {
+    expect(withoutBrowserOnlySteps(doc({
+      '/inputs': {
+        get: op('getInputs', 'bot-protection'),
+      },
+      '/mp_verify': {
+        post: op('postMpVerify', 'bot-protection'),
+      },
+    }))).toBeNull()
   })
 })
 

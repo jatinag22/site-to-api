@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 import { nameHtmlValues } from './html-values'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
-import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema } from './spec'
+import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema, withoutBrowserOnlySteps } from './spec'
 
 /** Input for {@link generateClient}. */
 export interface GenerateClientInput {
@@ -87,6 +87,7 @@ async function loadSpecs(specsDir: string, warnings: string[]): Promise<{ loaded
   const specFiles = names.filter(name => /\.ya?ml$/.test(name)).sort()
   const loaded: LoadedSpec[] = []
   const channels: ChannelSummary[] = []
+  let openApiCount = 0
   for (const file of specFiles) {
     const text = await readFile(path.join(specsDir, file), 'utf8')
     let raw: unknown
@@ -107,12 +108,16 @@ async function loadSpecs(specsDir: string, warnings: string[]): Promise<{ loaded
     const parsed = OpenApiDocumentSchema.safeParse(raw)
     if (!parsed.success)
       throw new SiteToApiError(`specs/${file} is not an OpenAPI document (${z.prettifyError(parsed.error).replaceAll('\n', '; ')}); run \`site-to-api build\` again`)
+    openApiCount++
+    const document = withoutBrowserOnlySteps(parsed.data)
+    if (document === null)
+      continue
     loaded.push({
-      host: describeHost(file, parsed.data, warnings),
-      document: parsed.data,
+      host: describeHost(file, document, warnings),
+      document,
     })
   }
-  if (loaded.length === 0)
+  if (openApiCount === 0)
     throw new SiteToApiError(`No .yaml specs (OpenAPI) in ${specsDir}: run \`site-to-api build\` first`)
   return { loaded, channels }
 }

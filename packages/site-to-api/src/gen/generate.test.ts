@@ -406,6 +406,50 @@ describe('generateClient', () => {
   }, 60_000)
 })
 
+describe('generateClient and bot-protection steps', () => {
+  it('generates no client method or folder for bot-protection steps', async () => {
+    const dir = await workspace()
+    try {
+      const specs = path.join(dir, 'handoff', 'specs')
+      const fixtureText = await readFile(fixture, 'utf8')
+      await writeFile(path.join(specs, 'shop.example.com.yaml'), fixtureText.replace('paths:\n', `paths:
+  /a1b2/c3d4/mfc:
+    get:
+      operationId: getA1b2C3d4Mfc
+      x-site-to-api-kind: bot-protection
+      responses:
+        '200':
+          description: OK
+`))
+      await writeFile(path.join(specs, 'abc.token.awswaf.com.yaml'), `openapi: 3.1.0
+info: { title: t, version: '1' }
+servers: [{ url: 'https://abc.token.awswaf.com' }]
+paths:
+  /a/b/c/inputs:
+    get:
+      operationId: getABCInputs
+      x-site-to-api-kind: bot-protection
+      responses:
+        '200':
+          description: OK
+`)
+      const result = await generateClient({
+        handoffDir: path.join(dir, 'handoff'),
+        flows,
+      })
+      expect(result.files.some(file => file.includes('awswaf'))).toBe(false)
+      const sdk = await readFile(path.join(dir, 'handoff', 'client', 'shop_example_com', 'sdk.gen.ts'), 'utf8')
+      expect(sdk).toContain('postApiSession')
+      expect(sdk).not.toContain('Mfc')
+      const index = await readFile(path.join(dir, 'handoff', 'client', 'index.ts'), 'utf8')
+      expect(index).not.toContain('awswaf')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+})
+
 describe('generateClient errors', () => {
   it('asks for build when there are no specs', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'site-to-api-gen-'))
