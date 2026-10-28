@@ -32,7 +32,26 @@ function fakeJwt(subject: string): string {
 
 const JWT = fakeJwt('jane-0001')
 const RESET_TOKEN = 'secrettokenvalue_abcdefghijklmnop'
-const RANDOM_TOKEN = 'aB3dE5gH7jK9mN1pQ2xY'
+/** A signed-link token with no credential word, different in each session. */
+const RANDOM_TOKENS = { a: 'aB3dE5gH7jK9mN1pQ2xY', b: 'Zx9Qw8Er7Ty6Ui5Op4As' } as const
+/** Padded and standard base64 reset tokens, sent percent-encoded. */
+const PADDED_TOKEN = 'dGhpcyBpcyBhIHNlY3JldCB0b2tlbg=='
+const STANDARD_TOKEN = 'Xy7+Qw9/Zt3=Lm2Pk8Rs'
+const RESET_CODE = '847263'
+const VERIFY_CODE = 'a1B2c3'
+const GROUPED_CODE = 'ABCD-EFGH-IJKL-MNOP'
+/** A MongoDB ObjectId: a public product id, kept like a UUID. */
+const OBJECT_ID = '5f2b8c1e9a7d4f3b2c1a0e9d'
+/** Route names after credential words; each must stay a literal path and readable text. */
+const CREDENTIAL_WORD_ROUTES = [
+  '/auth/registration-form',
+  '/auth/organization-settings',
+  '/auth/organization-members',
+  '/auth/password-requirements',
+  '/signin/organization-identifier',
+  '/confirm/subscription-preferences',
+  '/verify/international-shipping',
+] as const
 const EMAIL = 'jane.doe@example.org'
 const DEVICE = 'device-secret-123'
 
@@ -44,7 +63,18 @@ const SECRETS: readonly string[] = [
   RESET_TOKEN,
   'secrettokenvalue',
   'abcdefghijklmnop',
-  RANDOM_TOKEN,
+  RANDOM_TOKENS.a,
+  RANDOM_TOKENS.b,
+  PADDED_TOKEN,
+  encodeURIComponent(PADDED_TOKEN),
+  'dGhpcyBpcyBhIHNlY3JldCB0b2tlbg',
+  STANDARD_TOKEN,
+  encodeURIComponent(STANDARD_TOKEN),
+  'Xy7',
+  'Lm2Pk8Rs',
+  RESET_CODE,
+  VERIFY_CODE,
+  GROUPED_CODE,
   EMAIL,
   encodeURIComponent(EMAIL),
   'jane.doe',
@@ -88,7 +118,36 @@ function capture(): { exchanges: Exchange[], sessions: LoadedSession[] } {
       },
       api(`/api/magic/${JWT}`, 100),
       api(`/api/reset/${RESET_TOKEN}`, 200),
-      api(`/api/files/${RANDOM_TOKEN}`, 300),
+      api(`/api/files/${RANDOM_TOKENS[sessionId as keyof typeof RANDOM_TOKENS]}`, 300),
+      api(`/api/reset/${encodeURIComponent(PADDED_TOKEN)}`, 400),
+      api(`/api/reset/${encodeURIComponent(STANDARD_TOKEN)}`, 500),
+      api(`/api/reset/${RESET_CODE}`, 600),
+      api(`/api/verify/${VERIFY_CODE}`, 700),
+      api(`/api/reset/${GROUPED_CODE}`, 800),
+      {
+        ...exchange({
+          sessionId,
+          url: `https://${HOST}/reset/${encodeURIComponent(PADDED_TOKEN)}`,
+          resourceType: 'document',
+          startedAt: start + 900,
+          responseBody: textBody('<html><body>Choose a new password</body></html>'),
+        }),
+        pageUrl: null,
+      },
+      exchange({
+        sessionId,
+        url: `https://${HOST}/api/products/${OBJECT_ID}`,
+        startedAt: start + 1_100,
+        requestHeaders: headers,
+        responseBody: jsonBody({ id: OBJECT_ID, name: 'Desk lamp' }),
+      }),
+      ...CREDENTIAL_WORD_ROUTES.map((route, index) => exchange({
+        sessionId,
+        url: `https://${HOST}${route}`,
+        startedAt: start + 1_200 + index,
+        requestHeaders: headers,
+        responseBody: jsonBody({ message: `Complete your ${route.split('/')[2]} today` }),
+      })),
       api('/api/promo/summer-sale-2026', 2_000),
     )
     const events: CaptureEvent[] = [
@@ -190,9 +249,16 @@ describe('handoff output: no secret from paths, constants or labels', () => {
       expect(FlowsDocumentSchema.safeParse(analysis.flows).success).toBe(true)
       const text = await emitAll(analysis, examples)
       expect(SECRETS.filter(secret => text.includes(secret))).toEqual([])
-      // Ordinary values and slugs stay readable.
+      // Ordinary values, slugs and public ids stay readable.
       expect(text).toContain('/api/promo/summer-sale-2026')
       expect(text).toContain('web-4.2.1')
+      for (const route of CREDENTIAL_WORD_ROUTES)
+        expect(text, route).toContain(route)
+      if (examples === 'masked') {
+        expect(text).toContain(OBJECT_ID)
+        expect(text).toContain('Complete your registration-form today')
+      }
+      expect(text).not.toContain('<redacted: 24 hex chars>')
     })
   }
 
@@ -201,9 +267,19 @@ describe('handoff output: no secret from paths, constants or labels', () => {
     expect(paths).toEqual([
       '/api/files/{fileId}',
       '/api/magic/{magicId}',
+      '/api/products/{productId}',
       '/api/promo/summer-sale-2026',
       '/api/reset/{resetId}',
+      '/api/verify/{verifyId}',
+      '/auth/organization-members',
+      '/auth/organization-settings',
+      '/auth/password-requirements',
+      '/auth/registration-form',
+      '/confirm/subscription-preferences',
       '/magic/{magicId}',
+      '/reset/{resetId}',
+      '/signin/organization-identifier',
+      '/verify/international-shipping',
     ])
   })
 
