@@ -74,6 +74,9 @@ uses it, add or update a decision record when the change affects the on-disk for
 - `e2e/` runs the real pipeline against the fixture site. Any feature that changes output must keep
   e2e green and extend it when the feature is user-visible.
 - Never commit real captures, cookies or personal data, including in test fixtures.
+- A test that drives a real browser (capture, e2e) must pass 10 consecutive runs before it is
+  committed (`for i in $(seq 1 10); do pnpm exec vitest --run <file> -t "<name>" || break; done`).
+  Timing bugs (background-tab timer throttling, load events, popups) do not show up in one run.
 
 ## Commands
 
@@ -89,6 +92,7 @@ pnpm run ci           # everything CI runs
 ```
 
 Run `pnpm run lint:fix` and `pnpm run ci` before every commit. Fix root causes; do not add ignores.
+A pre-push hook runs `pnpm run ci` automatically; do not bypass it with `--no-verify`.
 
 ## Git
 
