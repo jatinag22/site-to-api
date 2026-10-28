@@ -106,6 +106,35 @@ paths:
                     type: array
                     items:
                       type: string
+  /api/search:
+    post:
+      operationId: postApiSearch
+      x-site-to-api-kind: api
+      requestBody:
+        required: true
+        content:
+          # JSON text the site sends as a form, as Algolia does.
+          application/json:
+            x-site-to-api-content-type: application/x-www-form-urlencoded
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [hits]
+                properties:
+                  hits:
+                    type: array
+                    items:
+                      type: string
   /api/me:
     get:
       operationId: getApiMe

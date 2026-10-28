@@ -61,6 +61,20 @@ export interface ResponseInfo {
   examples: unknown[]
 }
 
+/** The request body of an operation, typed by what the body is, not by what its header claims. */
+export interface RequestBodyInfo {
+  /** Media type of the body syntax: `application/json` whenever every captured body parsed as JSON. */
+  mimeType: string
+  /**
+   * The `Content-Type` the site sent when it differs from `mimeType`: JSON text sent as
+   * `application/x-www-form-urlencoded` or `text/plain` (common to avoid a CORS preflight).
+   * Servers that do this often reject the same body under another type, so clients send it as is.
+   */
+  sentContentType?: string
+  schema: JsonSchema
+  examples: unknown[]
+}
+
 export interface Operation {
   /** Stable, readable id, e.g. `getApiIpoDetail`. Unique per host. */
   operationId: string
@@ -74,7 +88,7 @@ export interface Operation {
   headers: HeaderInfo[]
   /** Cookies this operation was seen with. Names only. */
   cookies: ParamInfo[]
-  requestBody: { mimeType: string, schema: JsonSchema, examples: unknown[] } | null
+  requestBody: RequestBodyInfo | null
   responses: ResponseInfo[]
   /** Where the page's code sends this request from. */
   sentFrom: SourceRef[]

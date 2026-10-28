@@ -225,6 +225,10 @@ function requestBody(operation: Operation, origins: Map<string, ValueOrigin>): J
         [body.mimeType || 'application/octet-stream']: {
           schema: annotateBody(schemaObject(body.schema), origins),
           ...examplesObject(body.examples),
+          // JSON text the site labels as another type; gen makes the client send that header.
+          ...(body.sentContentType === undefined
+            ? {}
+            : { 'x-site-to-api-content-type': body.sentContentType }),
         },
       },
     },

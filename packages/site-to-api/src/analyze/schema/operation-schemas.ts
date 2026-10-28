@@ -1,7 +1,7 @@
 /**
  * Fills each operation's query, headers, cookies, request body and responses from its exchanges.
  */
-import type { Body, Exchange, HeaderInfo, JsonSchema, NameValue, Operation, ParamInfo, RedactContext, Redactor, ResponseInfo } from '../../model'
+import type { Body, Exchange, HeaderInfo, JsonSchema, NameValue, Operation, ParamInfo, RedactContext, Redactor, RequestBodyInfo, ResponseInfo } from '../../model'
 import type { InferOptions } from './infer'
 import { coerceStrings, inferSchema, inferStringSchema } from './infer'
 
@@ -189,6 +189,24 @@ function inferFormSchema(items: Array<{ form: NameValue[], sessionId: string }>,
     : { type: 'object', properties }
 }
 
+/** `application/json`, `application/ld+json`, `application/vnd.x+json`: types a JSON serializer fits. */
+function isJsonMimeType(mimeType: string): boolean {
+  return mimeType === 'application/json' || /^application\/[\w.-]+\+json$/.test(mimeType)
+}
+
+/**
+ * The media type of a JSON body comes from its syntax, not its header: Algolia sends JSON text as
+ * `application/x-www-form-urlencoded`, and a client that believed the header would serialize the
+ * object as `query=...` and get `400 Expecting object or array`. The header is kept beside it.
+ */
+function jsonMediaType(mimeType: string): Pick<RequestBodyInfo, 'mimeType' | 'sentContentType'> {
+  if (isJsonMimeType(mimeType))
+    return { mimeType }
+  return mimeType === ''
+    ? { mimeType: 'application/json' }
+    : { mimeType: 'application/json', sentContentType: mimeType }
+}
+
 function inferRequestBody(exchanges: Exchange[], redactor: Redactor): Operation['requestBody'] {
   const withBody = exchanges.filter((exchange): exchange is Exchange & { request: { body: Body } } => exchange.request.body !== null)
   if (withBody.length === 0)
@@ -200,7 +218,7 @@ function inferRequestBody(exchanges: Exchange[], redactor: Redactor): Operation[
   if (bodies.every(body => body.json !== undefined)) {
     const context: RedactContext = { in: 'body' }
     return {
-      mimeType,
+      ...jsonMediaType(mimeType),
       schema: inferSchema(group.map(exchange => ({ value: exchange.request.body.json, sessionId: exchange.sessionId })), enumGuard(redactor, context)),
       examples: redactor.examples(bodies.map(body => body.json), context),
     }

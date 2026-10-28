@@ -335,6 +335,55 @@ describe('inferOperationSchemas', () => {
       })
   })
 
+  it('types a JSON body by its syntax and keeps the content type the site sent', () => {
+    const jsonText = (value: unknown, mimeType: string) => ({
+      mimeType,
+      text: JSON.stringify(value),
+      base64: null,
+      json: value,
+      // A form parser reads JSON text as one field named after the whole body.
+      form: mimeType === 'application/x-www-form-urlencoded'
+        ? [
+            {
+              name: JSON.stringify(value),
+              value: '',
+            },
+          ]
+        : null,
+    })
+    const algolia = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: jsonText({ query: 'a', page: 0 }, 'application/x-www-form-urlencoded'),
+      }),
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: jsonText({ query: 'b', page: 1 }, 'application/x-www-form-urlencoded'),
+      }),
+    ]).requestBody
+    expect(algolia?.mimeType).toBe('application/json')
+    expect(algolia?.sentContentType).toBe('application/x-www-form-urlencoded')
+    expect(algolia?.schema.properties?.page).toEqual({ type: 'integer' })
+    expect(infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: jsonText({ a: 1 }, 'text/plain'),
+      }),
+    ]).requestBody?.sentContentType).toBe('text/plain')
+    const vendor = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: jsonText({ a: 1 }, 'application/vnd.api+json'),
+      }),
+    ]).requestBody
+    expect(vendor?.mimeType).toBe('application/vnd.api+json')
+    expect(vendor).not.toHaveProperty('sentContentType')
+  })
+
   it('groups responses by status and media type; HTML gets no schema', () => {
     const result = infer([
       exchange({

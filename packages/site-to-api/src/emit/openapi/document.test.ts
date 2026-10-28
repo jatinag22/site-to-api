@@ -419,6 +419,33 @@ describe('operation ids shared by two hosts', () => {
   })
 })
 
+describe('request body media type', () => {
+  it('writes JSON text sent under another content type as application/json with the sent type', () => {
+    const algoliaBody = {
+      mimeType: 'application/x-www-form-urlencoded',
+      text: '{"query":"a"}',
+      base64: null,
+      json: { query: 'a' },
+      form: [
+        { name: '{"query":"a"}', value: '' },
+      ],
+    }
+    const analysis = analyse([
+      page(),
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/search',
+        requestBody: algoliaBody,
+        responseBody: jsonBody({ hits: [] }),
+      }),
+    ])
+    const document = buildOpenApiDocuments(analysis).get('shop.test') as { paths: Record<string, Record<string, { requestBody: { content: Record<string, Record<string, unknown>> } }>> }
+    const content = document.paths['/api/search']!.post!.requestBody.content
+    expect(Object.keys(content)).toEqual(['application/json'])
+    expect(content['application/json']!['x-site-to-api-content-type']).toBe('application/x-www-form-urlencoded')
+  })
+})
+
 describe('request body origins', () => {
   it('never writes through a field named __proto__ into Object.prototype', () => {
     const analysis = analyse([

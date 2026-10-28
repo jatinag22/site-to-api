@@ -88,6 +88,10 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
   - `x-site-to-api-method-unknown`: on a source-only endpoint, the code did not show its HTTP
     method; the operation is listed under `get` because OpenAPI needs a method
   - `x-site-to-api-requires`: from `probe`, e.g. `[cookie:session, header:referer]`
+  - `x-site-to-api-content-type`: on an `application/json` request body, the `Content-Type` the
+    site sent with it (`application/x-www-form-urlencoded`, `text/plain`). A request body's media
+    type comes from its syntax: JSON text is `application/json` whatever its header said, so the
+    client serializes it as JSON, and the generated client then sends the site's own header.
 
 ## `specs/<host>.asyncapi.yaml`
 

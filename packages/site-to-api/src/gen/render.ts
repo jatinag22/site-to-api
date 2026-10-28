@@ -227,6 +227,7 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     `    headers: ${renderStringRecord(host.defaultHeaders, '    ')},`,
     `  },`,
   ].join('\n'))
+  const contentTypes = renderContentTypes(hosts)
   const extractValues = [
     ...extracts.flatMap(entry => [entry.functionName, entry.schemaName]),
     ...htmlValues.map(value => value.functionName),
@@ -258,6 +259,7 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     '',
     `const hostDefaults: Record<SiteHost, { baseUrl: string, headers: Record<string, string> }> = {\n${defaults.join('\n')}\n}`,
     '',
+    ...contentTypes.declarations,
     `/** A security scheme of the spec, as the client passes it to {@link SiteClientOptions.auth}. */`,
     `export interface SiteAuthScheme {`,
     `  type: 'apiKey' | 'http'`,
@@ -322,10 +324,49 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     `  const { client, sdk } = sdks[options.host]`,
     `  // \`auth\` is always set so a second call without it clears the first call's credentials.`,
     `  client.setConfig({ baseUrl: options.baseUrl ?? defaults.baseUrl, fetch: siteFetch, auth: options.auth })`,
+    ...contentTypes.setup,
     `  return { host: options.host, client, sdk, jar, fetch: siteFetch }`,
     `}`,
     '',
   ].join('\n')
+}
+
+/**
+ * Code for operations whose JSON body the site sends under another content type (Algolia's JSON
+ * as `application/x-www-form-urlencoded`). hey-api serializes the body as JSON and labels it
+ * `application/json`; a request interceptor puts back the site's content type. Nothing is written
+ * when no operation needs it, so most clients do not change.
+ */
+function renderContentTypes(hosts: HostSpec[]): { declarations: string[], setup: string[] } {
+  if (hosts.every(host => Object.keys(host.sentContentTypes).length === 0))
+    return { declarations: [], setup: [] }
+  const entries = hosts.map(host => `  ${literal(host.host)}: ${renderStringRecord(host.sentContentTypes, '  ')},`)
+  return {
+    declarations: [
+      `/**`,
+      ` * Operations (\`METHOD /path\`) whose body is JSON text the site sends under another`,
+      ` * content type. The server may reject the same body labelled \`application/json\`.`,
+      ` */`,
+      `const sentContentTypes: Record<SiteHost, Record<string, string>> = {\n${entries.join('\n')}\n}`,
+      '',
+      `/** Hosts whose client already has the content-type interceptor (it is added once). */`,
+      `const contentTypeHosts = new Set<SiteHost>()`,
+      '',
+    ],
+    setup: [
+      `  const contentTypes = sentContentTypes[options.host]`,
+      `  if (Object.keys(contentTypes).length > 0 && !contentTypeHosts.has(options.host)) {`,
+      `    contentTypeHosts.add(options.host)`,
+      `    client.interceptors.request.use((request, opts) => {`,
+      `      const sent = contentTypes[\`\${opts.method} \${opts.url}\`]`,
+      `      // Only the SDK's own label is replaced; a content type the caller passed wins.`,
+      `      if (sent !== undefined && request.headers.get('content-type') === 'application/json')`,
+      `        request.headers.set('content-type', sent)`,
+      `      return request`,
+      `    })`,
+      `  }`,
+    ],
+  }
 }
 
 function renderStringRecord(record: Record<string, string>, indent: string): string {
@@ -462,6 +503,9 @@ function renderHostSection(host: HostSpec, session: SessionRequirement | null): 
   const headers = Object.entries(host.defaultHeaders)
   if (headers.length > 0)
     lines.push(`- Sent on every request: ${headers.map(([name, value]) => code(`${name}: ${value}`)).join(', ')}.`)
+  const sent = Object.entries(host.sentContentTypes)
+  if (sent.length > 0)
+    lines.push(`- JSON bodies sent under the site's own content type (the client does this for you): ${sent.map(([operation, type]) => `${code(operation)} as ${code(type)}`).join(', ')}.`)
   const auth = authLine(host)
   if (auth !== null)
     lines.push(auth)
