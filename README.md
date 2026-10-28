@@ -16,7 +16,7 @@ needs. It writes all of that into one folder: OpenAPI 3.1 specs, a flows documen
 for an agent, excerpts of the site's own source code, and a typed TypeScript client with Zod
 validation.
 
-> Status: pre-release (`0.x`), not yet published to npm. See [Install](#install).
+> Status: pre-release (version `0.0.0` until the first release), not yet published to npm. See [Install](#install).
 
 ```
 capture ──► build ──► probe (optional) ──► your coding agent builds the wrapper
@@ -90,11 +90,12 @@ pnpm --filter @site-to-api/e2e run fixture
 
 ```sh
 # terminal 2: three scripted browsing sessions, then build
+REPO=/path/to/site-to-api        # your clone
 mkdir -p /tmp/pinewood && cd /tmp/pinewood
 site-to-api init
 for s in browse browse-again login; do
   site-to-api capture http://localhost:4173 --headless --channel bundled --session $s \
-    --script "$OLDPWD/e2e/scenarios/$s.ts"
+    --script "$REPO/e2e/scenarios/$s.ts"
 done
 site-to-api build      # 21 operations, 19 flows → ./api-handoff
 site-to-api probe      # optional: checks the session needs against the live shop
@@ -137,7 +138,8 @@ An excerpt of the `AGENT.md` generated from the fixture shop walkthrough above:
 ## Values computed in the browser
 
 - `body./password` of `postApiAuthLogin`: `src/auth/crypto.ts:26 encryptPassword` using
-  `crypto.subtle.encrypt` (name=RSA-OAEP); it uses `body./publicKey` from `getApiAuthKey`.
+  `crypto.subtle.encrypt` (name=RSA-OAEP); it uses `body./publicKey` from `getApiAuthKey`, the
+  `password` field.
 ```
 
 The full format is specified in [docs/output-format.md](docs/output-format.md).
@@ -195,20 +197,36 @@ The flags and variables a `build` ran with (`--examples`, `--include`, `--exclud
 
 ### Project setup
 
-The generated client is TypeScript that imports `@site-to-api/runtime` and `zod` 4. Until the first
-npm release, install the runtime from your clone:
+The generated client is TypeScript that imports `@site-to-api/runtime` and `zod` 4. Your project
+is the folder that holds `api-handoff/` (the one you ran `init` in). Until the first npm release,
+install the runtime from your clone:
 
 ```sh
 npm init -y && npm pkg set type=module          # ES modules
 npm install /path/to/site-to-api/packages/runtime zod@4
 npm install playwright tsx typescript            # playwright only for browser sessions
-npm install -D /path/to/site-to-api/packages/site-to-api   # types for site-to-api.config.ts
+npm install -D @types/node /path/to/site-to-api/packages/site-to-api   # Node types; config types
 ```
 
-`tsconfig.json`: `"module"` and `"moduleResolution"` set to `"nodenext"` (or `"esnext"` /
-`"bundler"`), `"strict": true`, and `"lib"` including `"DOM"`. Run files with `tsx`, or compile with
-`tsc` and run with `node`. The whole folder type-checks, `api-handoff/` included: code excerpts in
-`source/` start with `// @ts-nocheck`, because they are fragments of the site's code for reading.
+A `tsconfig.json` that type-checks the whole folder, `api-handoff/` included:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true
+  }
+}
+```
+
+`"module": "esnext"` with `"moduleResolution": "bundler"` works too. Run files with `tsx`, or drop
+`noEmit`, compile with `tsc` and run with `node`. Code excerpts in `source/` start with
+`// @ts-nocheck`: they are fragments of the site's code, for reading.
 
 ### Example: log in and list orders on the fixture shop
 
