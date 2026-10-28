@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { validate } from '@scalar/openapi-parser'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
+import { fakeHash, graphqlGet, graphqlPost, graphqlSpecYaml } from '../../../test/graphql'
 import { exchange, jsonBody, textBody } from '../../../test/helpers'
 import { CONFIG, fixtureExchanges, SECRETS } from '../../../test/secret-fixture'
 import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
@@ -489,5 +490,74 @@ describe('writeOpenApiDocuments', () => {
     finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('graphQL operations (decision 0027)', () => {
+  const HASH = fakeHash('7b')
+  const yaml = graphqlSpecYaml([
+    graphqlPost({
+      operationName: 'queryArtistOverview',
+      variables: { uri: 'spotify:artist:1' },
+      hash: HASH,
+    }),
+    graphqlPost({
+      query: 'mutation AddToWishlist($id: Int!) { addToWishlist(id: $id) { count } }',
+      variables: { id: 1 },
+    }),
+    graphqlGet({
+      operationName: 'StoreHours',
+      variables: { slug: 'pine-hill' },
+      hash: HASH,
+    }),
+  ], 'api.example.test')
+
+  it('writes a valid document with one path item per GraphQL operation', async () => {
+    const result = await validate(yaml)
+    expect(result.errors ?? []).toEqual([])
+    expect(result.valid).toBe(true)
+    const document = parse(yaml)
+    expect(Object.keys(document.paths)).toEqual(['/graphql#AddToWishlist', '/graphql#queryArtistOverview', '/graphql#StoreHours'])
+  })
+
+  it('describes the GraphQL operation in x-site-to-api-graphql', () => {
+    const document = parse(yaml)
+    expect(document.paths['/graphql#AddToWishlist'].post['x-site-to-api-graphql']).toEqual({
+      endpoint: '/graphql',
+      operationName: 'AddToWishlist',
+      operationType: 'mutation',
+      operationTypeFrom: 'document',
+      persistedQuery: null,
+      document: 'mutation AddToWishlist($id: Int!) { addToWishlist(id: $id) { count } }',
+      batched: false,
+      sent: {
+        body: ['query', 'variables'],
+        query: [],
+      },
+    })
+  })
+
+  it('writes GET variables and extensions as JSON media type parameters', () => {
+    const document = parse(yaml)
+    const parameters: Array<Record<string, unknown>> = document.paths['/graphql#StoreHours'].get.parameters
+    const variables = parameters.find(parameter => parameter.name === 'variables')
+    expect(variables).toMatchObject({
+      in: 'query',
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: {
+              slug: { type: 'string' },
+            },
+          },
+        },
+      },
+    })
+    expect(variables?.schema).toBeUndefined()
+    expect(parameters.find(parameter => parameter.name === 'operationName')).toMatchObject({
+      schema: { const: 'StoreHours' },
+    })
   })
 })

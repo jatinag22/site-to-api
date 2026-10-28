@@ -25,6 +25,11 @@ export const ConfigSchema = z.strictObject({
       /** Playwright channel, e.g. `chrome`. `null` uses Playwright's bundled Chromium. */
       channel: z.string().nullable().default('chrome'),
       headless: z.boolean().default(false),
+      /**
+       * Keep the headful browser but minimize its windows, so a scripted capture does not take
+       * over the screen. Unlike `headless`, sites see an ordinary browser. Ignored when headless.
+       */
+      minimized: z.boolean().default(false),
       locale: z.string().nullable().default(null),
       timezone: z.string().nullable().default(null),
       userAgent: z.string().nullable().default(null),
@@ -70,7 +75,7 @@ export const ConfigSchema = z.strictObject({
   probe: z.strictObject({
     /** Requests per second against the live site. */
     maxRps: z.number().positive().max(10).default(1),
-    /** Replay POST, PUT, PATCH and DELETE too. Off by default: they can change data. */
+    /** Replay POST, PUT, PATCH and DELETE, GraphQL mutations and GraphQL operations of unknown type too. Off by default: they can change data. */
     unsafeMethods: z.boolean().default(false),
     timeoutMs: z.number().int().positive().default(15_000),
     /**

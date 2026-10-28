@@ -8,6 +8,7 @@
  * - {@link SiteApiError}: a failed HTTP call with its status and body.
  * - {@link extract}: records from HTML or text responses; {@link extractValue}: one value from HTML.
  * - {@link requestValidationInput}: used by generated clients before validating a request.
+ * - {@link graphqlQuerySerializer}, {@link fetchWithoutFragment}: used by generated GraphQL functions.
  *
  * Uses only web-standard APIs (`fetch`, `Request`, `Headers`, `URL`), so it runs on Node 22+,
  * Bun, Deno and Cloudflare Workers.
@@ -20,6 +21,7 @@ export { isSiteApiError, SiteApiError } from './errors'
 export type { SiteApiErrorInit } from './errors'
 export { extract, extractValue } from './extract'
 export type { ExtractedRecord, ExtractField, ExtractSpec, FieldType, HtmlExtractSpec, HtmlValueLocation, TextExtractSpec } from './extract'
+export { fetchWithoutFragment, graphqlQuerySerializer, withoutFragment } from './graphql'
 export { createFetch, requestValidationInput } from './http'
 export type { CreateFetchOptions, RetryOptions } from './http'
 export { browserSession, combineSessions, cookieSession, tokenSession } from './session'

@@ -74,6 +74,7 @@ function host(overrides: Partial<HostSpec> = {}): HostSpec {
     auth: [],
     securedOperationIds: [],
     probedRequires: [],
+    graphql: [],
     ...overrides,
   }
 }
