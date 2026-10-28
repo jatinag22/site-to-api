@@ -611,20 +611,10 @@ describe('runCapture when a page floods the binding', () => {
 })
 
 /**
- * Pages on fake host names, served by `context.route` inside the capture script so no real site
- * is contacted: `shop.test` is the captured site, `sub.shop.test` another host of it, and
- * `other.test` a third party that tries to borrow the shop's identity.
+ * Script shared by the scope fixture pages: `send` calls the binding in both shapes a binding
+ * could take (only JSON text is valid), so a forged call is refused whichever one would work.
  */
-const SCOPE_SCRIPT = `
-import type { BrowserContext, Page } from 'playwright'
-
-declare global {
-  interface Window {
-    __done?: boolean
-  }
-}
-
-const SEND = \`
+const SCOPE_SEND = `
 function send(win, label) {
   const message = { t: 'action', kind: 'click', ts: 1, pageUrl: location.href, label: label, selector: '#x', field: null };
   for (const shape of [JSON.stringify(message), message]) {
@@ -635,25 +625,39 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function whenBound(win) {
   for (let i = 0; i < 100 && typeof win.__siteToApiEmit !== 'function'; i++) await sleep(50);
 }
-\`
+`
 
-const PAGES: Record<string, string> = {
-  'http://shop.test/': \`<!doctype html><title>Shop</title><body>
-<iframe name="a" src="http://other.test/a"></iframe>
-<iframe name="b" src="http://other.test/b"></iframe>
+/**
+ * The scope fixture site, keyed by host name on one local server. Chromium resolves every
+ * `*.localhost` name to loopback itself, so these are distinct sites with no DNS and no real
+ * website: `shop.localhost` is the captured site, `sub.shop.localhost` another host of it, and
+ * `other.localhost` a third party that tries to borrow the shop's identity.
+ *
+ * A real server, not `context.route`: with request interception on, a popup opened while the
+ * page loads (as the shop does here) can leave an iframe's fulfilled response undelivered, so the
+ * iframe never runs its script. That is Playwright's interception, not capture, and it made this
+ * test fail about half the time.
+ */
+function scopePages(port: number): Record<string, string> {
+  const shop = `http://shop.localhost:${port}`
+  const other = `http://other.localhost:${port}`
+  return {
+    [`${shop}/`]: `<!doctype html><title>Shop</title><body>
+<iframe name="a" src="${other}/a"></iframe>
+<iframe name="b" src="${other}/b"></iframe>
 <iframe name="same" src="/same"></iframe>
-<iframe name="sub" src="http://sub.shop.test/sub"></iframe>
-<script>\${SEND}
+<iframe name="sub" src="http://sub.shop.localhost:${port}/sub"></iframe>
+<script>${SCOPE_SEND}
 send(window, 'Main');
 const blank = document.createElement('iframe');
 blank.name = 'blank';
 document.body.appendChild(blank);
 send(blank.contentWindow, 'Blank');
 window.open('/popup');
-</script></body>\`,
-  'http://shop.test/same': \`<!doctype html><script>\${SEND} send(window, 'Same'); window.__done = true;</script>\`,
-  'http://sub.shop.test/sub': \`<!doctype html><script>\${SEND} send(window, 'Sub'); window.__done = true;</script>\`,
-  'http://shop.test/popup': \`<!doctype html><title>Popup</title><script>\${SEND}
+</script></body>`,
+    [`${shop}/same`]: `<!doctype html><script>${SCOPE_SEND} send(window, 'Same'); window.__done = true;</script>`,
+    [`http://sub.shop.localhost:${port}/sub`]: `<!doctype html><script>${SCOPE_SEND} send(window, 'Sub'); window.__done = true;</script>`,
+    [`${shop}/popup`]: `<!doctype html><title>Popup</title><script>${SCOPE_SEND}
 fetch('/api/popup');
 (async () => {
   await whenBound(window);
@@ -662,59 +666,121 @@ fetch('/api/popup');
   await sleep(1000);
   window.__done = true;
 })();
-</script>\`,
-  'http://other.test/a': '<!doctype html><p>third party</p>',
-  'http://other.test/b': \`<!doctype html><script>\${SEND}
+</script>`,
+    [`${other}/a`]: '<!doctype html><p>third party</p>',
+    [`${other}/b`]: `<!doctype html><script>${SCOPE_SEND}
 (async () => {
-  // Frame A is on this origin too: turn it into an about:blank document and speak through it.
-  top.frames.a.location = 'about:blank';
-  for (let i = 0; i < 100; i++) {
-    await sleep(20);
-    try { if (top.frames.a.location.href === 'about:blank') break; } catch (e) {}
+  // __done is always set and every loop is bounded by time, so a misbehaving step fails the
+  // assertions below instead of hanging the capture script.
+  try {
+    // Frame A is on this origin too: turn it into an about:blank document and speak through it.
+    top.frames.a.location = 'about:blank';
+    const blankBy = Date.now() + 5000;
+    while (Date.now() < blankBy) {
+      try { if (top.frames.a.location.href === 'about:blank') break; } catch (e) {}
+      await sleep(20);
+    }
+    send(top.frames.a, 'ForgedBlank');
+    // A popup opened from here is a main frame of its own page.
+    const popup = window.open('about:blank');
+    const popupBy = Date.now() + 3000;
+    while (popup && Date.now() < popupBy) {
+      send(popup, 'ForgedPopup');
+      await sleep(100);
+    }
   }
-  send(top.frames.a, 'ForgedBlank');
-  // A popup opened from here is a main frame of its own page.
-  const popup = window.open('about:blank');
-  for (let i = 0; i < 30; i++) {
-    send(popup, 'ForgedPopup');
-    await sleep(100);
+  finally {
+    window.__done = true;
   }
-  window.__done = true;
 })();
-</script>\`,
+</script>`,
+  }
+}
+
+function startScopeSite(): Promise<{ port: number, close: () => Promise<void> }> {
+  let pages: Record<string, string> = {}
+  const server = createServer((req, res) => {
+    const body = pages[`http://${req.headers.host ?? ''}${(req.url ?? '/').split('?')[0] ?? '/'}`]
+    res.writeHead(200, {
+      'content-type': body === undefined
+        ? 'application/json'
+        : 'text/html',
+    })
+    res.end(body ?? '{}')
+  })
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address !== null
+        ? address.port
+        : 0
+      pages = scopePages(port)
+      resolve({
+        port,
+        close: () => new Promise<void>((r) => {
+          server.closeAllConnections()
+          server.close(() => r())
+        }),
+      })
+    })
+  })
+}
+
+const SCOPE_SCRIPT = `
+import type { BrowserContext, Page } from 'playwright'
+
+declare global {
+  interface Window {
+    __done?: boolean
+  }
 }
 
 export default async ({ page, context, baseUrl }: { page: Page, context: BrowserContext, baseUrl: string }) => {
-  await context.route(/^http:\\/\\/[a-z.]+\\.test\\//, async (route) => {
-    const url = new URL(route.request().url())
-    const body = PAGES[url.origin + url.pathname]
-    await (body === undefined
-      ? route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
-      : route.fulfill({ status: 200, contentType: 'text/html', body }))
-  })
   await page.goto(baseUrl)
-  for (const name of ['b', 'same', 'sub'])
-    await page.frame({ name })?.waitForFunction(() => window.__done === true, null, { timeout: 20_000 })
+  for (const name of ['b', 'same', 'sub']) {
+    const frame = page.frame({ name })
+    if (!frame)
+      throw new Error(\`frame \${name} is missing; frames: \${page.frames().map(f => f.name() + '=' + f.url()).join(', ')}\`)
+    // Time-based polling: once a popup opens, this page is in the background, where
+    // requestAnimationFrame (the default polling) may not fire.
+    await frame.waitForFunction(() => window.__done === true, null, { timeout: 20_000, polling: 100 })
+      .catch((error: unknown) => {
+        throw new Error(\`frame \${name} (\${frame.url()}) never finished: \${String(error)}\`)
+      })
+  }
+  const popupUrl = new URL('/popup', baseUrl).href
   let popup: Page | undefined
   for (let i = 0; i < 100 && popup === undefined; i++) {
-    popup = context.pages().find(p => p.url() === 'http://shop.test/popup')
+    popup = context.pages().find(p => p.url() === popupUrl)
     if (popup === undefined)
       await page.waitForTimeout(50)
   }
-  await popup?.waitForFunction(() => window.__done === true, null, { timeout: 20_000 })
+  if (!popup)
+    throw new Error(\`the shop's popup never opened; pages: \${context.pages().map(p => p.url()).join(', ')}\`)
+  await popup.waitForFunction(() => window.__done === true, null, { timeout: 20_000, polling: 100 })
 }
 `
 
 describe('runCapture frame scope', () => {
   let events: CaptureEvent[]
   let warnings: string[]
+  let scope: { port: number, close: () => Promise<void> }
+  let shop: string
+  let other: string
 
   beforeAll(async () => {
+    scope = await startScopeSite()
+    shop = `http://shop.localhost:${scope.port}`
+    other = `http://other.localhost:${scope.port}`
     await writeFile(path.join(work, 'scope.ts'), SCOPE_SCRIPT)
-    const result = await runCapture(headlessConfig('scope.ts'), { url: 'http://shop.test/', sessionId: 'scope', cwd: work })
+    const result = await runCapture(headlessConfig('scope.ts'), { url: `${shop}/`, sessionId: 'scope', cwd: work })
     warnings = result.warnings
     events = await readEvents(path.join(result.sessionDir, 'events.jsonl'))
   }, 120_000)
+
+  afterAll(async () => {
+    await scope.close()
+  })
 
   const action = (label: string): CaptureEvent | undefined => events.find(e => e.t === 'action' && e.label === label)
 
@@ -727,19 +793,20 @@ describe('runCapture frame scope', () => {
   })
 
   it('never records the third party as a frame origin, and says it ignored it', () => {
-    expect(events.filter(e => e.frameOrigin === 'http://other.test')).toEqual([])
-    expect(warnings).toContainEqual(expect.stringMatching(/^Ignored \d+ instrumentation event\(s\) from frames of other sites: http:\/\/other\.test\.$/))
+    expect(events.filter(e => e.frameOrigin === other)).toEqual([])
+    const escaped = other.replaceAll('.', '\\.')
+    expect(warnings).toContainEqual(expect.stringMatching(new RegExp(`^Ignored \\d+ instrumentation event\\(s\\) from frames of other sites: ${escaped}\\.$`)))
   })
 
   it('keeps the top frame, same-origin and same-site frames, and about:blank frames the site made', () => {
-    expect(action('Main')).toMatchObject({ frameOrigin: 'http://shop.test' })
-    expect(action('Blank')).toMatchObject({ frameOrigin: 'http://shop.test' })
-    expect(action('Same')).toMatchObject({ frameOrigin: 'http://shop.test' })
-    expect(action('Sub')).toMatchObject({ frameOrigin: 'http://sub.shop.test' })
+    expect(action('Main')).toMatchObject({ frameOrigin: shop })
+    expect(action('Blank')).toMatchObject({ frameOrigin: shop })
+    expect(action('Same')).toMatchObject({ frameOrigin: shop })
+    expect(action('Sub')).toMatchObject({ frameOrigin: `http://sub.shop.localhost:${scope.port}` })
   })
 
   it('keeps a popup of the site, including events it queued before the binding reached it', () => {
-    expect(action('Popup')).toMatchObject({ frameOrigin: 'http://shop.test', pageUrl: 'http://shop.test/popup' })
-    expect(events.find(e => e.t === 'request' && e.url === 'http://shop.test/api/popup')).toMatchObject({ frameOrigin: 'http://shop.test' })
+    expect(action('Popup')).toMatchObject({ frameOrigin: shop, pageUrl: `${shop}/popup` })
+    expect(events.find(e => e.t === 'request' && e.url === `${shop}/api/popup`)).toMatchObject({ frameOrigin: shop })
   })
 })
