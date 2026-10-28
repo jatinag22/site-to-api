@@ -161,14 +161,19 @@ function templateFor(segments: string[], names: Map<number, string>): string {
     : segment).join('/')}`
 }
 
-/** Operation kind of a group: the most specific one any member has. */
+/**
+ * Operation kind of a group: `api` when any member is a data call, then `page`. A group is a
+ * bot-protection step only when every member is: a page or API call that was challenged once
+ * (`x-amzn-waf-action: challenge`, `cf-mitigated`) and then answered normally is still that page
+ * or call, and must keep its client method.
+ */
 function kindOf(members: Classified[]): OperationKind {
   const kinds = new Set(members.map(member => member.exchange.kind))
   if (kinds.has('api'))
     return 'api'
-  if (kinds.has('bot-protection'))
-    return 'bot-protection'
-  return 'page'
+  if (kinds.has('page'))
+    return 'page'
+  return 'bot-protection'
 }
 
 function capitalize(phrase: string): string {

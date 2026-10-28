@@ -129,6 +129,22 @@ const BOT_PROTECTION_SIGNATURES: readonly BotProtectionSignature[] = [
     responseHeaders: [/^x-kpsdk-/],
   },
   {
+    // AWS WAF Bot Control: the challenge script and its `inputs` / `verify` / `mp_verify` calls go
+    // to a vendor host (`<id>.<region>.token.awswaf.com`, `*.captcha.awswaf.com`,
+    // `*.edge.sdk.awswaf.com`); a challenged request gets `x-amzn-waf-action: challenge|captcha`.
+    vendor: 'AWS WAF',
+    endpoints: [
+      { domain: 'awswaf.com' },
+    ],
+    bodies: [],
+    challengeHeaders: [
+      { name: 'x-amzn-waf-action', value: /^(?:challenge|captcha)$/i },
+    ],
+    cookies: [/^aws-waf-token$/],
+    requestHeaders: [/^x-aws-waf-token$/],
+    responseHeaders: [],
+  },
+  {
     vendor: 'reCAPTCHA',
     endpoints: [
       { domain: 'recaptcha.net' },

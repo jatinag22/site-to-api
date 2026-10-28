@@ -149,6 +149,28 @@ describe('buildOperations: grouping, ids and summaries', () => {
     ])
   })
 
+  it('keeps a page that was challenged once a page', () => {
+    const operations = build([
+      {
+        ...get('/trade', {
+          kind: 'bot-protection',
+          resourceType: 'document',
+          status: 202,
+          responseBody: textBody('<html>'),
+        }),
+        kindReason: 'AWS WAF: response header x-amzn-waf-action',
+      },
+      get('/trade', {
+        kind: 'page',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+    ])
+    expect(operations.map(operation => [operation.operationId, operation.kind, operation.summary])).toEqual([
+      ['getTrade', 'page', 'Page trade.'],
+    ])
+  })
+
   it('separates hosts and makes colliding ids unique deterministically', () => {
     const operations = build([
       get('/api/items-list'),

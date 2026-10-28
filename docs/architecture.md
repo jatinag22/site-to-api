@@ -30,7 +30,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    `response` events fill bodies the HAR lost when the page navigated (decision 0016).
 2. **classify** (`src/analyze/classify`): labels each exchange `api`, `page`, `bot-protection`,
    `asset` or `noise` using resource type, media type, host lists and bot-protection signatures
-   (Akamai, Cloudflare, PerimeterX, DataDome, Imperva, Kasada, reCAPTCHA, hCaptcha, Turnstile).
+   (Akamai, AWS WAF, Cloudflare, PerimeterX, DataDome, Imperva, Kasada, reCAPTCHA, hCaptcha,
+   Turnstile).
 3. **operations** (`src/analyze/operations`): groups exchanges into operations by host + method +
    path template. Path parameters come from source route templates, value tracing, variation
    across samples and ID-like segments (UUID, hex, base58, numbers, upper-case slugs).

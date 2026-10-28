@@ -320,6 +320,37 @@ describe('classifyExchanges: bot protection', () => {
       }),
     ],
     [
+      'AWS WAF',
+      on({
+        url: 'https://a1b2c3d4e5f6.0a1b2c3d.eu-west-1.token.awswaf.com/a1b2c3d4e5f6/0a1b2c3d4e5f/6a7b8c9d0e1f/inputs?client=browser',
+        pageUrl: PAGE,
+        responseBody: jsonBody({
+          challenge: { input: 'i' },
+          challenge_type: 't',
+          difficulty: 1,
+        }),
+      }),
+    ],
+    [
+      'AWS WAF',
+      on({
+        method: 'POST',
+        url: 'https://a1b2c3d4e5f6.0a1b2c3d.eu-west-1.token.awswaf.com/a1b2c3d4e5f6/0a1b2c3d4e5f/6a7b8c9d0e1f/mp_verify',
+        pageUrl: PAGE,
+        requestBody: formBody({ solution_data: 's', solution_metadata: 'm' }),
+        responseBody: jsonBody({ token: 't', inputs: {} }),
+      }),
+    ],
+    [
+      'AWS WAF',
+      on({
+        url: 'https://shop.test/api/prices',
+        status: 202,
+        responseHeaders: { 'x-amzn-waf-action': 'challenge' },
+        responseBody: textBody('<html>'),
+      }),
+    ],
+    [
       'reCAPTCHA',
       on({
         method: 'POST',
@@ -380,6 +411,12 @@ describe('classifyExchanges: bot protection', () => {
       'Kasada',
       {
         requestHeaders: { 'x-kpsdk-ct': 'k' },
+      },
+    ],
+    [
+      'AWS WAF',
+      {
+        cookies: { 'aws-waf-token': 'w' },
       },
     ],
   ])('records %s cookies and headers as evidence without relabelling the call', (vendor, init) => {
