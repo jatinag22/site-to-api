@@ -6,8 +6,18 @@ import { join } from 'node:path'
 import { stringify } from 'yaml'
 
 /** Ports become `_<port>`: `:` is not allowed in Windows file names. */
+function hostFileStem(host: string): string {
+  return host.replace(/[^\w.-]/g, '_')
+}
+
+/** File name of a host's OpenAPI document under `specs/`. */
 export function specFileName(host: string): string {
-  return `${host.replace(/[^\w.-]/g, '_')}.yaml`
+  return `${hostFileStem(host)}.yaml`
+}
+
+/** File name of a host's AsyncAPI document (WebSocket channels) under `specs/`. */
+export function asyncApiFileName(host: string): string {
+  return `${hostFileStem(host)}.asyncapi.yaml`
 }
 
 /** YAML text of one document: no line folding, no anchors, keys in insertion order. */

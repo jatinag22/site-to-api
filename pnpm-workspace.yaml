@@ -13,6 +13,7 @@ onlyBuiltDependencies:
 catalogs:
   dev:
     '@antfu/eslint-config': ^10.0.0
+    '@asyncapi/parser': ^3.6.6
     '@jridgewell/gen-mapping': 0.3.13
     '@scalar/openapi-parser': 0.29.16
     '@types/node': ^26.6.5

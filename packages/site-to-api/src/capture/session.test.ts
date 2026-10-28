@@ -92,7 +92,7 @@ const INDEX_HTML = `<!doctype html><html><head><title>Fixture Home</title></head
 <script src="/static/libs.js?v=2"></script>
 <script>
   const ws = new WebSocket('ws://' + location.host + '/socket');
-  ws.onmessage = (e) => { window.__ws = e.data; ws.send('hello-server'); };
+  ws.onmessage = (e) => { window.__ws = e.data; ws.send('hello-server'); ws.send(new Uint8Array([1, 2, 3])); };
 </script>
 </body></html>`
 
@@ -420,6 +420,17 @@ describe('runCapture in script mode', () => {
     expect(ws.map(e => e.direction)).toEqual(expect.arrayContaining(['open', 'received', 'sent']))
     expect(ws.find(e => e.direction === 'received')?.data).toBe('welcome')
     expect(ws.find(e => e.direction === 'sent')?.data).toBe('hello-server')
+  })
+
+  it('marks binary frames and numbers each socket', () => {
+    const ws = events.filter(e => e.t === 'ws')
+    const sent = ws.filter(e => e.direction === 'sent')
+    expect(sent.map(e => [e.data, e.binary])).toEqual([
+      ['hello-server', false],
+      ['AQID', true],
+    ])
+    expect(ws.find(e => e.direction === 'received')?.binary).toBe(false)
+    expect(new Set(ws.map(e => e.socket))).toEqual(new Set([0]))
   })
 
   it('saves scripts, sourcemaps and unpacked sources inside the session', async () => {

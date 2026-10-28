@@ -239,6 +239,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     if (capture.saveScripts || capture.sourcemaps)
       context.on('response', response => collector.onResponse(response))
 
+    let nextSocket = 0
     const watchPage = (page: Page): void => {
       page.on('framenavigated', (frame) => {
         if (frame !== page.mainFrame())
@@ -258,7 +259,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
         }))
       })
       if (capture.websockets)
-        page.on('websocket', ws => recordWebSocket(ws, page, event => events.write(event)))
+        page.on('websocket', ws => recordWebSocket(ws, page, nextSocket++, event => events.write(event)))
     }
     context.pages().forEach(watchPage)
     context.on('page', watchPage)
@@ -344,11 +345,12 @@ async function navigationLabel(page: Page, url: string): Promise<string> {
   }
 }
 
-function recordWebSocket(ws: WebSocket, page: Page, write: (event: CaptureEvent) => void): void {
-  const base = (): { ts: number, pageUrl: string, url: string } => ({
+function recordWebSocket(ws: WebSocket, page: Page, socket: number, write: (event: CaptureEvent) => void): void {
+  const base = (): { ts: number, pageUrl: string, url: string, socket: number } => ({
     ts: Date.now(),
     pageUrl: page.url(),
     url: ws.url(),
+    socket,
   })
   const frameData = (payload: string | Buffer): string => typeof payload === 'string'
     ? payload
@@ -364,12 +366,14 @@ function recordWebSocket(ws: WebSocket, page: Page, write: (event: CaptureEvent)
     t: 'ws',
     direction: 'sent',
     data: frameData(frame.payload),
+    binary: typeof frame.payload !== 'string',
   }))
   ws.on('framereceived', frame => write({
     ...base(),
     t: 'ws',
     direction: 'received',
     data: frameData(frame.payload),
+    binary: typeof frame.payload !== 'string',
   }))
   ws.on('close', () => write({
     ...base(),

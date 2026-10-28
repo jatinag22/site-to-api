@@ -1,5 +1,5 @@
 import type { FlowsDocument } from '../model'
-import type { HostSpec, OpenApiDocument } from './spec'
+import type { ChannelSummary, HostSpec, OpenApiDocument } from './spec'
 import { readFileSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -9,7 +9,7 @@ import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
-import { describeHost, OpenApiDocumentSchema } from './spec'
+import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema } from './spec'
 
 /** Input for {@link generateClient}. */
 export interface GenerateClientInput {
@@ -36,7 +36,7 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
   const warnings: string[] = []
   const specsDir = path.join(input.handoffDir, 'specs')
   const clientDir = path.join(input.handoffDir, 'client')
-  const loaded = await loadSpecs(specsDir, warnings)
+  const { loaded, channels } = await loadSpecs(specsDir, warnings)
 
   const seen = new Map<string, string>()
   for (const { host } of loaded) {
@@ -56,7 +56,7 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
   const extracts = nameExtracts(hosts, warnings)
   await writeFile(path.join(clientDir, 'extract.ts'), renderExtractModule(extracts))
   await writeFile(path.join(clientDir, 'index.ts'), renderIndexModule(hosts, extracts))
-  await writeFile(path.join(clientDir, 'README.md'), renderReadme(hosts, extracts, input.flows.session))
+  await writeFile(path.join(clientDir, 'README.md'), renderReadme(hosts, extracts, input.flows.session, channels))
 
   const files = (await listFiles(clientDir)).map(file => path.posix.join('client', file))
   return { files, warnings }
@@ -67,7 +67,12 @@ interface LoadedSpec {
   document: OpenApiDocument
 }
 
-async function loadSpecs(specsDir: string, warnings: string[]): Promise<LoadedSpec[]> {
+function isAsyncApi(raw: unknown): boolean {
+  return typeof raw === 'object' && raw !== null && 'asyncapi' in raw
+}
+
+/** OpenAPI specs for hey-api, and the WebSocket channels of the AsyncAPI documents beside them. */
+async function loadSpecs(specsDir: string, warnings: string[]): Promise<{ loaded: LoadedSpec[], channels: ChannelSummary[] }> {
   let names: string[]
   try {
     names = await readdir(specsDir)
@@ -76,10 +81,8 @@ async function loadSpecs(specsDir: string, warnings: string[]): Promise<LoadedSp
     throw new SiteToApiError(`No specs folder at ${specsDir}: run \`site-to-api build\` first`, { cause: error })
   }
   const specFiles = names.filter(name => /\.ya?ml$/.test(name)).sort()
-  if (specFiles.length === 0)
-    throw new SiteToApiError(`No .yaml specs in ${specsDir}: run \`site-to-api build\` first`)
-
   const loaded: LoadedSpec[] = []
+  const channels: ChannelSummary[] = []
   for (const file of specFiles) {
     const text = await readFile(path.join(specsDir, file), 'utf8')
     let raw: unknown
@@ -89,6 +92,14 @@ async function loadSpecs(specsDir: string, warnings: string[]): Promise<LoadedSp
     catch (error) {
       throw new SiteToApiError(`specs/${file} is not valid YAML; run \`site-to-api build\` again`, { cause: error })
     }
+    if (isAsyncApi(raw)) {
+      const asyncApi = AsyncApiSummarySchema.safeParse(raw)
+      if (asyncApi.success)
+        channels.push(...describeChannels(file, asyncApi.data))
+      else
+        warnings.push(`specs/${file} looks like AsyncAPI but could not be read (${z.prettifyError(asyncApi.error).replaceAll('\n', '; ')}); client/README.md does not list its channels.`)
+      continue
+    }
     const parsed = OpenApiDocumentSchema.safeParse(raw)
     if (!parsed.success)
       throw new SiteToApiError(`specs/${file} is not an OpenAPI document (${z.prettifyError(parsed.error).replaceAll('\n', '; ')}); run \`site-to-api build\` again`)
@@ -97,7 +108,9 @@ async function loadSpecs(specsDir: string, warnings: string[]): Promise<LoadedSp
       document: parsed.data,
     })
   }
-  return loaded
+  if (loaded.length === 0)
+    throw new SiteToApiError(`No .yaml specs (OpenAPI) in ${specsDir}: run \`site-to-api build\` first`)
+  return { loaded, channels }
 }
 
 async function runHeyApi(document: OpenApiDocument, output: string, file: string): Promise<void> {
