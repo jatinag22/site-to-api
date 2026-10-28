@@ -38,6 +38,9 @@ export async function shoppingJourney(page: Page, baseUrl: string, choices: Jour
   await page.getByRole('button', { name: 'Read reviews' }).click()
   await page.locator('#reviews li').first().waitFor()
   await waitForLivePricePolls(page, 2)
+  // The ticker socket opens on its own schedule. Leaving the page before its first tick can drop
+  // the connection from the capture, so wait for one: each journey then records one connection.
+  await page.locator('#ticker').filter({ hasText: /\(tick \d+\)/ }).waitFor()
 
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Deals' }).click()
   await page.locator('table.deals tbody tr').first().waitFor()
