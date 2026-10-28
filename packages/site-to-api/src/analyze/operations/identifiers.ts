@@ -2,7 +2,7 @@
  * Which path segments look like identifiers. Kept conservative: a wrong parameter merges two
  * different endpoints into one, which is worse than listing one endpoint twice.
  */
-import { isSecretPathSegment } from '../redact'
+import { isRandomPathSegment, isSecretPathSegment } from '../redact'
 
 const INTEGER = /^\d+$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -17,12 +17,13 @@ const HAS_LETTER = /[a-z]/i
 /**
  * Identifiers that are parameters even when seen once: UUIDs, long hex, long numbers, long
  * random tokens. Short numbers stay literal on their own (`/api/2/items` is often a version).
- * Secrets in the path (a JWT in a magic link, a long token after `/reset/`) are parameters too:
- * a literal segment would be copied into the spec path, the operation id and the summary.
- * `previous` is the segment before this one, which tells `/reset/<token>` apart from a slug.
+ * Secrets in the path (a JWT in a magic link, a token or code after `/reset/`, base64 and
+ * percent-encoded forms included) are parameters too: a literal segment would be copied into the
+ * spec path, the operation id and the summary. `previous` is the segment before this one, which
+ * tells `/reset/<token>` apart from a slug.
  */
 export function isStrongIdentifier(segment: string, previous?: string | null): boolean {
-  if (isSecretPathSegment(segment, previous))
+  if (isSecretPathSegment(segment, previous) || isRandomPathSegment(segment))
     return true
   if (UUID.test(segment))
     return true

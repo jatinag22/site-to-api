@@ -13,6 +13,32 @@ describe('isStrongIdentifier', () => {
     expect(isStrongIdentifier('secrettokenvalue_abcdefghijklmnop')).toBe(false)
   })
 
+  it('treats base64 and percent-encoded tokens and one-time codes after credential words as parameters', () => {
+    expect(isStrongIdentifier('dGhpcyBpcyBhIHNlY3JldCB0b2tlbg%3D%3D', 'reset')).toBe(true)
+    expect(isStrongIdentifier('Xy7%2BQw9%2FZt3%3DLm2Pk8Rs', 'reset')).toBe(true)
+    expect(isStrongIdentifier('Xy7%2BQw9%2FZt3%3DLm2Pk8Rs')).toBe(true)
+    expect(isStrongIdentifier('a1B2c3', 'verify')).toBe(true)
+    expect(isStrongIdentifier('ABCD-EFGH-IJKL-MNOP', 'reset')).toBe(true)
+    expect(isStrongIdentifier('5f2b8c1e9a7d4f3b2c1a0e9d', 'products')).toBe(true)
+  })
+
+  it('keeps route names after credential words literal, so they never merge', () => {
+    const routes: ReadonlyArray<[string, string]> = [
+      ['auth', 'registration-form'],
+      ['auth', 'organization-settings'],
+      ['auth', 'organization-members'],
+      ['signin', 'organization-identifier'],
+      ['confirm', 'subscription-preferences'],
+      ['verify', 'international-shipping'],
+    ]
+    for (const [previous, segment] of routes)
+      expect(isStrongIdentifier(segment, previous), `/${previous}/${segment}`).toBe(false)
+    const marks = markParameters(['/auth/organization-settings', '/auth/organization-members'], [])
+    expect([
+      ...marks.values(),
+    ].map(mark => mark.size)).toEqual([0, 0])
+  })
+
   it('keeps the existing identifiers and leaves slugs literal', () => {
     expect(isStrongIdentifier('123e4567-e89b-12d3-a456-426614174000')).toBe(true)
     expect(isStrongIdentifier('123456')).toBe(true)

@@ -8,8 +8,9 @@
  * 2. Values under secret-looking names (`x-csrf-token`, `apiKey`, `password`) are replaced too,
  *    unless the same value appeared in every session (at least two): then it is a constant the
  *    site ships to everyone, such as a public API key, and the client needs it.
- *    Path segments that are tokens (`/magic/<jwt>`, `/reset/<long token>`, see `path-tokens.ts`)
- *    count as rule 1.
+ *    Path segments that are credentials (`/magic/<jwt>`, `/reset/<token>`, see `path-tokens.ts`)
+ *    count as rule 1; opaque random segments with no credential word (a signed download link)
+ *    count as rule 2. Other random ids in paths (ObjectIds, SHAs) are public, like UUIDs.
  * 3. Every value found by rules 1 and 2 is also removed wherever else it appears (echoed in a
  *    response, inside a URL), as are JWTs embedded in text.
  * 4. Personal data (email, phone, card, PAN, Aadhaar, configured patterns) is masked keeping its
@@ -22,7 +23,7 @@ import type { Body, Exchange, RedactContext, Redactor } from '../../model'
 import type { PersonalDataPattern } from './personal-data'
 import { SiteToApiError } from '../../errors'
 import { describeShape, inspectJwt } from '../shape'
-import { isSecretPathSegment } from './path-tokens'
+import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
 import { isPhoneField, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { CREDENTIAL_HEADERS, isSecretName } from './secret-names'
 
@@ -45,8 +46,12 @@ interface Located {
   value: string
   in: RedactContext['in']
   name: string | null
-  /** For path segments: whether the segment is a token (`/magic/<jwt>`, `/reset/<token>`). */
+  /** For path segments: whether the segment is a credential (`/magic/<jwt>`, `/reset/<token>`). */
   pathToken?: boolean
+  /** For path segments: an opaque random string with no credential word, secret unless constant. */
+  pathOpaque?: boolean
+  /** For path segments: the segment as sent, when percent-decoding changed it. */
+  raw?: string
 }
 
 function isQueryLike(where: RedactContext['in']): boolean {
@@ -78,6 +83,16 @@ function safeDecode(text: string): string | null {
   }
 }
 
+/** `+` is literal in a path; only query strings and forms use it for a space. */
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment)
+  }
+  catch {
+    return segment
+  }
+}
+
 function* bodyValues(body: Body | null, where: 'body' | 'response-body'): Generator<Located> {
   if (!body)
     return
@@ -97,11 +112,16 @@ function* valuesOf(exchange: Exchange): Generator<Located> {
   const { request, response } = exchange
   const segments = request.path.split('/')
   for (const [index, segment] of segments.entries()) {
+    const value = decodePathSegment(segment)
     yield* expand({
-      value: safeDecode(segment) ?? segment,
+      value,
       in: 'path',
       name: null,
       pathToken: isSecretPathSegment(segment, segments[index - 1]),
+      pathOpaque: isOpaquePathSegment(segment),
+      ...(value === segment
+        ? {}
+        : { raw: segment }),
     }, 0)
   }
   for (const item of request.query)
@@ -179,6 +199,49 @@ function compilePatterns(config: ResolvedConfig['redact']): PersonalDataPattern[
   ]
 }
 
+interface Learnt {
+  /** Sessions each value was seen in, to tell constants from per-session values. */
+  sessionsByValue: Map<string, Set<string>>
+  always: Set<string>
+  unlessConstant: Set<string>
+}
+
+/**
+ * A value and, for a path segment, the segment as sent: its percent-encoding (`%3d`, `%2f`) need
+ * not match what `encodeURIComponent` produces from the decoded value.
+ */
+function formsOf(item: Located): string[] {
+  return item.raw === undefined
+    ? [item.value]
+    : [item.value, item.raw]
+}
+
+/** One pass over every value of the capture: where each value was seen and which are secrets. */
+function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean): Learnt {
+  const learnt: Learnt = {
+    sessionsByValue: new Map(),
+    always: new Set(),
+    unlessConstant: new Set(),
+  }
+  for (const exchange of exchanges) {
+    for (const item of valuesOf(exchange)) {
+      const forms = formsOf(item)
+      for (const form of forms) {
+        const sessions = learnt.sessionsByValue.get(form) ?? new Set()
+        sessions.add(exchange.sessionId)
+        learnt.sessionsByValue.set(form, sessions)
+      }
+      if (item.value === '')
+        continue
+      if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true)
+        forms.forEach(form => learnt.always.add(form))
+      else if (isSecretName(item.name, isQueryLike(item.in)) || item.pathOpaque === true)
+        forms.forEach(form => learnt.unlessConstant.add(form))
+    }
+  }
+  return learnt
+}
+
 /**
  * Builds the redactor for one build. Secrets and constants are learnt from all exchanges up
  * front, so a value is treated the same wherever it appears.
@@ -188,10 +251,6 @@ export function createRedactor(input: RedactorInput): Redactor {
   const patterns = compilePatterns(config)
   const fields = new Set(config.fields.map(field => field.toLowerCase()))
   const sessionCount = new Set(input.exchanges.map(exchange => exchange.sessionId)).size
-
-  const sessionsByValue = new Map<string, Set<string>>()
-  const always = new Set<string>()
-  const unlessConstant = new Set<string>()
 
   const isAlwaysSecret = (where: RedactContext['in'], name: string | null | undefined): boolean => {
     if (where === 'cookie' || where === 'set-cookie')
@@ -204,22 +263,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     return fields.has(lower)
   }
 
-  for (const exchange of input.exchanges) {
-    for (const item of valuesOf(exchange)) {
-      let sessions = sessionsByValue.get(item.value)
-      if (!sessions) {
-        sessions = new Set()
-        sessionsByValue.set(item.value, sessions)
-      }
-      sessions.add(exchange.sessionId)
-      if (item.value === '')
-        continue
-      if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true)
-        always.add(item.value)
-      else if (isSecretName(item.name, isQueryLike(item.in)))
-        unlessConstant.add(item.value)
-    }
-  }
+  const { sessionsByValue, always, unlessConstant } = learnValues(input.exchanges, isAlwaysSecret)
 
   const isConstant = (value: string): boolean =>
     sessionCount >= 2 && (sessionsByValue.get(value)?.size ?? 0) === sessionCount
@@ -298,9 +342,10 @@ export function createRedactor(input: RedactorInput): Redactor {
       return text
     if (isAlwaysSecret(context.in, context.name) || inspectJwt(text) || secrets.has(text))
       return placeholder(text)
-    // Without the previous segment only the context-free rules apply; the learnt secrets above
-    // already cover `/reset/<token>` seen in the capture.
-    if (context.in === 'path' && isSecretPathSegment(text))
+    // Without the previous segment only the context-free rule applies; the learnt secrets above
+    // already cover `/reset/<token>` seen in the capture. An opaque segment never seen in the
+    // capture is not known to be constant, so it is redacted.
+    if (context.in === 'path' && isOpaquePathSegment(text) && !isConstant(text))
       return placeholder(text)
     if (isSecretName(context.name, isQueryLike(context.in)) && !isConstant(text))
       return placeholder(text)
