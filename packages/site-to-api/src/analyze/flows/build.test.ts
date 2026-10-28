@@ -320,6 +320,58 @@ describe('buildFlows: segments and merging', () => {
     expect(doc.flows[0]?.steps[0]?.summary).toBe('After clicking "Go!": GET /one.')
   })
 
+  it('starts a navigation at its document request, which comes before the navigate event', () => {
+    const newest = exchange({
+      url: 'https://news.example.test/newest',
+      resourceType: 'document',
+      kind: 'page',
+      startedAt: 1_100,
+    })
+    const search = exchange({
+      url: 'https://search.example.test/',
+      resourceType: 'document',
+      kind: 'page',
+      startedAt: 4_000,
+    })
+    const query = exchange({ url: 'https://api.search.example.test/query', startedAt: 4_600 })
+    const action = (ts: number, kind: 'click' | 'navigate', pageUrl: string, label: string): CaptureEvent => ({
+      t: 'action',
+      ts,
+      pageUrl,
+      kind,
+      label,
+      selector: kind === 'click'
+        ? 'a'
+        : '',
+      field: null,
+    })
+    const doc = build([newest, search, query], [
+      op('getNewest', [newest], { kind: 'page' }),
+      op('getRoot', [search], { kind: 'page' }),
+      op('getQuery', [query]),
+    ], [
+      loaded('s1', [
+        action(1_000, 'click', 'https://news.example.test/', 'new'),
+        action(1_500, 'navigate', 'https://news.example.test/newest', 'Newest'),
+        // A script's `page.goto`: the event arrives once the page runs, after its document.
+        action(4_400, 'navigate', 'https://search.example.test/', 'Search'),
+      ]),
+    ])
+    expect(doc.flows.map(entry => [
+      entry.trigger.kind,
+      entry.steps.map(step => step.operationId),
+    ])).toEqual([
+      [
+        'click',
+        ['getNewest'],
+      ],
+      [
+        'navigate',
+        ['getRoot', 'getQuery'],
+      ],
+    ])
+  })
+
   it('drops segments without steps and skips exchanges without an operation or of other kinds', () => {
     const asset = exchange({ url: 'https://cdn.example.test/app.js', startedAt: 1, kind: 'asset' })
     const orphan = exchange({ url: 'https://api.example.test/orphan', startedAt: 2 })
