@@ -57,7 +57,7 @@ describe('graphqlTypesInText', () => {
     })
   })
 
-  it('takes a type near an anonymous hash without asking for a name', () => {
+  it('takes a type near an anonymous hash only when its own entry states it', () => {
     expect(graphqlTypesInText(`register("query", "${OWN}")`, [
       {
         key: 'k',
@@ -65,6 +65,19 @@ describe('graphqlTypesInText', () => {
         hashes: [OWN],
       },
     ]).get('k')).toEqual(['query'])
+    const H1 = fakeHash('a1')
+    const target = [
+      {
+        key: 'k',
+        operationName: null,
+        hashes: [OWN],
+      },
+    ]
+    // The entry of the hash says mutation; the neighbour's query does not count.
+    expect(graphqlTypesInText(`[{id:"${H1}",type:"query"},{id:"${OWN}",type:"mutation"}]`, target).get('k')).toEqual(['mutation'])
+    // A map from hash to type: the entry holds both words, so it is no evidence.
+    expect(graphqlTypesInText(`{"${H1}":"query","${OWN}":"mutation"}`, target).get('k')).toBeUndefined()
+    expect(graphqlTypesInText(`{"${OWN}":"mutation","${H1}":"query"}`, target).get('k')).toBeUndefined()
   })
 })
 

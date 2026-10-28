@@ -58,35 +58,93 @@ function quotedNear(text: string, position: number, length: number, name: string
   return [`"${name}"`, `'${name}'`, `\`${name}\``].some(quoted => near.includes(quoted))
 }
 
+const OPENERS: Record<string, string> = { ')': '(', ']': '[', '}': '{' }
+const CLOSERS: Record<string, string> = { '(': ')', '[': ']', '{': '}' }
+
 /**
- * The type word (`"query"`, `'mutation'`) nearest to each occurrence of the hash, counted only
- * when the operation's quoted name is next to that word (when the name is known).
+ * The innermost bracketed entry around `[from, to)`: from just after the unmatched opening
+ * bracket before it to just before the unmatched closing one after it, at most `HASH_WINDOW`
+ * characters each way. `new Q("x", "query", "<hash>")` gives the arguments, and
+ * `[{ id: "<h1>", type: "query" }, { id: "<h2>", type: "mutation" }]` the object around one hash.
+ */
+function enclosingEntry(text: string, from: number, to: number): string {
+  const start = unmatchedBracket(text, from - 1, Math.max(0, from - HASH_WINDOW) - 1, -1, OPENERS, CLOSERS)
+  const end = unmatchedBracket(text, to, Math.min(text.length, to + HASH_WINDOW), 1, CLOSERS, OPENERS)
+  return text.slice(start + 1, end)
+}
+
+/**
+ * Walks from `from` towards `limit` (exclusive) in steps of `step` and returns the index of the
+ * first bracket of `outward` kind that is not matched along the way, or `limit` when none is.
+ * `inward` brackets are the ones that open a nested entry in the walking direction.
+ */
+function unmatchedBracket(text: string, from: number, limit: number, step: 1 | -1, inward: Record<string, string>, outward: Record<string, string>): number {
+  let depth = 0
+  for (let i = from; i !== limit; i += step) {
+    const char = text.charAt(i)
+    if (inward[char] !== undefined)
+      depth++
+    else if (outward[char] !== undefined && depth-- === 0)
+      return i
+  }
+  return limit
+}
+
+/**
+ * The type a mention of an unnamed operation's hash states: only when its entry holds exactly
+ * one type word. A type word of a neighbouring entry (`{"h1":"query","h2":"mutation"}`) is not
+ * evidence, so such an operation stays `unknown`.
+ */
+function typeOfUnnamedEntry(text: string, at: number, hash: string): KnownType | null {
+  const types = [
+    ...enclosingEntry(text, at, at + hash.length).matchAll(TYPE_LITERAL),
+  ].map(match => asType(match[2]))
+  const [only] = types
+  return types.length === 1 && only !== undefined
+    ? only
+    : null
+}
+
+/** The type word nearest to the hash, when the operation's quoted name is next to that word. */
+function typeOfNamedMention(text: string, at: number, hash: string, name: string): KnownType | null {
+  const start = Math.max(0, at - HASH_WINDOW)
+  const window = text.slice(start, at + hash.length + HASH_WINDOW)
+  let best: { type: KnownType, distance: number, position: number, length: number } | null = null
+  for (const match of window.matchAll(TYPE_LITERAL)) {
+    const type = asType(match[2])
+    if (type === null)
+      continue
+    const position = start + match.index
+    const distance = position < at
+      ? at - (position + match[0].length)
+      : position - (at + hash.length)
+    if (best === null || distance < best.distance) {
+      best = {
+        type,
+        distance,
+        position,
+        length: match[0].length,
+      }
+    }
+  }
+  return best && quotedNear(text, best.position, best.length, name)
+    ? best.type
+    : null
+}
+
+/**
+ * What each mention of the hash says about the type. With a name, the nearest type word counts
+ * when the name sits beside it (Spotify ships several operations under one hash); without one,
+ * only an entry with a single type word counts.
  */
 function typesNearHash(text: string, hash: string, name: string | null): KnownType[] {
   const found: KnownType[] = []
   for (const at of occurrences(text, hash)) {
-    const start = Math.max(0, at - HASH_WINDOW)
-    const window = text.slice(start, at + hash.length + HASH_WINDOW)
-    let best: { type: KnownType, distance: number, position: number, length: number } | null = null
-    for (const match of window.matchAll(TYPE_LITERAL)) {
-      const type = asType(match[2])
-      if (type === null)
-        continue
-      const position = start + match.index
-      const distance = position < at
-        ? at - (position + match[0].length)
-        : position - (at + hash.length)
-      if (best === null || distance < best.distance) {
-        best = {
-          type,
-          distance,
-          position,
-          length: match[0].length,
-        }
-      }
-    }
-    if (best && (name === null || quotedNear(text, best.position, best.length, name)))
-      found.push(best.type)
+    const type = name === null
+      ? typeOfUnnamedEntry(text, at, hash)
+      : typeOfNamedMention(text, at, hash, name)
+    if (type !== null)
+      found.push(type)
   }
   return found
 }

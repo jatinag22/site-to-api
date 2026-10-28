@@ -3,6 +3,7 @@ import type { Operation } from '../model'
 import { createServer } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { exchange, jsonBody, textBody } from '../../test/helpers'
+import { applyGraphqlTypes } from '../analyze/graphql'
 import { probeOperations, resemblesCapture } from './probe'
 
 let origin: string
@@ -353,6 +354,34 @@ describe('probeOperations: GraphQL (decision 0027)', () => {
         'skipped',
         expect.stringContaining('GraphQL operation of unknown type was replayed once only'),
       ],
+    ])
+  })
+
+  it('never replays a mutation whose type came from the site\'s code', async () => {
+    const [typed] = applyGraphqlTypes([
+      {
+        ...graphqlOp('saveRecentSearches', 'unknown'),
+        operationId: 'saveRecentSearches',
+      },
+    ], new Map([
+      [
+        `${new URL(origin).host} saveRecentSearches`,
+        ['mutation'],
+      ],
+    ]))
+    expect(typed?.graphql).toMatchObject({ operationType: 'mutation', operationTypeFrom: 'source' })
+    const before = requests
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: typed
+        ? [typed]
+        : [],
+    })
+    expect(requests - before).toBe(0)
+    expect(report.operations).toEqual([])
+    expect(report.skipped).toEqual([
+      { operationId: 'saveRecentSearches', reason: 'GraphQL mutation saveRecentSearches can change data; pass --unsafe-methods to include it' },
     ])
   })
 
