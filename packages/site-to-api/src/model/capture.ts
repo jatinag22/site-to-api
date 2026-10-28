@@ -138,6 +138,16 @@ export const WebSocketEventSchema = z.object({
   direction: z.enum(['open', 'sent', 'received', 'close']),
   /** Text frames as-is, binary frames base64 encoded. */
   data: z.string().nullable(),
+  /**
+   * True for a binary frame (`data` is base64). Absent in captures made before it was recorded;
+   * those frames are read as text.
+   */
+  binary: z.boolean().optional(),
+  /**
+   * Which socket of the session the event belongs to (0, 1, ... in opening order), so two sockets
+   * to the same URL stay apart. Absent in older captures, where events are matched by URL.
+   */
+  socket: z.number().int().nonnegative().optional(),
 })
 
 export const CaptureEventSchema = z.discriminatedUnion('t', [

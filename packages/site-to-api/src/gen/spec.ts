@@ -105,6 +105,64 @@ export const OpenApiDocumentSchema = z.looseObject({
 })
 export type OpenApiDocument = z.infer<typeof OpenApiDocumentSchema>
 
+/**
+ * The parts of a `specs/<host>.asyncapi.yaml` document (written by `build`) that the client
+ * README mentions. hey-api generates HTTP clients only, so channels are documented, not generated.
+ */
+export const AsyncApiSummarySchema = z.object({
+  asyncapi: z.string(),
+  servers: z.record(z.string(), z.object({
+    host: z.string(),
+    protocol: z.string(),
+  })),
+  channels: z.record(z.string(), z.object({
+    'address': z.string(),
+    'servers': z.array(z.object({
+      $ref: z.string(),
+    })).default([]),
+    'messages': z.record(z.string(), z.object({
+      name: z.string().optional(),
+    })).default({}),
+    'x-site-to-api-handshake': z.array(z.object({
+      message: z.string(),
+      example: z.unknown(),
+    })).default([]),
+  })),
+})
+
+/** One WebSocket channel as the client README describes it. */
+export interface ChannelSummary {
+  /** `specs/` file it was read from. */
+  file: string
+  id: string
+  /** `ws://host/path`. */
+  url: string
+  /** Messages to send right after connecting, with a redacted example (null when none was written). */
+  handshake: Array<{ name: string, example: unknown }>
+}
+
+/** Channels of one parsed AsyncAPI document, in document order. */
+export function describeChannels(file: string, document: z.infer<typeof AsyncApiSummarySchema>): ChannelSummary[] {
+  return Object.entries(document.channels).map(([id, channel]) => {
+    const serverName = channel.servers[0]?.$ref.split('/').at(-1)
+    const server = (serverName === undefined
+      ? undefined
+      : document.servers[serverName]) ?? Object.values(document.servers)[0]
+    const url = server
+      ? `${server.protocol}://${server.host}${channel.address}`
+      : channel.address
+    return {
+      file,
+      id,
+      url,
+      handshake: channel['x-site-to-api-handshake'].map(step => ({
+        name: channel.messages[step.message]?.name ?? step.message,
+        example: step.example ?? null,
+      })),
+    }
+  })
+}
+
 type Parameter = z.infer<typeof ParameterSchema>
 type Operation = z.infer<typeof OperationSchema>
 

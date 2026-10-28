@@ -1,15 +1,21 @@
 /**
  * Which frames may report instrumentation events.
  *
- * The binding is exposed to every frame, including third-party and cross-origin iframes (ads,
- * embedded widgets, a hostile page's own iframes), and any of them could send forged requests,
- * actions or response bodies. Only frames that belong to the site being captured are listened to.
+ * The binding reaches every document in a page, including third-party iframes (ads, embedded
+ * widgets, a hostile page's own iframes) and popups, and any of them could send forged requests,
+ * actions or response bodies. Only documents that belong to the site being captured are listened
+ * to.
  *
- * Rule: the top frame is always accepted. Another frame is accepted when its origin equals the
- * top frame's origin, or when both are http(s) and their hosts share a registrable host
- * ({@link registrableHost}). `about:blank`, `about:srcdoc` and `blob:` frames take the origin of
- * the document that created them, approximated by walking up to the nearest parent with a real
- * URL. Everything else is ignored and counted in a capture warning.
+ * Scope is judged by the calling document's security origin as the browser reports it (see
+ * `binding.ts`), never by its URL: an `about:blank` document has the origin of whoever navigated
+ * it there, which need not be its parent, so a URL-based guess can be borrowed by a third party.
+ *
+ * Rule ({@link acceptsCall}): in the first page, the top frame is always accepted (the person may
+ * browse anywhere in it), and another frame is accepted when it is in scope of the current top
+ * frame ({@link isFrameInScope}: same origin, or both http(s) with the same {@link registrableHost}).
+ * In any other page (a popup), every frame, the top one included, must be in scope of the capture's
+ * site: the start URL, or the first page's top frame when there is no start URL. Everything else
+ * is ignored and counted in a capture warning.
  */
 
 /**
@@ -80,37 +86,39 @@ export function registrableHost(hostname: string): string {
   return labels.slice(-keep).join('.')
 }
 
-/** Origin of a URL, or `null` for `about:` URLs and unparsable ones, which inherit their creator's. */
-function originOf(url: string): string | null {
-  if (url === '' || url.startsWith('about:'))
-    return null
+/**
+ * A security origin as the browser reports it, in the form `URL.origin` uses: `scheme://host[:port]`
+ * for tuple origins, `'null'` for opaque ones (Chromium reports those as `://`), sandboxed
+ * documents and anything unparsable.
+ */
+export function normalizeOrigin(origin: string): string {
   try {
-    return new URL(url).origin
+    return new URL(origin).origin
   }
   catch {
-    return null
+    return 'null'
   }
 }
 
-/** The part of a Playwright `Frame` that {@link effectiveOrigin} needs. */
-export interface FrameLike {
-  url: () => string
-  parentFrame: () => FrameLike | null
+/** One call of the binding, described by the security origins involved. */
+export interface FrameCall {
+  /** Security origin of the calling document. */
+  frameOrigin: string
+  /** The caller is the top frame of its page. */
+  mainFrame: boolean
+  /** The caller's page is the one the capture opened first. */
+  firstPage: boolean
+  /** Security origin of the top frame of the caller's page, `'null'` when unknown. */
+  topOrigin: string
+  /** Origin of the capture's site: the start URL's, else the first page's top frame's. */
+  siteOrigin: string
 }
 
-/**
- * Origin of the document in a frame: its own URL's origin, or for `about:blank`/`about:srcdoc`
- * frames the origin of the nearest ancestor with a real URL. `null` (the string) when none has.
- */
-export function effectiveOrigin(frame: FrameLike): string {
-  let current: FrameLike | null = frame
-  while (current !== null) {
-    const origin = originOf(current.url())
-    if (origin !== null)
-      return origin
-    current = current.parentFrame()
-  }
-  return 'null'
+/** True when a binding call should be recorded; the rule is described at the top of this file. */
+export function acceptsCall(call: FrameCall): boolean {
+  if (call.firstPage)
+    return call.mainFrame || isFrameInScope(call.frameOrigin, call.topOrigin)
+  return isFrameInScope(call.frameOrigin, call.siteOrigin)
 }
 
 /** True when events from a frame with `frameOrigin` should be recorded for a top frame with `topOrigin`. */

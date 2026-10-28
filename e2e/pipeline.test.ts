@@ -219,6 +219,48 @@ describe('flows and session needs', () => {
   })
 })
 
+describe('real-time channels', () => {
+  function ticker(): NonNullable<Analysis['channels']>[number] {
+    const found = analysis.channels?.find(channel => channel.host === host && channel.path === '/ws/ticker')
+    if (!found)
+      throw new Error(`no /ws/ticker channel; have: ${(analysis.channels ?? []).map(channel => channel.path).join(', ')}`)
+    return found
+  }
+
+  it('finds the ticker with a subscribe message from the client and tick messages from the server', () => {
+    const channel = ticker()
+    const subscribe = channel.messages.find(message => message.direction === 'send' && message.discriminator?.value === 'subscribe')
+    const tick = channel.messages.find(message => message.direction === 'receive' && message.discriminator?.value === 'tick')
+    expect(subscribe?.schema?.required).toEqual(['type', 'productId'])
+    expect(tick?.schema?.properties?.price).toEqual({ type: 'number' })
+    expect(channel.handshake.map(step => step.message)).toEqual([subscribe?.id])
+    expect(channel.connections).toBeGreaterThanOrEqual(2)
+  })
+
+  it('links the subscribed productId to the operation it came from', () => {
+    const link = ticker().messages.find(message => message.discriminator?.value === 'subscribe')?.links.find(item => item.input === 'body./productId')
+    const origin = link?.origin
+    expect(origin?.kind).toMatch(/response|html/)
+    const producer = origin && origin.kind !== 'user-input'
+      ? analysis.operations.find(op => op.host === host && op.operationId === origin.operationId)
+      : undefined
+    expect(producer?.path).toMatch(/^\/(?:api\/)?products/)
+  })
+
+  it('documents the channel in AGENT.md, API_MAP.md, the AsyncAPI spec and the client README', () => {
+    const guide = files.get('AGENT.md') ?? ''
+    const section = guide.split('## Real-time channels')[1]?.split('\n## ')[0] ?? ''
+    expect(section).toContain(`### \`ws://${host}/ws/ticker\``)
+    expect(section).toMatch(/1\. `subscribe`, e\.g\. `\{"type":"subscribe","productId":\d+\}`/)
+    expect(section).toContain('`tick`')
+    expect(files.get('API_MAP.md')).toContain('## Real-time channels')
+    const specName = `specs/${host.replace(/[^\w.-]/g, '_')}.asyncapi.yaml`
+    expect(files.get(specName)).toMatch(/^asyncapi: 3\.0\.0\n/)
+    expect(files.get(specName)).toContain('address: /ws/ticker')
+    expect(files.get('client/README.md')).toContain(`\`ws://${host}/ws/ticker\``)
+  })
+})
+
 describe('generated client', () => {
   it('type-checks in strict mode', () => {
     const clientFiles = [
@@ -386,6 +428,9 @@ describe('first-time use through the CLI: build options stick and the docs agree
     const generated = await read('AGENT.md')
     expect(generated).toContain('5. `client/`: typed client with Zod validation')
     expect(generated).not.toContain('No client generated')
+    // gen rewrites only the client sentences: the channels section and table survive.
+    expect(generated).toContain('## Real-time channels')
+    expect(await read('API_MAP.md')).toContain('## Real-time channels')
     expect(await read('API_MAP.md')).toContain('exported by the generated `client/`')
     expect(JSON.parse(await read('build.json'))).toMatchObject({
       client: true,

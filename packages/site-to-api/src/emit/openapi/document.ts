@@ -58,7 +58,7 @@ function isJson(value: unknown): value is Json {
 }
 
 /** Copies a schema in its own key order, dropping empty keys, so the output never has `undefined`. */
-function schemaObject(schema: JsonSchema): Json {
+export function schemaObject(schema: JsonSchema): Json {
   const result: Json = {}
   for (const [key, value] of Object.entries(schema)) {
     if (value === undefined)

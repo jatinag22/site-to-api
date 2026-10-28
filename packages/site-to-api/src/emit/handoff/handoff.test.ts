@@ -1,9 +1,11 @@
 import type { Analysis, Operation } from '../../model'
 import { describe, expect, it } from 'vitest'
+import { channelMessage, tickerChannel } from '../../../test/channels'
 import { HOSTILE, injected, renderMarkdown } from '../../../test/markdown'
 import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { renderAgentGuide } from './agent-guide'
 import { describeOrigin, renderApiMap } from './api-map'
+import { withApiMapClientState, withClientState } from './client'
 
 function operation(init: Partial<Operation> & Pick<Operation, 'operationId' | 'method' | 'path'>): Operation {
   return {
@@ -539,5 +541,143 @@ describe('operation ids shared by two hosts', () => {
     })
     expect(guide).toContain(`\`getRoot\` on \`${WWW}\` → \`getRoot\` on \`${API}\``)
     expect(guide).toContain(`- \`header.x-sig\` of \`getRoot\` on \`${API}\`: location not found using \`btoa\`; it uses \`body./token\` from \`getRoot\` on \`${WWW}\`.`)
+  })
+})
+
+describe('real-time channels', () => {
+  const context = {
+    toolVersion: '0.1.0',
+    examples: 'masked',
+    probed: false,
+    client: 'current',
+    probe: null,
+  } as const
+  const withChannels = (channels: Analysis['channels']): Analysis => ({
+    ...fixture(),
+    channels,
+  })
+
+  it('has no channel section without channels', () => {
+    expect(renderAgentGuide(fixture(), context)).not.toContain('Real-time channels')
+    expect(renderApiMap(withChannels([]), 'current')).not.toContain('Real-time channels')
+  })
+
+  it('tells the agent the URL, what to send after connecting, the message types and the spec', () => {
+    const guide = renderAgentGuide(withChannels([
+      tickerChannel(),
+    ]), context)
+    const section = guide.split('## Real-time channels')[1]?.split('\n## ')[0] ?? ''
+    expect(section).toContain('### `ws://shop.test:8080/ws/ticker`')
+    expect(section).toContain('- Spec: `specs/shop.test_8080.asyncapi.yaml`, channel `wsTicker`. Seen in 2 connections.')
+    expect(section).toContain('1. `subscribe`, e.g. `{"type":"subscribe","productId":1007}`')
+    expect(section).toContain('- Client → server: `subscribe` (2×).')
+    expect(section).toContain('- Server → client: `tick` (6×), text frames (1×), binary frames (1×).')
+    expect(section).toContain('- `body./productId` of `subscribe` comes from `body./items/0/id` of `getApiProducts`.')
+    expect(section).toContain('- The browser sent cookies when connecting: `sid`.')
+    expect(section).toContain('- Opened by `src/widgets/ticker.ts:22 connectPriceTicker`.')
+    expect(guide).toContain('`specs/<host>.asyncapi.yaml`')
+  })
+
+  it('says when the server pushes without a subscription and when cookies are unknown', () => {
+    const guide = renderAgentGuide(withChannels([
+      tickerChannel({
+        handshake: [],
+        cookies: { status: 'unknown', names: [] },
+      }),
+    ]), context)
+    expect(guide).toContain('- The client sent nothing after connecting: the server pushes on its own.')
+    expect(guide).toContain('the capture has no record of the upgrade request')
+  })
+
+  it('lets gen switch the client state of AGENT.md and API_MAP.md that have channels', () => {
+    const analysis = withChannels([
+      tickerChannel(),
+    ])
+    for (const from of ['none', 'stale'] as const) {
+      const guide = renderAgentGuide(analysis, { ...context, client: from })
+      expect(guide).toContain('## Real-time channels')
+      expect(withClientState(guide, 'current')).toBe(renderAgentGuide(analysis, { ...context, client: 'current' }))
+      expect(withApiMapClientState(renderApiMap(analysis, from), 'current')).toBe(renderApiMap(analysis, 'current'))
+    }
+    const stale = renderAgentGuide(analysis, { ...context, client: 'stale' })
+    // The client gap stays the last line of the folder's gaps, after the channels section.
+    expect(stale.indexOf('## Real-time channels')).toBeLessThan(stale.indexOf('## Gaps'))
+    expect(stale.trimEnd().split('\n').at(-1)).toContain('`client/` is from an earlier build')
+  })
+
+  it('adds one channels row to API_MAP.md', () => {
+    const map = renderApiMap(withChannels([
+      tickerChannel(),
+    ]), 'current')
+    const rows = map.split('## Real-time channels')[1]?.split('\n').filter(line => line.startsWith('| `')) ?? []
+    expect(rows).toEqual(['| `wsTicker` | `ws://shop.test:8080/ws/ticker` | `subscribe` | `subscribe` | `tick`, text frames, binary frames | `subscribe` `body./productId` ← `body./items/0/id` of `getApiProducts` | cookies: `sid` | `specs/shop.test_8080.asyncapi.yaml` |'])
+  })
+
+  const hostile = tickerChannel({
+    path: `/ws/${HOSTILE}`,
+    summary: HOSTILE,
+    messages: [
+      channelMessage({
+        id: 'sendMessage',
+        direction: 'send',
+        discriminator: { field: HOSTILE, value: HOSTILE },
+        examples: [
+          { [HOSTILE]: HOSTILE },
+        ],
+        links: [
+          {
+            input: `body./${HOSTILE}`,
+            origin: {
+              kind: 'html',
+              operationId: HOSTILE,
+              host: 'shop.test:8080',
+              selector: HOSTILE,
+              attr: HOSTILE,
+            },
+            samples: 1,
+          },
+        ],
+      }),
+    ],
+    handshake: [
+      {
+        message: 'sendMessage',
+        example: { [HOSTILE]: HOSTILE },
+      },
+    ],
+    cookies: {
+      status: 'sent',
+      names: [HOSTILE],
+    },
+  })
+
+  it('cannot inject links, HTML or headings through channel text in AGENT.md', () => {
+    const guide = renderAgentGuide(withChannels([hostile]), context)
+    const html = renderMarkdown(guide)
+    expect(injected(html)).toEqual([])
+    // The channel heading is a code span: `<h3>` directly followed by `<code>`.
+    expect(html).toContain('<h3><code>ws://shop.test:8080/ws/')
+    expect(html.match(/<h\d>[^<]*/g)?.filter(heading => heading !== '<h3>')).toEqual([
+      '<h1>Start here',
+      '<h2>Reading order',
+      '<h2>Session requirements',
+      '<h3>shop.example',
+      '<h2>Flows',
+      '<h2>Real-time channels',
+      '<h2>Values computed in the browser',
+      '<h2>Gaps',
+    ])
+    for (const line of guide.split('\n'))
+      expect(line).toMatch(/^(?:$|#{1,3} |- | {2}\d\. |\d\. | {3}`|[A-Z])/)
+  })
+
+  it('cannot add table columns through channel text in API_MAP.md', () => {
+    const html = renderMarkdown(renderApiMap(withChannels([hostile]), 'current'))
+    expect(injected(html)).toEqual([])
+    const table = html.split('Real-time channels')[1] ?? ''
+    const rows = table.match(/<tr>[\s\S]*?<\/tr>/g) ?? []
+    expect(rows).toHaveLength(2)
+    for (const row of rows)
+      expect(row.match(/<t[dh][\s>]/g)).toHaveLength(8)
   })
 })

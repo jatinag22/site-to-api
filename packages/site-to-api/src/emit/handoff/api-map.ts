@@ -3,14 +3,16 @@
  * needs without opening the specs (docs/output-format.md). Every cell is built from values the
  * site controls, so each one goes through `text()` or `cellCode()` (both escape `|`).
  */
-import type { Analysis, Flow, Operation, ResponseInfo, SessionRequirement, SourceRef, ValueOrigin } from '../../model'
+import type { Analysis, Flow, Operation, ResponseInfo, SessionRequirement, ValueOrigin } from '../../model'
 import type { StepResolver } from '../steps'
 import type { ClientState } from './client'
 import { cookieNeedsBrowser } from '../../model'
 import { cellCode, text } from '../escape'
 import { responseSchemaName, sdkFunctionName } from '../naming'
 import { createStepResolver } from '../steps'
+import { channelsTable } from './channels'
 import { apiMapClientLine } from './client'
+import { describeSource } from './source-ref'
 
 /** Renders a step reference from an origin (`s2` or `<flowId>.<stepId>`) for a table cell. */
 export type StepLabel = (reference: string) => string
@@ -70,13 +72,6 @@ function inputName(input: string, operation: Operation): string {
   return param
     ? `path.${param.name}`
     : input
-}
-
-/** `file:line function` for a source reference, as plain text (callers escape it). */
-export function describeSource(ref: SourceRef): string {
-  return `${ref.file}:${ref.line}${ref.functionName
-    ? ` ${ref.functionName}`
-    : ''}`
 }
 
 function describeResponse(responses: ResponseInfo[]): string {
@@ -198,6 +193,7 @@ export function renderApiMap(analysis: Analysis, client: ClientState): string {
     if (operations.length > 0)
       lines.push(...hostTable(host, operations, analysis, resolver))
   }
+  lines.push(...channelsTable(analysis.channels ?? []))
   return `${lines.join('\n').trimEnd()}\n`
 }
 

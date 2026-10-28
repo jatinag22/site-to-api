@@ -10,8 +10,9 @@ import type { ClientState } from './client'
 import { anchor, code, text } from '../escape'
 import { specFileName } from '../openapi/write'
 import { createStepResolver } from '../steps'
-import { describeSource } from './api-map'
+import { channelsSection } from './channels'
 import { clientGap, clientReadingLine } from './client'
+import { describeSource } from './source-ref'
 
 /** What `probe` could not finish, so AGENT.md can say which needs are still only inferred. */
 interface ProbeGaps {
@@ -267,6 +268,7 @@ function gapsSection(analysis: Analysis, context: AgentGuideContext, resolver: S
 /** Renders `AGENT.md`. Deterministic for the same analysis and context. */
 export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext): string {
   const resolver = createStepResolver(analysis.operations, analysis.flows)
+  const channels = analysis.channels ?? []
   const exampleNote = {
     masked: 'Example values are masked: secrets and personal data are replaced, formats are kept.',
     raw: 'Example values are copied from the capture (`redact.examples: raw`). Treat this folder as sensitive.',
@@ -287,11 +289,15 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext)
     '1. `API_MAP.md`: every operation, its inputs and where they come from.',
     '2. `flows.md`: the order requests happen in and which value feeds which request.',
     '3. `specs/<host>.yaml`: full OpenAPI 3.1 detail for the operations you use.',
+    ...(channels.length > 0
+      ? ['   `specs/<host>.asyncapi.yaml`: AsyncAPI 3.0 detail for the WebSocket channels (see "Real-time channels").']
+      : []),
     '4. `source/`: the site\'s own code for computed values and call sites.',
     clientReadingLine(context.client),
     '',
     ...sessionSection(analysis),
     ...flowsSection(analysis, resolver),
+    ...channelsSection(channels),
     ...computedSection(analysis, resolver),
     ...gapsSection(analysis, context, resolver),
   ]

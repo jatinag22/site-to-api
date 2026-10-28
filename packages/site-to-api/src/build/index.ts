@@ -10,7 +10,8 @@ import type { ProbeReport } from '../model/probe'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'pathe'
-import { classifyExchanges } from '../analyze/classify'
+import { buildChannels, channelExchanges, collectConnections } from '../analyze/channels'
+import { classifyExchanges, createChannelScope } from '../analyze/classify'
 import { traceValues } from '../analyze/correlate'
 import { buildFlows } from '../analyze/flows'
 import { createHtmlLocator, inferExtraction } from '../analyze/html'
@@ -18,6 +19,7 @@ import { buildOperations } from '../analyze/operations'
 import { createRedactor } from '../analyze/redact'
 import { inferOperationSchemas } from '../analyze/schema'
 import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findSourceEndpoints } from '../analyze/source'
+import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
 import { writeFlows } from '../emit/flows'
 import { clientGap, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
@@ -122,6 +124,10 @@ function addCallSites(operations: Operation[], resolver: SourceResolver): Operat
 /** Every source reference that the output mentions, so each gets an excerpt. */
 function referencedSources(analysis: Analysis): SourceRef[] {
   const refs: SourceRef[] = analysis.operations.flatMap(operation => operation.sentFrom)
+  for (const channel of analysis.channels ?? []) {
+    if (channel.sentFrom)
+      refs.push(channel.sentFrom)
+  }
   for (const flow of analysis.flows.flows) {
     for (const step of flow.steps) {
       if (step.sentFrom)
@@ -200,27 +206,44 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   const staticStrings = await collectStaticStrings(loaded.sessions)
   const htmlLocator = createHtmlLocator()
 
-  const redactor = createRedactor({ exchanges: classified.exchanges, config: config.redact })
+  // WebSocket frames stand in as exchanges, so the redactor learns secrets sent over a socket and
+  // tracing finds where the client's frame values came from (decision 0023).
+  const sockets = channelExchanges(collectConnections(loaded.sessions))
+  const redactor = createRedactor({
+    exchanges: [
+      ...classified.exchanges,
+      ...sockets.exchanges,
+    ],
+    config: config.redact,
+  })
   const wanted = inHostFilter(config.hosts)
   let operations = buildOperations(classified.exchanges, { sourceRoutes })
     .filter(operation => !operation.sourceOnly || wanted(operation.host))
   operations = inferOperationSchemas(operations, redactor)
   const warnings = [
     ...loaded.warnings,
-    ...unmatchedHostPatterns(loaded.exchanges, config.hosts),
+    // WebSocket hosts count as captured: a pattern that only matches a socket host is not a typo.
+    ...unmatchedHostPatterns([
+      ...loaded.exchanges,
+      ...sockets.exchanges,
+    ], config.hosts),
   ]
   operations = addExtraction(operations, config.build.minExtractSamples, warnings)
   const operationIdByExchange = new Map(operations.flatMap(operation => operation.exchanges.map(exchange => [exchange.id, operation.operationId] as const)))
   const callSites = createWrapperAwareResolver(resolver, classified.exchanges, exchange => operationIdByExchange.get(exchange.id) ?? null)
   operations = addCallSites(operations, callSites)
 
-  const traces = traceValues({
-    exchanges: classified.exchanges,
+  const allTraces = traceValues({
+    exchanges: [
+      ...classified.exchanges,
+      ...sockets.exchanges,
+    ],
     sessions: loaded.sessions,
     htmlLocator,
     staticStrings,
     minValueLength: config.build.minTraceValueLength,
   })
+  const traces = allTraces.filter(trace => !sockets.standIns.has(trace.exchangeId))
   const flows = buildFlows({
     exchanges: classified.exchanges,
     operations,
@@ -230,6 +253,17 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     botProtection: classified.botProtection,
     redactor,
     toolVersion: VERSION,
+  })
+
+  const channels = buildChannels({
+    channelExchanges: sockets,
+    exchanges: classified.exchanges,
+    operations,
+    traces: allTraces,
+    redactor,
+    sourceRoutes,
+    sourceResolver: callSites,
+    inScope: createChannelScope(classified.exchanges, config.hosts),
   })
 
   const probe = await readProbeReport(outDir)
@@ -245,6 +279,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     operations,
     flows,
     botProtection: classified.botProtection,
+    channels,
     excerpts: new Map(),
     warnings,
   }
@@ -276,8 +311,14 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     await rm(join(outDir, stale), { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 
+  const openApi = buildOpenApiDocuments(analysis)
+  const asyncApi = await writeAsyncApiDocuments(outDir, buildAsyncApiDocuments(analysis.channels ?? [], analysis.sessions.length), [
+    ...openApi.keys(),
+  ])
+  analysis.warnings.push(...asyncApi.warnings)
   const files = [
-    ...await writeOpenApiDocuments(outDir, buildOpenApiDocuments(analysis)),
+    ...await writeOpenApiDocuments(outDir, openApi),
+    ...asyncApi.files,
     ...await writeFlows(outDir, analysis.flows, { operations: analysis.operations }),
     ...await writeExcerpts(outDir, analysis.excerpts),
   ]
