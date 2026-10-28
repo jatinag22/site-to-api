@@ -268,9 +268,14 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 
   const probe = await readProbeReport(outDir)
   if (probe) {
-    flows.session = applyProbeReport(flows.session, probe)
+    flows.session = applyProbeReport(flows.session, probe, operations)
     const requires = requirementsByOperation(probe)
-    operations = operations.map(operation => ({ ...operation, requires: requires.get(`${operation.host} ${operation.operationId}`) ?? null }))
+    operations = operations.map(operation => ({
+      ...operation,
+      requires: operation.kind === 'bot-protection'
+        ? null
+        : requires.get(`${operation.host} ${operation.operationId}`) ?? null,
+    }))
   }
 
   const analysis: Analysis = {

@@ -7,6 +7,7 @@
 import type { Analysis, Operation, SessionRequirement, ValueOrigin } from '../../model'
 import type { StepResolver } from '../steps'
 import type { ClientState } from './client'
+import { sendsBotProtectionHeaders } from '../../analyze/classify'
 import { cookieLines } from '../cookies'
 import { anchor, code, text } from '../escape'
 import { specFileName } from '../openapi/write'
@@ -71,6 +72,11 @@ function sessionSection(analysis: Analysis): string[] {
     lines.push(`- Needs: ${REQUIREMENT_TEXT[entry.requires]}${entry.probed ? ' (confirmed by probe)' : ' (inferred from the capture, not yet probed)'}.`)
     for (const finding of entry.botProtection)
       lines.push(`- Bot protection: ${text(finding.vendor)} (${text(finding.evidence)}). Do not try to reproduce it; let a real browser run it (\`browserSession\` in \`@site-to-api/runtime\`).`)
+    const guarded = entry.botProtection.length === 0
+      ? []
+      : analysis.operations.filter(operation => operation.host === entry.host && operation.kind === 'api' && sendsBotProtectionHeaders(operation))
+    if (guarded.length > 0)
+      lines.push(`- Calls that send the bot-protection script's headers, so only a real browser can make them: ${guarded.map(operation => code(operation.operationId)).join(', ')}${entry.probed ? '. Whatever probe found for other calls, these keep the host on a real browser' : ''}.`)
     lines.push(...cookieLines(entry, probedRequires(entry, analysis)))
     lines.push(`- Spec: ${code(`specs/${specFileName(entry.host)}`)}.`, '')
   }

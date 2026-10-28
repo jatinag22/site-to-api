@@ -7,7 +7,7 @@
  * `requestHeaders` and `responseHeaders` are evidence only: the site's real API calls carry them
  * too and must stay `api`.
  */
-import type { Exchange } from '../../model'
+import type { Exchange, Operation } from '../../model'
 import { hostMatchesDomain } from './noise-hosts'
 
 interface BotProtectionSignature {
@@ -254,6 +254,14 @@ export function isBotProtectionHeader(name: string): boolean {
     ...signature.requestHeaders,
     ...signature.responseHeaders,
   ].some(pattern => pattern.test(lower)))
+}
+
+/**
+ * True when the calls of an operation carry headers a bot-protection script adds (`x-kpsdk-ct`,
+ * `x-px-*`): the site checks a browser-made token on it, whatever other calls showed.
+ */
+export function sendsBotProtectionHeaders(operation: Pick<Operation, 'headers'>): boolean {
+  return operation.headers.some(header => isBotProtectionHeader(header.name))
 }
 
 /** Every signature that matches one exchange. */

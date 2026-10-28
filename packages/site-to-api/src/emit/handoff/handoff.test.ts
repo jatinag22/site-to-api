@@ -389,6 +389,33 @@ describe('probe evidence, qualified references and unknown methods', () => {
     expect(guide).toContain('`site-to-api probe --minimize-per-host 6`')
   })
 
+  it('names the calls that send bot-protection headers on a protected host', () => {
+    const analysis = fixture()
+    analysis.operations.push(operation({
+      operationId: 'putApiCart',
+      method: 'PUT',
+      path: '/api/cart',
+      headers: [
+        {
+          name: 'x-kpsdk-ct',
+          required: true,
+          schema: { type: 'string' },
+          constant: false,
+        },
+      ],
+    }))
+    const options = {
+      toolVersion: '0.1.0',
+      examples: 'masked' as const,
+      probed: false,
+      client: 'current' as const,
+      probe: null,
+    }
+    expect(renderAgentGuide(analysis, options)).toContain('- Calls that send the bot-protection script\'s headers, so only a real browser can make them: `putApiCart`.')
+    const unguarded = fixture()
+    expect(renderAgentGuide(unguarded, options)).not.toContain('bot-protection script\'s headers')
+  })
+
   it('says "method unknown" instead of presenting the placeholder method', () => {
     const analysis = probed()
     const map = renderApiMap(analysis, 'current')
