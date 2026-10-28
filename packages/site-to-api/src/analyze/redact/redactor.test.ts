@@ -488,6 +488,42 @@ describe('createRedactor: bot protection', () => {
   })
 })
 
+describe('createRedactor: opaque blobs', () => {
+  const blob = 'Qm9vT2pLcFh5ZVd6M1JhTnNUdUlvUG1BYkNkRWZHaElqS2xNbk9wUXJTdFV2V3hZeg'.repeat(5)
+  const fingerprint = 'hX7kQ2mZpL9vRt4WcB8nYd3JfS6gAe1U'
+
+  it('masks long opaque strings in examples by shape, nested or not', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/dlg',
+        method: 'POST',
+        requestBody: jsonBody({
+          body: { a13: blob, a14: fingerprint, a2: 'www.shop.test' },
+        }),
+      }),
+    ])
+    expect(r.examples([
+      {
+        body: { a13: blob, a14: fingerprint, a2: 'www.shop.test' },
+      },
+    ], { in: 'body' })).toEqual([
+      {
+        body: { a13: `<redacted: ${blob.length} base64 chars>`, a14: '<redacted: 32 base64 chars>', a2: 'www.shop.test' },
+      },
+    ])
+    expect(r.value(JSON.stringify({ data: blob }), { in: 'body' })).toBe(`{"data":"<redacted: ${blob.length} base64 chars>"}`)
+  })
+
+  it('keeps a blob identical in every session, like any constant', () => {
+    const items = ['s1', 's2'].map(sessionId => exchange({
+      url: 'https://shop.test/api/key',
+      sessionId,
+      responseBody: jsonBody({ publicKey: blob }),
+    }))
+    expect(redactor(items).value(blob, { in: 'response-body', name: 'publicKey' })).toBe(blob)
+  })
+})
+
 describe('createRedactor: modes and examples', () => {
   const exchanges = fixtureExchanges()
 

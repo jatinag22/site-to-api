@@ -16,7 +16,9 @@
  *    count as rule 2. Other random ids in paths (ObjectIds, SHAs) are public, like UUIDs.
  * 3. Every value found by rules 1 and 2 is also removed wherever else it appears (echoed in a
  *    response, inside a URL), as are JWTs embedded in text.
- * 4. Personal data (email, phone, card, PAN, Aadhaar, configured patterns) is masked keeping its
+ * 4. Long opaque blobs (random base64 of 32+ characters, any base64 of 256+, see `blobs.ts`) are
+ *    replaced by their shape unless identical in every session.
+ * 5. Personal data (email, phone, card, PAN, Aadhaar, configured patterns) is masked keeping its
  *    format, constant or not. So are values under personal field names (`username`, `displayName`,
  *    `firstName`, `address`, `city`, `zip`, `dob`, `userId`, see `personal-data.ts`), and `name`
  *    and `id` inside an object that describes a person (under `user`, `account`, `profile`,
@@ -32,6 +34,7 @@ import type { PersonalDataPattern } from './personal-data'
 import { SiteToApiError } from '../../errors'
 import { isBotProtectionHeader } from '../classify'
 import { describeShape, inspectJwt } from '../shape'
+import { isOpaqueBlob } from './blobs'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
 import { isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { CREDENTIAL_HEADERS, isAuthScheme, isPublishableKeyName, isSecretName } from './secret-names'
@@ -392,6 +395,9 @@ export function createRedactor(input: RedactorInput): Redactor {
     const byName = maskByName(text, context.name, personRecord)
     if (byName !== null)
       return byName
+    // A sensor payload or encrypted blob (`a13: <5572 base64 chars>`) says nothing as an example.
+    if (isOpaqueBlob(text) && !isConstant(text))
+      return placeholder(text)
     if (depth < MAX_DEPTH) {
       const nested = redactNested(text, context, depth)
       if (nested !== null)

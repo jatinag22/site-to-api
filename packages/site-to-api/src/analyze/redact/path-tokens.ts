@@ -209,7 +209,7 @@ export function isRandomPathSegment(segment: string): boolean {
 }
 
 /** Base64 that decodes to readable text (`Z2lkOi8vc2hvcGlmeS9Qcm9kdWN0LzE=` → `gid://...`). */
-function isEncodedText(value: string): boolean {
+export function isEncodedText(value: string): boolean {
   if (!BASE64.test(value))
     return false
   const standard = value.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '')
