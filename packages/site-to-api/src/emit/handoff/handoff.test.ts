@@ -405,6 +405,45 @@ describe('probe evidence, qualified references and unknown methods', () => {
 })
 
 describe('helpers', () => {
+  it('says when a value is one of several items or elements', () => {
+    expect(describeOrigin({
+      kind: 'step',
+      step: 'a.s1',
+      output: 'body./items/*/id',
+      transform: 'none',
+    })).toBe('`a.s1` → `body./items/*/id` (one of the items)')
+    expect(describeOrigin({
+      kind: 'step',
+      step: 'a.s1',
+      output: 'body./*',
+      transform: 'url-encoded',
+    })).toBe('`a.s1` → `body./*` (one of the items, url-encoded)')
+    expect(describeOrigin({
+      kind: 'step',
+      step: 'a.s1',
+      output: 'body./a*b',
+      transform: 'none',
+    })).toBe('`a.s1` → `body./a*b`')
+    expect(describeOrigin({
+      kind: 'html',
+      step: 'a.s1',
+      selector: 'li > a',
+      attr: 'href',
+      pattern: null,
+      confidence: 'high',
+      repeated: true,
+    }))
+      .toBe('`a.s1` → html one of the elements matching `li > a` @`href`')
+    expect(describeOrigin({
+      kind: 'html',
+      step: 'a.s1',
+      selector: 'meta',
+      attr: null,
+      pattern: null,
+      confidence: 'high',
+    })).toBe('`a.s1` → html `meta`')
+  })
+
   it('describes every origin kind', () => {
     expect(describeOrigin({ kind: 'constant', value: 'v1' })).toBe('constant')
     expect(describeOrigin({ kind: 'browser', note: 'set by page script' })).toBe('set by browser: set by page script')

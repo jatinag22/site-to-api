@@ -9,7 +9,7 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { exchange, jsonBody, textBody } from '../../../test/helpers'
+import { exchange, formBody, jsonBody, textBody } from '../../../test/helpers'
 import { fakeSourceResolver } from '../../../test/scenarios'
 import { writeFlows } from '../../emit/flows'
 import { writeHandoffDocs } from '../../emit/handoff'
@@ -379,5 +379,123 @@ describe('handoff output: HTML origins that embed page text', () => {
     const text = await emitAll(analysis, 'masked')
     expect(text).not.toContain(EMAIL)
     expect(text).not.toContain('jane\\.doe')
+  })
+})
+
+describe('handoff output: a plaintext password typed the same way in two sessions', () => {
+  const PASSWORD = 'Plaintext-Pa55word!'
+  const PIN = '482916'
+  const API_KEY = 'pk_live_public_0123456789'
+
+  function plaintextCapture(): { exchanges: Exchange[], sessions: LoadedSession[] } {
+    const exchanges: Exchange[] = []
+    const sessions: LoadedSession[] = []
+    for (const [offset, sessionId] of ['a', 'b'].entries()) {
+      const start = 1_700_000_000_000 + offset * 1_000_000
+      const page = `https://${HOST}/login`
+      exchanges.push(
+        exchange({
+          sessionId,
+          url: page,
+          resourceType: 'document',
+          startedAt: start,
+          responseBody: textBody('<html><body><form><input name="password" type="password"></form></body></html>'),
+        }),
+        exchange({
+          sessionId,
+          method: 'POST',
+          url: `https://${HOST}/login`,
+          startedAt: start + 100,
+          requestHeaders: { 'content-type': 'application/x-www-form-urlencoded', 'x-api-key': API_KEY },
+          requestBody: formBody({ username: 'jane', password: PASSWORD }),
+          responseBody: jsonBody({ ok: true }),
+        }),
+        exchange({
+          sessionId,
+          method: 'POST',
+          url: `https://${HOST}/api/session`,
+          startedAt: start + 200,
+          requestHeaders: { 'x-api-key': API_KEY, 'x-passcode': PIN },
+          requestBody: jsonBody({
+            login: 'jane',
+            password: PASSWORD,
+            otp: PIN,
+            client_secret: `${PASSWORD}-cs`,
+          }),
+          responseBody: jsonBody({ ok: true }),
+        }),
+        exchange({
+          sessionId,
+          url: `https://${HOST}/api/legacy-auth?user=jane&pwd=${encodeURIComponent(PASSWORD)}&key=${API_KEY}`,
+          startedAt: start + 300,
+          responseBody: jsonBody({ ok: true, echo: `pwd=${PASSWORD}` }),
+        }),
+      )
+      const events: CaptureEvent[] = [
+        {
+          t: 'action',
+          ts: start + 10,
+          pageUrl: page,
+          kind: 'change',
+          label: 'Password',
+          selector: '#password',
+          field: 'password',
+        },
+        {
+          t: 'action',
+          ts: start + 50,
+          pageUrl: page,
+          kind: 'submit',
+          label: 'Sign in',
+          selector: 'form',
+          field: null,
+        },
+      ]
+      sessions.push({
+        dir: `/captures/${sessionId}`,
+        events,
+        meta: {
+          formatVersion: 1,
+          sessionId,
+          toolVersion: 'test',
+          startUrl: page,
+          startedAt: '2026-01-01T00:00:00.000Z',
+          completedAt: '2026-01-01T00:01:00.000Z',
+          browser: { channel: null, headless: true, userAgent: 'test' },
+          har: 'traffic.har',
+          events: 'events.jsonl',
+          scripts: [],
+        },
+      })
+    }
+    return { exchanges, sessions }
+  }
+
+  for (const examples of ['masked', 'none'] as const) {
+    it(`writes it nowhere, as form field, JSON body or query, with redact.examples: ${examples}`, async () => {
+      const analysis = analyse({ ...REDACT, examples }, plaintextCapture())
+      const text = await emitAll(analysis, examples)
+      const leaks = [
+        PASSWORD,
+        encodeURIComponent(PASSWORD),
+        PIN,
+        `${PASSWORD}-cs`,
+      ].filter(secret => text.includes(secret))
+      expect(leaks).toEqual([])
+      // The publishable key the page sends to everyone is still a usable constant.
+      expect(text).toContain(API_KEY)
+    })
+  }
+
+  it('describes the password inputs by origin or shape, never as constants', () => {
+    const steps = analyse(REDACT, plaintextCapture()).flows.flows.flatMap(flow => flow.steps)
+    const constants = steps.flatMap(step => Object.entries(step.inputs)).filter(([, origin]) => origin.kind === 'constant')
+    expect(constants.map(([key]) => key).sort()).not.toEqual(expect.arrayContaining(['body./password']))
+    for (const [, origin] of constants)
+      expect(origin).not.toMatchObject({ value: PASSWORD })
+    const operations = analyse(REDACT, plaintextCapture()).operations
+    const passcode = operations.flatMap(op => op.headers).find(header => header.name === 'x-passcode')
+    expect(passcode?.schema.default).toBeUndefined()
+    expect(operations.flatMap(op => op.headers).find(header => header.name === 'x-api-key')?.schema.default).toBe(API_KEY)
   })
 })

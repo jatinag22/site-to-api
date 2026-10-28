@@ -25,14 +25,14 @@ function operation(exchanges: Exchange[], init: Partial<Operation> = {}): Operat
   }
 }
 
-function infer(exchanges: Exchange[], init: Partial<Operation> = {}, examples: 'masked' | 'raw' | 'none' = 'masked'): Operation {
+function infer(exchanges: Exchange[], init: Partial<Operation> = {}, examples: 'masked' | 'raw' | 'none' = 'masked', fields: string[] = []): Operation {
   const redactor = createRedactor({
     exchanges,
     config: {
       examples,
       maxExamples: 3,
       patterns: [],
-      fields: [],
+      fields,
     },
   })
   return inferOperationSchemas([
@@ -87,13 +87,16 @@ describe('inferOperationSchemas', () => {
       name.toLowerCase(),
       value,
     ]))
+    // A secret constant across two sessions (a reused profile): the redactor keeps it only because
+    // it is identical in every session, so it is a default only through the configured field.
     const result = infer([
-      exchange({ url: 'https://shop.test/api/x', requestHeaders: lower }),
+      exchange({ url: 'https://shop.test/api/x', requestHeaders: lower, sessionId: 's1' }),
       exchange({
         url: 'https://shop.test/api/x',
         requestHeaders: { ...lower, 'x-extra': '1' },
+        sessionId: 's2',
       }),
-    ])
+    ], {}, 'masked', ['x-csrf-token'])
     expect(result.headers.map(header => header.name)).toEqual([
       'x-app',
       'x-csrf-token',
@@ -113,6 +116,101 @@ describe('inferOperationSchemas', () => {
     expect(extra).toMatchObject({ required: false, constant: false })
     expect(isBrowserManagedHeader('sec-fetch-site')).toBe(true)
     expect(isBrowserManagedHeader('x-sec-fetch')).toBe(false)
+  })
+
+  it('treats a header as constant only when two or more sessions agree', () => {
+    // One session: a per-session CSRF token from the page repeats on every request of that session.
+    const single = infer([
+      exchange({
+        url: 'https://shop.test/api/x',
+        requestHeaders: { 'x-csrf-token': 'per-session-token', 'x-app': 'web' },
+      }),
+      exchange({
+        url: 'https://shop.test/api/x',
+        requestHeaders: { 'x-csrf-token': 'per-session-token', 'x-app': 'web' },
+      }),
+    ])
+    for (const header of single.headers) {
+      expect(header.constant).toBe(false)
+      expect(header.schema.default).toBeUndefined()
+      expect(header.schema['x-constant']).toBeUndefined()
+    }
+    expect(single.headers.find(header => header.name === 'x-csrf-token')?.schema.examples).toEqual(['<redacted: 17 base64 chars>'])
+    // Two sessions with the same value: a constant the client can default.
+    const two = infer([
+      exchange({
+        url: 'https://shop.test/api/x',
+        requestHeaders: { 'x-app': 'web' },
+        sessionId: 's1',
+      }),
+      exchange({
+        url: 'https://shop.test/api/x',
+        requestHeaders: { 'x-app': 'web' },
+        sessionId: 's2',
+      }),
+    ])
+    expect(two.headers[0]).toMatchObject({
+      constant: true,
+      schema: { 'default': 'web', 'x-constant': true },
+    })
+  })
+
+  it('never requires the page context headers a browser adds, even when sent every time', () => {
+    const result = infer([
+      exchange({
+        url: 'https://shop.test/api/x',
+        requestHeaders: { 'origin': 'https://shop.test', 'referer': 'https://shop.test/login', 'x-app': 'web' },
+      }),
+      exchange({
+        url: 'https://shop.test/api/x',
+        requestHeaders: { 'origin': 'https://shop.test', 'referer': 'https://shop.test/login', 'x-app': 'web' },
+      }),
+    ])
+    expect(result.headers.map(header => [header.name, header.required, header.constant])).toEqual([
+      ['origin', false, false],
+      ['referer', false, false],
+      ['x-app', true, false],
+    ])
+    expect(result.headers.find(header => header.name === 'referer')?.schema.examples).toEqual(['https://shop.test/login'])
+  })
+
+  it('never turns the capture browser\'s identity into constant defaults', () => {
+    const identity = {
+      'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36',
+      'accept-language': 'en-US,en;q=0.9',
+      'sec-ch-ua': '"Chromium";v="156"',
+      'x-app': 'web',
+    }
+    const result = infer([
+      exchange({ url: 'https://shop.test/api/x', requestHeaders: identity, sessionId: 's1' }),
+      exchange({ url: 'https://shop.test/api/x', requestHeaders: identity, sessionId: 's2' }),
+    ])
+    expect(result.headers.map(header => header.name)).toEqual(['user-agent', 'accept-language', 'x-app'])
+    const [agent, language, app] = result.headers
+    for (const header of [agent!, language!]) {
+      expect(header.constant).toBe(false)
+      expect(header.required).toBe(false)
+      expect(header.schema.default).toBeUndefined()
+      expect(header.schema['x-constant']).toBeUndefined()
+    }
+    // Still documented as observed values.
+    expect(agent!.schema.examples).toEqual([identity['user-agent']])
+    expect(app).toMatchObject({
+      constant: true,
+      schema: { default: 'web' },
+    })
+  })
+
+  it('infers query enums only for code-like names and values', () => {
+    const urls = [
+      'beverages',
+      'snacks',
+      'beverages',
+      'snacks',
+    ].map(category => `https://shop.test/api/x?category=${category}&q=${category}`)
+    const result = infer(urls.map(url => exchange({ url })))
+    expect(result.query.find(param => param.name === 'category')?.schema.enum).toEqual(['beverages', 'snacks'])
+    expect(result.query.find(param => param.name === 'q')?.schema.enum).toBeUndefined()
   })
 
   it('lists cookies by name only', () => {

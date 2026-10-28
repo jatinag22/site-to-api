@@ -23,12 +23,24 @@ export type StepLabel = (reference: string) => string
  */
 export function describeOrigin(origin: ValueOrigin, step: StepLabel = cellCode): string {
   switch (origin.kind) {
-    case 'step':
-      return `${step(origin.step)} → ${cellCode(origin.output)}${origin.transform === 'none'
-        ? ''
-        : ` (${origin.transform})`}`
+    case 'step': {
+      const notes = [
+        // `*` indexes an array: the value is one of the items, not the one the sample used.
+        ...(/\/\*(?:\/|$)/.test(origin.output)
+          ? ['one of the items']
+          : []),
+        ...(origin.transform === 'none'
+          ? []
+          : [origin.transform]),
+      ]
+      return `${step(origin.step)} → ${cellCode(origin.output)}${notes.length > 0
+        ? ` (${notes.join(', ')})`
+        : ''}`
+    }
     case 'html':
-      return `${step(origin.step)} → html ${cellCode(origin.selector)}${origin.attr
+      return `${step(origin.step)} → html ${origin.repeated === true
+        ? 'one of the elements matching '
+        : ''}${cellCode(origin.selector)}${origin.attr
         ? ` @${cellCode(origin.attr)}`
         : ''}`
     case 'user-input':

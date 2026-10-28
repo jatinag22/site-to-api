@@ -41,7 +41,10 @@ abbreviated), response (JSON / extract / text), needs (cookies, token, browser),
   ``sign-in-2.s2 (postApiAuthLogin) → body./token``. An origin marked `(substring)` means the
   request value contains the produced value rather than equalling it, e.g. an `authorization`
   header `Bearer <token>` built from `body./token`; other markers (`url-encoded`, `base64`,
-  `json-string`) name the encoding applied between response and request.
+  `json-string`) name the encoding applied between response and request. An output with `*`
+  (`body./items/*/id`) is marked `(one of the items)`: the value comes from any item of that
+  array, not the one the sample used; an HTML origin whose selector matches a repeated element
+  reads `html one of the elements matching <selector>`.
 - **Needs** ends with `(confirmed by probe)` when it comes from `probe.json` (`requires`), and
   with `(seen in capture)` when it lists the cookies the captured request was sent with, which
   may include ones it does not need. `nothing (confirmed by probe)` means the request works with

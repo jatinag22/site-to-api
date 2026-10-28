@@ -33,7 +33,7 @@ function fakeJwt(subject: string): string {
 
 /**
  * Per-session secrets: a password, a login cookie, a bearer token, a socket auth token, an API key.
- * (A secret-named value identical in every session is a constant by decision 0015, frames or not.)
+ * (Only a publishable key identical in every session is kept as a constant, frames or not: 0026.)
  */
 const SESSION_SECRETS = {
   a: {
@@ -149,8 +149,7 @@ function capture(): { exchanges: Exchange[], sessions: LoadedSession[] } {
   return { exchanges, sessions }
 }
 
-function analyse(config: ResolvedConfig['redact']): Analysis {
-  const input = capture()
+function analyse(config: ResolvedConfig['redact'], input = capture()): Analysis {
   const hosts = { include: [], exclude: [] }
   const { exchanges, botProtection } = classifyExchanges(input.exchanges, hosts)
   const sockets = channelExchanges(collectConnections(input.sessions))
@@ -268,5 +267,136 @@ describe('webSocket frames in the handoff folder', () => {
   it('copies frames as captured with redact.examples: raw, which the user chose', () => {
     const [channel] = analyse({ ...REDACT, examples: 'raw' }).channels ?? []
     expect(JSON.stringify(channel?.handshake)).toContain(SESSION_SECRETS.a.jwt)
+  })
+})
+
+describe('webSocket frames follow the fitting and credential rules (decision 0026)', () => {
+  /** Typed the same way in both captures: identical in every session, still a credential. */
+  const PASSWORD = 'Same-Pa55word-in-both'
+  const PUBLIC_KEY = 'pk_live_public_0123456789'
+  const PRODUCTS = ['Glass Jar Set 250 g', 'Masala Makhana 250 g', 'Rock Salt 1 kg']
+
+  function fittedCapture(): { exchanges: Exchange[], sessions: LoadedSession[] } {
+    const exchanges: Exchange[] = []
+    const sessions: LoadedSession[] = []
+    for (const [offset, sessionId] of (['a', 'b'] as const).entries()) {
+      const start = 1_700_000_000_000 + offset * 1_000_000
+      exchanges.push(
+        exchange({
+          sessionId,
+          url: `https://${HOST}/`,
+          resourceType: 'document',
+          startedAt: start,
+          responseBody: textBody('<html><body>shop</body></html>'),
+        }),
+        exchange({
+          sessionId,
+          url: `wss://${HOST}/live`,
+          resourceType: 'websocket',
+          startedAt: start + 1_000,
+          status: 101,
+        }),
+      )
+      const orders = PRODUCTS.flatMap((name, index) => [
+        [
+          '<',
+          JSON.stringify({
+            type: 'order',
+            status: index % 2 === 0
+              ? 'PAID'
+              : 'SHIPPED',
+            item: { name, quantity: index + 1 },
+          }),
+        ],
+        [
+          '<',
+          JSON.stringify({
+            type: 'order',
+            status: index % 2 === 0
+              ? 'SHIPPED'
+              : 'PAID',
+            item: { name, quantity: index + 2 },
+          }),
+        ],
+      ] as Array<['<', string]>)
+      sessions.push(loadedSession(sessionId, socketEvents({
+        url: `wss://${HOST}/live`,
+        pageUrl: `https://${HOST}/account`,
+        socket: 0,
+        openedAt: start + 1_000,
+        frames: [
+          [
+            '>',
+            JSON.stringify({
+              type: 'login',
+              username: 'jane',
+              password: PASSWORD,
+              pwd: PASSWORD,
+              apiKey: PUBLIC_KEY,
+            }),
+          ],
+          [
+            '<',
+            JSON.stringify({
+              type: 'me',
+              user: {
+                id: 'usr_jane_0001',
+                name: 'Jane Doe',
+                displayName: 'Jane D',
+                tokenType: 'Bearer',
+              },
+            }),
+          ],
+          ...orders,
+        ],
+      })))
+    }
+    return { exchanges, sessions }
+  }
+
+  for (const examples of ['masked', 'none'] as const) {
+    it(`write no constant password and no account field, with redact.examples: ${examples}`, async () => {
+      const text = await emitAll(analyse({ ...REDACT, examples }, fittedCapture()), examples)
+      expect(text).toContain('asyncapi: 3.0.0')
+      expect([
+        PASSWORD,
+        'usr_jane_0001',
+        'Jane Doe',
+        'Jane D',
+      ].filter(secret => text.includes(secret))).toEqual([])
+    })
+  }
+
+  it('masks account fields by name, keeps the auth scheme and the publishable key', () => {
+    const [channel] = analyse(REDACT, fittedCapture()).channels ?? []
+    const login = channel?.messages.find(message => message.id === 'sendLogin')
+    expect(login?.examples).toEqual([
+      {
+        type: 'login',
+        username: 'xxxx',
+        password: '<redacted: 21 base64 chars>',
+        pwd: '<redacted: 21 base64 chars>',
+        apiKey: PUBLIC_KEY,
+      },
+    ])
+    const me = channel?.messages.find(message => message.id === 'receiveMe')
+    expect(me?.examples).toEqual([
+      {
+        type: 'me',
+        user: {
+          id: 'xxx_xxxx_0000',
+          name: 'Xxxx Xxx',
+          displayName: 'Xxxx X',
+          tokenType: 'Bearer',
+        },
+      },
+    ])
+  })
+
+  it('infers enums in message schemas for codes only, never for product names', () => {
+    const [channel] = analyse(REDACT, fittedCapture()).channels ?? []
+    const order = channel?.messages.find(message => message.id === 'receiveOrder')?.schema
+    expect(order?.properties?.status?.enum).toEqual(['PAID', 'SHIPPED'])
+    expect(order?.properties?.item?.properties?.name).toEqual({ type: 'string' })
   })
 })
