@@ -18,7 +18,7 @@ import { createHtmlLocator, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
 import { createRedactor } from '../analyze/redact'
 import { inferOperationSchemas } from '../analyze/schema'
-import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findSourceEndpoints } from '../analyze/source'
+import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findSourceEndpoints, screenSourceRoutes } from '../analyze/source'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
 import { writeFlows } from '../emit/flows'
 import { clientGap, writeHandoffDocs } from '../emit/handoff'
@@ -202,7 +202,11 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   log(`Loaded ${loaded.sessions.length} session(s), ${loaded.exchanges.length} requests`)
   const classified = classifyExchanges(loaded.exchanges, config.hosts)
   const resolver = await createSourceResolver(loaded.sessions)
-  const sourceRoutes = await findSourceEndpoints(loaded.sessions)
+  const screened = screenSourceRoutes(
+    await findSourceEndpoints(loaded.sessions),
+    new Set(loaded.exchanges.map(exchange => exchange.request.host)),
+  )
+  const sourceRoutes = screened.routes
   const staticStrings = await collectStaticStrings(loaded.sessions)
   const htmlLocator = createHtmlLocator()
 
@@ -222,6 +226,9 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   operations = inferOperationSchemas(operations, redactor)
   const warnings = [
     ...loaded.warnings,
+    ...(screened.warning === null
+      ? []
+      : [screened.warning]),
     // WebSocket hosts count as captured: a pattern that only matches a socket host is not a typo.
     ...unmatchedHostPatterns([
       ...loaded.exchanges,

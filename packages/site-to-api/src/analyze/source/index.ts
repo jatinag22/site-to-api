@@ -5,5 +5,6 @@ export { findSourceEndpoints } from './endpoints'
  */
 export { buildExcerpt } from './excerpt'
 export { createSourceResolver } from './resolver'
+export { screenSourceRoutes } from './screen'
 export { collectStaticStrings } from './strings'
 export { createWrapperAwareResolver } from './wrappers'
