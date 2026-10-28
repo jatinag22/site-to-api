@@ -17,6 +17,8 @@ export const GRAPHQL_FIELDS = [
 ] as const
 
 const SHA256 = /^[0-9a-f]{64}$/i
+/** A GraphQL `Name` (spec 2.1.9). */
+const GRAPHQL_NAME = /^[_A-Z]\w*$/i
 
 type Fields = Partial<Record<(typeof GRAPHQL_FIELDS)[number], unknown>>
 
@@ -61,7 +63,8 @@ function readFields(fields: Fields): Pick<GraphqlRequest, 'operationName' | 'doc
   // unless a persisted-query hash says otherwise.
   if (document !== null && operations === null && persistedQuery === null)
     return null
-  const declaredName = typeof fields.operationName === 'string' && fields.operationName !== ''
+  // Only a GraphQL name: anything else (`a?debug=1`, `{x}`) would end up in the spec path and URL.
+  const declaredName = typeof fields.operationName === 'string' && GRAPHQL_NAME.test(fields.operationName)
     ? fields.operationName
     : null
   const hasVariables = 'variables' in fields && (fields.variables === null || isRecord(fields.variables))
@@ -98,7 +101,7 @@ function pathOperation(path: string): { name: string, hash: string } | null {
   const segments = path.split('/').filter(segment => segment !== '')
   const hash = segments.at(-1)
   const name = segments.at(-2)
-  if (hash === undefined || name === undefined || !SHA256.test(hash) || !/^[_A-Z]\w*$/i.test(name))
+  if (hash === undefined || name === undefined || !SHA256.test(hash) || !GRAPHQL_NAME.test(name))
     return null
   return { name, hash }
 }
@@ -117,9 +120,23 @@ function queryFields(query: NameValue[]): Fields {
   return fields
 }
 
-function looksLikeGraphqlResponse(exchange: Exchange): boolean {
+const RESPONSE_KEYS: ReadonlySet<string> = new Set(['data', 'errors', 'extensions'])
+
+/** `errors` as GraphQL defines it: a list of objects that each have a string `message`. */
+function isGraphqlErrors(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0 && value.every(item => isRecord(item) && typeof item.message === 'string')
+}
+
+/**
+ * The response is shaped like a GraphQL response (only `data`, `errors` and `extensions`), and
+ * says so beyond a `data` envelope that many REST APIs use too: either the request carried a
+ * GraphQL field, or the response has GraphQL-shaped `errors`.
+ */
+function looksLikeGraphqlResponse(exchange: Exchange, requestHasGraphqlField: boolean): boolean {
   const json = exchange.response.body?.json
-  return isRecord(json) && ('data' in json || 'errors' in json)
+  if (!isRecord(json) || !('data' in json || 'errors' in json) || !Object.keys(json).every(key => RESPONSE_KEYS.has(key)))
+    return false
+  return requestHasGraphqlField || isGraphqlErrors(json.errors)
 }
 
 function finish(
@@ -192,9 +209,10 @@ function singleRequest(exchange: Exchange, json: unknown, query: Fields): Graphq
 /** The path names the operation and the response is GraphQL-shaped: still one operation. */
 function pathRequest(exchange: Exchange, json: unknown, query: Fields): GraphqlRequest | null {
   const fromPath = pathOperation(exchange.request.path)
-  if (fromPath === null || !looksLikeGraphqlResponse(exchange))
-    return null
   const inBody = isRecord(json)
+  const hasGraphqlField = sentFields(query).length > 0 || (inBody && sentFields(json).length > 0)
+  if (fromPath === null || !looksLikeGraphqlResponse(exchange, hasGraphqlField))
+    return null
   return finish({
     operationName: fromPath.name,
     document: null,

@@ -109,6 +109,26 @@ describe('detectGraphqlRequests: JSON bodies', () => {
     expect(detectGraphqlRequests(shortHash)).toBeNull()
     expect(detectGraphqlRequests(exchange({ url: 'https://shop.test/api/items' }))).toBeNull()
   })
+
+  it('does not take a JSON object in a `query` field for an anonymous query', () => {
+    const bulk = exchange({
+      method: 'POST',
+      url: 'https://shop.test/api/bulk',
+      requestBody: jsonBody({ query: '{"status":"old"}', action: 'archive' }),
+    })
+    expect(detectGraphqlRequests(bulk)).toBeNull()
+    const search = exchange({ url: `https://shop.test/items?query=${encodeURIComponent('{"name":"x"}')}` })
+    expect(detectGraphqlRequests(search)).toBeNull()
+  })
+
+  it('treats an operationName that is not a GraphQL name as no name', () => {
+    const [request] = detectGraphqlRequests(graphqlPost({ operationName: 'a?debug=1', variables: {}, hash: HASH })) ?? []
+    expect(request).toMatchObject({ operationName: null, key: `sha256:${HASH}` })
+    const [braces] = detectGraphqlRequests(graphqlPost({ operationName: '{x}', query: 'query Real { a }' })) ?? []
+    // The document still names its only operation.
+    expect(braces?.operationName).toBe('Real')
+    expect(detectGraphqlRequests(graphqlPost({ operationName: 'a b', variables: {} }))).toBeNull()
+  })
 })
 
 describe('detectGraphqlRequests: query strings and paths', () => {
@@ -157,18 +177,59 @@ describe('detectGraphqlRequests: query strings and paths', () => {
     expect(other?.pathNamesOperation).toBe(false)
   })
 
-  it('accepts the path form alone only with a GraphQL-shaped response', () => {
+  it('accepts the path form alone only with a GraphQL field in the request or GraphQL errors', () => {
     const answered = exchange({
-      url: `https://api.example.test/api/v3/Header/${HASH}?locale=en`,
+      url: `https://api.example.test/api/v3/Header/${HASH}?operationName=Header&locale=en`,
       responseBody: jsonBody({
         data: { header: {} },
       }),
     })
     expect(detectGraphqlRequests(answered)?.[0]).toMatchObject({ operationName: 'Header', pathNamesOperation: true, transport: 'query' })
+    const failed = exchange({
+      url: `https://api.example.test/api/v3/Header/${HASH}`,
+      responseBody: jsonBody({
+        errors: [
+          { message: 'PersistedQueryNotFound' },
+        ],
+      }),
+    })
+    expect(detectGraphqlRequests(failed)?.[0]?.operationName).toBe('Header')
     const file = exchange({
       url: `https://cdn.example.test/assets/Bundle/${HASH}`,
       responseBody: jsonBody({ ok: true }),
     })
     expect(detectGraphqlRequests(file)).toBeNull()
+  })
+
+  it('keeps REST endpoints with a hash id and a `data` envelope out', () => {
+    const rest = exchange({
+      url: `https://api.example.test/api/tx/${HASH}`,
+      responseBody: jsonBody({
+        data: { amount: 10 },
+      }),
+    })
+    expect(detectGraphqlRequests(rest)).toBeNull()
+    const named = exchange({
+      url: `https://api.example.test/api/Transaction/${HASH}`,
+      responseBody: jsonBody({
+        data: { amount: 10 },
+      }),
+    })
+    expect(detectGraphqlRequests(named)).toBeNull()
+    const extra = exchange({
+      url: `https://api.example.test/api/Transaction/${HASH}?operationName=Transaction`,
+      responseBody: jsonBody({
+        data: {},
+        meta: { page: 1 },
+      }),
+    })
+    expect(detectGraphqlRequests(extra)).toBeNull()
+    const loose = exchange({
+      url: `https://api.example.test/api/Transaction/${HASH}`,
+      responseBody: jsonBody({
+        errors: ['not found'],
+      }),
+    })
+    expect(detectGraphqlRequests(loose)).toBeNull()
   })
 })

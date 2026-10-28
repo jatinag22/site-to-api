@@ -57,28 +57,64 @@ const OPERATION_KEYWORDS = new Set(['query', 'mutation', 'subscription'])
 const CLOSING: Record<string, string> = { '{': '}', '(': ')', '[': ']' }
 
 /**
+ * Whether `tokens[i]` may stand where it is. Selection sets hold only fields, aliases, fragment
+ * spreads and directives; strings, numbers and lists appear only inside arguments or variable
+ * definitions (in parentheses). A `:` always follows a name (alias, argument, object field or
+ * variable), and a selection set is never empty. This is what tells a GraphQL document from a
+ * JSON object such as `{"status":"active"}` sent in a field called `query`.
+ */
+function fitsHere(tokens: Token[], i: number, stack: readonly string[]): boolean {
+  const token = tokens[i]!
+  const inParentheses = stack.includes(')')
+  if (token.kind === 'string' || token.kind === 'number' || token.text === '[')
+    return inParentheses
+  if (token.text === ':')
+    return tokens[i - 1]?.kind === 'name'
+  if (token.text === '{' && !inParentheses) {
+    const next = tokens[i + 1]
+    return next !== undefined && (next.kind === 'name' || next.text === '...')
+  }
+  return true
+}
+
+/**
  * Index just past the definition that starts at `start`: everything up to and including the
- * selection set that closes it. -1 when brackets do not balance or no selection set follows.
+ * selection set that closes it. -1 when brackets do not balance, no selection set follows, or a
+ * token cannot be part of a GraphQL definition (see {@link fitsHere}).
  */
 function definitionEnd(tokens: Token[], start: number): number {
   const stack: string[] = []
   for (let i = start; i < tokens.length; i++) {
-    const text = tokens[i]!.text
-    if (tokens[i]!.kind !== 'punct')
-      continue
-    const closing = CLOSING[text]
-    if (closing !== undefined) {
-      stack.push(closing)
-      continue
-    }
-    if (text === '}' || text === ')' || text === ']') {
-      if (stack.pop() !== text)
-        return -1
-      if (stack.length === 0 && text === '}')
-        return i + 1
-    }
+    if (!fitsHere(tokens, i, stack))
+      return -1
+    const step = bracketStep(tokens[i]!, stack)
+    if (step === 'unbalanced')
+      return -1
+    if (step === 'closed')
+      return i + 1
   }
   return -1
+}
+
+/**
+ * Applies one token to the bracket stack: `closed` when it closes the definition's outermost
+ * selection set, `unbalanced` when it closes a bracket that is not open.
+ */
+function bracketStep(token: Token, stack: string[]): 'open' | 'closed' | 'unbalanced' {
+  if (token.kind !== 'punct')
+    return 'open'
+  const closing = CLOSING[token.text]
+  if (closing !== undefined) {
+    stack.push(closing)
+    return 'open'
+  }
+  if (token.text !== '}' && token.text !== ')' && token.text !== ']')
+    return 'open'
+  if (stack.pop() !== token.text)
+    return 'unbalanced'
+  return stack.length === 0 && token.text === '}'
+    ? 'closed'
+    : 'open'
 }
 
 function operationType(keyword: string): OperationDefinition['type'] {

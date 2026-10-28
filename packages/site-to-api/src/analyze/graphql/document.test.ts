@@ -36,6 +36,26 @@ describe('readOperations', () => {
     expect(readOperations('{ a(x: "unterminated) }')).toBeNull()
     expect(readOperations('query Q { a } ; ')).toBeNull()
   })
+
+  it('rejects JSON objects sent in a `query` field', () => {
+    expect(readOperations('{"status":"active","limit":10}')).toBeNull()
+    expect(readOperations('{}')).toBeNull()
+    expect(readOperations('{"$and":[{"a":1}]}')).toBeNull()
+    expect(readOperations('{"name":"x"}')).toBeNull()
+    expect(readOperations('{ status: "old" }')).toBeNull()
+    expect(readOperations('{ a { } }')).toBeNull()
+    expect(readOperations('{ 1 }')).toBeNull()
+    expect(readOperations('query Q { : a }')).toBeNull()
+  })
+
+  it('still accepts strings, numbers, lists and object values inside arguments', () => {
+    expect(readOperations('{ items(filter: { status: "old", ids: [1, 2] }, first: 10) { id alias: name } }')).toEqual([
+      { type: 'query', name: null },
+    ])
+    expect(readOperations('query Q($ids: [ID!]! = []) { a(o: {}) { ...F } }')).toEqual([
+      { type: 'query', name: 'Q' },
+    ])
+  })
 })
 
 describe('selectOperation', () => {
