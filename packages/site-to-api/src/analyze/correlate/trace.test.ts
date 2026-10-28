@@ -4,6 +4,7 @@ import { Buffer } from 'node:buffer'
 import { describe, expect, it } from 'vitest'
 import { exchange, formBody, jsonBody, textBody } from '../../../test/helpers'
 import { CLIENT_VERSION, CONSTANT_API_KEY, fakeHtmlLocator, ITEM_ID, shopCapture } from '../../../test/scenarios'
+import { createHtmlLocator } from '../html'
 import { traceValues } from './index'
 
 const noLocator: HtmlLocator = () => null
@@ -248,6 +249,49 @@ describe('traceValues: response producers', () => {
         attr: null,
         pattern: null,
       },
+    })
+  })
+
+  it('does not trace a short number to a page that contains it by chance', () => {
+    const page = exchange({
+      url: 'https://www.example.test/',
+      startedAt: 1,
+      kind: 'page',
+      responseBody: textBody('<meta name="viewport" content="width=device-width, initial-scale=1"><p>Welcome</p>'),
+    })
+    // One JSON response returned `1`, so the small-integer rule lets `page=1` be traced at all.
+    const meta = exchange({
+      url: 'https://api.example.test/meta',
+      startedAt: 2,
+      responseBody: jsonBody({ firstPage: 1 }),
+    })
+    const list = exchange({ url: 'https://api.example.test/products?page=1', startedAt: 3 })
+    const origin = originAt(trace([page, meta, list], {
+      htmlLocator: createHtmlLocator(),
+    }), list, '{"in":"query","name":"page"}')
+    expect(origin).toEqual({
+      kind: 'response',
+      exchangeId: meta.id,
+      location: { in: 'body', pointer: '/firstPage' },
+      transform: 'none',
+    })
+  })
+
+  it('still traces a value of the minimum length to the page attribute it came from', () => {
+    const page = exchange({
+      url: 'https://www.example.test/stores',
+      startedAt: 1,
+      kind: 'page',
+      responseBody: textBody('<ul id="stores"><li><a href="/s/north" data-store="nrth">North</a></li></ul>'),
+    })
+    const call = exchange({ url: 'https://api.example.test/stock?store=nrth', startedAt: 2 })
+    expect(originAt(trace([page, call], {
+      htmlLocator: createHtmlLocator(),
+    }), call, '{"in":"query","name":"store"}')).toMatchObject({
+      kind: 'response',
+      exchangeId: page.id,
+      location: { in: 'html', attr: 'data-store', pattern: null },
+      transform: 'none',
     })
   })
 

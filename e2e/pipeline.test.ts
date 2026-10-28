@@ -316,6 +316,13 @@ describe('flows and session needs', () => {
     expect(files.get('client/README.md')).not.toContain('Cookies the API needs')
   })
 
+  it('does not read a page number from the viewport meta tag by coincidence', () => {
+    const inputs = analysis.flows.flows.flatMap(flow => flow.steps.flatMap(step => Object.entries(step.inputs)))
+    expect(inputs.filter(([name, origin]) => name === 'query.page' && origin.kind === 'html' && origin.selector.includes('viewport'))).toEqual([])
+    expect(files.get('client/README.md')).not.toContain('meta[name="viewport"]')
+    expect(files.get('client/README.md')).not.toContain('initial-scale')
+  })
+
   it('reports the script-set store cookie as set by the page, with a value a wrapper can derive', () => {
     const session = analysis.flows.session.find(entry => entry.host === host)
     expect(session?.cookies.find(cookie => cookie.name === 'pm_store')?.source).toBe('script')
