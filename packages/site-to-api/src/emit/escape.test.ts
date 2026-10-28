@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { injected, renderMarkdown } from '../../test/markdown'
 import { anchor, cellCode, code, codeBlock, commentText, oneLine, text } from './escape'
 
 describe('oneLine', () => {
@@ -66,7 +67,7 @@ describe('code', () => {
 
 describe('cellCode', () => {
   it('escapes pipes so the value stays in one table cell', () => {
-    expect(cellCode('a|b')).toBe('`a\\|b`')
+    expect(cellCode('a|b')).toBe('<code>a&#124;b</code>')
   })
 })
 
@@ -83,5 +84,23 @@ describe('anchor', () => {
     expect(anchor('a" onmouseover="x')).toBe('a-onmouseover-x')
     expect(anchor(')](https://evil')).toBe('https-evil')
     expect(anchor('***')).toBe('section')
+  })
+})
+
+describe('escaping: second review', () => {
+  it('keeps a value with a backslash before a pipe inside its table cell', () => {
+    const hostile = '/p/x\\| <img src=x> [click](https://evil.example) |'
+    const table = ['| a | b |', '|---|---|', `| ${cellCode(hostile)} | end |`].join('\n')
+    const html = renderMarkdown(table)
+    expect(injected(html)).toEqual([])
+    expect(html.match(/<td>/g)).toHaveLength(2)
+  })
+
+  it('keeps ordinary values as readable code spans', () => {
+    expect(cellCode('/api/products/{id}')).toBe('`/api/products/{id}`')
+  })
+
+  it('does not turn an email address into a link', () => {
+    expect(renderMarkdown(text('contact evil@attacker.example'))).not.toContain('mailto:')
   })
 })

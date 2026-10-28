@@ -6,7 +6,7 @@
 import type { Analysis, ResolvedConfig } from '../packages/site-to-api/src'
 import type { FixtureSite } from './fixture-site/server'
 import { existsSync } from 'node:fs'
-import { cp, readdir, readFile, rm } from 'node:fs/promises'
+import { cp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join, relative } from 'pathe'
 import { chromium } from 'playwright'
@@ -234,6 +234,32 @@ describe('generated client', () => {
     })
     const diagnostics = ts.getPreEmitDiagnostics(program).map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n'))
     expect(diagnostics).toEqual([])
+  })
+
+  it('lets callers use an SDK function without passing the captured constant headers', async () => {
+    const usage = join(outDir, 'usage-check.ts')
+    await writeFile(usage, [
+      `import { createSiteClient } from './client'`,
+      `const { sdk } = createSiteClient({ host: ${JSON.stringify(host)} })`,
+      `export const pending = sdk.${operation('GET', '/api/categories').operationId}({})`,
+      '',
+    ].join('\n'))
+    try {
+      const program = ts.createProgram([usage], {
+        strict: true,
+        noEmit: true,
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        skipLibCheck: true,
+        lib: ['lib.es2023.d.ts', 'lib.dom.d.ts'],
+      })
+      const diagnostics = ts.getPreEmitDiagnostics(program).map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n'))
+      expect(diagnostics).toEqual([])
+    }
+    finally {
+      await rm(usage, { force: true })
+    }
   })
 
   it('calls the live site through a browser-backed session', async () => {

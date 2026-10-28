@@ -136,13 +136,21 @@ function parameter(where: 'path' | 'query' | 'header' | 'cookie', param: ParamIn
   }
 }
 
+function hasDefault(header: Operation['headers'][number]): boolean {
+  return header.constant && header.schema.default !== undefined
+}
+
 function parameters(operation: Operation, origins: Map<string, ValueOrigin>): Json[] {
   return [
     ...operation.pathParams.map(param => parameter('path', { name: param.name, required: true, schema: param.schema }, origins)),
     ...operation.query.map(param => parameter('query', param, origins)),
     ...operation.headers
       .filter(header => !NOT_PARAMETERS.has(header.name))
-      .map(header => parameter('header', header, origins, header.constant
+      // A constant header with a known value is sent by the generated client itself, so callers
+      // must not be forced to pass it: required in the capture, optional in the spec.
+      .map(header => parameter('header', hasDefault(header)
+        ? { ...header, required: false }
+        : header, origins, header.constant
         ? { 'x-site-to-api-constant': true }
         : {})),
     // Cookie values never appear in the spec: the schema is a bare string.

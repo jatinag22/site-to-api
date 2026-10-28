@@ -166,6 +166,76 @@ describe('createRedactor: rules', () => {
     expect(r2.value('summer-sale-2026', { in: 'path', name: 'slug' })).toBe('summer-sale-2026')
   })
 
+  it('learns base64 tokens with padding, `+` and `/` after a credential word, in every encoding', () => {
+    const padded = 'dGhpcyBpcyBhIHNlY3JldCB0b2tlbg=='
+    const standard = 'Xy7+Qw9/Zt3=Lm2Pk8Rs'
+    const r2 = redactor(['s1', 's2'].flatMap(sessionId => [
+      exchange({ sessionId, url: `https://shop.test/api/reset/${encodeURIComponent(padded)}` }),
+      exchange({ sessionId, url: `https://shop.test/api/reset/${encodeURIComponent(standard)}` }),
+      exchange({ sessionId, url: 'https://shop.test/api/reset/dGhpcyBpcyBhIHNlY3JldCB0b2tlbg%3d%3d' }),
+    ]))
+    for (const text of [
+      padded,
+      encodeURIComponent(padded),
+      'dGhpcyBpcyBhIHNlY3JldCB0b2tlbg%3d%3d',
+      standard,
+      encodeURIComponent(standard),
+    ]) {
+      expect(r2.value(`see https://shop.test/api/reset/${text} now`, { in: 'response-body' }), text).not.toContain(text)
+      expect(r2.value(text, { in: 'path', name: 'resetId' }), text).toMatch(/^<redacted/)
+    }
+  })
+
+  it('learns short one-time codes after a credential word', () => {
+    const r2 = redactor(['s1', 's2'].map(sessionId => exchange({ sessionId, url: 'https://shop.test/reset/847263' })))
+    expect(r2.value('Your code is 847263.', { in: 'response-body' })).toBe('Your code is <redacted: 6-digit number>.')
+  })
+
+  it('keeps route names after credential words readable in every response', () => {
+    const slugs = [
+      'registration-form',
+      'organization-settings',
+      'password-requirements',
+      'organization-identifier',
+      'subscription-preferences',
+      'international-shipping',
+    ]
+    const r2 = redactor(['auth', 'signin', 'confirm', 'verify'].flatMap(word => slugs.map(slug => exchange({ url: `https://shop.test/${word}/${slug}` }))))
+    for (const slug of slugs) {
+      expect(r2.value(`Complete your ${slug} today`, { in: 'response-body' })).toBe(`Complete your ${slug} today`)
+      expect(r2.value(slug, { in: 'path', name: 'page' })).toBe(slug)
+    }
+  })
+
+  it('keeps public random ids from paths (hex, encoded ids, words with numbers) like UUIDs', () => {
+    const gid = btoa('gid://shopify/Product/1234567890')
+    const ids = [
+      '5f2b8c1e9a7d4f3b2c1a0e9d',
+      'd670460b4b4aece5915caf5c68d12f560a9fe3e4',
+      gid,
+      'iPhone15ProMax256GB',
+    ]
+    const r2 = redactor(ids.map(id => exchange({
+      url: `https://shop.test/api/products/${encodeURIComponent(id)}`,
+      responseBody: jsonBody({ id, name: 'Lamp' }),
+    })))
+    for (const id of ids) {
+      expect(r2.json({ id }, { in: 'response-body' })).toEqual({ id })
+      expect(r2.value(`https://shop.test/api/products/${id}`, { in: 'text' })).toBe(`https://shop.test/api/products/${id}`)
+      expect(r2.value(id, { in: 'path', name: 'productId' })).toBe(id)
+    }
+  })
+
+  it('treats opaque random path segments as secret unless identical in every session', () => {
+    const perSession = redactor([
+      exchange({ sessionId: 's1', url: 'https://shop.test/files/aB3dE5gH7jK9mN1pQ2xY' }),
+      exchange({ sessionId: 's2', url: 'https://shop.test/files/Zx9Qw8Er7Ty6Ui5Op4As' }),
+    ])
+    expect(perSession.value('link: /files/aB3dE5gH7jK9mN1pQ2xY', { in: 'response-body' })).toBe('link: /files/<redacted: 20 base64 chars>')
+    const shared = redactor(['s1', 's2'].map(sessionId => exchange({ sessionId, url: 'https://shop.test/files/aB3dE5gH7jK9mN1pQ2xY' })))
+    expect(shared.value('aB3dE5gH7jK9mN1pQ2xY', { in: 'path', name: 'fileId' })).toBe('aB3dE5gH7jK9mN1pQ2xY')
+  })
+
   it('removes known secrets wherever they are echoed', () => {
     expect(r.value(`echo ${SECRETS.sessionCookie} end`, { in: 'response-body' })).toBe('echo <redacted: 25 base64 chars> end')
     expect(r.value(SECRETS.setCookie, { in: 'body', name: 'value' })).toMatch(/^<redacted/)

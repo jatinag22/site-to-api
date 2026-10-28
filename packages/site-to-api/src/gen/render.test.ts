@@ -177,11 +177,12 @@ describe('renderReadme', () => {
         cookies: [
           { name: 'sid', setBy: 'postLogin', source: 'response' },
           { name: '_abck', setBy: null, source: 'browser' },
+          { name: 'device', setBy: null, source: 'unknown' },
         ],
       }),
     ])
     expect(readme).toContain('- Session: cookies set by the site\'s own responses (confirmed by `probe`).')
-    expect(readme).toContain('`sid` (set by `postLogin`), `_abck` (set by the browser, not by an API response)')
+    expect(readme).toContain('`sid` (set by `postLogin`), `_abck` (set by the browser, not by an API response), `device` (present in the browser profile; origin unknown)')
     expect(readme).toContain('createSiteClient({ host: "a.example.com", jar })')
     expect(readme).toContain('`extractGetList(text)` → `GetListRecord[]`')
   })

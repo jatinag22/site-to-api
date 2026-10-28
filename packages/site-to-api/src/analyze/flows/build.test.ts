@@ -439,7 +439,8 @@ describe('buildFlows: segments and merging', () => {
       [
         'cookie.example.test',
         'cookies',
-        ['sid:script'],
+        // Too short to trace and set by no response: present in the profile, origin unknown.
+        ['sid:unknown'],
       ],
       ['plain.example.test', 'none', []],
       ['token.example.test', 'token', []],
@@ -497,6 +498,79 @@ describe('buildFlows: cookies set by page scripts', () => {
       { name: '_px3', setBy: null, source: 'browser' },
     ])
     expect(bot?.requires).toBe('browser')
+  })
+})
+
+describe('buildFlows: cookies nothing in the capture produced', () => {
+  /** Two sessions from one reused browser profile: `sid` is the same login cookie in both. */
+  function twoSessions(hosts: readonly string[], cookieFor: (host: string, sessionId: string) => Record<string, string>): FlowsDocument['session'] {
+    const exchanges: Exchange[] = []
+    const operations: Operation[] = []
+    for (const host of hosts) {
+      const calls = ['s1', 's2'].map((sessionId, index) => exchange({
+        sessionId,
+        url: `https://${host}/api/account`,
+        startedAt: 1_000 * (index + 1),
+        cookies: cookieFor(host, sessionId),
+        responseBody: jsonBody({ ok: true }),
+      }))
+      exchanges.push(...calls)
+      operations.push(op(`getAccount_${host}`, calls, {
+        cookies: Object.keys(cookieFor(host, 's1')).map(name => ({ name, required: true, schema: {} })),
+      }))
+    }
+    const sessions = [
+      loaded('s1', []),
+      loaded('s2', []),
+    ]
+    const traces = traceValues({
+      exchanges,
+      sessions,
+      htmlLocator: fakeHtmlLocator,
+      staticStrings: new Set(),
+      minValueLength: 4,
+    })
+    return build(exchanges, operations, sessions, traces).session
+  }
+
+  it('reports a shared cookie no response or script produced as unknown, not script, and needs no browser for it', () => {
+    const session = twoSessions(['profile.example.test'], () => ({ sid: 'Lg7Hq2Vx9Kd4Pw1Z' }))
+    expect(session).toEqual([
+      {
+        host: 'profile.example.test',
+        requires: 'cookies',
+        cookies: [
+          { name: 'sid', setBy: null, source: 'unknown' },
+        ],
+        botProtection: [],
+        probed: false,
+      },
+    ])
+  })
+
+  it('keys cookie origins by host and name', () => {
+    // `vid` is opaque and different per session on one host, and constant on the other.
+    const session = twoSessions(['a.example.test', 'b.example.test'], (host, sessionId) => ({
+      vid: host === 'a.example.test'
+        ? `Qm9vdHN0cmFwcGVk${sessionId}VmFsdWU5`
+        : 'Lg7Hq2Vx9Kd4Pw1Z',
+    }))
+    expect(session.map(entry => [
+      entry.host,
+      entry.requires,
+      entry.cookies.map(cookie => `${cookie.name}:${cookie.source}`),
+    ])).toEqual([
+      [
+        'a.example.test',
+        'browser',
+        ['vid:browser'],
+      ],
+      [
+        'b.example.test',
+        'cookies',
+        ['vid:unknown'],
+      ],
+    ])
   })
 })
 
