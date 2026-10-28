@@ -31,3 +31,4 @@ or `Proposed`.
 | [0021](0021-path-token-tiers-and-cookie-origins.md) | Three tiers of path segments; cookie origins from evidence | Accepted |
 | [0022](0022-binding-scope-by-security-origin.md) | Judge instrumentation calls by the caller's security origin | Accepted |
 | [0023](0023-websocket-channels.md) | WebSocket channels in `build`, as AsyncAPI 3.0 | Accepted |
+| [0026](0026-fitting-and-credential-rules.md) | Fit output to the site, not the samples; credentials are never constants (refines 0015) | Accepted |
