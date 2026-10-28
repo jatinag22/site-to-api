@@ -1,4 +1,4 @@
-# 0022 Generated client: request validation, `.js` imports, auth and HTML values
+# 0024 Generated client: request validation, `.js` imports, auth and HTML values
 
 Status: Accepted (2026-10-28). Refines 0010.
 
