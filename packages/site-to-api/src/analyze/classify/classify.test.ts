@@ -516,6 +516,36 @@ describe('classifyExchanges: telemetry and mirrors', () => {
     ])
     expect(result.exchanges[6]!.kindReason).toBe('fallback mirror of app1-dsn.algolia.net, which the specs describe')
   })
+
+  it('drops ad, RUM and tag-manager hosts, including the ones named by convention', () => {
+    const urls = [
+      'https://logx.optimizely.com/v1/events',
+      'https://app.contentsquare.com/',
+      'https://asia.creativecdn.com/tags/v2',
+      'https://c.go-mpulse.net/api/config.json',
+      'https://c.amazon-adsystem.com/aax2/apstag.js',
+      'https://sdk-api-v1.singular.net/api/v1/event',
+      'https://pixel-config.reddit.com/pixels/t2_x/config',
+      'https://sgtm.shop.test/g/collect',
+      'https://unagi.amazon.in/1/events/com.amazon.csm.csa.prod',
+      'https://unagi-na.amazon.com/1/events/x',
+    ]
+    expect(kinds([
+      page(),
+      ...urls.map(url => on({
+        method: 'POST',
+        url,
+        responseBody: jsonBody({}),
+      })),
+    ]).slice(1)).toEqual(urls.map(() => 'noise'))
+    expect(kinds([
+      page(),
+      on({
+        url: 'https://www.amazon.in/api/cart',
+        responseBody: jsonBody({}),
+      }),
+    ])).toEqual(['page', 'api'])
+  })
 })
 
 describe('classifyExchanges: challenge pages', () => {

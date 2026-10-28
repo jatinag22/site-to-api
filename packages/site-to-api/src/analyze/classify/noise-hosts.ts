@@ -85,6 +85,9 @@ const NOISE_DOMAINS: readonly string[] = [
   'browser-intake-datadoghq.eu',
   'datadoghq-browser-agent.com',
   'rum.hlx.page',
+  // Akamai mPulse real-user monitoring (boomerang beacons and config)
+  'go-mpulse.net',
+  'akstat.io',
   'telemetry.algolia.com',
   'insights.algolia.io',
   'intake-analytics.wikimedia.org',
@@ -122,6 +125,17 @@ const NOISE_DOMAINS: readonly string[] = [
   'exelator.com',
   'rlcdn.com',
   'tapad.com',
+  // Experimentation and session analytics: Optimizely's event API (logx), Contentsquare
+  'logx.optimizely.com',
+  'contentsquare.com',
+  'contentsquare.net',
+  // Ad retargeting and attribution: RTB House, Amazon Ads, Singular, Reddit and Pinterest pixels
+  'creativecdn.com',
+  'amazon-adsystem.com',
+  'singular.net',
+  'pixel-config.reddit.com',
+  'trk.pinterest.com',
+  'analytics-ipv6.tiktokw.us',
   // Attribution and marketing automation
   'branch.io',
   'app.link',
@@ -156,6 +170,15 @@ const NOISE_DOMAINS: readonly string[] = [
   'usercentrics.eu',
   'didomi.io',
   'quantcast.com',
+]
+
+/**
+ * Telemetry hosts named by convention rather than one domain: server-side Google Tag Manager runs
+ * on a first-party `sgtm.` subdomain, and Amazon's client telemetry on `unagi[-region].amazon.<tld>`.
+ */
+const NOISE_HOST_PATTERNS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
+  { pattern: /^sgtm\./, label: 'server-side Google Tag Manager (sgtm.*)' },
+  { pattern: /^unagi(?:-[a-z]+)?\.amazon\.[a-z.]+$/, label: 'Amazon client telemetry (unagi)' },
 ]
 
 /** Noise on domains that also serve real content: host suffix + path prefix. */
@@ -200,6 +223,10 @@ export function findNoise(host: string, path: string): string | null {
   const domain = NOISE_DOMAINS.find(entry => hostMatchesDomain(host, entry))
   if (domain)
     return domain
+  const hostname = host.replace(/:\d+$/, '').toLowerCase()
+  const named = NOISE_HOST_PATTERNS.find(entry => entry.pattern.test(hostname))
+  if (named)
+    return named.label
   const endpoint = NOISE_ENDPOINTS.find(entry => hostMatchesDomain(host, entry.domain) && path.startsWith(entry.pathPrefix))
   return endpoint
     ? `${endpoint.domain}${endpoint.pathPrefix}`
