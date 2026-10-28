@@ -83,3 +83,23 @@ export function isSecretName(name: string | null | undefined, inQuery = false): 
   const joined = parts.join('')
   return SECRET_JOINED.some(word => joined.includes(word))
 }
+
+/** Auth scheme names (RFC 7235 and common practice). Public words, never credentials. */
+const AUTH_SCHEMES: ReadonlySet<string> = new Set([
+  'bearer',
+  'basic',
+  'token',
+  'jwt',
+  'mac',
+  'digest',
+  'negotiate',
+])
+
+/**
+ * True when a value is only an auth scheme word (`Bearer`, `Basic`, `Token`, `JWT`, `MAC`,
+ * `Digest`, `Negotiate`), as in `tokenType: "Bearer"`. Such a value is not a secret even under a
+ * secret-looking name.
+ */
+export function isAuthScheme(value: string): boolean {
+  return AUTH_SCHEMES.has(value.trim().toLowerCase())
+}

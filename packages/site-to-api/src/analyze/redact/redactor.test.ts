@@ -70,10 +70,10 @@ describe('createRedactor: no fixture secret survives', () => {
     const r = redactor(exchanges)
     const output = JSON.stringify(exchanges.flatMap(item => redactEverything(r, item)))
     expect(leakedSecrets(output)).toEqual([])
-    // Constants and ordinary data stay readable.
+    // Constants and ordinary data stay readable; a person's name next to their email does not.
     expect(output).toContain('1.2.3')
-    expect(output).toContain('Jane')
     expect(output).toContain('lang=en')
+    expect(output).not.toContain('Jane')
   })
 })
 
@@ -127,6 +127,138 @@ describe('createRedactor: rules', () => {
     expect(r.value('9876543210', { in: 'body', name: 'mobileNumber' })).toBe('0000000000')
     expect(r.json({ aadhaar: SECRETS.aadhaarNumber }, { in: 'body' })).toEqual({ aadhaar: '000000000000' })
     expect(r.value('ID EMP-123456 here', { in: 'body' })).toBe('ID XXX-000000 here')
+  })
+
+  it('masks personal and account fields by name, keeping their format', () => {
+    // The shapes of a shop's `GET /api/me` and login responses.
+    const me = {
+      id: 'usr_demo_0001',
+      username: 'demo',
+      displayName: 'Demo Shopper',
+      email: 'demo@shop.example',
+    }
+    expect(r.json(me, { in: 'response-body' })).toEqual({
+      id: 'xxx_xxxx_0000',
+      username: 'xxxx',
+      displayName: 'Xxxx Xxxxxxx',
+      email: 'xxxx@xxxx.xxxxxxx',
+    })
+    const login = {
+      token: SECRETS.jwt,
+      tokenType: 'Bearer',
+      expiresIn: 3600,
+      user: me,
+    }
+    expect(r.json(login, { in: 'response-body' })).toEqual({
+      token: '<redacted: JWT (alg=HS256, claims=[exp, sub])>',
+      tokenType: 'Bearer',
+      expiresIn: 3600,
+      user: {
+        id: 'xxx_xxxx_0000',
+        username: 'xxxx',
+        displayName: 'Xxxx Xxxxxxx',
+        email: 'xxxx@xxxx.xxxxxxx',
+      },
+    })
+    // Under a user, account, profile or customer name, `name` and `id` identify the person too.
+    expect(r.json({
+      customer: { id: 42, name: 'Asha Rao' },
+      profiles: [
+        { name: 'Dev' },
+      ],
+    }, { in: 'response-body' }))
+      .toEqual({
+        customer: { id: '00', name: 'Xxxx Xxx' },
+        profiles: [
+          { name: 'Xxx' },
+        ],
+      })
+    expect(r.json({
+      orders: [
+        { userId: 'usr_demo_0001', total: 5 },
+      ],
+    }, { in: 'response-body' }))
+      .toEqual({
+        orders: [
+          { userId: 'xxx_xxxx_0000', total: 5 },
+        ],
+      })
+    const address = {
+      firstName: 'Asha',
+      last_name: 'Rao',
+      fullName: 'Asha Rao',
+      user_name: 'asha',
+      login: 'asha',
+      street: '12 Pine Road',
+      city: 'Pune',
+      postcode: 'AB1 2CD',
+      zip: 411001,
+      dob: '1990-01-31',
+      birthDate: '1990-01-31',
+      billingAddress: '12 Pine Road',
+    }
+    expect(r.json(address, { in: 'body' })).toEqual({
+      firstName: 'Xxxx',
+      last_name: 'Xxx',
+      fullName: 'Xxxx Xxx',
+      user_name: 'xxxx',
+      login: 'xxxx',
+      street: '00 Xxxx Xxxx',
+      city: 'Xxxx',
+      postcode: 'XX0 0XX',
+      zip: '000000',
+      dob: '0000-00-00',
+      birthDate: '0000-00-00',
+      billingAddress: '00 Xxxx Xxxx',
+    })
+    // Single values by name, as in forms and flows.
+    expect(r.value('demo', { in: 'body', name: 'username' })).toBe('xxxx')
+    expect(r.value('demo', { in: 'form', name: 'login' })).toBe('xxxx')
+  })
+
+  it('keeps ordinary names and ids outside person records', () => {
+    expect(r.json([
+      { id: 7, name: 'Snacks', slug: 'snacks' },
+    ], { in: 'response-body' })).toEqual([
+      { id: 7, name: 'Snacks', slug: 'snacks' },
+    ])
+    // A store list has a city but is not a person; only the address fields are masked.
+    expect(r.json({
+      stores: [
+        { name: 'Pine Hill', city: 'Pune' },
+      ],
+    }, { in: 'response-body' })).toEqual({
+      stores: [
+        { name: 'Pine Hill', city: 'Xxxx' },
+      ],
+    })
+    expect(r.json({ velocity: 'fast', lastLogin: '2026-10-28' }, { in: 'response-body' })).toEqual({ velocity: 'fast', lastLogin: '2026-10-28' })
+  })
+
+  it('keeps auth scheme words under secret names, and does not hunt for them elsewhere', () => {
+    const list = [
+      exchange({
+        url: 'https://shop.test/api/login',
+        responseBody: jsonBody({ tokenType: 'Bearer', note: 'Send it as Bearer in the header' }),
+      }),
+    ]
+    const r2 = redactor(list)
+    for (const scheme of [
+      'Bearer',
+      'Basic',
+      'Token',
+      'JWT',
+      'MAC',
+      'Digest',
+      'Negotiate',
+      'bearer',
+    ])
+      expect(r2.value(scheme, { in: 'response-body', name: 'tokenType' })).toBe(scheme)
+    expect(r2.json({ tokenType: 'Bearer', note: 'Send it as Bearer in the header' }, { in: 'response-body' }))
+      .toEqual({ tokenType: 'Bearer', note: 'Send it as Bearer in the header' })
+    // Anything else under a secret name is still redacted, and the scheme inside a credential header too.
+    expect(r2.value('Bearer2', { in: 'response-body', name: 'tokenType' })).toBe('<redacted: 7 chars>')
+    expect(r2.value('Bearer', { in: 'header', name: 'authorization' })).toBe('<redacted: 6 chars>')
   })
 
   it('leaves look-alikes alone: timestamps, failed checksums, plain numbers', () => {

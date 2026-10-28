@@ -111,6 +111,127 @@ export function isPhoneField(name: string | null | undefined): boolean {
   return name !== null && name !== undefined && PHONE_FIELD.test(name)
 }
 
+/** Lower-case name with separators removed: `display_name`, `displayName` → `displayname`. */
+function compactName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+/** Lower-case words of a name: `shippingAddress` → `[shipping, address]`. */
+function words(name: string): string[] {
+  return name
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z\d]+/)
+    .filter(word => word !== '')
+}
+
+/** Whole names (separators removed) of fields that identify a person or their account. */
+const PERSONAL_NAMES: ReadonlySet<string> = new Set([
+  'login',
+  'loginid',
+  'loginname',
+  'zip',
+  'pincode',
+  'dob',
+])
+
+/**
+ * Last words of personal field names, separators removed: `billingCity`, `user_name`,
+ * `shippingAddress`. Matched on word boundaries, so `velocity` is not a city.
+ */
+const PERSONAL_NAME_ENDINGS: readonly string[] = [
+  'username',
+  'displayname',
+  'firstname',
+  'lastname',
+  'fullname',
+  'givenname',
+  'familyname',
+  'middlename',
+  'nickname',
+  'address',
+  'addressline1',
+  'addressline2',
+  'street',
+  'city',
+  'postcode',
+  'postalcode',
+  'zipcode',
+  'birthdate',
+  'dateofbirth',
+  'birthday',
+  'userid',
+  'customerid',
+  'accountid',
+  'memberid',
+]
+
+/**
+ * Field names whose values are a person's name, account or address, wherever they appear:
+ * `username`, `user_name`, `login`, `displayName`, `firstName`, `lastName`, `fullName`,
+ * `address`, `street`, `city`, `postcode`, `zip`, `dob`, `birthDate`, and account ids
+ * (`userId`). Phone fields have their own rule ({@link isPhoneField}).
+ */
+export function isPersonalField(name: string | null | undefined): boolean {
+  if (name === null || name === undefined || name === '')
+    return false
+  if (PERSONAL_NAMES.has(compactName(name)))
+    return true
+  const parts = words(name)
+  const tails = parts.map((_, index) => parts.slice(index).join(''))
+  return tails.some(tail => PERSONAL_NAME_ENDINGS.includes(tail))
+}
+
+/** Words of a property name that say the object under it describes a person or their account. */
+const PERSON_OBJECT_WORDS: ReadonlySet<string> = new Set([
+  'user',
+  'users',
+  'account',
+  'accounts',
+  'profile',
+  'profiles',
+  'customer',
+  'customers',
+  'me',
+])
+
+/** Fields that identify a person only inside a person's record: `user.name`, `customer.id`. */
+const PERSON_RECORD_FIELDS: ReadonlySet<string> = new Set([
+  'name',
+  'id',
+])
+
+/**
+ * Keys that make an object a person's record by themselves. Address fields are not among them: a
+ * shop's store list has a `city` too, and its `name` is public.
+ */
+const PERSON_IDENTITY_KEYS: ReadonlySet<string> = new Set([
+  'username',
+  'login',
+  'displayname',
+  'firstname',
+  'lastname',
+  'fullname',
+  'email',
+  'emailaddress',
+])
+
+/**
+ * True when an object describes a person: it sits under a user/account/profile/customer name,
+ * or it carries an identity field itself (`GET /api/me` answers `{ id, username, email }` at
+ * the top level).
+ */
+export function isPersonObject(parentName: string | null | undefined, keys: readonly string[]): boolean {
+  if (parentName !== null && parentName !== undefined && words(parentName).some(word => PERSON_OBJECT_WORDS.has(word)))
+    return true
+  return keys.some(key => PERSON_IDENTITY_KEYS.has(compactName(key)))
+}
+
+/** `name` and `id` of a person's record. */
+export function isPersonRecordField(name: string | null | undefined): boolean {
+  return name !== null && name !== undefined && PERSON_RECORD_FIELDS.has(compactName(name))
+}
+
 /** Masks every personal-data match in a text. */
 export function maskPersonalData(text: string, patterns: readonly PersonalDataPattern[]): string {
   let result = text
