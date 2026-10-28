@@ -34,7 +34,47 @@ const flows: FlowsDocument = {
       probed: false,
     },
   ],
-  flows: [],
+  flows: [
+    {
+      id: 'sign-in',
+      name: 'Sign in',
+      trigger: { kind: 'submit', label: 'Sign in', pageUrl: 'https://shop.example.com/login' },
+      steps: [
+        {
+          id: 's1',
+          operationId: 'getLogin',
+          kind: 'page',
+          browserOnly: false,
+          summary: 'Login page',
+          sentFrom: null,
+          inputs: {},
+          outputs: {},
+          observedIn: [],
+        },
+        {
+          id: 's2',
+          operationId: 'postApiSession',
+          kind: 'api',
+          browserOnly: false,
+          summary: 'Sign in',
+          sentFrom: null,
+          inputs: {
+            'header.x-csrf-token': {
+              kind: 'html',
+              step: 's1',
+              selector: 'meta[name="csrf-token"]',
+              attr: 'content',
+              pattern: null,
+              confidence: 'high',
+            },
+          },
+          outputs: {},
+          observedIn: [],
+        },
+      ],
+      seenInSessions: 1,
+    },
+  ],
   computedValues: [],
 }
 
@@ -45,29 +85,45 @@ async function workspace(): Promise<string> {
   await mkdir(path.join(dir, 'node_modules'))
   await symlink(zodDir, path.join(dir, 'node_modules', 'zod'), 'dir')
   await copyFile(fixture, path.join(dir, 'handoff', 'specs', 'shop.example.com.yaml'))
+  // `nodenext` treats .ts files as ES modules only inside a `"type": "module"` package.
+  await writeFile(path.join(dir, 'package.json'), '{ "type": "module" }\n')
   return dir
 }
 
 // Uses the generated client the way a person would, so the strict type check below also proves
 // the generated API is usable without casts.
-const DRIVER = `import { CookieJar, createSiteClient, extractGetPrices, shop_example_com } from './handoff/client/index'
-import type { GetPricesRecord } from './handoff/client/index'
+const DRIVER = `import { CookieJar, createSiteClient, extractCsrfTokenFromGetLogin, extractGetPrices, shop_example_com } from './handoff/client/index.js'
+import type { GetPricesRecord } from './handoff/client/index.js'
 
 export async function run(baseUrl: string) {
   const jar = new CookieJar()
-  const site = createSiteClient({ host: 'shop.example.com', jar, baseUrl, retry: false })
+  const site = createSiteClient({ host: 'shop.example.com', jar, baseUrl, retry: false, auth: () => 'Bearer t-1' })
   const before = await shop_example_com.getApiItem({ path: { itemId: 'a1' } })
-  const login = await shop_example_com.postApiSession({ body: { username: 'demo' } })
+  const loginPage = await site.sdk.getLogin()
+  const csrf = typeof loginPage.data === 'string' ? extractCsrfTokenFromGetLogin(loginPage.data) : null
+  // Required headers, one of them spelled in mixed case in the spec, pass request validation.
+  const login = await shop_example_com.postApiSession({
+    body: { username: 'demo' },
+    headers: { 'x-csrf-token': csrf ?? '', 'X-Api-Version': '2' },
+  })
   const item = await site.sdk.getApiItem({ path: { itemId: 'a1' }, query: { currency: 'INR' } })
+  const me = await site.sdk.getApiMe()
   // hey-api returns a failed response validation as \`error\` instead of throwing.
   const broken = await shop_example_com.getApiItem({ path: { itemId: 'broken' } })
   const invalid = broken.error instanceof Error ? broken.error.name : 'accepted'
   const page = await shop_example_com.getPrices()
   const records: GetPricesRecord[] = typeof page.data === 'string' ? extractGetPrices(page.data) : []
+  // A second configuration for the same host replaces the first one, \`auth\` included.
+  createSiteClient({ host: 'shop.example.com', jar, baseUrl, retry: false })
+  const meWithoutAuth = await site.sdk.getApiMe()
   return {
     beforeStatus: before.response?.status ?? 0,
+    csrf,
     login: login.data ?? null,
+    loginError: login.error === undefined ? null : String(login.error),
     item: item.data ?? null,
+    me: me.data ?? null,
+    meWithoutAuthStatus: meWithoutAuth.response?.status ?? 0,
     invalid,
     records,
     cookies: jar.all().map(cookie => cookie.name),
@@ -75,7 +131,7 @@ export async function run(baseUrl: string) {
 }
 `
 
-function typeCheck(files: string[]): string {
+function typeCheck(files: string[], resolution: 'bundler' | 'nodenext' = 'bundler', only?: string): string {
   const options: ts.CompilerOptions = {
     strict: true,
     noUncheckedIndexedAccess: true,
@@ -85,8 +141,12 @@ function typeCheck(files: string[]): string {
     noEmit: true,
     skipLibCheck: true,
     target: ts.ScriptTarget.ES2023,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    module: resolution === 'bundler'
+      ? ts.ModuleKind.ESNext
+      : ts.ModuleKind.NodeNext,
+    moduleResolution: resolution === 'bundler'
+      ? ts.ModuleResolutionKind.Bundler
+      : ts.ModuleResolutionKind.NodeNext,
     lib: ['lib.es2023.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
     types: [],
     paths: {
@@ -94,7 +154,10 @@ function typeCheck(files: string[]): string {
     },
   }
   const program = ts.createProgram(files, options)
+  // The runtime is checked from source here; its own imports are written for a bundler, so a
+  // `nodenext` check only looks at the files under test.
   const diagnostics = ts.getPreEmitDiagnostics(program)
+    .filter(diagnostic => only === undefined || (diagnostic.file?.fileName.startsWith(only) ?? true))
   return ts.formatDiagnostics(diagnostics, {
     getCanonicalFileName: name => name,
     getCurrentDirectory: () => process.cwd(),
@@ -114,6 +177,36 @@ const PRICES_HTML = `<html><body><table class="prices"><tbody>
 <tr><td class="name">Beta</td><td class="price">99</td></tr>
 </tbody></table></body></html>`
 
+type SendJson = (status: number, body: unknown, headers?: Record<string, string | string[]>) => void
+
+/** The login page, the CSRF-checked sign-in and the bearer-protected `/api/me`. */
+function handleSignIn(request: IncomingMessage, response: ServerResponse, json: SendJson): boolean {
+  if (request.url === '/login') {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    response.end('<html><head><meta name="csrf-token" content="csrf-1"></head><body></body></html>')
+    return true
+  }
+  if (request.url === '/api/me') {
+    if (request.headers.authorization === 'Bearer t-1')
+      json(200, { name: 'demo' })
+    else
+      json(401, { message: 'no token' })
+    return true
+  }
+  if (request.method === 'POST' && request.url === '/api/session') {
+    if (request.headers['x-csrf-token'] === 'csrf-1' && request.headers['x-api-version'] === '2') {
+      json(200, { ok: true }, {
+        'set-cookie': ['session=s-123; Path=/; HttpOnly'],
+      })
+    }
+    else {
+      json(403, { message: 'csrf' })
+    }
+    return true
+  }
+  return false
+}
+
 function handle(seen: Seen[]) {
   return (request: IncomingMessage, response: ServerResponse): void => {
     const cookie = request.headers.cookie ?? null
@@ -130,12 +223,8 @@ function handle(seen: Seen[]) {
       response.writeHead(status, { 'content-type': 'application/json', ...headers })
       response.end(JSON.stringify(body))
     }
-    if (request.method === 'POST' && request.url === '/api/session') {
-      json(200, { ok: true }, {
-        'set-cookie': ['session=s-123; Path=/; HttpOnly'],
-      })
+    if (handleSignIn(request, response, json))
       return
-    }
     if (request.url?.startsWith('/api/items/')) {
       if (cookie !== 'session=s-123') {
         json(401, { message: 'sign in first' })
@@ -162,8 +251,12 @@ function handle(seen: Seen[]) {
 
 const DriverResultSchema = z.object({
   beforeStatus: z.number(),
+  csrf: z.string().nullable(),
   login: z.unknown(),
+  loginError: z.string().nullable(),
   item: z.unknown(),
+  me: z.unknown(),
+  meWithoutAuthStatus: z.number(),
   invalid: z.string(),
   records: z.array(z.record(z.string(), z.unknown())),
   cookies: z.array(z.string()),
@@ -221,6 +314,15 @@ describe('generateClient', () => {
     const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
     expect(readme).toContain('Cookies the API needs: `session` (set by `postApiSession`)')
     expect(readme).toContain('`extractGetPrices(text)` → `GetPricesRecord[]`')
+    expect(extract).toContain('export function extractCsrfTokenFromGetLogin(html: string): string | null {')
+    expect(readme).toContain('- Auth: `getApiMe` declare security.')
+  })
+
+  it('validates requests through the runtime, so headers are read from the Headers instance', async () => {
+    const sdk = await readFile(path.join(dir, 'handoff', 'client', 'shop_example_com', 'sdk.gen.ts'), 'utf8')
+    expect(sdk).toContain(`import { requestValidationInput } from '@site-to-api/runtime'`)
+    expect(sdk).toMatch(/\.parseAsync\(requestValidationInput\(data, \[\s*'X-Api-Version'\s*\]\)\)/)
+    expect(sdk).toContain('.parseAsync(requestValidationInput(data))')
   })
 
   it('type-checks in strict mode with zero errors', () => {
@@ -231,9 +333,21 @@ describe('generateClient', () => {
     expect(typeCheck(files)).toBe('')
   }, 60_000)
 
+  it('type-checks under moduleResolution nodenext, with .js specifiers throughout', async () => {
+    // The driver is left out: with the runtime checked from source its types degrade under
+    // `nodenext`. e2e/pipeline.test.ts checks a driver against the built runtime.
+    const files = result.files.filter(file => file.endsWith('.ts')).map(file => path.join(dir, 'handoff', file))
+    expect(typeCheck(files, 'nodenext', path.join(dir, 'handoff'))).toBe('')
+    for (const file of result.files.filter(name => name.endsWith('.ts'))) {
+      const source = await readFile(path.join(dir, 'handoff', file), 'utf8')
+      for (const [, specifier] of source.matchAll(/from '(\.[^']*)'/g))
+        expect(specifier, file).toMatch(/\.js$/)
+    }
+  }, 60_000)
+
   it('the type check reports errors, so a clean result means something', async () => {
     const bad = path.join(dir, 'bad.ts')
-    await writeFile(bad, `import { shop_example_com } from './handoff/client/index'\nawait shop_example_com.getApiItem({ path: { itemId: 1 } })\n`)
+    await writeFile(bad, `import { shop_example_com } from './handoff/client/index.js'\nawait shop_example_com.getApiItem({ path: { itemId: 1 } })\n`)
     expect(typeCheck([bad])).toMatch(/TS2322/)
   }, 60_000)
 
@@ -244,7 +358,11 @@ describe('generateClient', () => {
     const output = DriverResultSchema.parse(await driver.run(baseUrl))
 
     expect(output.beforeStatus).toBe(401)
+    expect(output.csrf).toBe('csrf-1')
+    expect(output.loginError).toBeNull()
     expect(output.login).toEqual({ ok: true })
+    expect(output.me).toEqual({ name: 'demo' })
+    expect(output.meWithoutAuthStatus).toBe(401)
     expect(output.item).toEqual({
       id: 'a1',
       name: 'Alpha',
@@ -405,7 +523,7 @@ describe('generateClient with hostile specs', () => {
       const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
       const html = renderMarkdown(readme)
       expect(html.match(/<pre>/g)).toHaveLength(1)
-      expect(html.match(/<h\d>/g)).toHaveLength(4)
+      expect(html.match(/<h\d>/g)).toHaveLength(7)
       expect(result.files).toContain('client/README.md')
     }
     finally {

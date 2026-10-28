@@ -8,6 +8,7 @@ import { createClient } from '@hey-api/openapi-ts'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
+import { nameHtmlValues } from './html-values'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
 import { describeHost, OpenApiDocumentSchema } from './spec'
 
@@ -28,9 +29,11 @@ export interface GenerateClientResult {
 
 /**
  * Generates the typed client in `<handoffDir>/client/` from `<handoffDir>/specs/*.yaml`:
- * hey-api output (types, SDK with response validation, Zod schemas) per host, `extract.ts` with a
- * parser per HTML/text operation, `index.ts` wiring each host to `@site-to-api/runtime`, and a
- * `README.md`. The `client/` folder is replaced on every run, so stale hosts do not linger.
+ * hey-api output (types, SDK with request and response validation, Zod schemas) per host,
+ * `extract.ts` with a parser per HTML/text operation and a reader per value flows.json traces to
+ * an HTML page, `index.ts` wiring each host to `@site-to-api/runtime`, and a `README.md`. Every
+ * relative import ends in `.js`, so the client works under `bundler` and `nodenext` resolution.
+ * The `client/` folder is replaced on every run, so stale hosts do not linger.
  */
 export async function generateClient(input: GenerateClientInput): Promise<GenerateClientResult> {
   const warnings: string[] = []
@@ -54,9 +57,10 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
 
   const hosts = loaded.map(entry => entry.host)
   const extracts = nameExtracts(hosts, warnings)
-  await writeFile(path.join(clientDir, 'extract.ts'), renderExtractModule(extracts))
-  await writeFile(path.join(clientDir, 'index.ts'), renderIndexModule(hosts, extracts))
-  await writeFile(path.join(clientDir, 'README.md'), renderReadme(hosts, extracts, input.flows.session))
+  const htmlValues = nameHtmlValues(input.flows, new Set(extracts.map(entry => entry.functionName)), warnings)
+  await writeFile(path.join(clientDir, 'extract.ts'), renderExtractModule(extracts, htmlValues))
+  await writeFile(path.join(clientDir, 'index.ts'), renderIndexModule(hosts, extracts, htmlValues))
+  await writeFile(path.join(clientDir, 'README.md'), renderReadme(hosts, extracts, input.flows.session, htmlValues))
 
   const files = (await listFiles(clientDir)).map(file => path.posix.join('client', file))
   return { files, warnings }
@@ -104,11 +108,37 @@ async function runHeyApi(document: OpenApiDocument, output: string, file: string
   try {
     await createClient({
       input: document,
-      output: { path: output },
+      // `.js` specifiers resolve under both `bundler` and `nodenext`, and in compiled output that
+      // plain Node runs; extensionless ones only work with a bundler.
+      output: {
+        path: output,
+        module: { extension: '.js' },
+      },
       plugins: [
         '@hey-api/client-fetch',
-        // Pinned so the output does not depend on the zod version found in the user's project.
-        { name: 'zod', compatibilityVersion: 4 },
+        {
+          name: 'zod',
+          // Pinned so the output does not depend on the zod version found in the user's project.
+          compatibilityVersion: 4,
+          $resolvers: {
+            validator: {
+              // hey-api validates the resolved request options, whose `headers` is a `Headers`
+              // instance that a Zod object cannot read: every required header failed. The
+              // runtime turns it into a plain object first.
+              request: ({ $, operation, plugin, symbols }) => {
+                const helper = plugin.symbolOnce('requestValidationInput', { external: '@site-to-api/runtime' })
+                const mixedCase = Object.values(operation.parameters?.header ?? {})
+                  .map(parameter => parameter.name)
+                  .filter(name => name !== name.toLowerCase())
+                  .sort()
+                const input = mixedCase.length === 0
+                  ? $(helper).call('data')
+                  : $(helper).call('data', $.fromValue(mixedCase))
+                return $(symbols.schema).attr('parseAsync').call(input).await().return()
+              },
+            },
+          },
+        },
         { name: '@hey-api/sdk', validator: true },
       ],
       // No log files in the user's working directory; failures surface as the error below.

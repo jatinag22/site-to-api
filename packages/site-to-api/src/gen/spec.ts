@@ -66,8 +66,11 @@ const ResponseSchema = z.looseObject({
 
 // Parameters and responses are checked one by one later, so one odd entry (a `$ref`, an
 // extension) does not reject the whole spec.
+const SecurityRequirementsSchema = z.array(z.record(z.string(), z.unknown()))
+
 const OperationSchema = z.looseObject({
   operationId: z.string().optional(),
+  security: SecurityRequirementsSchema.optional(),
   parameters: z.array(z.unknown()).optional(),
   responses: z.record(z.string(), z.unknown()).optional(),
 })
@@ -95,9 +98,20 @@ const PathItemSchema = z.looseObject({
   trace: OperationSchema.optional(),
 })
 
+const SecuritySchemeSchema = z.looseObject({
+  type: z.string(),
+  name: z.string().optional(),
+  in: z.string().optional(),
+  scheme: z.string().optional(),
+})
+
 /** The parts of an OpenAPI 3.1 document `gen` reads; everything else passes through. */
 export const OpenApiDocumentSchema = z.looseObject({
   openapi: z.string(),
+  security: SecurityRequirementsSchema.optional(),
+  components: z.looseObject({
+    securitySchemes: z.record(z.string(), z.unknown()).optional(),
+  }).optional(),
   servers: z.array(z.looseObject({
     url: z.string(),
   })).optional(),
@@ -118,6 +132,20 @@ export interface ExtractOperation {
   spec: ExtractSpec
 }
 
+/** A security scheme from `components.securitySchemes`, as the generated client applies it. */
+export interface AuthScheme {
+  /** Key in `components.securitySchemes`. */
+  name: string
+  /** `apiKey` (sent as-is), `http` (`bearer` adds `Bearer `, `basic` encodes) or another type. */
+  type: string
+  /** `header`, `query` or `cookie` for `apiKey`; null otherwise. */
+  in: string | null
+  /** Header, query or cookie name for `apiKey`; null otherwise. */
+  parameter: string | null
+  /** `bearer`, `basic`, ... for `http`; null otherwise. */
+  scheme: string | null
+}
+
 /** Everything `gen` writes for one host spec. */
 export interface HostSpec {
   /** Spec file name inside `specs/`. */
@@ -131,6 +159,10 @@ export interface HostSpec {
   defaultHeaders: Record<string, string>
   operationIds: string[]
   extracts: ExtractOperation[]
+  /** Security schemes the spec declares, sorted by name. */
+  auth: AuthScheme[]
+  /** Operations that declare a security requirement (theirs or the document's), sorted. */
+  securedOperationIds: string[]
 }
 
 /**
@@ -141,6 +173,7 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
   const { host, baseUrl } = resolveServer(file, document, warnings)
   const headerValues = new Map<string, Set<string>>()
   const operationIds: string[] = []
+  const securedOperationIds: string[] = []
   const extracts: ExtractOperation[] = []
   for (const [path, item] of Object.entries(document.paths ?? {})) {
     for (const method of METHODS) {
@@ -153,6 +186,9 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
         continue
       }
       operationIds.push(operation.operationId)
+      // An empty list (`security: []`) is how an operation opts out of the document's default.
+      if ((operation.security ?? document.security ?? []).some(requirement => Object.keys(requirement).length > 0))
+        securedOperationIds.push(operation.operationId)
       collectConstantHeaders([
         ...(item.parameters ?? []),
         ...(operation.parameters ?? []),
@@ -177,7 +213,36 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
     defaultHeaders: settleHeaders(headerValues, file, warnings),
     operationIds: operationIds.sort(),
     extracts: extracts.sort((a, b) => a.operationId.localeCompare(b.operationId)),
+    auth: readAuthSchemes(file, document, warnings),
+    securedOperationIds: securedOperationIds.sort(),
   }
+}
+
+function readAuthSchemes(file: string, document: OpenApiDocument, warnings: string[]): AuthScheme[] {
+  const schemes: AuthScheme[] = []
+  const entries = Object.entries(document.components?.securitySchemes ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  for (const [name, raw] of entries) {
+    const parsed = SecuritySchemeSchema.safeParse(raw)
+    if (!parsed.success) {
+      warnings.push(`specs/${file}: security scheme ${name} has no type and is not described in the client README`)
+      continue
+    }
+    const scheme = parsed.data
+    schemes.push({
+      name,
+      type: scheme.type,
+      in: scheme.type === 'apiKey'
+        ? scheme.in ?? null
+        : null,
+      parameter: scheme.type === 'apiKey'
+        ? scheme.name ?? null
+        : null,
+      scheme: scheme.type === 'http'
+        ? scheme.scheme?.toLowerCase() ?? null
+        : null,
+    })
+  }
+  return schemes
 }
 
 /** The host and base URL from `servers[0]`, falling back to the spec file name. */

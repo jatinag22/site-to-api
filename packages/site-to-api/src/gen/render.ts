@@ -4,7 +4,8 @@
  */
 import type { ExtractField, ExtractSpec, FieldType } from '@site-to-api/runtime'
 import type { SessionRequirement } from '../model'
-import type { ExtractOperation, HostSpec } from './spec'
+import type { NamedHtmlValue } from './html-values'
+import type { AuthScheme, ExtractOperation, HostSpec } from './spec'
 import { code, codeBlock, commentText, text } from '../emit/escape'
 import { sdkFunctionName } from '../emit/naming'
 import { toPascalCase } from './spec'
@@ -85,11 +86,14 @@ function literal(value: unknown, indent?: number): string {
     .replace(/\u2029/g, '\\u2029')
 }
 
-/** `client/extract.ts`: one parser and one Zod record schema per HTML/text operation. */
-export function renderExtractModule(extracts: NamedExtract[]): string {
-  if (extracts.length === 0)
-    return `${HEADER}\n// No operation in specs/ has an HTML or text response with an extraction spec.\nexport {}\n`
-  const blocks = extracts.map((entry) => {
+/**
+ * `client/extract.ts`: one parser and one Zod record schema per HTML/text operation, and one
+ * reader per value that flows.json says comes from an HTML page.
+ */
+export function renderExtractModule(extracts: NamedExtract[], htmlValues: NamedHtmlValue[] = []): string {
+  if (extracts.length === 0 && htmlValues.length === 0)
+    return `${HEADER}\n// No operation in specs/ has an HTML or text response with an extraction spec,\n// and flows.json reads no value from an HTML page.\nexport {}\n`
+  const recordBlocks = extracts.map((entry) => {
     const many = entry.spec.kind === 'text' || entry.spec.many
     const returns = many
       ? `${entry.typeName}[]`
@@ -116,15 +120,62 @@ export function renderExtractModule(extracts: NamedExtract[]): string {
       `}`,
     ].join('\n')
   })
+  const valueBlocks = htmlValues.map(renderHtmlValue)
+  const runtimeImports = [
+    ...(extracts.length > 0
+      ? ['extract']
+      : []),
+    ...(htmlValues.length > 0
+      ? ['extractValue']
+      : []),
+  ]
   return [
     HEADER,
-    `import type { ExtractSpec } from '@site-to-api/runtime'`,
-    `import { extract } from '@site-to-api/runtime'`,
-    `import * as z from 'zod'`,
+    ...(extracts.length > 0
+      ? [`import type { ExtractSpec } from '@site-to-api/runtime'`]
+      : []),
+    `import { ${runtimeImports.join(', ')} } from '@site-to-api/runtime'`,
+    ...(extracts.length > 0
+      ? [`import * as z from 'zod'`]
+      : []),
     '',
-    blocks.join('\n\n'),
+    [
+      ...recordBlocks,
+      ...valueBlocks,
+    ].join('\n\n'),
     '',
   ].join('\n')
+}
+
+function describeLocation(location: NamedHtmlValue['location']): string {
+  const parts = [`\`${location.selector}\``]
+  parts.push(location.attr === null
+    ? 'its text'
+    : `attribute \`${location.attr}\``)
+  if (location.pattern !== null)
+    parts.push(`first group of \`${location.pattern}\``)
+  return parts.join(', ')
+}
+
+function renderHtmlValue(value: NamedHtmlValue): string {
+  // Selectors, patterns and operation ids come from the site; commentText keeps them inside.
+  const lines = [
+    `/**`,
+    ` * Reads ${commentText(`\`${value.input}\``)} for ${commentText(value.usedBy.map(id => `\`${id}\``).join(', '))} from the HTML of`,
+    ` * ${commentText(`\`${value.sourceOperationId}\``)}: ${commentText(describeLocation(value.location))}.`,
+    ` * Returns \`null\` when the page has no such value.`,
+  ]
+  if (value.confidence === 'low')
+    lines.push(` * flows.json rates this location low confidence: check it against the page.`)
+  if (value.alternatives.length > 0)
+    lines.push(` * flows.json also saw ${commentText(value.alternatives.map(describeLocation).join('; '))}.`)
+  lines.push(
+    ` */`,
+    `export function ${value.functionName}(html: string): string | null {`,
+    `  return extractValue(html, ${literal(value.location)})`,
+    `}`,
+  )
+  return lines.join('\n')
 }
 
 function renderRecordSchema(spec: ExtractSpec): string {
@@ -157,10 +208,11 @@ function zodForType(type: FieldType): string {
 }
 
 /** `client/index.ts`: every host's SDK under its namespace, plus `createSiteClient`. */
-export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[]): string {
+export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], htmlValues: NamedHtmlValue[] = []): string {
+  // `.js` specifiers work under `moduleResolution: bundler` and `nodenext` alike.
   const imports = hosts.flatMap(host => [
-    `import * as ${host.identifier} from './${host.identifier}/index'`,
-    `import { client as ${host.identifier}Client } from './${host.identifier}/client.gen'`,
+    `import * as ${host.identifier} from './${host.identifier}/index.js'`,
+    `import { client as ${host.identifier}Client } from './${host.identifier}/client.gen.js'`,
   ])
   const entries = hosts.map(host => [
     `  ${literal(host.host)}: {`,
@@ -174,12 +226,18 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[]): 
     `    headers: ${renderStringRecord(host.defaultHeaders, '    ')},`,
     `  },`,
   ].join('\n'))
-  const extractExports = extracts.length === 0
-    ? []
-    : [
-        `export { ${extracts.flatMap(entry => [entry.functionName, entry.schemaName]).sort().join(', ')} } from './extract'`,
-        `export type { ${extracts.map(entry => entry.typeName).sort().join(', ')} } from './extract'`,
-      ]
+  const extractValues = [
+    ...extracts.flatMap(entry => [entry.functionName, entry.schemaName]),
+    ...htmlValues.map(value => value.functionName),
+  ].sort()
+  const extractExports = [
+    ...(extractValues.length === 0
+      ? []
+      : [`export { ${extractValues.join(', ')} } from './extract.js'`]),
+    ...(extracts.length === 0
+      ? []
+      : [`export type { ${extracts.map(entry => entry.typeName).sort().join(', ')} } from './extract.js'`]),
+  ]
 
   return [
     HEADER,
@@ -189,7 +247,7 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[]): 
     '',
     `export { ${hosts.map(host => host.identifier).join(', ')} }`,
     ...extractExports,
-    `export { browserSession, CookieJar, cookieSession, isSiteApiError, SiteApiError, tokenSession } from '@site-to-api/runtime'`,
+    `export { browserSession, combineSessions, CookieJar, cookieSession, extractValue, isSiteApiError, SiteApiError, tokenSession } from '@site-to-api/runtime'`,
     `export type { BrowserCookie, Session } from '@site-to-api/runtime'`,
     '',
     `const sdks = {\n${entries.join('\n')}\n}`,
@@ -199,11 +257,28 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[]): 
     '',
     `const hostDefaults: Record<SiteHost, { baseUrl: string, headers: Record<string, string> }> = {\n${defaults.join('\n')}\n}`,
     '',
+    `/** A security scheme of the spec, as the client passes it to {@link SiteClientOptions.auth}. */`,
+    `export interface SiteAuthScheme {`,
+    `  type: 'apiKey' | 'http'`,
+    `  /** Where the value goes; defaults to a header. */`,
+    `  in?: 'header' | 'query' | 'cookie'`,
+    `  /** Header, query or cookie name; defaults to \`Authorization\`. */`,
+    `  name?: string`,
+    `  scheme?: 'basic' | 'bearer'`,
+    `}`,
+    '',
     `/** Options for {@link createSiteClient}. */`,
     `export interface SiteClientOptions<H extends SiteHost> {`,
     `  host: H`,
     `  /** How requests authenticate; defaults to the cookies in \`jar\` (see README.md). */`,
     `  session?: Session`,
+    `  /**`,
+    `   * Credentials for the operations whose spec declares \`security\`, called before each of them.`,
+    `   * For an \`apiKey\` scheme the value is sent as-is (include \`Bearer \` when the site expects`,
+    `   * it); for \`http\` bearer the client adds \`Bearer \`. Return \`undefined\` to send nothing.`,
+    `   * Works alongside \`session\`, e.g. browser cookies plus a token from the login response.`,
+    `   */`,
+    `  auth?: string | ((scheme: SiteAuthScheme) => string | undefined | Promise<string | undefined>)`,
     `  /** Cookie jar; defaults to the session's jar or a new one. Persist it with \`jar.toJSON()\`. */`,
     `  jar?: CookieJar`,
     `  /** Underlying fetch; defaults to \`globalThis.fetch\`. */`,
@@ -226,8 +301,12 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[]): 
     '',
     `/**`,
     ` * Configures the shared hey-api client of \`host\` to send requests through the runtime's`,
-    ` * \`createFetch\`: cookies from \`jar\`, the session's credentials, retries with backoff and the`,
-    ` * constant headers captured for that host. Every SDK function of the host then uses it.`,
+    ` * \`createFetch\`: cookies from \`jar\`, the session's credentials, \`auth\` for secured`,
+    ` * operations, retries with backoff and the constant headers captured for that host. Every SDK`,
+    ` * function of the host then uses it.`,
+    ` *`,
+    ` * There is one configuration per host: calling it again for the same host replaces the`,
+    ` * previous configuration, also for the \`sdk\` the earlier call returned.`,
     ` */`,
     `export function createSiteClient<H extends SiteHost>(options: SiteClientOptions<H>): SiteClient<H> {`,
     `  const defaults = hostDefaults[options.host]`,
@@ -240,7 +319,8 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[]): 
     `    defaultHeaders: { ...defaults.headers, ...options.headers },`,
     `  })`,
     `  const { client, sdk } = sdks[options.host]`,
-    `  client.setConfig({ baseUrl: options.baseUrl ?? defaults.baseUrl, fetch: siteFetch })`,
+    `  // \`auth\` is always set so a second call without it clears the first call's credentials.`,
+    `  client.setConfig({ baseUrl: options.baseUrl ?? defaults.baseUrl, fetch: siteFetch, auth: options.auth })`,
     `  return { host: options.host, client, sdk, jar, fetch: siteFetch }`,
     `}`,
     '',
@@ -254,24 +334,58 @@ function renderStringRecord(record: Record<string, string>, indent: string): str
   return `{\n${entries.map(([key, value]) => `${indent}  ${literal(key)}: ${literal(value)},`).join('\n')}\n${indent}}`
 }
 
-/** `client/README.md`: how to create a client for each host and which session it needs. */
-export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessions: SessionRequirement[]): string {
+/** `client/README.md`: how to set up and create a client for each host and which session it needs. */
+export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessions: SessionRequirement[], htmlValues: NamedHtmlValue[] = []): string {
   const sections = hosts.map(host => renderHostSection(host, sessions.find(session => session.host === host.host) ?? null))
   const parsers = extracts.length === 0
     ? ['No operation has an HTML or text response with an extraction spec.']
     : extracts.map(entry => `- ${code(`${entry.functionName}(text)`)} → ${code(`${entry.typeName}${entry.spec.kind === 'text' || entry.spec.many
         ? '[]'
         : ''}`)}: ${code(entry.operationId)} (${code(`${entry.method} ${entry.path}`)} on ${code(entry.host)}, ${text(entry.mimeType)}). Schema: ${code(entry.schemaName)}.`)
+  const values = htmlValues.length === 0
+    ? ['flows.json reads no request value from an HTML page.']
+    : htmlValues.map(value => `- ${code(`${value.functionName}(html)`)} → ${code('string | null')}: ${code(value.input)} for ${value.usedBy.map(id => code(id)).join(', ')}, read from the HTML of ${code(value.sourceOperationId)} (${code(value.location.selector)}${value.location.attr === null
+        ? ', text'
+        : `, attribute ${code(value.location.attr)}`}${value.location.pattern === null
+        ? ''
+        : `, pattern ${code(value.location.pattern)}`}).`)
   return [
     '# Generated client',
     '',
-    'Generated by `site-to-api gen` from `../specs/` and `../flows.json`. Do not edit these files:',
-    'run `site-to-api gen` again after `build` or `probe`.',
+    'Generated from `../specs/` and `../flows.json`. Do not edit these files: `site-to-api build` and',
+    '`site-to-api probe` regenerate them, and `site-to-api gen` regenerates only this folder from an',
+    'existing handoff folder (for example after editing a spec).',
     '',
-    'The code imports `@site-to-api/runtime` and `zod` (v4); add both to your project.',
+    '## Setup',
+    '',
+    '- Add `@site-to-api/runtime` and `zod` (v4) to your project.',
+    '- The files are TypeScript ES modules with `.js` import specifiers, so they type-check under',
+    '  `moduleResolution` `bundler` and `nodenext`. Compile them with the rest of your code, or run',
+    '  them with a TypeScript runner such as `tsx`. Under `nodenext` the folder must be part of an',
+    '  ES module package (`"type": "module"` in the nearest `package.json`).',
+    '- Import from `./client/index.js` (`./client` also works with a bundler).',
+    '',
     'Each host folder holds the hey-api output (types, SDK functions, Zod schemas). `index.ts` exports',
     'every host\'s SDK as a namespace and `createSiteClient()`, which routes that host\'s SDK through',
-    'the runtime: a cookie jar, the session below, retries with backoff and the constant headers.',
+    'the runtime: a cookie jar, the session below, `auth` for secured operations, retries with backoff',
+    'and the constant headers.',
+    '',
+    '## Using `createSiteClient`',
+    '',
+    '`createSiteClient({ host, ... })` returns `{ sdk, client, jar, fetch }`; call the operations',
+    'through `sdk`. It configures the one shared hey-api client of that host, so calling it twice for',
+    'the same host replaces the first configuration, including for the `sdk` the first call returned',
+    '(the host namespaces exported from `index.ts` are the same functions). Call it once per host at',
+    'start-up and pass the result around.',
+    '',
+    'Credentials:',
+    '',
+    '- `session` adds credentials to every request: `cookieSession` (the default), `tokenSession`,',
+    '  `browserSession`, or several joined with `combineSessions(...)`, which share one jar.',
+    '- `auth` answers the `security` requirements in the spec: it is called before each operation that',
+    '  declares one and its value goes where the scheme says (see "Auth" per host). It works',
+    '  alongside `session`, for example browser cookies from `browserSession` plus a bearer token',
+    '  from the login response.',
     '',
     '## Hosts',
     '',
@@ -280,6 +394,13 @@ export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessio
     '## Parsing HTML and text responses',
     '',
     ...parsers,
+    '',
+    '## Values from HTML pages',
+    '',
+    'Request values that flows.json traces to an HTML page, such as a CSRF token in a meta tag.',
+    'Fetch the page (for example with the SDK and `parseAs: \'text\'`) and pass its HTML:',
+    '',
+    ...values,
     '',
   ].join('\n')
 }
@@ -316,8 +437,54 @@ function renderHostSection(host: HostSpec, session: SessionRequirement | null): 
   const headers = Object.entries(host.defaultHeaders)
   if (headers.length > 0)
     lines.push(`- Sent on every request: ${headers.map(([name, value]) => code(`${name}: ${value}`)).join(', ')}.`)
+  const auth = authLine(host)
+  if (auth !== null)
+    lines.push(auth)
   lines.push('', ...codeBlock(sessionExample(host, session?.requires ?? 'unknown', example), 'ts'))
   return lines.join('\n')
+}
+
+const LISTED_OPERATIONS = 5
+
+function authLine(host: HostSpec): string | null {
+  if (host.securedOperationIds.length === 0)
+    return null
+  const listed = host.securedOperationIds.slice(0, LISTED_OPERATIONS).map(id => code(id)).join(', ')
+  const more = host.securedOperationIds.length > LISTED_OPERATIONS
+    ? ` and ${host.securedOperationIds.length - LISTED_OPERATIONS} more`
+    : ''
+  const schemes = host.auth.length === 0
+    ? 'the spec declares no security scheme, so `auth` has nothing to apply'
+    : host.auth.map(describeAuthScheme).join('; ')
+  return `- Auth: ${listed}${more} declare security. Pass \`auth\` to \`createSiteClient\`: ${schemes}.`
+}
+
+function describeAuthScheme(scheme: AuthScheme): string {
+  if (scheme.type === 'apiKey') {
+    const where = `${text(scheme.in ?? 'header')} ${code(scheme.parameter ?? 'Authorization')}`
+    const bearer = (scheme.in ?? 'header') === 'header' && (scheme.parameter ?? 'Authorization').toLowerCase() === 'authorization'
+      ? ` (for example \`\` \`Bearer \${token}\` \`\`)`
+      : ''
+    return `${code(scheme.name)} is an API key in ${where}, sent as-is, so return the full value${bearer}`
+  }
+  if (scheme.type === 'http' && scheme.scheme === 'bearer')
+    return `${code(scheme.name)} is an HTTP bearer token: return the token and the client adds \`Bearer \``
+  if (scheme.type === 'http' && scheme.scheme === 'basic')
+    return `${code(scheme.name)} is HTTP basic auth: return \`user:password\` and the client encodes it`
+  return `${code(scheme.name)} has type ${code(scheme.type)}, which the client does not apply; add the credentials with a \`session\``
+}
+
+/** The `auth` option of the README example, or null when no operation declares security. */
+function authExample(host: HostSpec): string | null {
+  if (host.securedOperationIds.length === 0 || host.auth.length === 0)
+    return null
+  const first = host.auth[0]
+  const bearerHeader = first?.type === 'apiKey'
+    && (first.in ?? 'header') === 'header'
+    && (first.parameter ?? 'Authorization').toLowerCase() === 'authorization'
+  return bearerHeader
+    ? `  auth: () => token && \`Bearer \${token}\`,`
+    : '  auth: () => token,'
 }
 
 function describeSession(session: SessionRequirement | null): string {
@@ -339,21 +506,30 @@ function describeSession(session: SessionRequirement | null): string {
 }
 
 function sessionExample(host: HostSpec, requires: SessionRequirement['requires'], operation: string): string[] {
-  const call = [`const { data, error } = await ${host.identifier}.${operation}({ /* options */ })`]
+  const auth = authExample(host)
+  const tokenLine = auth === null
+    ? []
+    : ['let token: string | undefined // for example from the login response', '']
+  const authLines = auth === null
+    ? []
+    : [auth]
+  const call = [`const { data, error } = await sdk.${operation}({ /* options */ })`]
   const head = `import { ${requires === 'token'
     ? 'createSiteClient, tokenSession'
     : requires === 'browser'
       ? 'browserSession, CookieJar, createSiteClient'
-      : 'CookieJar, createSiteClient'}, ${host.identifier} } from './client'`
+      : 'CookieJar, createSiteClient'} } from './client/index.js'`
   const hostLiteral = literal(host.host)
   switch (requires) {
     case 'token':
       return [
         head,
         '',
-        `createSiteClient({`,
+        ...tokenLine,
+        `const { sdk } = createSiteClient({`,
         `  host: ${hostLiteral},`,
         `  session: tokenSession({ getToken: () => process.env.SITE_TOKEN ?? '' }),`,
+        ...authLines,
         `})`,
         ...call,
       ]
@@ -362,8 +538,9 @@ function sessionExample(host: HostSpec, requires: SessionRequirement['requires']
         head,
         `import { chromium } from 'playwright'`,
         '',
+        ...tokenLine,
         `const jar = new CookieJar()`,
-        `createSiteClient({`,
+        `const { sdk } = createSiteClient({`,
         `  host: ${hostLiteral},`,
         `  jar,`,
         `  // A real browser loads the site; its cookies are reused for plain HTTP and`,
@@ -382,6 +559,7 @@ function sessionExample(host: HostSpec, requires: SessionRequirement['requires']
         `      }`,
         `    },`,
         `  }),`,
+        ...authLines,
         `})`,
         ...call,
       ]
@@ -389,8 +567,17 @@ function sessionExample(host: HostSpec, requires: SessionRequirement['requires']
       return [
         head,
         '',
+        ...tokenLine,
         `const jar = new CookieJar() // or CookieJar.fromJSON(saved)`,
-        `createSiteClient({ host: ${hostLiteral}, jar })`,
+        ...(auth === null
+          ? [`const { sdk } = createSiteClient({ host: ${hostLiteral}, jar })`]
+          : [
+              `const { sdk } = createSiteClient({`,
+              `  host: ${hostLiteral},`,
+              `  jar,`,
+              ...authLines,
+              `})`,
+            ]),
         ...call,
       ]
   }
