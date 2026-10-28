@@ -1,1 +1,1 @@
-export { classifyExchanges } from './classify'
+export { classifyExchanges, createChannelScope } from './classify'

@@ -2,7 +2,7 @@
  * Builders for hand-made test inputs. Analysis tests construct exchanges with these instead of
  * loading HAR files, so each test shows exactly the data it depends on.
  */
-import type { Body, Exchange, NameValue } from '../src/model'
+import type { Body, CaptureEvent, Exchange, LoadedSession, NameValue, WebSocketEvent } from '../src/model'
 
 let counter = 0
 
@@ -98,4 +98,81 @@ export function exchange(init: ExchangeInit): Exchange {
     kind: init.kind ?? 'api',
     kindReason: 'test',
   }
+}
+
+/** A loaded session holding only capture events (no saved scripts), as `load` would return it. */
+export function loadedSession(sessionId: string, events: CaptureEvent[]): LoadedSession {
+  return {
+    dir: `/captures/${sessionId}`,
+    events,
+    meta: {
+      formatVersion: 1,
+      sessionId,
+      toolVersion: 'test',
+      startUrl: null,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      completedAt: '2026-01-01T00:01:00.000Z',
+      browser: { channel: null, headless: true, userAgent: 'test' },
+      har: 'traffic.har',
+      events: 'events.jsonl',
+      scripts: [],
+    },
+  }
+}
+
+export interface SocketInit {
+  url: string
+  pageUrl?: string
+  /** Socket number written on every event; omit to imitate captures made before it existed. */
+  socket?: number
+  openedAt?: number
+  /** Frames after `open`, 10 ms apart; `>` is sent by the page, `<` received from the server. */
+  frames: Array<[direction: '>' | '<', data: string | Uint8Array]>
+  /** Adds a `close` event after the last frame. */
+  close?: boolean
+}
+
+/** The `ws` events of one socket: `open`, its frames, and optionally `close`. */
+export function socketEvents(init: SocketInit): WebSocketEvent[] {
+  const pageUrl = init.pageUrl ?? `${new URL(init.url).origin.replace(/^ws/, 'http')}/`
+  const start = init.openedAt ?? 1_700_000_000_000
+  const base = (ts: number): Omit<WebSocketEvent, 'direction' | 'data'> => ({
+    t: 'ws',
+    ts,
+    pageUrl,
+    url: init.url,
+    ...(init.socket === undefined
+      ? {}
+      : { socket: init.socket }),
+  })
+  const events: WebSocketEvent[] = [
+    {
+      ...base(start),
+      direction: 'open',
+      data: null,
+    },
+  ]
+  init.frames.forEach(([direction, data], index) => {
+    const binary = typeof data !== 'string'
+    events.push({
+      ...base(start + (index + 1) * 10),
+      direction: direction === '>'
+        ? 'sent'
+        : 'received',
+      data: binary
+        ? btoa(String.fromCharCode(...data))
+        : data,
+      ...(init.socket === undefined && !binary
+        ? {}
+        : { binary }),
+    })
+  })
+  if (init.close === true) {
+    events.push({
+      ...base(start + (init.frames.length + 1) * 10),
+      direction: 'close',
+      data: null,
+    })
+  }
+  return events
 }

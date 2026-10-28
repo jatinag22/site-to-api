@@ -67,12 +67,17 @@ function hostOf(url: string | null): string | null {
  * Hosts analysed when `include` is empty: those that served a document, plus those that received
  * XHR/fetch calls from such documents. Noise domains never count.
  */
-function defaultScope(exchanges: Exchange[]): Set<string> {
+function pageHostsOf(exchanges: Exchange[]): Set<string> {
   const pageHosts = new Set<string>()
   for (const exchange of exchanges) {
     if (exchange.resourceType === 'document' && findNoise(exchange.request.host, exchange.request.path) === null)
       pageHosts.add(exchange.request.host)
   }
+  return pageHosts
+}
+
+function defaultScope(exchanges: Exchange[]): Set<string> {
+  const pageHosts = pageHostsOf(exchanges)
   const scope = new Set(pageHosts)
   for (const exchange of exchanges) {
     const pageHost = hostOf(exchange.pageUrl)
@@ -196,4 +201,26 @@ export function classifyExchanges(exchanges: Exchange[], options: ClassifyOption
     }))
     .sort((a, b) => a.host.localeCompare(b.host) || a.vendor.localeCompare(b.vendor))
   return { exchanges: classified, botProtection }
+}
+
+/**
+ * Which WebSocket connections to analyse, by the same host rules as HTTP: known analytics hosts
+ * and `exclude` never count; with `include` set, its globs decide; otherwise a socket counts when
+ * its host served a page or a page of such a host opened it, because a real-time host
+ * (`rt.site.com`, a hosted push service) usually serves no page of its own.
+ */
+export function createChannelScope(exchanges: Exchange[], options: ClassifyOptions): (url: { host: string, path: string }, pageUrl: string) => boolean {
+  const included = compileHostGlobs(options.include)
+  const excluded = compileHostGlobs(options.exclude)
+  const pageHosts = options.include.length === 0
+    ? pageHostsOf(exchanges)
+    : null
+  return (url, pageUrl) => {
+    if (findNoise(url.host, url.path) !== null || excluded(url.host))
+      return false
+    if (pageHosts === null)
+      return included(url.host)
+    const pageHost = hostOf(pageUrl)
+    return pageHosts.has(url.host) || (pageHost !== null && pageHosts.has(pageHost) && !excluded(pageHost))
+  }
 }
