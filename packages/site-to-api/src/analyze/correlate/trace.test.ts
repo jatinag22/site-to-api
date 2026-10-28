@@ -213,6 +213,41 @@ describe('traceValues: response producers', () => {
     expect(originAt(trace([copy, call]), call, '{"in":"query","name":"view"}')).toMatchObject({ kind: 'unknown' })
   })
 
+  it('never takes a value from a cookie header a response reflects', () => {
+    // A bot-protection page echoes the request's cookies back in a `cookie` response header.
+    const blocked = exchange({
+      url: 'https://api.example.test/cart',
+      startedAt: 1,
+      status: 403,
+      responseHeaders: { cookie: '_fbp=fb.1.1793209580.4471; session=x' },
+    })
+    const call = exchange({
+      url: 'https://api.example.test/next',
+      startedAt: 2,
+      cookies: { _fbp: 'fb.1.1793209580.4471' },
+    })
+    expect(originAt(trace([blocked, call]), call, '{"in":"cookie","name":"_fbp"}')).not.toMatchObject({ kind: 'response' })
+  })
+
+  it('matches a number inside a longer value only where separators set it off', () => {
+    const clock = exchange({
+      url: 'https://api.example.test/tags',
+      startedAt: 1,
+      responseBody: jsonBody({
+        ts: '1793209580',
+        ids: ['55512345'],
+      }),
+    })
+    const call = exchange({ url: 'https://api.example.test/x?gcl=1.1.1793209580.1793209581&ids=4,55512345,9', startedAt: 2 })
+    const traces = trace([clock, call])
+    expect(originAt(traces, call, '{"in":"query","name":"gcl"}')).toMatchObject({ kind: 'unknown' })
+    expect(originAt(traces, call, '{"in":"query","name":"ids"}')).toMatchObject({
+      kind: 'response',
+      transform: 'substring',
+      location: { pointer: '/ids/0' },
+    })
+  })
+
   it('finds values in HTML through the locator, also as part of a longer value', () => {
     const page = exchange({
       url: 'https://www.example.test/',
@@ -290,7 +325,7 @@ describe('traceValues: response producers', () => {
   })
 
   it('traces a plain word only to a page of the same site, never to a class name or another site\'s link', () => {
-    const html = '<html><body><input name="tags" value="story"><table><tr><td class="title">x</td></tr></table><a href="https://news.other.test/newest">new</a></body></html>'
+    const html = '<html><body><input name="tags" value="story"><table><tr><td class="title">x</td></tr></table><a href="https://news.other.test/newest">new</a><a href="https://www.news.test/basket">Bag</a></body></html>'
     const page = (url: string): Exchange => exchange({
       url,
       startedAt: 1,
@@ -311,6 +346,8 @@ describe('traceValues: response producers', () => {
     expect(traced('https://www.elsewhere.test/', 'tag=story')).toMatchObject({ kind: 'unknown' })
     expect(traced('https://www.news.test/', 'restrict=title')).toMatchObject({ kind: 'unknown' })
     expect(traced('https://www.news.test/', 'kind=newest')).toMatchObject({ kind: 'unknown' })
+    // The first path segment of a link names a page: `/basket`, not a value.
+    expect(traced('https://www.news.test/', 'resource=basket')).toMatchObject({ kind: 'unknown' })
   })
 
   it('does not trace a short number to a page that contains it by chance', () => {

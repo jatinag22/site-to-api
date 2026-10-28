@@ -96,6 +96,7 @@ function buildIndex(exchanges: readonly Exchange[], events: readonly CaptureEven
 
 /** Letters only, maybe joined by `-` or `_`: `combined`, `tick`, `SUBSCRIBE`, `price-update`. */
 const PLAIN_WORD = /^\p{L}+(?:[-_]\p{L}+)*$/u
+const INTEGER_TEXT = /^\d+$/
 
 /** Attributes that carry data or links, so a word inside them (`/stores/pine-hill`) is a value. */
 const DATA_ATTRIBUTE = /^(?:href|src|action|value|content|data-.+)$/
@@ -130,8 +131,11 @@ function isPlainWordSource({ found, pageHost, requestHost }: PlainWordPlace): bo
   if (found.pattern === null)
     return true
   const prefix = found.pattern.slice(0, found.pattern.indexOf('('))
-  const linkedHost = /\/\/([^/]+)/.exec(prefix.replaceAll('\\', ''))?.[1]
-  return found.attr !== null && DATA_ATTRIBUTE.test(found.attr) && URL_BOUNDARY.test(prefix)
+  const literal = prefix.replaceAll('\\', '').replace(/^\^\\?s\*/, '')
+  const linkedHost = /\/\/([^/]+)/.exec(literal)?.[1]
+  // The first path segment of a link (`/cart`, `//www.example.com/cart`) names a page, not a value.
+  const firstSegment = /^(?:[a-z]+:)?(?:\/\/[^/]+)?\/$/.test(literal)
+  return found.attr !== null && DATA_ATTRIBUTE.test(found.attr) && URL_BOUNDARY.test(prefix) && !firstSegment
     && (linkedHost === undefined || siteOf(linkedHost) === siteOf(requestHost))
 }
 
@@ -207,6 +211,26 @@ function* htmlCandidates(consumer: Exchange, sent: LocatedValue, variants: reado
   }
 }
 
+/** Characters that separate list items, parameters and words: `ids=1,2`, `Bearer x`, `a=1&b=2`. */
+const PART_SEPARATOR = /[\s,;=&/|:"']/
+
+/**
+ * Whether `part` sits in `whole` as a part of its own. A number must be set off by separators: a
+ * timestamp inside `1.1.1793209580.1793209580` or a count inside an id is the same clock or
+ * counter, not a copied value.
+ */
+function containsAsPart(whole: string, part: string): boolean {
+  if (!INTEGER_TEXT.test(part))
+    return true
+  for (let index = whole.indexOf(part); index !== -1; index = whole.indexOf(part, index + 1)) {
+    const before = whole.charAt(index - 1)
+    const after = whole.charAt(index + part.length)
+    if ((before === '' || PART_SEPARATOR.test(before)) && (after === '' || PART_SEPARATOR.test(after)))
+      return true
+  }
+  return false
+}
+
 function* substringCandidates(consumer: Exchange, sent: LocatedValue, index: SessionIndex): Generator<Candidate> {
   const value = sent.value
   // A plain word inside a longer text (a description, a sentence) is a coincidence, not a copy.
@@ -214,7 +238,8 @@ function* substringCandidates(consumer: Exchange, sent: LocatedValue, index: Ses
     return
   for (const producer of index.producers) {
     const other = producer.value
-    const related = other.length >= SUBSTRING_MIN_LENGTH && other !== value && !PLAIN_WORD.test(other) && (value.includes(other) || other.includes(value))
+    const related = other.length >= SUBSTRING_MIN_LENGTH && other !== value && !PLAIN_WORD.test(other)
+      && ((value.includes(other) && containsAsPart(value, other)) || (other.includes(value) && containsAsPart(other, value)))
     if (related && isBefore(producer.exchange, consumer))
       yield producerCandidate(producer, sent, 'substring')
   }
