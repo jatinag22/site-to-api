@@ -3,7 +3,7 @@
  * (docs/output-format.md, decision 0023). Objects are built with a fixed key order so the YAML is
  * byte-identical for the same analysis. Every value in it was redacted by the analysis.
  */
-import type { ChannelMessage, ChannelValueLink, JsonSchema, ParamInfo, WebSocketChannel } from '../../model'
+import type { ChannelMessage, ChannelValueLink, ParamInfo, PathParam, WebSocketChannel } from '../../model'
 import { schemaObject } from '../openapi'
 
 const ASYNCAPI_VERSION = '3.0.0'
@@ -72,15 +72,27 @@ function messageObject(message: ChannelMessage): Json {
   }
 }
 
+/** Why a path segment is a parameter, in the words of the strongest evidence for it. */
+function parameterReason(param: PathParam, connections: number): string {
+  if (param.evidence.includes('source-template'))
+    return 'named by a URL template in the site\'s code'
+  if (param.evidence.includes('varies') && connections > 1)
+    return 'that varied between connections'
+  if (param.evidence.includes('value-trace'))
+    return 'whose value came from an earlier response'
+  return 'that looks like an identifier'
+}
+
 /** AsyncAPI parameter examples are strings; path values were redacted as path segments. */
-function parameterObject(schema: JsonSchema): Json {
+function parameterObject(param: PathParam, connections: number): Json {
+  const { schema } = param
   const examples = (schema.examples ?? []).map(String)
   return {
     description: `Path segment${schema.type
       ? ` (${Array.isArray(schema.type)
         ? schema.type.join(' | ')
         : schema.type})`
-      : ''} that varied between connections.`,
+      : ''} ${parameterReason(param, connections)}.`,
     ...(examples.length > 0
       ? { examples }
       : {}),
@@ -123,7 +135,7 @@ function channelObject(channel: WebSocketChannel): Json {
       ? {
           parameters: Object.fromEntries(channel.pathParams.map(param => [
             param.name,
-            parameterObject(param.schema),
+            parameterObject(param, channel.connections),
           ])),
         }
       : {}),

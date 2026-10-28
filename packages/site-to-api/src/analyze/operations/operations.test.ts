@@ -117,6 +117,28 @@ describe('buildOperations: path parameters', () => {
     })
   })
 
+  it('does not let a source template made only of parameters turn a plain word into one', () => {
+    // A bundle's `${base}/${token}` gives `/{token}` with no host: it says nothing about which
+    // single-segment path on which host it was built for.
+    const operations = build([
+      get('/stream'),
+      exchange({ url: 'https://other.test/nats-fe' }),
+    ], [
+      route('/{token}'),
+    ]).filter(operation => !operation.sourceOnly)
+    expect(paths(operations).sort()).toEqual(['GET /nats-fe', 'GET /stream'])
+    expect(operations.every(operation => operation.pathParams.length === 0)).toBe(true)
+  })
+
+  it('still lets a parameter-only source template name an identifier segment', () => {
+    const operations = build([
+      get('/a1b2c3d4e5f6a7b8c9d0'),
+    ], [
+      route('/{token}'),
+    ]).filter(operation => !operation.sourceOnly)
+    expect(paths(operations)).toEqual(['GET /{token}'])
+  })
+
   it('shares parameter names across methods on the same path', () => {
     const operations = build([
       get('/api/items/12'),
