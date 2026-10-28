@@ -37,7 +37,22 @@ function nameBase(value: string): string {
 }
 
 /**
- * Names each parser after its operation (`extractGetPrices`). Operation ids are unique per host
+ * `SubmissionsFromGetRoot` when the spec says what its records are, else the operation alone
+ * (`GetPrices`).
+ */
+function extractBase(operation: ExtractOperation): string {
+  const base = nameBase(operation.operationId)
+  const kind = operation.spec.kind === 'html' && operation.spec.recordsName !== undefined
+    ? toPascalCase(operation.spec.recordsName)
+    : ''
+  return /^[A-Z][A-Za-z\d]*$/.test(kind)
+    ? `${kind}From${base}`
+    : base
+}
+
+/**
+ * Names each parser after the records it returns and its operation (`extractDealsFromGetDeals`),
+ * or after the operation alone when the page does not say what its records are (`extractGetPrices`). Operation ids are unique per host
  * only, so a clash across hosts is resolved by prefixing the host identifier. Ids that differ
  * only in punctuation (`get-a`, `getA`) can still meet; a numeric suffix keeps them apart.
  */
@@ -45,7 +60,7 @@ export function nameExtracts(hosts: HostSpec[], warnings: string[]): NamedExtrac
   const hostsByBase = new Map<string, Set<string>>()
   for (const host of hosts) {
     for (const operation of host.extracts) {
-      const base = nameBase(operation.operationId)
+      const base = extractBase(operation)
       hostsByBase.set(base, (hostsByBase.get(base) ?? new Set()).add(host.host))
     }
   }
@@ -53,7 +68,7 @@ export function nameExtracts(hosts: HostSpec[], warnings: string[]): NamedExtrac
   const taken = new Set<string>()
   for (const host of hosts) {
     for (const operation of host.extracts) {
-      let base = nameBase(operation.operationId)
+      let base = extractBase(operation)
       if ((hostsByBase.get(base)?.size ?? 0) > 1) {
         // Host identifiers can start with `_1`; nameBase keeps the result an identifier.
         const prefixed = nameBase(`${host.identifier}_${base}`)
