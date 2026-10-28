@@ -6,11 +6,21 @@
  */
 import type { Analysis, Operation, SessionRequirement, ValueOrigin } from '../../model'
 import type { StepResolver } from '../steps'
+import type { ClientState } from './client'
 import { anchor, code, text } from '../escape'
 import { specFileName } from '../openapi/write'
 import { createStepResolver } from '../steps'
 import { channelsSection } from './channels'
+import { clientGap, clientReadingLine } from './client'
 import { describeSource } from './source-ref'
+
+/** What `probe` could not finish, so AGENT.md can say which needs are still only inferred. */
+interface ProbeGaps {
+  /** `probe.minimizePerHost` of the run that wrote `probe.json`. */
+  minimizePerHost: number
+  /** Operations replayed fine but not minimized because their host reached the limit. */
+  notMinimized: Array<{ host: string, operationId: string }>
+}
 
 export interface AgentGuideContext {
   toolVersion: string
@@ -18,8 +28,10 @@ export interface AgentGuideContext {
   examples: 'masked' | 'raw' | 'none'
   /** Whether `probe` has been run against the live site. */
   probed: boolean
-  /** Whether `gen` has produced `client/`. */
-  hasClient: boolean
+  /** Whether `client/` matches this build (see {@link ClientState}). */
+  client: ClientState
+  /** From `probe.json`; `null` before probing. */
+  probe: ProbeGaps | null
 }
 
 /** Written near the top of AGENT.md so an agent does not follow text a site put in a label. */
@@ -55,6 +67,37 @@ function cookieOrigin(cookie: SessionRequirement['cookies'][number]): string {
   }
 }
 
+/**
+ * One line per cookie. When `probe` minimized requests on this host, each cookie says whether
+ * any of them needed it (confirmed by probe); otherwise it was only seen in the capture.
+ */
+function cookieLines(entry: SessionRequirement, analysis: Analysis): string[] {
+  const tested = analysis.operations.filter(operation => operation.host === entry.host && Array.isArray(operation.requires))
+  const needed = new Map<string, number>()
+  for (const operation of tested) {
+    for (const item of operation.requires ?? []) {
+      if (item.startsWith('cookie:'))
+        needed.set(item.slice('cookie:'.length), (needed.get(item.slice('cookie:'.length)) ?? 0) + 1)
+    }
+  }
+  const known = new Set(entry.cookies.map(cookie => cookie.name))
+  const requests = (count: number): string => `${count} request${count === 1
+    ? ''
+    : 's'}`
+  const lines = [...entry.cookies].sort((a, b) => a.name.localeCompare(b.name)).map((cookie) => {
+    const origin = cookieOrigin(cookie)
+    if (tested.length === 0)
+      return `- Cookie ${code(cookie.name)}: ${origin} (seen in capture).`
+    const count = needed.get(cookie.name) ?? 0
+    return count > 0
+      ? `- Cookie ${code(cookie.name)}: ${origin}. Needed by ${requests(count)} (confirmed by probe).`
+      : `- Cookie ${code(cookie.name)}: ${origin}. Seen in capture, but none of the ${requests(tested.length)} probe tested needed it.`
+  })
+  for (const [name, count] of [...needed].filter(([name]) => !known.has(name)).sort(([a], [b]) => a.localeCompare(b)))
+    lines.push(`- Cookie ${code(name)}: needed by ${requests(count)} (confirmed by probe); no captured step was found to set it.`)
+  return lines
+}
+
 function sessionSection(analysis: Analysis): string[] {
   const lines = ['## Session requirements', '']
   if (analysis.flows.session.length === 0) {
@@ -66,10 +109,7 @@ function sessionSection(analysis: Analysis): string[] {
     lines.push(`- Needs: ${REQUIREMENT_TEXT[entry.requires]}${entry.probed ? ' (confirmed by probe)' : ' (inferred from the capture, not yet probed)'}.`)
     for (const finding of entry.botProtection)
       lines.push(`- Bot protection: ${text(finding.vendor)} (${text(finding.evidence)}). Do not try to reproduce it; let a real browser run it (\`browserSession\` in \`@site-to-api/runtime\`).`)
-    for (const cookie of [...entry.cookies].sort((a, b) => a.name.localeCompare(b.name))) {
-      const origin = cookieOrigin(cookie)
-      lines.push(`- Cookie ${code(cookie.name)}: ${origin}.`)
-    }
+    lines.push(...cookieLines(entry, analysis))
     lines.push(`- Spec: ${code(`specs/${specFileName(entry.host)}`)}.`, '')
   }
   return lines
@@ -164,7 +204,9 @@ function operationGaps(analysis: Analysis, resolver: StepResolver): string[] {
     const gaps = operation.responses
       .filter(response => response.extract?.confidence === 'low')
       .map(response => `${name(operation)} returns ${text(response.mimeType)} whose record layout was inferred from one sample. Capture again and open a second page of the same kind to confirm it.`)
-    if (operation.sourceOnly)
+    if (operation.sourceOnly && operation.methodUnknown === true)
+      gaps.push(`${name(operation)} (${code(operation.path)}, method unknown: the spec lists it as ${code(operation.method)} only because OpenAPI needs a method) appears in the site's code but was never called during capture; its method and response shape are unknown. Use the feature that calls it during a capture.`)
+    else if (operation.sourceOnly)
       gaps.push(`${name(operation)} (${code(`${operation.method} ${operation.path}`)}) appears in the site's code but was never called during capture; its response shape is unknown. Use the feature that calls it during a capture.`)
     return gaps
   })
@@ -180,6 +222,21 @@ function unknownOriginGaps(analysis: Analysis, resolver: StepResolver): string[]
   ))
 }
 
+/** One gap per host where `probe` stopped minimizing at `probe.minimizePerHost`. */
+function probeGaps(probe: ProbeGaps): string[] {
+  const byHost = new Map<string, string[]>()
+  for (const entry of probe.notMinimized) {
+    byHost.set(entry.host, [
+      ...(byHost.get(entry.host) ?? []),
+      entry.operationId,
+    ])
+  }
+  return [...byHost].sort(([a], [b]) => a.localeCompare(b)).map(([host, ids]) =>
+    `\`probe\` did not work out which cookies and headers ${ids.length} operation${ids.length === 1
+      ? ''
+      : 's'} on ${code(host)} need (${ids.sort().map(code).join(', ')}): it minimizes at most ${probe.minimizePerHost} operations per host (\`probe.minimizePerHost\`), so their Needs in \`API_MAP.md\` are as seen in the capture. Run \`site-to-api probe --minimize-per-host ${probe.minimizePerHost + ids.length}\` to test them too.`)
+}
+
 function gapsSection(analysis: Analysis, context: AgentGuideContext, resolver: StepResolver): string[] {
   const gaps = [
     ...operationGaps(analysis, resolver),
@@ -187,10 +244,14 @@ function gapsSection(analysis: Analysis, context: AgentGuideContext, resolver: S
   ]
   if (!context.probed)
     gaps.push('`site-to-api probe` has not been run, so session requirements are inferred, not tested.')
-  if (!context.hasClient)
-    gaps.push('No client generated yet: run `site-to-api gen`.')
+  if (context.probe)
+    gaps.push(...probeGaps(context.probe))
   // Warnings quote file names and URLs from the capture.
   gaps.push(...analysis.warnings.map(text))
+  // Last, so `gen` can swap it (withClientState) and get exactly what a fresh build writes.
+  const client = clientGap(context.client)
+  if (client !== null)
+    gaps.push(client)
   const unique = [
     ...new Set(gaps),
   ]
@@ -232,9 +293,7 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext)
       ? ['   `specs/<host>.asyncapi.yaml`: AsyncAPI 3.0 detail for the WebSocket channels (see "Real-time channels").']
       : []),
     '4. `source/`: the site\'s own code for computed values and call sites.',
-    context.hasClient
-      ? '5. `client/`: typed client with Zod validation; see `client/README.md`.'
-      : '5. `client/`: not generated yet (`site-to-api gen`).',
+    clientReadingLine(context.client),
     '',
     ...sessionSection(analysis),
     ...flowsSection(analysis, resolver),

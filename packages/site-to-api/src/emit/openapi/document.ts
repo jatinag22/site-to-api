@@ -326,6 +326,10 @@ function operationObject(operation: Operation, origins: Map<string, ValueOrigin>
     ...(operation.sourceOnly
       ? { 'x-site-to-api-source-only': true }
       : {}),
+    // The code called this URL without a literal method, so the method key above is a placeholder.
+    ...(operation.methodUnknown === true
+      ? { 'x-site-to-api-method-unknown': true }
+      : {}),
     ...(operation.requires
       ? { 'x-site-to-api-requires': operation.requires }
       : {}),

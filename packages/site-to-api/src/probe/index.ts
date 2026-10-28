@@ -10,6 +10,7 @@ import { ProbeReportSchema } from '../model/probe'
 export { applyProbeReport, requirementsByOperation } from './apply'
 export { probeOperations } from './probe'
 export type { ProbeOptions } from './probe'
+export { minimizeLimit, notMinimized, summarizeProbe } from './summary'
 
 const PROBE_FILE = 'probe.json'
 

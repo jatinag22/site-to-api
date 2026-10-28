@@ -10,7 +10,7 @@ const HostPattern = z.string().min(1)
 export const ConfigSchema = z.strictObject({
   /** Raw captures: HAR files, sourcemaps, real cookies. Always gitignored. */
   rawDir: z.string().default('.site-to-api/raw'),
-  /** Generated handoff folder: specs, flows, docs and client. Safe to commit. */
+  /** Generated handoff folder: specs, flows, docs and client. Redacted by default; review before publishing. */
   outDir: z.string().default('api-handoff'),
   hosts: z.strictObject({
     /**
@@ -73,6 +73,11 @@ export const ConfigSchema = z.strictObject({
     /** Replay POST, PUT, PATCH and DELETE too. Off by default: they can change data. */
     unsafeMethods: z.boolean().default(false),
     timeoutMs: z.number().int().positive().default(15_000),
+    /**
+     * Operations per host that get the remove-one-at-a-time analysis that finds which cookies and
+     * headers a request needs. It costs one request per cookie and header, so it is capped.
+     */
+    minimizePerHost: z.number().int().min(0).default(5),
   }).prefault({}),
   gen: z.strictObject({
     /** Generate the TypeScript client into `<outDir>/client`. */

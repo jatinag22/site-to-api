@@ -11,12 +11,13 @@ import process from 'node:process'
 import { InvalidArgumentError } from 'commander'
 import { consola } from 'consola'
 import { join, resolve } from 'pathe'
-import { analyzeCaptures, buildHandoff } from '../build'
+import { analyzeCaptures, buildHandoff, readBuildRecord, recordClientGenerated, stickyOptions } from '../build'
 import { runCapture } from '../capture'
+import { updateClientState } from '../emit/handoff'
 import { SiteToApiError } from '../errors'
 import { generateClient } from '../gen'
 import { FlowsDocumentSchema } from '../model'
-import { probeOperations, writeProbeReport } from '../probe'
+import { probeOperations, summarizeProbe, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { resolveConfig } from './program'
 
@@ -83,23 +84,43 @@ const captureCommand: CommandRegistrar = (program) => {
     })
 }
 
-interface BuildFlags {
+function parseCount(value: string): number {
+  const parsed = parseNumber(value)
+  if (!Number.isInteger(parsed) || parsed < 0)
+    throw new InvalidArgumentError(`"${value}" is not a whole number of 0 or more.`)
+  return parsed
+}
+
+/** Flags that shape the handoff folder; `build` takes them, and `probe` (which rebuilds) too. */
+interface OutputFlags {
   include?: string[]
   exclude?: string[]
   examples?: string
   client?: boolean
 }
 
+function addOutputOptions(command: Command, note: string): Command {
+  return command
+    .option('--include <host>', `only analyse this host (glob, repeatable)${note}`, collect)
+    .option('--exclude <host>', `skip this host (glob, repeatable)${note}`, collect)
+    .option('--examples <mode>', `masked | raw | none${note}`)
+    .option('--no-client', `do not generate the TypeScript client${note}`)
+}
+
+function warnIfRaw(examples: string): void {
+  if (examples === 'raw')
+    consola.warn('redact.examples is "raw": captured values, including personal data, will be written to the handoff folder.')
+}
+
 const buildCommand: CommandRegistrar = (program) => {
-  program
-    .command('build')
-    .description('analyse all captures and write the handoff folder (specs, flows, docs, client)')
-    .option('--include <host>', 'only analyse this host (glob, repeatable)', collect)
-    .option('--exclude <host>', 'skip this host (glob, repeatable)', collect)
-    .option('--examples <mode>', 'masked | raw | none')
-    .option('--no-client', 'do not generate the TypeScript client')
-    .action(async (flags: BuildFlags, command: Command) => {
-      const { config, cwd } = await resolveConfig(command, {
+  addOutputOptions(
+    program
+      .command('build')
+      .description('analyse all captures and write the handoff folder (specs, flows, docs, client); the options used are recorded in build.json for probe and gen'),
+    '',
+  )
+    .action(async (flags: OutputFlags, command: Command) => {
+      const { config, cwd, sources } = await resolveConfig(command, {
         hosts: { include: flags.include, exclude: flags.exclude },
         redact: { examples: flags.examples },
         gen: {
@@ -108,11 +129,11 @@ const buildCommand: CommandRegistrar = (program) => {
             : undefined,
         },
       })
-      if (config.redact.examples === 'raw')
-        consola.warn('redact.examples is "raw": captured values, including personal data, will be written to the handoff folder.')
+      warnIfRaw(config.redact.examples)
       const result = await buildHandoff({
         config,
         cwd,
+        sources,
         log: message => consola.info(message),
       })
       printWarnings(result.warnings)
@@ -121,21 +142,43 @@ const buildCommand: CommandRegistrar = (program) => {
     })
 }
 
-interface ProbeFlags {
+interface ProbeFlags extends OutputFlags {
   maxRps?: number
   unsafeMethods?: boolean
+  minimizePerHost?: number
 }
 
 const probeCommand: CommandRegistrar = (program) => {
-  program
-    .command('probe')
-    .description('replay captured requests against the live site to learn what plain HTTP needs (rate limited, safe methods only by default)')
-    .option('--max-rps <n>', 'requests per second', parseNumber)
-    .option('--unsafe-methods', 'also replay POST, PUT, PATCH and DELETE (they can change data on the site)')
+  addOutputOptions(
+    program
+      .command('probe')
+      .description('replay captured requests against the live site to learn what plain HTTP needs (rate limited, safe methods only by default), then rebuild the handoff folder with the options of the last build')
+      .option('--max-rps <n>', 'requests per second', parseNumber)
+      .option('--unsafe-methods', 'also replay POST, PUT, PATCH and DELETE (they can change data on the site)')
+      .option('--minimize-per-host <n>', 'operations per host whose required cookies and headers are worked out one by one (default 5)', parseCount),
+    ' (default: as in the last build)',
+  )
     .action(async (flags: ProbeFlags, command: Command) => {
-      const { config, cwd } = await resolveConfig(command, {
-        probe: { maxRps: flags.maxRps, unsafeMethods: flags.unsafeMethods },
+      // The rebuild must look like the last build: `probe` after `build --examples none` must
+      // not write masked examples. Flags and SITE_TO_API_* variables given now still win.
+      const located = await resolveConfig(command)
+      const sticky = stickyOptions(await readBuildRecord(resolve(located.cwd, located.config.outDir)), located.sources)
+      const { config, cwd, sources } = await resolveConfig(command, {
+        hosts: {
+          include: flags.include ?? sticky.hosts.include,
+          exclude: flags.exclude ?? sticky.hosts.exclude,
+        },
+        redact: { examples: flags.examples ?? sticky.redact.examples },
+        gen: {
+          client: flags.client === false
+            ? false
+            : sticky.gen.client,
+        },
+        probe: { maxRps: flags.maxRps, unsafeMethods: flags.unsafeMethods, minimizePerHost: flags.minimizePerHost },
       })
+      if (sticky.described.length > 0)
+        consola.info(`Using the options of the last build (build.json): ${sticky.described.join(', ')}.`)
+      warnIfRaw(config.redact.examples)
       const analysis = await analyzeCaptures({ config, cwd })
       const report = await probeOperations({
         operations: analysis.operations,
@@ -145,11 +188,11 @@ const probeCommand: CommandRegistrar = (program) => {
       })
       const outDir = resolve(cwd, config.outDir)
       await writeProbeReport(outDir, report)
-      for (const entry of report.skipped)
-        consola.info(`skipped ${entry.operationId}: ${entry.reason}`)
-      const result = await buildHandoff({ config, cwd })
+      const result = await buildHandoff({ config, cwd, sources })
       printWarnings(result.warnings)
-      consola.success(`Probed ${report.operations.length} operations; handoff folder updated with the results.`)
+      for (const line of summarizeProbe(report))
+        consola.info(line)
+      consola.success(`Handoff folder updated with the probe results: ${outDir}`)
     })
 }
 
@@ -173,13 +216,20 @@ async function readFlowsDocument(handoffDir: string): Promise<FlowsDocument> {
 const genCommand: CommandRegistrar = (program) => {
   program
     .command('gen')
-    .description('regenerate only the TypeScript client from the specs in the handoff folder')
+    .description('regenerate only the TypeScript client from the specs in the handoff folder (updates the client lines of AGENT.md and API_MAP.md)')
     .action(async (_flags: unknown, command: Command) => {
       const { config, cwd } = await resolveConfig(command)
       // Works from the committed handoff folder alone: raw captures are not needed (or present) in a fresh clone.
       const handoffDir = resolve(cwd, config.outDir)
+      // Fails on an unreadable build.json before anything in the folder is rewritten.
+      await readBuildRecord(handoffDir)
       const result = await generateClient({ handoffDir, flows: await readFlowsDocument(handoffDir) })
-      printWarnings(result.warnings)
+      // AGENT.md and API_MAP.md were written when the client was missing or stale; say it exists now.
+      printWarnings([
+        ...result.warnings,
+        ...await updateClientState(handoffDir, 'current'),
+      ])
+      await recordClientGenerated(handoffDir)
       consola.success(`Generated ${result.files.length} client files`)
     })
 }

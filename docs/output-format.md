@@ -1,8 +1,8 @@
 # Handoff folder format
 
-What `build` (and `gen`) write to `outDir`. Everything here is safe to commit under the default
-redaction settings (decision 0004). Output is deterministic: the same captures produce
-byte-identical files.
+What `build` (and `probe` and `gen`) write to `outDir`. Everything here is redacted under the
+default settings (decision 0004); review it before publishing. Output is deterministic: the same
+captures, options and `probe.json` produce byte-identical files.
 
 ## `AGENT.md`
 
@@ -10,7 +10,9 @@ The entry point for a coding agent. Generated from a template, no LLM. Sections,
 
 1. **What this folder is**: one paragraph, the hosts covered, the sessions used, the tool version.
 2. **Session requirements per host**: plain HTTP / cookies / token / browser, the bot protection
-   detected, which step sets each required cookie, whether `probe` confirmed it.
+   detected, which step sets each cookie, and whether `probe` confirmed it. After `probe`, each
+   cookie line says either "Needed by N requests (confirmed by probe)" or "Seen in capture, but
+   none of the N requests probe tested needed it"; before, "(seen in capture)".
 3. **Flows**: one line per flow (trigger label → steps), linking to `flows.md#<flow-id>`.
    **Real-time channels** (only when the capture has WebSocket traffic): per channel, the URL,
    the AsyncAPI file and channel id, cookies on the upgrade request, the code that opened it, the
@@ -21,14 +23,37 @@ The entry point for a coding agent. Generated from a template, no LLM. Sections,
 5. **Reading order**: `API_MAP.md` → `flows.md` → the spec for the host → `source/` excerpts →
    `client/` usage.
 6. **Gaps**: operations with low-confidence extraction, unresolved value origins, endpoints seen
-   only in source, hosts excluded. Each gap says what would resolve it (usually "capture again and
-   do X").
+   only in source (with "method unknown" when the code did not show the method), host patterns
+   that matched nothing, operations `probe` did not minimize because of `probe.minimizePerHost`,
+   and the state of `client/` (last). Each gap says what would resolve it (usually "capture again
+   and do X").
 
 ## `API_MAP.md`
 
 One table per host. Columns: operation id, method + path, kind, summary, inputs (with origins
 abbreviated), response (JSON / extract / text), needs (cookies, token, browser), source
 (`file:line`), client function and Zod schema names.
+
+- **Inputs** are written `<input> ← <origin>`. Inputs use the request locations of `flows.json`,
+  except path inputs, which use the parameter name of the spec: `path.productId`, not the segment
+  index `path.2` that `flows.json` uses. A step origin is always qualified, because every flow has
+  an `s1`: `<flowId>.<stepId> (<operationId>) → <output>`, e.g.
+  ``sign-in-2.s2 (postApiAuthLogin) → body./token``. An origin marked `(substring)` means the
+  request value contains the produced value rather than equalling it, e.g. an `authorization`
+  header `Bearer <token>` built from `body./token`; other markers (`url-encoded`, `base64`,
+  `json-string`) name the encoding applied between response and request. An output with `*`
+  (`body./items/*/id`) is marked `(one of the items)`: the value comes from any item of that
+  array, not the one the sample used; an HTML origin whose selector matches a repeated element
+  reads `html one of the elements matching <selector>`.
+- **Needs** ends with `(confirmed by probe)` when it comes from `probe.json` (`requires`), and
+  with `(seen in capture)` when it lists the cookies the captured request was sent with, which
+  may include ones it does not need. `nothing (confirmed by probe)` means the request works with
+  no cookies or auth. Bot-protection steps list no needs: they run in a real browser.
+- **Request** shows `? <path> (method unknown)` for an endpoint found in code whose method could
+  not be determined; its spec uses `get` only as a placeholder, marked
+  `x-site-to-api-method-unknown: true`.
+- A sentence above the tables says whether the Client column exists in `client/` yet (current,
+  from an earlier build, or not generated).
 
 When the capture has WebSocket traffic, a final **Real-time channels** table has one row per
 channel: channel id, URL, what to send after connecting, client and server message types, traced
@@ -60,6 +85,8 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
   - `x-site-to-api-computed`: on a parameter or body property, the computed value id
   - `x-site-to-api-origin`: on a parameter, the value origin (as in `flows.json`)
   - `x-site-to-api-source-only`: endpoint found in code but never called during capture
+  - `x-site-to-api-method-unknown`: on a source-only endpoint, the code did not show its HTTP
+    method; the operation is listed under `get` because OpenAPI needs a method
   - `x-site-to-api-requires`: from `probe`, e.g. `[cookie:session, header:referer]`
 
 ## `specs/<host>.asyncapi.yaml`
@@ -97,6 +124,11 @@ original location and the capture session.
 
 ## `client/`
 
+`gen` reads only the handoff folder, so it cannot re-run the analysis; instead it rewrites the
+client sentences of `AGENT.md` (reading order line 5 and the client gap) and `API_MAP.md` in
+place, so both say the client is current (decision 0025). `build --no-client` keeps an existing
+`client/` and marks it as from an earlier build in both files and in its warning.
+
 Generated by `build` (or `gen` alone): hey-api output per host in `client/<host>/` (types, SDK,
 Zod schemas, request and response validation), `index.ts` exporting each host's SDK as a namespace
 and `createSiteClient({ host, session?, auth?, jar?, fetch?, baseUrl?, retry?, headers? })` wired
@@ -113,5 +145,36 @@ the client works under `moduleResolution` `bundler` and `nodenext`. The generate
 
 Written by `probe`; schema `ProbeReportSchema` in `src/model/probe.ts`. Per operation: whether the
 captured request still works (`replay`), whether it works with no cookies or auth (`bare`), and
-the cookies and headers it needs (`requires`, names only). Safe to commit. `build` folds it into
-`flows.json` session requirements and `x-site-to-api-requires`.
+the cookies and headers it needs (`requires`, names only; `null` when not worked out). Finding
+`requires` costs one request per cookie and header, so it is done for at most
+`probe.minimizePerHost` operations per host (default 5, `--minimize-per-host <n>`), recorded as
+`minimizePerHost`. Names only.
+
+`probe` writes `probe.json` and then rebuilds the handoff folder. Every `build`, including that
+rebuild, reads `probe.json` when it exists and folds it into `flows.json` session requirements,
+`x-site-to-api-requires`, the Needs column of `API_MAP.md` and the cookie lines and gaps of
+`AGENT.md`. At the end, `probe` prints a summary: operations probed, needs found, not minimized
+and why (per-host limit, data-changing method, session no longer accepted, host unreachable), and
+skipped and why.
+
+## `build.json`
+
+Written by every `build` (and the rebuild `probe` runs): the options it ran with. Names only.
+
+```json
+{
+  "formatVersion": 1,
+  "generatedBy": "site-to-api 0.1.0",
+  "examples": "none",
+  "hosts": { "include": [], "exclude": [] },
+  "client": false,
+  "sticky": ["gen.client", "redact.examples"]
+}
+```
+
+`sticky` lists the options that came from CLI flags or `SITE_TO_API_*` variables. `probe` reuses
+exactly those for its rebuild, so `probe` after `build --examples none --no-client` writes no
+examples and no client; values from the config file are read again as usual. Flags given to
+`probe` (`--include`, `--exclude`, `--examples`, `--no-client`) and `SITE_TO_API_*` variables
+set for the `probe` run override them and become sticky in turn. A plain `build` starts over from the config. `gen` sets `client` to `true` and drops a
+sticky `--no-client`, since the folder now has a current client.

@@ -80,6 +80,11 @@ export interface Operation {
   sentFrom: SourceRef[]
   /** True when the operation appears in source code but was never called during capture. */
   sourceOnly: boolean
+  /**
+   * True for a `sourceOnly` operation whose HTTP method the code did not reveal: `method` is then
+   * a placeholder (`GET`), not evidence.
+   */
+  methodUnknown?: boolean
   /** From `probe`: cookies and headers the request needs (`cookie:sid`, `header:referer`). Absent when not probed. */
   requires?: string[] | null
   /** Short description without an LLM: trigger labels, path words, response field names. */

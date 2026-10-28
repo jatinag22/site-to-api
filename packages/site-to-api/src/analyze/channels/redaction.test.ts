@@ -228,7 +228,8 @@ async function emitAll(analysis: Analysis, examples: ResolvedConfig['redact']['e
     toolVersion: 'test',
     examples,
     probed: false,
-    hasClient: false,
+    client: 'none',
+    probe: null,
   })
   return readTree(dir)
 }

@@ -14,9 +14,9 @@
 | Command | Reads | Writes | Network |
 |---|---|---|---|
 | `capture [url]` | config | `<rawDir>/<session>/` | the target site, through a real browser |
-| `build` | all raw sessions, `probe.json` | `<outDir>/` including `client/` | none |
-| `probe` | raw sessions | `probe.json`, then rebuilds `<outDir>/` | the target site, rate limited |
-| `gen` | `<outDir>/specs`, `flows.json` | `<outDir>/client/` | none |
+| `build` | all raw sessions, `probe.json` | `<outDir>/` including `client/` and `build.json` | none |
+| `probe` | raw sessions, `build.json` | `probe.json`, then rebuilds `<outDir>/` with the last build's options | the target site, rate limited |
+| `gen` | `<outDir>/specs`, `flows.json` | `<outDir>/client/`, client lines of `AGENT.md` and `API_MAP.md`, `build.json` | none |
 | `config` | config sources | stdout | none |
 | `init` | nothing | `site-to-api.config.ts`, `.gitignore` entries | none |
 
@@ -77,6 +77,8 @@ See `docs/output-format.md` for the full specification.
   specs/<host>.asyncapi.yaml  AsyncAPI 3.0 for WebSocket channels, when there are any
   source/           code excerpts referenced by flows and specs
   client/           generated TypeScript client (gen)
+  probe.json        probe results (names only)
+  build.json        options of the last build, reused by probe (gen updates its client entry)
 ```
 
 ## Packages

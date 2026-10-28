@@ -57,7 +57,12 @@ function op(operationId: string, method: string, path: string, init: Parameters<
   }
 }
 
-const config = { maxRps: 10, unsafeMethods: false, timeoutMs: 5000 }
+const config = {
+  maxRps: 10,
+  unsafeMethods: false,
+  timeoutMs: 5000,
+  minimizePerHost: 5,
+}
 
 describe('probeOperations', () => {
   it('finds which cookies and headers a request needs, without counting generic headers', async () => {
@@ -127,6 +132,41 @@ describe('probeOperations', () => {
     expect(requests).toBe(before)
     expect(report.skipped.map(entry => entry.operationId).sort()).toEqual(['postOrder', 'postShield'])
     expect(report.skipped.find(entry => entry.operationId === 'postOrder')?.reason).toContain('--unsafe-methods')
+  })
+
+  it('minimizes at most probe.minimizePerHost operations per host and records the limit', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config: { ...config, minimizePerHost: 0 },
+      operations: [
+        op('getPrivate', 'GET', '/api/private', {
+          url: `${origin}/api/private`,
+          cookies: { sid: 'good' },
+          requestHeaders: { 'x-api-key': 'k1' },
+          responseBody: jsonBody({
+            items: [1],
+            total: 1,
+          }),
+        }),
+      ],
+    })
+    expect(report.minimizePerHost).toBe(0)
+    expect(report.operations[0]).toMatchObject({ replay: 'ok', bare: 'rejected', requires: null })
+    expect(report.operations[0]?.note).toContain('--minimize-per-host')
+  })
+
+  it('skips endpoints seen only in code with a reason that says so', async () => {
+    const related = op('getRelated', 'GET', '/api/related', { url: `${origin}/api/related` })
+    related.sourceOnly = true
+    related.exchanges = []
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [related],
+    })
+    expect(report.skipped).toEqual([
+      { operationId: 'getRelated', reason: 'seen in code only: it was never called during capture, so there is no request to replay' },
+    ])
   })
 
   it('spaces requests according to maxRps', async () => {
