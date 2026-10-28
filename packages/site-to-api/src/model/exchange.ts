@@ -41,6 +41,37 @@ export interface Initiator {
 
 export type ExchangeKind = 'api' | 'page' | 'bot-protection' | 'asset' | 'noise'
 
+/** GraphQL operation types, plus `unknown` when nothing in the capture shows which one it is. */
+export type GraphqlOperationType = 'query' | 'mutation' | 'subscription' | 'unknown'
+
+/**
+ * One GraphQL request found in an exchange by `analyze/graphql` (decision 0027). A batched body
+ * becomes one stand-in exchange per element, so each exchange carries at most one of these.
+ */
+export interface GraphqlRequest {
+  /** `operationName` of the request, or the name a `/<Name>/<sha256>` path carries. */
+  operationName: string | null
+  /** The query document, when the request sent one. */
+  document: string | null
+  /** Operation type read from the document; `unknown` without one (GET implies `query`). */
+  operationType: GraphqlOperationType
+  /** `extensions.persistedQuery` (Apollo automatic persisted queries) or the path's hash. */
+  persistedQuery: { version: number | null, sha256Hash: string } | null
+  /**
+   * Stable grouping key within an endpoint: the operation name, else `sha256:<persisted hash>`,
+   * else `document:<sha256 of the whitespace-normalised document>`.
+   */
+  key: string
+  /** Where the GraphQL fields were sent: the JSON body (POST) or the query string (GET). */
+  transport: 'body' | 'query'
+  /** The GraphQL fields the request carried, per location, sorted. */
+  sent: { body: string[], query: string[] }
+  /** The path ends in `/<operationName>/<sha256>`: the path names the operation. */
+  pathNamesOperation: boolean
+  /** Position in a batched (array) body, or null for a single request. */
+  batchIndex: number | null
+}
+
 export interface Exchange {
   /** Stable id: `<sessionId>:<index in HAR>`. */
   id: string
@@ -74,6 +105,8 @@ export interface Exchange {
   initiator: Initiator | null
   /** Filled in by the classify stage. */
   kind: ExchangeKind
+  /** Filled in by `analyze/graphql` when the request is a GraphQL request (decision 0027). */
+  graphql?: GraphqlRequest
   /** Why the classifier chose `kind`, for debugging and the `--explain` output. */
   kindReason: string
 }
