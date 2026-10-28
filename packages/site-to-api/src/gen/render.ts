@@ -6,6 +6,7 @@ import type { ExtractField, ExtractSpec, FieldType } from '@site-to-api/runtime'
 import type { SessionRequirement } from '../model'
 import type { NamedHtmlValue } from './html-values'
 import type { AuthScheme, ChannelSummary, ExtractOperation, HostSpec } from './spec'
+import { cookieLines } from '../emit/cookies'
 import { code, codeBlock, commentText, text } from '../emit/escape'
 import { sdkFunctionName } from '../emit/naming'
 import { toPascalCase } from './spec'
@@ -454,20 +455,8 @@ function renderHostSection(host: HostSpec, session: SessionRequirement | null): 
       : 's'}.`,
     `- Session: ${describeSession(session)}`,
   ]
-  if (session && session.cookies.length > 0) {
-    const cookies = session.cookies.map((cookie) => {
-      if (cookie.source === 'browser')
-        return `${code(cookie.name)} (set by the browser, not by an API response)`
-      if (cookie.source === 'script')
-        return `${code(cookie.name)} (set by a page script; derive its value and set it yourself)`
-      if (cookie.source === 'unknown')
-        return `${code(cookie.name)} (present in the browser profile; origin unknown)`
-      return cookie.setBy
-        ? `${code(cookie.name)} (set by ${code(cookie.setBy)})`
-        : code(cookie.name)
-    })
-    lines.push(`- Cookies the API needs: ${cookies.join(', ')}.`)
-  }
+  if (session)
+    lines.push(...cookieLines(session, host.probedRequires))
   if (session && session.botProtection.length > 0)
     lines.push(`- Bot protection: ${session.botProtection.map(entry => `${text(entry.vendor)} (${text(entry.evidence)})`).join(', ')}.`)
   const headers = Object.entries(host.defaultHeaders)

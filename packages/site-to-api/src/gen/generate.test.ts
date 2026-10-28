@@ -315,7 +315,7 @@ describe('generateClient', () => {
     expect(extract).toContain('export function extractGetPrices(text: string): GetPricesRecord[]')
     expect(extract).toContain('"link": z.string().nullable().optional(),')
     const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
-    expect(readme).toContain('Cookies the API needs: `session` (set by `postApiSession`)')
+    expect(readme).toContain('- Cookie `session`: set by `postApiSession` (seen in capture).')
     expect(readme).toContain('`extractGetPrices(text)` → `GetPricesRecord[]`')
     expect(extract).toContain('export function extractCsrfTokenFromGetLogin(html: string): string | null {')
     expect(readme).toContain('- Auth: `getApiMe` declare security.')

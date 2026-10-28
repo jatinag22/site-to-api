@@ -127,7 +127,15 @@ function* exactCandidates(consumer: Exchange, sent: LocatedValue, variants: read
   }
 }
 
-function* htmlCandidates(consumer: Exchange, value: string, variants: readonly Variant[], index: SessionIndex, locator: HtmlLocator): Generator<Candidate> {
+/**
+ * Searches earlier HTML and text documents for the value. A document is searched by substring,
+ * so a value shorter than the minimum trace length (only small integers get this far, see
+ * `isTrivial`) is found in almost every page by chance: `page=1` in `initial-scale=1`. Such
+ * values are only matched against structured response values.
+ */
+function* htmlCandidates(consumer: Exchange, value: string, variants: readonly Variant[], index: SessionIndex, locator: HtmlLocator, minValueLength: number): Generator<Candidate> {
+  if (value.length < minValueLength)
+    return
   for (const { exchange, text } of index.texts) {
     if (!isBefore(exchange, consumer))
       continue
@@ -163,8 +171,8 @@ function pickBest(candidates: Iterable<Candidate>, initial: Candidate | null): C
   return best
 }
 
-function findResponseProducer(consumer: Exchange, sent: LocatedValue, variants: readonly Variant[], index: SessionIndex, locator: HtmlLocator): Candidate | null {
-  const best = pickBest(htmlCandidates(consumer, sent.value, variants, index, locator), pickBest(exactCandidates(consumer, sent, variants, index), null))
+function findResponseProducer(consumer: Exchange, sent: LocatedValue, variants: readonly Variant[], index: SessionIndex, locator: HtmlLocator, minValueLength: number): Candidate | null {
+  const best = pickBest(htmlCandidates(consumer, sent.value, variants, index, locator, minValueLength), pickBest(exactCandidates(consumer, sent, variants, index), null))
   // Scanning every response value for containment is the slow path; it can only win when
   // nothing better than a substring match was found.
   if ((best && best.transform !== 'substring') || sent.value.length < SUBSTRING_MIN_LENGTH)
@@ -236,7 +244,7 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
         continue
       const variants = variantsOf(sent.value, minValueLength)
       const resolve = (): Origin => {
-        const producer = findResponseProducer(exchange, sent, variants, index, htmlLocator)
+        const producer = findResponseProducer(exchange, sent, variants, index, htmlLocator, minValueLength)
         if (producer) {
           return {
             kind: 'response',

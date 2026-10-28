@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION } from '../model'
-import { loadSessions } from './index'
+import { countSessions, loadSessions } from './index'
 
 const T0 = Date.parse('2026-01-01T10:00:00.000Z')
 
@@ -380,5 +380,27 @@ describe('loadSessions', () => {
       ['b-first:0', 1],
       ['a-second:0', 0],
     ])
+  })
+})
+
+describe('countSessions', () => {
+  let root: string
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'site-to-api-count-'))
+  })
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('counts folders with a meta.json and ignores other entries', async () => {
+    await mkdir(join(root, 'a'))
+    await writeFile(join(root, 'a', 'meta.json'), '{}')
+    await mkdir(join(root, 'b'))
+    await writeFile(join(root, 'b', 'meta.json'), '{}')
+    await mkdir(join(root, 'unfinished'))
+    await writeFile(join(root, '.gitignore'), '*')
+    expect(await countSessions(root)).toBe(2)
   })
 })
