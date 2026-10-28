@@ -157,12 +157,61 @@ describe('buildChannels', () => {
       'receive:receiveHello:2',
       'receive:receiveTick:4',
     ])
-    // The server's greeting comes first; the handshake is what the client sends before the next answer.
+    // The server's greeting comes first; `ping` is a keep-alive, not setup.
     expect(channel!.handshake).toEqual([
       {
         message: 'sendSubscribe',
+        role: 'subscribe',
         example: { type: 'subscribe', productId: 1007 },
       },
+    ])
+  })
+
+  it('lists the setup messages after connecting, not data, keep-alives or teardown', () => {
+    const handshake = (frames: Parameters<typeof socketEvents>[0]['frames']): Array<[string, string]> => {
+      const session = loadedSession('s1', socketEvents({
+        url: `wss://${HOST}/feed`,
+        pageUrl: `https://${HOST}/`,
+        openedAt: T0 + 500,
+        frames,
+      }))
+      return channelsOf([
+        page('s1', '/', 0),
+      ], [session])[0]!.handshake.map(step => [step.message, step.role])
+    }
+    // An echo test page: everything is sent before the first answer.
+    expect(handshake([
+      ['>', '{"type":"subscribe","channel":"ticker"}'],
+      ['>', '{"type":"ping"}'],
+      ['>', 'hello plain text'],
+      ['>', '{"type":"unsubscribe","channel":"ticker"}'],
+      ['<', '{"type":"subscribe","channel":"ticker"}'],
+    ])).toEqual([
+      ['sendSubscribe', 'subscribe'],
+    ])
+    // Authentication, then a flood of data messages.
+    expect(handshake([
+      ['>', '{"op":"auth","token":"t"}'],
+      ...Array.from({ length: 8 }, (_, seq): ['>', string] => ['>', `{"op":"tick","seq":${seq}}`]),
+    ])).toEqual([
+      ['sendAuth', 'auth'],
+    ])
+    // The subscription that follows the server's answer to the login is setup too.
+    expect(handshake([
+      ['>', '{"type":"login","user":"u"}'],
+      ['<', '{"type":"ok"}'],
+      ['>', '{"type":"subscribe","topic":"orders"}'],
+      ['<', '{"type":"order","id":1}'],
+    ])).toEqual([
+      ['sendLogin', 'auth'],
+      ['sendSubscribe', 'subscribe'],
+    ])
+    // Names this does not know: the first message, marked as such.
+    expect(handshake([
+      ['>', '{"type":"q1","x":1}'],
+      ['>', '{"type":"q2","x":2}'],
+    ])).toEqual([
+      ['sendQ1', 'other'],
     ])
   })
 

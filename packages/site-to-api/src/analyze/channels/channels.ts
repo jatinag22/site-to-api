@@ -9,6 +9,7 @@ import type { KeyedFrame } from './messages'
 import { formatLocation } from '../flows'
 import { buildOperations, camelCase, pathPhrase } from '../operations'
 import { inferOperationSchemas } from '../schema'
+import { handshakeOf } from './handshake'
 import { groupMessages } from './messages'
 
 /** Input of {@link buildChannels}. */
@@ -31,8 +32,6 @@ export interface BuildChannelsInput {
 
 /** Upgrade requests further from the `open` event than this belong to another connection. */
 const UPGRADE_MATCH_WINDOW_MS = 10_000
-/** Longest opening sequence reported as the handshake. */
-const MAX_HANDSHAKE_MESSAGES = 5
 
 function refKey(ref: SourceRef): string {
   return `${ref.file}:${ref.line}:${ref.column}`
@@ -108,55 +107,6 @@ function keyedFrames(connections: readonly Connection[], direction: 'sent' | 're
         { key: `${connection.id}:${index}`, sessionId: connection.sessionId, frame },
       ]
     : []))
-}
-
-/** Indexes of the run of client frames after any server greeting, up to the server's next frame. */
-function openingRun(connection: Connection): number[] {
-  const firstSent = connection.frames.findIndex(frame => frame.direction === 'sent')
-  if (firstSent === -1)
-    return []
-  const answer = connection.frames.findIndex((frame, index) => index > firstSent && frame.direction === 'received')
-  const end = Math.min(answer === -1
-    ? connection.frames.length
-    : answer, firstSent + MAX_HANDSHAKE_MESSAGES)
-  return Array.from({ length: end - firstSent }, (_, offset) => firstSent + offset)
-}
-
-/**
- * The client frames sent right after connecting: skip what the server says first (a greeting),
- * then take the run of client frames before the server answers. The most common such sequence
- * across connections wins; ties go to the first connection that showed it.
- */
-function handshakeOf(connections: readonly Connection[], messageOf: ReadonlyMap<string, string>, redactor: Redactor): WebSocketChannel['handshake'] {
-  const sequences = new Map<string, { count: number, connection: Connection, indexes: number[] }>()
-  for (const connection of connections) {
-    const indexes = openingRun(connection)
-    if (indexes.length === 0)
-      continue
-    const key = indexes.map(index => messageOf.get(`${connection.id}:${index}`) ?? '').join('\u0000')
-    const entry = sequences.get(key)
-    if (entry)
-      entry.count++
-    else
-      sequences.set(key, { count: 1, connection, indexes })
-  }
-  const best = [
-    ...sequences.values(),
-  ].reduce<{ count: number, connection: Connection, indexes: number[] } | null>((winner, entry) => winner === null || entry.count > winner.count
-    ? entry
-    : winner, null)
-  if (best === null)
-    return []
-  return best.indexes.map((index) => {
-    const frame = best.connection.frames[index]!
-    const example = frame.binary
-      ? undefined
-      : redactor.examples([frame.json ?? frame.data], { in: 'body' })[0]
-    return {
-      message: messageOf.get(`${best.connection.id}:${index}`) ?? '',
-      example: example ?? null,
-    }
-  })
 }
 
 interface LinkContext {
@@ -312,6 +262,8 @@ function summaryOf(path: string, messages: readonly ChannelMessage[]): string {
   const phrase = pathPhrase(path) || 'root'
   const sends = describeMessages(messages, 'send')
   const receives = describeMessages(messages, 'receive')
+  if (sends === null && receives === null)
+    return `WebSocket ${phrase}: no messages were seen during capture.`
   const parts = [
     sends
       ? `the client sends ${sends}`
@@ -406,7 +358,7 @@ export function buildChannels(input: BuildChannelsInput): WebSocketChannel[] {
         connections: members.length,
         sentFrom: sentFromOf(members, upgrades, input.sourceResolver),
         messages,
-        handshake: handshakeOf(members, sent.messageOf, redactor),
+        handshake: handshakeOf(members, sent.messages, sent.messageOf, redactor),
         cookies: cookiesOf(members, upgrades),
         links: summarizeLinks(urlLinks),
         summary: summaryOf(operation.path, messages),

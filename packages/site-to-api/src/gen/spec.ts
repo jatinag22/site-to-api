@@ -4,6 +4,7 @@
  * reads the file.
  */
 import type { ExtractSpec } from '@site-to-api/runtime'
+import type { HandshakeRole } from '../model'
 import { z } from 'zod'
 
 const FieldTypeSchema = z.enum([
@@ -141,6 +142,8 @@ export const AsyncApiSummarySchema = z.object({
     })).default({}),
     'x-site-to-api-handshake': z.array(z.object({
       message: z.string(),
+      // Absent in documents written before roles existed (decision 0029).
+      role: z.enum(['init', 'auth', 'subscribe', 'other']).optional(),
       example: z.unknown(),
     })).default([]),
   })),
@@ -154,7 +157,9 @@ export interface ChannelSummary {
   /** `ws://host/path`. */
   url: string
   /** Messages to send right after connecting, with a redacted example (null when none was written). */
-  handshake: Array<{ name: string, example: unknown }>
+  handshake: Array<{ name: string, role: HandshakeRole | null, example: unknown }>
+  /** Message types the capture saw on the channel, both directions. */
+  messageTypes: number
 }
 
 /** Channels of one parsed AsyncAPI document, in document order. */
@@ -173,8 +178,10 @@ export function describeChannels(file: string, document: z.infer<typeof AsyncApi
       url,
       handshake: channel['x-site-to-api-handshake'].map(step => ({
         name: channel.messages[step.message]?.name ?? step.message,
+        role: step.role ?? null,
         example: step.example ?? null,
       })),
+      messageTypes: Object.keys(channel.messages).length,
     }
   })
 }

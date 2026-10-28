@@ -102,6 +102,7 @@ export function tickerChannel(overrides: Partial<WebSocketChannel> = {}): WebSoc
     handshake: [
       {
         message: 'sendSubscribe',
+        role: 'subscribe',
         example: { type: 'subscribe', productId: 1007 },
       },
     ],

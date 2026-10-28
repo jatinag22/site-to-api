@@ -103,8 +103,9 @@ are written from the client's point of view: `send` is client → server, `recei
   discriminator pinned as `const`, and redacted examples. Non-JSON text frames are one `text/plain`
   message with their shapes; binary frames are one `application/octet-stream` message, counted only.
 - Extensions:
-  - `x-site-to-api-handshake` (channel): the messages to send right after connecting, in order,
-    each with a redacted example
+  - `x-site-to-api-handshake` (channel): the messages that set up the connection, in order, each
+    with its `role` (`init`, `auth`, `subscribe`, or `other` when no message type was recognised
+    and the first message the client sent is listed) and a redacted example (decision 0029)
   - `x-site-to-api-cookies` (channel): `{ status: sent | none | unknown, names }` from the HTTP
     upgrade request; `unknown` when the HAR has none
   - `x-site-to-api-connections` (channel), `x-site-to-api-count` (message): how often each was seen

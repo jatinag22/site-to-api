@@ -624,7 +624,7 @@ describe('real-time channels', () => {
     const section = guide.split('## Real-time channels')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain('### `ws://shop.test:8080/ws/ticker`')
     expect(section).toContain('- Spec: `specs/shop.test_8080.asyncapi.yaml`, channel `wsTicker`. Seen in 2 connections.')
-    expect(section).toContain('1. `subscribe`, e.g. `{"type":"subscribe","productId":1007}`')
+    expect(section).toContain('1. `subscribe` (subscription), e.g. `{"type":"subscribe","productId":1007}`')
     expect(section).toContain('- Client → server: `subscribe` (2×).')
     expect(section).toContain('- Server → client: `tick` (6×), text frames (1×), binary frames (1×).')
     expect(section).toContain('- `body./productId` of `subscribe` comes from `body./items/0/id` of `getApiProducts`.')
@@ -634,14 +634,41 @@ describe('real-time channels', () => {
   })
 
   it('says when the server pushes without a subscription and when cookies are unknown', () => {
+    const ticker = tickerChannel()
     const guide = renderAgentGuide(withChannels([
       tickerChannel({
         handshake: [],
+        messages: ticker.messages.filter(message => message.direction === 'receive'),
         cookies: { status: 'unknown', names: [] },
       }),
     ]), context)
-    expect(guide).toContain('- The client sent nothing after connecting: the server pushes on its own.')
+    expect(guide).toContain('- The client sent nothing after connecting: the server sent its messages on its own.')
+    expect(guide).toContain('- Server → client: `tick`')
     expect(guide).toContain('the capture has no record of the upgrade request')
+  })
+
+  it('does not claim the server pushes when no messages were seen at all', () => {
+    const guide = renderAgentGuide(withChannels([
+      tickerChannel({ handshake: [], messages: [] }),
+    ]), context)
+    expect(guide).toContain('- No messages were seen on this connection during the capture, so what to send after connecting is unknown.')
+    expect(guide).not.toContain('pushes')
+  })
+
+  it('says which handshake message does what, and when none was recognised as setup', () => {
+    const ticker = tickerChannel()
+    const named = renderAgentGuide(withChannels([
+      tickerChannel({
+        handshake: [
+          { message: 'sendSubscribe', role: 'other', example: null },
+        ],
+      }),
+    ]), context)
+    expect(named).toContain('1. `subscribe` (the first message sent; no message type was recognised as authentication or a subscription), see the spec for its shape')
+    const none = renderAgentGuide(withChannels([
+      tickerChannel({ handshake: [], messages: ticker.messages }),
+    ]), context)
+    expect(none).toContain('- None of the client\'s messages set up the connection')
   })
 
   it('lets gen switch the client state of AGENT.md and API_MAP.md that have channels', () => {
@@ -697,6 +724,7 @@ describe('real-time channels', () => {
     handshake: [
       {
         message: 'sendMessage',
+        role: 'other',
         example: { [HOSTILE]: HOSTILE },
       },
     ],

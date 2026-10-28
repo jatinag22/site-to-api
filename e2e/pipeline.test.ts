@@ -435,7 +435,7 @@ describe('real-time channels', () => {
     const guide = files.get('AGENT.md') ?? ''
     const section = guide.split('## Real-time channels')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain(`### \`ws://${host}/ws/ticker\``)
-    expect(section).toMatch(/1\. `subscribe`, e\.g\. `\{"type":"subscribe","productId":\d+\}`/)
+    expect(section).toMatch(/1\. `subscribe` \(subscription\), e\.g\. `\{"type":"subscribe","productId":\d+\}`/)
     expect(section).toContain('`tick`')
     expect(files.get('API_MAP.md')).toContain('## Real-time channels')
     const specName = `specs/${host.replace(/[^\w.-]/g, '_')}.asyncapi.yaml`

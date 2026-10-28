@@ -146,6 +146,13 @@ export interface ChannelMessage {
   links: ChannelValueLink[]
 }
 
+/**
+ * Why a message is part of a channel's setup, from its type's name: `init` (`connection_init`,
+ * `hello`), `auth` (`auth`, `login`), `subscribe` (`subscribe`, `join`); `other` when no message
+ * type was recognised and the first message the client sent is listed instead.
+ */
+export type HandshakeRole = 'init' | 'auth' | 'subscribe' | 'other'
+
 /** A WebSocket endpoint seen during capture, with its messages grouped by direction and type. */
 export interface WebSocketChannel {
   /** Unique per host and usable as an AsyncAPI key, e.g. `wsTicker`. */
@@ -162,10 +169,10 @@ export interface WebSocketChannel {
   sentFrom: SourceRef | null
   messages: ChannelMessage[]
   /**
-   * What the client sends right after connecting (subscription, authentication), in order: the
-   * most common opening sequence across connections, with a redacted example of each message.
+   * What the client sends to set up the connection (decision 0029), in order: the most common
+   * setup sequence across connections, with the role of each message and a redacted example.
    */
-  handshake: Array<{ message: string, example: unknown }>
+  handshake: Array<{ message: string, role: HandshakeRole, example: unknown }>
   /**
    * Cookies on the HTTP upgrade request: `sent` (names listed), `none`, or `unknown` when the
    * HAR has no upgrade request for the channel.

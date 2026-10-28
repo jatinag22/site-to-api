@@ -3,7 +3,7 @@
  * Channel paths, message names, field names and examples come from the captured site, so each
  * goes through `text()`, `code()` or `cellCode()` (decision 0019).
  */
-import type { ChannelMessage, ChannelValueLink, ChannelValueOrigin, WebSocketChannel } from '../../model'
+import type { ChannelMessage, ChannelValueLink, ChannelValueOrigin, HandshakeRole, WebSocketChannel } from '../../model'
 import { cellCode, code, text } from '../escape'
 import { asyncApiFileName } from '../openapi'
 import { describeSource } from './source-ref'
@@ -14,6 +14,25 @@ const MAX_INLINE_EXAMPLE = 400
 /** `ws://host/path`, the address a client connects to. */
 function channelUrl(channel: WebSocketChannel): string {
   return `${channel.scheme}://${channel.host}${channel.path}`
+}
+
+/** What each handshake role means, for a reader deciding what to send. */
+const ROLE_NOTES: Record<HandshakeRole, string> = {
+  init: 'protocol start',
+  auth: 'authentication',
+  subscribe: 'subscription',
+  other: 'the first message sent; no message type was recognised as authentication or a subscription',
+}
+
+/** Says what the capture shows about the client's opening when it lists no handshake. */
+function noHandshakeLine(channel: WebSocketChannel): string {
+  const sends = channel.messages.some(message => message.direction === 'send')
+  const receives = channel.messages.some(message => message.direction === 'receive')
+  if (!sends && !receives)
+    return '- No messages were seen on this connection during the capture, so what to send after connecting is unknown.'
+  if (!sends)
+    return '- The client sent nothing after connecting: the server sent its messages on its own.'
+  return '- None of the client\'s messages set up the connection: no authentication or subscription message was recognised.'
 }
 
 function messageName(message: ChannelMessage): string {
@@ -103,13 +122,13 @@ function channelLines(channel: WebSocketChannel): string[] {
       const name = message
         ? code(messageName(message))
         : code(step.message)
-      lines.push(`  ${index + 1}. ${name}${example
+      lines.push(`  ${index + 1}. ${name} (${ROLE_NOTES[step.role]})${example
         ? `, e.g. ${example}`
-        : ' (see the spec for its shape)'}`)
+        : ', see the spec for its shape'}`)
     })
   }
   else {
-    lines.push('- The client sent nothing after connecting: the server pushes on its own.')
+    lines.push(noHandshakeLine(channel))
   }
   lines.push(`- Client → server: ${messageList(channel, 'send')}.`)
   lines.push(`- Server → client: ${messageList(channel, 'receive')}.`)
