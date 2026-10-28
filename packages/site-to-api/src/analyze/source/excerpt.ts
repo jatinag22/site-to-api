@@ -60,6 +60,16 @@ function commentFor(path: string): (line: string) => string {
     : line => `// ${commentText(line)}`
 }
 
+/**
+ * First line of JavaScript and TypeScript excerpts. They are fragments of the site's code (helpers
+ * they call are not included), so a project that type-checks the handoff folder must skip them.
+ */
+function preamble(path: string): string[] {
+  return /\.[cm]?[jt]sx?$/i.test(path)
+    ? ['// @ts-nocheck']
+    : []
+}
+
 function describe(ref: SourceRef): string {
   return `${ref.file}:${ref.line}:${ref.column}${ref.functionName
     ? ` (function ${ref.functionName})`
@@ -101,6 +111,7 @@ function originalExcerpt(ref: SourceRef, text: string, sessionId: string): { pat
   }
   const comment = commentFor(ref.file)
   const header = [
+    ...preamble(ref.file),
     comment(`site-to-api excerpt of ${describe(ref)}`),
     comment(`Lines ${range.first}-${range.last} (${what}) of the original source, captured in session ${sessionId}.`),
   ]
@@ -250,6 +261,7 @@ function bundleExcerpt(ref: SourceRef, text: string, host: string, url: string, 
   if (!isMinifiedLine(text.slice(lines.lineStart(line), lines.lineEnd(line)))) {
     const range = lineWindow(lines, line)
     const header = [
+      ...preamble(ref.file),
       comment(`site-to-api excerpt of ${describe(ref)} in ${url}`),
       comment(`Lines ${range.first}-${range.last} of the bundle (no sourcemap was available), captured in session ${sessionId}.`),
     ]
@@ -296,6 +308,7 @@ function bundleExcerpt(ref: SourceRef, text: string, host: string, url: string, 
     out += text[i]
   }
   const header = [
+    ...preamble(ref.file),
     comment(`site-to-api excerpt of ${describe(ref)} in ${url}`),
     comment(`Characters ${start - lines.lineStart(line) + 1}-${end - lines.lineStart(line)} of minified line ${line}, split at statement boundaries; the marker shows the location. Captured in session ${sessionId}; no sourcemap was available.`),
   ]

@@ -77,11 +77,16 @@ beforeAll(async () => {
 
 afterAll(removeSessions)
 
+/** Excerpt content without the `// @ts-nocheck` first line that JavaScript and TypeScript excerpts get. */
+function code(excerpt: { content: string } | null | undefined): string {
+  return (excerpt?.content ?? '').replace(/^\/\/ @ts-nocheck\n/, '')
+}
+
 describe('buildExcerpt', () => {
   it('returns the whole enclosing function of an original file with a header', async () => {
     const excerpt = await buildExcerpt(ref({}), [session], '2026-01-01-abc')
     expect(excerpt?.path).toBe('src/cart.L3-9.ts')
-    expect(excerpt?.content).toBe([
+    expect(code(excerpt)).toBe([
       '// site-to-api excerpt of src/cart.ts:5:10 (function checkout)',
       '// Lines 3-9 (the enclosing function) of the original source, captured in session 2026-01-01-abc.',
       ...cartTs.split('\n').slice(2, 9),
@@ -92,7 +97,7 @@ describe('buildExcerpt', () => {
   it('falls back to 40 lines either side for long functions and top-level code', async () => {
     const long = await buildExcerpt(ref({ file: 'src/big.ts', line: 100, column: 3 }), [session], '2026-01-01-abc')
     expect(long?.path).toBe('src/big.L60-140.ts')
-    expect(long?.content.split('\n')[2]).toBe('  step58()')
+    expect(code(long).split('\n')[2]).toBe('  step58()')
     const topLevel = await buildExcerpt(ref({ line: 11, column: 1 }), [session], '2026-01-01-abc')
     expect(topLevel?.path).toBe('src/cart.L1-11.ts')
   })
@@ -107,7 +112,7 @@ describe('buildExcerpt', () => {
       original: false,
     }), [session], '2026-01-01-abc')
     expect(excerpt?.path).toBe(`bundles/shop.test/static/app.min.L1C${column}.js`)
-    const lines = excerpt?.content.split('\n') ?? []
+    const lines = code(excerpt).split('\n') ?? []
     expect(lines[0]).toBe(`// site-to-api excerpt of /static/app.min.js:1:${column} (function send) in https://shop.test/static/app.min.js?v=3`)
     expect(lines).toContain('function send(t){')
     expect(lines).toContain(`  return /* <-- 1:${column} */ fetch("/api/orders/"+t,{method:"POST"})`)
@@ -117,7 +122,7 @@ describe('buildExcerpt', () => {
     expect(body.every(line => line.length < 200)).toBe(true)
     // Every line of the body starts at a statement, never in the middle of one.
     expect(body.filter(line => line.trim() !== '').every(line => /^\s*(?:var v\d+=compute\(\d+\);|function send|return|\})/.test(line))).toBe(true)
-    expect(excerpt?.content.length).toBeLessThan(3700)
+    expect(code(excerpt).length).toBeLessThan(3700)
   })
 
   it('breaks a short minified script at statements and closing braces, indented by nesting', async () => {
@@ -129,7 +134,7 @@ describe('buildExcerpt', () => {
       functionName: 't',
       original: false,
     }), [session], '2026-01-01-abc')
-    const body = excerpt?.content.split('\n').slice(2, -1) ?? []
+    const body = code(excerpt).split('\n').slice(2, -1) ?? []
     expect(body).toEqual([
       '"use strict";',
       '(()=>{',
@@ -154,7 +159,7 @@ describe('buildExcerpt', () => {
       functionName: null,
       original: false,
     }), [session], '2026-01-01-abc')
-    const body = excerpt?.content.split('\n').slice(2, -1) ?? []
+    const body = code(excerpt).split('\n').slice(2, -1) ?? []
     expect(body.slice(0, 9)).toEqual([
       'var a=1;',
       '/* <-- 1:9 */ var b={',
@@ -178,7 +183,7 @@ describe('buildExcerpt', () => {
       original: false,
     }), [session], '2026-01-01-abc')
     expect(excerpt?.path).toBe('bundles/shop.test/static/plain.L50C1.js')
-    const lines = excerpt?.content.split('\n') ?? []
+    const lines = code(excerpt).split('\n') ?? []
     expect(lines[2]).toBe('line10()')
     expect(lines.at(-2)).toBe('line90()')
   })
@@ -243,22 +248,29 @@ describe('buildExcerpt', () => {
       original: false,
     }), [hostile], 's3')
     for (const excerpt of [vue, ts, bundle]) {
-      const lines = excerpt?.content.split('\n') ?? []
+      const lines = code(excerpt).split('\n') ?? []
       // Two header lines, each one complete comment, then the code itself.
       for (const header of lines.slice(0, 2)) {
         expect(header).not.toMatch(/[\r\u2028\u2029]/)
         expect(header.slice(2)).not.toContain('*/')
       }
     }
-    const vueHeader = vue?.content.split('\n').slice(0, 2) ?? []
+    const vueHeader = code(vue).split('\n').slice(0, 2) ?? []
     for (const header of vueHeader) {
       expect(header).toMatch(/^<!-- .* -->$/)
       // The only comment end is the one at the end of the line.
       expect(header.slice(0, -3)).not.toMatch(/--!?>/)
     }
-    expect(vue?.content.split('\n')[2]).toBe('<script>')
-    expect(ts?.content.split('\n')[2]).toBe('function f(){')
-    expect(ts?.content.split('\n')[0]).toBe('// site-to-api excerpt of src/w.ts:2:3 (function f -\\-> <script>evil()</script> <!-- *\\/ evil() /* x)')
-    expect(bundle?.content.split('\n')[0]).toBe('// site-to-api excerpt of /b.js:2:1 (function f -\\-> <script>evil()</script> <!-- *\\/ evil() /* x) in https://shop.test/b.js?x= *\\/ evil() /*')
+    expect(code(vue).split('\n')[2]).toBe('<script>')
+    expect(code(ts).split('\n')[2]).toBe('function f(){')
+    expect(code(ts).split('\n')[0]).toBe('// site-to-api excerpt of src/w.ts:2:3 (function f -\\-> <script>evil()</script> <!-- *\\/ evil() /* x)')
+    expect(code(bundle).split('\n')[0]).toBe('// site-to-api excerpt of /b.js:2:1 (function f -\\-> <script>evil()</script> <!-- *\\/ evil() /* x) in https://shop.test/b.js?x= *\\/ evil() /*')
+  })
+})
+
+describe('buildExcerpt: type checking', () => {
+  it('starts JavaScript and TypeScript excerpts with // @ts-nocheck, since they are fragments', async () => {
+    const excerpt = await buildExcerpt(ref({}), [session], '2026-01-01-abc')
+    expect(excerpt?.content.split('\n')[0]).toBe('// @ts-nocheck')
   })
 })
