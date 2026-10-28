@@ -28,6 +28,7 @@ const COMMON_WORDS = new Set([
   'true',
   'type',
   'undefined',
+  'unknown',
   'user',
   'utf-8',
   'value',

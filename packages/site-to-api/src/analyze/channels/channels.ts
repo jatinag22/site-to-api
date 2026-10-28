@@ -181,18 +181,18 @@ function linkOrigin(trace: ValueTrace, context: LinkContext): ChannelValueOrigin
     return null
   const { location } = origin
   if (location.in === 'html') {
-    // Selectors embed page text; one that would change under redaction is not written at all.
+    // An origin is only useful with a selector a wrapper can read the value from: without one
+    // (the value is somewhere in the document) it is usually a coincidence. Selectors embed page
+    // text, so one that would change under redaction is not written either.
     const leaks = safeText(location.selector) !== location.selector || (location.attr !== null && safeText(location.attr) !== location.attr)
+    if (location.selector === '' || leaks)
+      return null
     return {
       kind: 'html',
       operationId: operation.operationId,
       host: operation.host,
-      selector: leaks
-        ? ''
-        : location.selector,
-      attr: leaks
-        ? null
-        : location.attr,
+      selector: location.selector,
+      attr: location.attr,
     }
   }
   return {

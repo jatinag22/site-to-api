@@ -296,7 +296,14 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
   const responseOrigin = (producerId: string, rawLocation: ValueLocation, transform: Extract<ValueOrigin, { kind: 'step' }>['transform'], value: string, currentFlow: string | null): ValueOrigin => {
     const general = generalLocation(producerId, rawLocation)
     const location = safeLocation(general.location)
-    const step = reference(producerId, location, currentFlow)
+    // Redaction can take away an HTML selector or pattern. What is left would read the wrong text
+    // (the whole element instead of the value inside it) or nothing, so it is not written.
+    const original = general.location
+    const unreadable = original.in === 'html' && location.in === 'html'
+      && ((original.selector !== '' && location.selector === '') || (original.pattern !== null && location.pattern === null))
+    const step = unreadable
+      ? null
+      : reference(producerId, location, currentFlow)
     if (step === null) {
       return {
         kind: 'unknown',
@@ -304,7 +311,7 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       }
     }
     if (location.in === 'html') {
-      const confidence = location.selector === ''
+      const confidence = location.selector === '' && location.pattern === null
         ? 'low'
         : 'high'
       return {
@@ -340,16 +347,10 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       const values = responseValues(exchange)
       const exact = values.find(value => value.value === preview || (preview.length >= MIN_PREFIX_LENGTH && value.value.startsWith(preview)))
       const contained = exact ?? values.find(value => value.value.length >= MIN_USE_LENGTH && preview.includes(value.value))
+      // Text somewhere in a page is not a place a wrapper can read it from; `foundInResponses`
+      // still keeps such a value from being reported as unexplained.
       if (contained)
         return responseOrigin(exchange.id, contained.location, exact ? 'none' : 'substring', contained.value, null)
-      if (responseText(exchange)?.includes(preview)) {
-        return responseOrigin(exchange.id, {
-          in: 'html',
-          selector: '',
-          attr: null,
-          pattern: null,
-        }, 'none', preview, null)
-      }
     }
     return null
   }

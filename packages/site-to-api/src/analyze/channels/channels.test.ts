@@ -259,6 +259,29 @@ describe('buildChannels', () => {
     ])
   })
 
+  it('leaves out an HTML origin that names no place in the page', () => {
+    // The page contains the value, but nowhere an extraction rule can read it from.
+    const exchanges = [
+      exchange({
+        sessionId: 's1',
+        url: `https://${HOST}/`,
+        resourceType: 'document',
+        startedAt: T0,
+        responseBody: textBody('<html><body><script>window.r="rk_7Hq2x9Lm4Pz"</script></body></html>'),
+      }),
+    ]
+    const session = loadedSession('s1', socketEvents({
+      url: `wss://${HOST}/socket`,
+      pageUrl: `https://${HOST}/`,
+      openedAt: T0 + 500,
+      frames: [
+        ['>', '{"type":"join","room":"rk_7Hq2x9Lm4Pz"}'],
+      ],
+    }))
+    const [channel] = channelsOf(exchanges, [session])
+    expect(channel!.messages.find(message => message.id === 'sendJoin')?.links).toEqual([])
+  })
+
   it('leaves out sockets to analytics hosts, excluded hosts and pages of hosts not analysed', () => {
     const sessions = [
       loadedSession('s1', [

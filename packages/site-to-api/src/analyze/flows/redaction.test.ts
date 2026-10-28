@@ -338,28 +338,17 @@ describe('handoff output: HTML origins that embed page text', () => {
     return analysis.flows.flows.flatMap(flow => flow.steps).find(step => step.operationId === 'getApiOrders')?.inputs['query.ref']
   }
 
-  it('drops a pattern whose anchor text holds personal data', () => {
+  // Without its pattern the selector would read the whole sentence, not the value: no origin.
+  it('drops an HTML origin whose pattern anchor holds personal data', () => {
     const origin = refOrigin(() => ({ selector: 'p', attr: null, pattern: 'Signed in as jane\\.doe@example\\.org ref ([^<]*)' }))
-    expect(origin).toEqual({
-      kind: 'html',
-      step: 's1',
-      selector: 'p',
-      attr: null,
-      pattern: null,
-      confidence: 'high',
-    })
+    expect(origin).toMatchObject({ kind: 'unknown' })
+    expect(JSON.stringify(origin)).not.toContain('jane')
   })
 
-  it('drops a selector that holds personal data, and with it the pattern', () => {
+  it('drops an HTML origin whose selector holds personal data', () => {
     const origin = refOrigin(() => ({ selector: `p[data-user="${EMAIL}"]`, attr: null, pattern: 'ref ([^<]*)' }))
-    expect(origin).toEqual({
-      kind: 'html',
-      step: 's1',
-      selector: '',
-      attr: null,
-      pattern: null,
-      confidence: 'low',
-    })
+    expect(origin).toMatchObject({ kind: 'unknown' })
+    expect(JSON.stringify(origin)).not.toContain('jane')
   })
 
   it('keeps patterns and selectors made of markup only', () => {

@@ -93,16 +93,42 @@ function buildIndex(exchanges: readonly Exchange[], events: readonly CaptureEven
   return index
 }
 
-function htmlCandidate(exchange: Exchange, text: string, value: string, transform: MatchTransform, locator: HtmlLocator): Candidate {
+/** Letters only, maybe joined by `-` or `_`: `combined`, `tick`, `SUBSCRIBE`, `price-update`. */
+const PLAIN_WORD = /^\p{L}+(?:[-_]\p{L}+)*$/u
+
+/** Attributes that carry data or links, so a word inside them (`/stores/pine-hill`) is a value. */
+const DATA_ATTRIBUTE = /^(?:href|src|action|value|content|data-.+)$/
+/** What may come right before a word taken out of a link: a path, query or fragment separator. */
+const URL_BOUNDARY = /[/=?&#:]$/
+
+/**
+ * A plain word is in almost every large page somewhere: a script, a class name, prose. Only an
+ * attribute or element holding exactly that word, or a whole URL part of a link or data attribute
+ * (`/stores/pine-hill`, not `manifest-web-player`), says it came from this page.
+ */
+function isPlainWordSource(found: NonNullable<ReturnType<HtmlLocator>>): boolean {
+  if (found.selector === '')
+    return false
+  if (found.pattern === null)
+    return true
+  const prefix = found.pattern.slice(0, found.pattern.indexOf('('))
+  return found.attr !== null && DATA_ATTRIBUTE.test(found.attr) && URL_BOUNDARY.test(prefix)
+}
+
+function htmlCandidate(exchange: Exchange, text: string, value: string, transform: MatchTransform, locator: HtmlLocator): Candidate | null {
   const found = locator(text, value)
+  // The value is in the document, but nowhere an extraction rule can read it from: not an
+  // origin a wrapper can use, and in a large page usually a coincidence.
+  if (found === null || (PLAIN_WORD.test(value) && !isPlainWordSource(found)))
+    return null
   return {
     exchange,
-    // An empty selector means the value is in the document but no extraction rule was found.
+    // An empty selector is the whole text document, read with the pattern if there is one.
     location: {
       in: 'html',
-      selector: found?.selector ?? '',
-      attr: found?.attr ?? null,
-      pattern: found?.pattern ?? null,
+      selector: found.selector,
+      attr: found.attr,
+      pattern: found.pattern,
     },
     transform,
     sameName: false,
@@ -142,21 +168,29 @@ function* htmlCandidates(consumer: Exchange, value: string, variants: readonly V
     // Variants come in rank order, so the first hit is the strongest for this document.
     const variant = variants.find(candidate => text.includes(candidate.value))
     if (variant) {
-      yield htmlCandidate(exchange, text, variant.value, variant.transform, locator)
+      const candidate = htmlCandidate(exchange, text, variant.value, variant.transform, locator)
+      if (candidate)
+        yield candidate
       continue
     }
     // `Bearer <token>`, `token=<token>; path=/`: a delimited part of the value is in the page.
     const part = value.split(/[\s,;=&]+/).find(piece => piece.length >= SUBSTRING_MIN_LENGTH && piece !== value && text.includes(piece))
-    if (part !== undefined)
-      yield htmlCandidate(exchange, text, part, 'substring', locator)
+    const candidate = part === undefined
+      ? null
+      : htmlCandidate(exchange, text, part, 'substring', locator)
+    if (candidate)
+      yield candidate
   }
 }
 
 function* substringCandidates(consumer: Exchange, sent: LocatedValue, index: SessionIndex): Generator<Candidate> {
   const value = sent.value
+  // A plain word inside a longer text (a description, a sentence) is a coincidence, not a copy.
+  if (PLAIN_WORD.test(value))
+    return
   for (const producer of index.producers) {
     const other = producer.value
-    const related = other.length >= SUBSTRING_MIN_LENGTH && other !== value && (value.includes(other) || other.includes(value))
+    const related = other.length >= SUBSTRING_MIN_LENGTH && other !== value && !PLAIN_WORD.test(other) && (value.includes(other) || other.includes(value))
     if (related && isBefore(producer.exchange, consumer))
       yield producerCandidate(producer, sent, 'substring')
   }

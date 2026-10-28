@@ -203,6 +203,16 @@ describe('traceValues: response producers', () => {
     })
   })
 
+  it('does not match a plain word inside a longer response text as a substring', () => {
+    const copy = exchange({
+      url: 'https://api.example.test/i18n',
+      startedAt: 1,
+      responseBody: jsonBody({ desc: 'Prices from both markets, combined into one feed' }),
+    })
+    const call = exchange({ url: 'https://api.example.test/feed?view=combined', startedAt: 2 })
+    expect(originAt(trace([copy, call]), call, '{"in":"query","name":"view"}')).toMatchObject({ kind: 'unknown' })
+  })
+
   it('finds values in HTML through the locator, also as part of a longer value', () => {
     const page = exchange({
       url: 'https://www.example.test/',
@@ -234,7 +244,7 @@ describe('traceValues: response producers', () => {
     })
   })
 
-  it('records an HTML hit with an empty selector when the locator cannot place it', () => {
+  it('records no HTML origin when the locator cannot place the value', () => {
     const page = exchange({
       url: 'https://www.example.test/',
       startedAt: 1,
@@ -242,13 +252,40 @@ describe('traceValues: response producers', () => {
       responseBody: textBody('<script>window.k="inline-key-998877"</script>'),
     })
     const call = exchange({ url: 'https://www.example.test/api?k=inline-key-998877', startedAt: 2 })
-    expect(originAt(trace([page, call]), call, '{"in":"query","name":"k"}')).toMatchObject({
-      location: {
-        in: 'html',
-        selector: '',
-        attr: null,
-        pattern: null,
-      },
+    expect(originAt(trace([page, call]), call, '{"in":"query","name":"k"}')).toMatchObject({ kind: 'unknown' })
+  })
+
+  it('does not trace a plain word to a page that only contains it somewhere', () => {
+    const page = exchange({
+      url: 'https://www.example.test/',
+      startedAt: 1,
+      kind: 'page',
+      responseBody: textBody('<html><body><script>var mode="combined";</script><div class="bar-horizontal">Live ticks</div></body></html>'),
+    })
+    const call = exchange({ url: 'https://www.example.test/api?view=combined&op=tick&dir=horizontal', startedAt: 2 })
+    for (const htmlLocator of [
+      noLocator,
+      createHtmlLocator(),
+    ]) {
+      const traces = trace([page, call], { htmlLocator })
+      for (const name of ['view', 'op', 'dir'])
+        expect(originAt(traces, call, `{"in":"query","name":"${name}"}`)).toMatchObject({ kind: 'unknown' })
+    }
+  })
+
+  it('still traces a plain word to the page element that holds exactly it', () => {
+    const page = exchange({
+      url: 'https://www.example.test/',
+      startedAt: 1,
+      kind: 'page',
+      responseBody: textBody('<html><body><select><option value="combined" selected>Combined</option></select></body></html>'),
+    })
+    const call = exchange({ url: 'https://www.example.test/api?view=combined', startedAt: 2 })
+    expect(originAt(trace([page, call], {
+      htmlLocator: createHtmlLocator(),
+    }), call, '{"in":"query","name":"view"}')).toMatchObject({
+      kind: 'response',
+      location: { in: 'html', attr: 'value' },
     })
   })
 

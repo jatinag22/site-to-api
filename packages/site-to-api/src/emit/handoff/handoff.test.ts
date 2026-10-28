@@ -442,6 +442,22 @@ describe('helpers', () => {
       pattern: null,
       confidence: 'high',
     })).toBe('`a.s1` → html `meta`')
+    expect(describeOrigin({
+      kind: 'html',
+      step: 'a.s1',
+      selector: 'script#state',
+      attr: null,
+      pattern: '"csrf":"([^"]*)',
+      confidence: 'high',
+    })).toBe('`a.s1` → html `script#state` matching `"csrf":"([^"]*)`')
+    expect(describeOrigin({
+      kind: 'html',
+      step: 'a.s1',
+      selector: '',
+      attr: null,
+      pattern: null,
+      confidence: 'low',
+    })).toBe('`a.s1` → the whole text response (low confidence)')
   })
 
   it('describes every origin kind', () => {
