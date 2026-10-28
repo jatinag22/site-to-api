@@ -3,6 +3,7 @@
  */
 import type { Exchange, Operation, PathParam, SourceRoute } from '../../model'
 import type { Evidence, Marks } from './templates'
+import { isChallengeAnswer } from '../classify'
 import { inferStringSchema } from '../schema'
 import { isSlug } from './identifiers'
 import { linkedSlugs } from './links'
@@ -300,8 +301,12 @@ function sourceOnlyOperation(route: SourceRoute, host: string, template: ReturnT
  * no page was captured.
  */
 function sourceOnlyOperations(routes: SourceRoute[], observed: Operation[]): Operation[] {
+  // A page answered with a challenge (every page, on a site that blocked the capture) is still
+  // where the site's relative routes point.
+  const servesPages = (operation: Operation): boolean => operation.kind === 'page'
+    || operation.exchanges.some(exchange => exchange.resourceType === 'document' && isChallengeAnswer(exchange))
   const pageHosts = [
-    ...new Set(observed.filter(operation => operation.kind === 'page').map(operation => operation.host)),
+    ...new Set(observed.filter(servesPages).map(operation => operation.host)),
   ]
   const fallbackHosts = pageHosts.length > 0
     ? pageHosts

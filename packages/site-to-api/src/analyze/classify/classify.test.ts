@@ -487,6 +487,42 @@ describe('classifyExchanges: bot protection', () => {
   })
 })
 
+describe('classifyExchanges: challenge pages', () => {
+  const doc = (url: string, html: string, status = 200): Exchange => on({
+    url,
+    resourceType: 'document',
+    status,
+    responseBody: textBody(html),
+    pageUrl: null,
+  })
+
+  it('labels interstitials by title or challenge markup, whatever the status', () => {
+    const result = classify([
+      doc('https://shop.test/', '<html><head><title>Shop - Prove your humanity</title></head><body>…</body></html>'),
+      doc('https://shop.test/r/news/', '<html><head><title>Shop</title><script>location.href = "?solution=1&js_challenge=1&jsc_token=" + t</script></head></html>'),
+      doc('https://shop.test/r/news/?js_challenge=1', '<html><body><div>You\'ve been blocked by network security.</div></body></html>', 403),
+      doc('https://shop.test/about', '<html><head><title>About us</title></head><body>We sell shoes.</body></html>'),
+    ])
+    expect(result.exchanges.map(item => item.kind)).toEqual([
+      'bot-protection',
+      'bot-protection',
+      'bot-protection',
+      'page',
+    ])
+    expect(result.exchanges[0]!.kindReason).toBe('Challenge page: challenge page (title "prove your humanity")')
+    expect(result.botProtection.map(finding => [finding.vendor, finding.host, finding.evidence])).toEqual([
+      ['Challenge page', 'shop.test', 'challenge page (JavaScript challenge redirect); challenge page (block page); challenge page (title "prove your humanity")'],
+    ])
+  })
+
+  it('leaves ordinary pages that mention captchas or load a challenge script alone', () => {
+    expect(kinds([
+      doc('https://shop.test/login', '<html><head><title>Log in</title></head><body><div class="g-recaptcha" data-sitekey="k"></div></body></html>'),
+      doc('https://shop.test/', '<html><head><title>Home</title><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></head></html>'),
+    ])).toEqual(['page', 'page'])
+  })
+})
+
 describe('looksLikeRandomSensorPath', () => {
   it('accepts mixed-case random segments and rejects word paths', () => {
     expect(looksLikeRandomSensorPath('/Xb4Ks/Ld0x/qP9/nHvO2kq')).toBe(true)

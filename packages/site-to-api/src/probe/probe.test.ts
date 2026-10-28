@@ -204,6 +204,32 @@ describe('resemblesCapture', () => {
     expect(resemblesCapture(html, 200, 'text/html', '<html>denied</html>')).toBe(false)
     expect(resemblesCapture(html, 302, 'text/html', '')).toBe(false)
   })
+
+  it('never takes a challenge page answered 200 for the page', () => {
+    const challenge = '<html><head><title>Shop - Prove your humanity</title></head><body>'.padEnd(1000, 'z')
+    expect(resemblesCapture(html, 200, 'text/html', challenge)).toBe(false)
+  })
+})
+
+describe('probeOperations: challenge pages in the capture', () => {
+  it('does not replay a page whose only successful samples were challenge pages', async () => {
+    const page = op('getRoot', 'GET', '/', {
+      url: 'https://x.test/',
+      resourceType: 'document',
+      responseBody: textBody('<html><title>Just a moment...</title></html>'),
+    })
+    page.kind = 'page'
+    page.exchanges = page.exchanges.map(item => ({ ...item, kind: 'bot-protection' }))
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [page],
+    })
+    expect(report.operations).toEqual([])
+    expect(report.skipped).toEqual([
+      { operationId: 'getRoot', reason: 'no successful response was captured' },
+    ])
+  })
 })
 
 describe('probeOperations: failures and data-changing requests', () => {

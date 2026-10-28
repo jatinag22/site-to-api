@@ -171,6 +171,25 @@ describe('buildOperations: grouping, ids and summaries', () => {
     ])
   })
 
+  it('puts relative code routes on a site whose pages were all challenge pages', () => {
+    const challenged = {
+      ...get('/', {
+        kind: 'bot-protection',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+      kindReason: 'Challenge page: challenge page (block page)',
+    }
+    const vendor = {
+      ...exchange({ url: 'https://captcha.vendor.test/anchor', kind: 'bot-protection', resourceType: 'document' }),
+      kindReason: 'reCAPTCHA: request to captcha.vendor.test',
+    }
+    const operations = build([challenged, vendor], [
+      route('/api/feed'),
+    ])
+    expect(operations.filter(item => item.sourceOnly).map(item => `${item.host} ${item.path}`)).toEqual(['shop.test /api/feed'])
+  })
+
   it('separates hosts and makes colliding ids unique deterministically', () => {
     const operations = build([
       get('/api/items-list'),

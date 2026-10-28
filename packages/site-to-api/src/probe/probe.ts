@@ -6,6 +6,7 @@
 import type { ResolvedConfig } from '../config/schema'
 import type { Exchange, Operation } from '../model'
 import type { OperationProbe, ProbeOutcome, ProbeReport } from '../model/probe'
+import { challengePageMarker } from '../analyze/classify'
 import { PROBE_FORMAT_VERSION } from '../model/probe'
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
@@ -50,8 +51,10 @@ interface Variant {
   cookies: Array<[string, string]>
 }
 
+/** The last successful exchange with real content: a challenge page answered 200 is not one. */
 function representative(operation: Operation): Exchange | null {
-  const successful = operation.exchanges.filter(exchange => exchange.response.status >= 200 && exchange.response.status < 300)
+  const successful = operation.exchanges.filter(exchange => exchange.response.status >= 200 && exchange.response.status < 300
+    && exchange.kind !== 'bot-protection')
   return successful.at(-1) ?? null
 }
 
@@ -83,10 +86,14 @@ function topLevelKeys(value: unknown): string[] | null {
 
 /**
  * Whether a live response looks like the captured one. Guards against challenge and login pages,
- * which often answer 200 with HTML where the capture had JSON.
+ * which often answer 200 with HTML where the capture had JSON, and against challenge pages that
+ * stand in for a page with a 200.
  */
 export function resemblesCapture(exchange: Exchange, status: number, contentType: string | null, body: string): boolean {
   if (status < 200 || status >= 300)
+    return false
+  // An interstitial answered 200 (Reddit's JavaScript challenge) is never the API working.
+  if (mediaType(contentType).includes('html') && challengePageMarker(body) !== null)
     return false
   const expected = exchange.response.body?.mimeType ?? ''
   const actual = mediaType(contentType)

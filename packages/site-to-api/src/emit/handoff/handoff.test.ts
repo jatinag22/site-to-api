@@ -1,6 +1,7 @@
 import type { Analysis, Operation } from '../../model'
 import { describe, expect, it } from 'vitest'
 import { channelMessage, tickerChannel } from '../../../test/channels'
+import { exchange } from '../../../test/helpers'
 import { HOSTILE, injected, renderMarkdown } from '../../../test/markdown'
 import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { renderAgentGuide } from './agent-guide'
@@ -414,6 +415,42 @@ describe('probe evidence, qualified references and unknown methods', () => {
     expect(renderAgentGuide(analysis, options)).toContain('- Calls that send the bot-protection script\'s headers, so only a real browser can make them: `putApiCart`.')
     const unguarded = fixture()
     expect(renderAgentGuide(unguarded, options)).not.toContain('bot-protection script\'s headers')
+  })
+
+  it('says a host that only answered with challenge pages has no real content', () => {
+    const analysis = fixture()
+    const challenged = {
+      ...exchange({ url: 'https://blocked.example/', resourceType: 'document' }),
+      kind: 'bot-protection' as const,
+      kindReason: 'Challenge page: challenge page (title "prove your humanity")',
+    }
+    analysis.operations.push(operation({
+      operationId: 'getRoot',
+      method: 'GET',
+      path: '/',
+      host: 'blocked.example',
+      kind: 'bot-protection',
+      exchanges: [challenged],
+    }))
+    analysis.flows.session.push({
+      host: 'blocked.example',
+      requires: 'browser',
+      cookies: [],
+      botProtection: [
+        { vendor: 'Challenge page', evidence: 'challenge page (title "prove your humanity")' },
+      ],
+      probed: false,
+    })
+    const guide = renderAgentGuide(analysis, {
+      toolVersion: '0.1.0',
+      examples: 'masked',
+      probed: false,
+      client: 'current',
+      probe: null,
+    })
+    const section = guide.slice(guide.indexOf('### blocked.example'), guide.indexOf('### shop.example'))
+    expect(section).toContain('- No real content: every response this host gave the capture was a bot challenge or block page')
+    expect(guide.slice(guide.indexOf('### shop.example'))).not.toContain('No real content')
   })
 
   it('says "method unknown" instead of presenting the placeholder method', () => {

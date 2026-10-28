@@ -7,7 +7,7 @@
 import type { Analysis, Operation, SessionRequirement, ValueOrigin } from '../../model'
 import type { StepResolver } from '../steps'
 import type { ClientState } from './client'
-import { sendsBotProtectionHeaders } from '../../analyze/classify'
+import { isChallengeAnswer, sendsBotProtectionHeaders } from '../../analyze/classify'
 import { cookieLines } from '../cookies'
 import { anchor, code, text } from '../escape'
 import { specFileName } from '../openapi/write'
@@ -61,6 +61,19 @@ function probedRequires(entry: SessionRequirement, analysis: Analysis): string[]
     : [])
 }
 
+/**
+ * True when every observed page and call of a host was answered with a challenge (Reddit's
+ * "Prove your humanity" on every page): the capture holds nothing of the site itself.
+ */
+function servedOnlyChallenges(host: string, analysis: Analysis): boolean {
+  const exchanges = analysis.operations
+    .filter(operation => operation.host === host && !operation.sourceOnly)
+    .flatMap(operation => operation.kind === 'bot-protection' && !operation.exchanges.some(isChallengeAnswer)
+      ? []
+      : operation.exchanges)
+  return exchanges.length > 0 && exchanges.every(isChallengeAnswer)
+}
+
 function sessionSection(analysis: Analysis): string[] {
   const lines = ['## Session requirements', '']
   if (analysis.flows.session.length === 0) {
@@ -72,6 +85,8 @@ function sessionSection(analysis: Analysis): string[] {
     lines.push(`- Needs: ${REQUIREMENT_TEXT[entry.requires]}${entry.probed ? ' (confirmed by probe)' : ' (inferred from the capture, not yet probed)'}.`)
     for (const finding of entry.botProtection)
       lines.push(`- Bot protection: ${text(finding.vendor)} (${text(finding.evidence)}). Do not try to reproduce it; let a real browser run it (\`browserSession\` in \`@site-to-api/runtime\`).`)
+    if (servedOnlyChallenges(entry.host, analysis))
+      lines.push('- No real content: every response this host gave the capture was a bot challenge or block page, so its specs describe the interstitial, not the site. Capture again with a browser session the site lets through; probe results cannot show that plain HTTP works here.')
     const guarded = entry.botProtection.length === 0
       ? []
       : analysis.operations.filter(operation => operation.host === entry.host && operation.kind === 'api' && sendsBotProtectionHeaders(operation))

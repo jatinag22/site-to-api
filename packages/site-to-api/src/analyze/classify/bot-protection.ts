@@ -274,6 +274,74 @@ export function sendsBotProtectionHeaders(operation: Pick<Operation, 'headers'>)
   return operation.headers.some(header => isBotProtectionHeader(header.name))
 }
 
+/** Vendor name for interstitials recognised by their content rather than a vendor endpoint. */
+const CHALLENGE_PAGE = 'Challenge page'
+
+/** Page titles of challenge and block interstitials (`Reddit - Prove your humanity`). */
+const CHALLENGE_TITLES: readonly string[] = [
+  'just a moment',
+  'attention required',
+  'prove your humanity',
+  'verify you are human',
+  'verify you are a human',
+  'are you a robot',
+  'are you a human',
+  'checking your browser',
+  'pardon our interruption',
+  'human verification',
+  'bot verification',
+  'access denied',
+  'request blocked',
+]
+/** Markup only challenge or block pages carry; each label says what was matched. */
+const CHALLENGE_MARKERS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
+  { pattern: /_cf_chl_opt/, label: 'Cloudflare challenge script' },
+  { pattern: /\bjs_challenge\b[\s\S]{1,2000}\bjsc_token\b|\bjsc_token\b[\s\S]{1,2000}\bjs_challenge\b/, label: 'JavaScript challenge redirect' },
+  { pattern: /blocked by network security/i, label: 'block page' },
+  { pattern: /captcha-delivery\.com/, label: 'DataDome captcha' },
+  { pattern: /id=["']?px-captcha/, label: 'PerimeterX captcha' },
+]
+/** Only the start of a page is read; interstitials put their title and script up front. */
+const MAX_CHALLENGE_SCAN = 300_000
+const TITLE = /<title[^>]*>([^<]{0,200})<\/title>/i
+
+/**
+ * What marks an HTML body as a bot challenge or block page, whatever its status (Reddit answers
+ * its JavaScript challenge with 200): a challenge title or challenge-only markup. `null` for an
+ * ordinary page. The returned text is one of this file's labels, never text from the page.
+ */
+export function challengePageMarker(html: string): string | null {
+  const head = html.slice(0, MAX_CHALLENGE_SCAN)
+  const title = TITLE.exec(head)?.[1]?.toLowerCase().replace(/\s+/g, ' ') ?? ''
+  const phrase = CHALLENGE_TITLES.find(candidate => title.includes(candidate))
+  if (phrase !== undefined)
+    return `title "${phrase}"`
+  return CHALLENGE_MARKERS.find(marker => marker.pattern.test(head))?.label ?? null
+}
+
+/**
+ * True for an exchange classify labelled as a challenge answer standing in for the site's own
+ * content: an interstitial page, or a response with a challenge header (`cf-mitigated`,
+ * `x-amzn-waf-action`). Vendor endpoints (`/cdn-cgi/challenge-platform/...`) are not.
+ */
+export function isChallengeAnswer(exchange: Pick<Exchange, 'kind' | 'kindReason'>): boolean {
+  return exchange.kind === 'bot-protection'
+    && (exchange.kindReason.startsWith(`${CHALLENGE_PAGE}:`) || exchange.kindReason.includes(': response header '))
+}
+
+/** The challenge-page evidence of one exchange: an HTML response that is an interstitial. */
+function challengePageEvidence(exchange: Exchange): Found[] {
+  const body = exchange.response.body
+  if (!body || body.text === null || !body.mimeType.includes('html'))
+    return []
+  const marker = challengePageMarker(body.text)
+  return marker === null
+    ? []
+    : [
+        { evidence: `challenge page (${marker})`, isTraffic: true, thirdParty: false },
+      ]
+}
+
 /** Every signature that matches one exchange. */
 export function detectBotProtection(exchange: Exchange, akamaiHosts: ReadonlySet<string>): BotEvidence[] {
   const body = bodyText(exchange)
@@ -283,6 +351,9 @@ export function detectBotProtection(exchange: Exchange, akamaiHosts: ReadonlySet
       ...traceEvidence(signature, exchange),
     ]
       .map(item => ({ vendor: signature.vendor, ...item })))
+  // A vendor-specific match already names the vendor; the content check covers the rest.
+  if (!found.some(item => item.isTraffic))
+    found.push(...challengePageEvidence(exchange).map(item => ({ vendor: CHALLENGE_PAGE, ...item })))
   const { request } = exchange
   if (request.method === 'POST' && akamaiHosts.has(request.host) && looksLikeRandomSensorPath(request.path)) {
     found.push({
