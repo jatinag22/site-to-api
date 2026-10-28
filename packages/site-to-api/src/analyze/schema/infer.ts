@@ -22,6 +22,13 @@ export interface InferOptions {
    * code-like values, so the name matters.
    */
   name?: string | null
+  /**
+   * `present` (the default): an object key is required when every sample has it, which is what a
+   * response promises. `varies`: it must also take more than one value across the samples, which
+   * is the evidence that a request needs the caller to supply it. Algolia sends
+   * `analyticsTags: ['web']` in every search, yet a search without it works.
+   */
+  required?: 'present' | 'varies'
 }
 
 /** Nesting deeper than this becomes an untyped schema. */
@@ -151,6 +158,8 @@ interface Node {
   keyCounts: Map<string, number>
   items: Node | null
   tooDeep: boolean
+  /** Up to two distinct JSON encodings of the values seen here, kept only for `required: 'varies'`. */
+  distinct: Set<string>
 }
 
 function newNode(): Node {
@@ -169,6 +178,7 @@ function newNode(): Node {
     keyCounts: new Map(),
     items: null,
     tooDeep: false,
+    distinct: new Set(),
   }
 }
 
@@ -210,7 +220,7 @@ function addScalar(node: Node, value: string | number | boolean | null): void {
   }
 }
 
-function addObject(node: Node, value: object, sessionId: string, depth: number): void {
+function addObject(node: Node, value: object, sessionId: string, depth: number, track: boolean): void {
   node.types.add('object')
   node.hasContainer = true
   node.objectCount++
@@ -223,14 +233,16 @@ function addObject(node: Node, value: object, sessionId: string, depth: number):
       child = newNode()
       node.properties.set(key, child)
     }
-    add(child, item, sessionId, depth + 1)
+    add(child, item, sessionId, depth + 1, track)
   }
 }
 
-function add(node: Node, value: unknown, sessionId: string, depth: number): void {
+function add(node: Node, value: unknown, sessionId: string, depth: number, track: boolean): void {
   if (value === undefined)
     return
   node.count++
+  if (track && node.distinct.size < 2)
+    node.distinct.add(JSON.stringify(value))
   node.sessions.add(sessionId)
   if (depth > MAX_SCHEMA_DEPTH) {
     node.tooDeep = true
@@ -243,10 +255,10 @@ function add(node: Node, value: unknown, sessionId: string, depth: number): void
     node.hasContainer = true
     node.items ??= newNode()
     for (const item of value)
-      add(node.items, item, sessionId, depth + 1)
+      add(node.items, item, sessionId, depth + 1, track)
   }
   else if (typeof value === 'object') {
-    addObject(node, value, sessionId, depth)
+    addObject(node, value, sessionId, depth, track)
   }
 }
 
@@ -346,7 +358,8 @@ function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, opti
     for (const [key, child] of node.properties)
       properties[key] = finalize(child, key, options, totalSessions)
     const required = [...node.keyCounts]
-      .filter(([, count]) => count === node.objectCount)
+      .filter(([key, count]) => count === node.objectCount
+        && (options.required !== 'varies' || (node.properties.get(key)?.distinct.size ?? 0) > 1))
       .map(([key]) => key)
     return required.length > 0
       ? { properties, required }
@@ -365,7 +378,7 @@ function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, opti
 export function inferSchema(samples: Sample[], options: InferOptions = {}): JsonSchema {
   const root = newNode()
   for (const sample of samples)
-    add(root, sample.value, sample.sessionId, 0)
+    add(root, sample.value, sample.sessionId, 0, options.required === 'varies')
   const totalSessions = new Set(samples.map(sample => sample.sessionId)).size
   return finalize(root, options.name ?? null, options, totalSessions)
 }

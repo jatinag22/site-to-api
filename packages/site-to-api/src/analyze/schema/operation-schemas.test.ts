@@ -105,7 +105,7 @@ describe('inferOperationSchemas', () => {
     ])
     const [app, csrf, referer, extra] = result.headers
     expect(app).toMatchObject({
-      required: true,
+      required: false,
       constant: true,
       schema: { type: 'string', default: 'web' },
     })
@@ -116,6 +116,54 @@ describe('inferOperationSchemas', () => {
     expect(extra).toMatchObject({ required: false, constant: false })
     expect(isBrowserManagedHeader('sec-fetch-site')).toBe(true)
     expect(isBrowserManagedHeader('x-sec-fetch')).toBe(false)
+  })
+
+  it('never makes tracing headers constants or defaults', () => {
+    const headers = {
+      'baggage': 'sentry-environment=production',
+      'sentry-trace': 'abc-def',
+      'x-datadog-origin': 'rum',
+      'traceparent': '00-1-2-01',
+    }
+    const result = infer([
+      exchange({ url: 'https://shop.test/api/x', requestHeaders: headers, sessionId: 's1' }),
+      exchange({ url: 'https://shop.test/api/x', requestHeaders: headers, sessionId: 's2' }),
+    ])
+    for (const header of result.headers) {
+      expect(header, header.name).toMatchObject({ required: false, constant: false })
+      expect(header.schema.default, header.name).toBeUndefined()
+      expect(header.schema['x-constant'], header.name).toBeUndefined()
+    }
+  })
+
+  it('takes constants from the whole host when the operation was seen in one session', () => {
+    const redactor = createRedactor({
+      exchanges: [],
+      config: {
+        examples: 'masked',
+        maxExamples: 3,
+        patterns: [],
+        fields: [],
+      },
+    })
+    const pages = ['s1', 's2'].map(sessionId => exchange({
+      url: 'https://shop.test/api/list',
+      requestHeaders: { 'x-requested-with': 'XMLHttpRequest' },
+      sessionId,
+    }))
+    const once = exchange({
+      url: 'https://shop.test/api/latest',
+      requestHeaders: { 'x-requested-with': 'XMLHttpRequest', 'x-nonce': 'n-1' },
+      sessionId: 's1',
+    })
+    const [, latest] = inferOperationSchemas([
+      operation(pages, { operationId: 'getList', path: '/api/list' }),
+      operation([once], { operationId: 'getLatest', path: '/api/latest' }),
+    ], redactor)
+    expect(latest!.headers.map(header => [header.name, header.constant, header.schema.default])).toEqual([
+      ['x-requested-with', true, 'XMLHttpRequest'],
+      ['x-nonce', false, undefined],
+    ])
   })
 
   it('treats a header as constant only when two or more sessions agree', () => {
@@ -155,7 +203,7 @@ describe('inferOperationSchemas', () => {
     })
   })
 
-  it('never requires the page context headers a browser adds, even when sent every time', () => {
+  it('never requires a header because the capture sent it every time', () => {
     const result = infer([
       exchange({
         url: 'https://shop.test/api/x',
@@ -169,7 +217,7 @@ describe('inferOperationSchemas', () => {
     expect(result.headers.map(header => [header.name, header.required, header.constant])).toEqual([
       ['origin', false, false],
       ['referer', false, false],
-      ['x-app', true, false],
+      ['x-app', false, false],
     ])
     expect(result.headers.find(header => header.name === 'referer')?.schema.examples).toEqual(['https://shop.test/login'])
   })
@@ -267,6 +315,43 @@ describe('inferOperationSchemas', () => {
         { email: 'x@x.xxxx', qty: 2 },
       ],
     })
+  })
+
+  it('requires a request body field only when every sample has it with more than one value', () => {
+    const search = (sessionId: string, query: string) => exchange({
+      method: 'POST',
+      url: 'https://shop.test/api/x',
+      sessionId,
+      requestBody: jsonBody({
+        query,
+        analyticsTags: ['web'],
+        clickAnalytics: true,
+        filter: { page: 0, sort: query },
+      }),
+    })
+    const result = infer([
+      search('s1', 'sqlite'),
+      search('s2', 'rust'),
+    ])
+    expect(result.requestBody?.schema.required).toEqual(['query', 'filter'])
+    expect(result.requestBody?.schema.properties?.filter?.required).toEqual(['sort'])
+    // One sample proves nothing about what a caller must send.
+    expect(infer([
+      search('s1', 'sqlite'),
+    ]).requestBody?.schema.required).toBeUndefined()
+    const forms = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: formBody({ q: 'a', lang: 'en' }),
+      }),
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: formBody({ q: 'b', lang: 'en' }),
+      }),
+    ])
+    expect(forms.requestBody?.schema.required).toEqual(['q'])
   })
 
   it('infers form bodies, picking the most common media type', () => {

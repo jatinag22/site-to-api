@@ -54,17 +54,6 @@ const BROWSER_IDENTITY_HEADERS: readonly string[] = [
   'sec-ch-ua*',
 ]
 
-/**
- * Headers every browser fills in from the page that sends the request. A server may check them,
- * so they stay documented (and get a default when constant), but a client that does not send them
- * is not calling the API wrongly, so they are never required: a value seen in one session only
- * would otherwise be a required SDK argument nobody can know.
- */
-const BROWSER_CONTEXT_HEADERS: readonly string[] = [
-  'origin',
-  'referer',
-]
-
 /** Sessions a value must be identical in before it counts as a constant (decision 0004). */
 const MIN_CONSTANT_SESSIONS = 2
 
@@ -120,7 +109,54 @@ function inferParams(exchanges: Exchange[], pick: (exchange: Exchange) => NameVa
   })
 }
 
-function inferHeaders(exchanges: Exchange[], redactor: Redactor): HeaderInfo[] {
+/**
+ * Tracing headers that monitoring scripts (Sentry, OpenTelemetry, Datadog, Zipkin) add to the
+ * page's requests. Servers do not need them, so they are never required and never a default: a
+ * client that replayed the capture's trace ids would report into someone else's trace.
+ */
+const TELEMETRY_HEADERS: readonly string[] = [
+  'baggage',
+  'sentry-trace',
+  'traceparent',
+  'tracestate',
+  'b3',
+  'x-b3-*',
+  'x-datadog-*',
+]
+
+/** True for `baggage`, `sentry-trace`, `traceparent`, `x-datadog-*`, `x-b3-*` and the like. */
+export function isTelemetryHeader(name: string): boolean {
+  return matchesHeaderList(TELEMETRY_HEADERS, name.toLowerCase())
+}
+
+/**
+ * Header values that are the same in every request to the host across two or more sessions
+ * (`x-requested-with: XMLHttpRequest`, `github-is-react: true`). An operation seen in one session
+ * only cannot prove its own constants, but the host's other requests can.
+ */
+function hostConstantHeaders(exchanges: Exchange[]): Map<string, string> {
+  const seen = new Map<string, { values: Set<string>, sessions: Set<string> }>()
+  for (const exchange of exchanges) {
+    for (const header of exchange.request.headers) {
+      const entry = seen.get(header.name) ?? {
+        values: new Set<string>(),
+        sessions: new Set<string>(),
+      }
+      entry.values.add(header.value)
+      entry.sessions.add(exchange.sessionId)
+      seen.set(header.name, entry)
+    }
+  }
+  const constants = new Map<string, string>()
+  for (const [name, entry] of seen) {
+    const [only] = entry.values
+    if (entry.values.size === 1 && only !== undefined && entry.sessions.size >= MIN_CONSTANT_SESSIONS)
+      constants.set(name, only)
+  }
+  return constants
+}
+
+function inferHeaders(exchanges: Exchange[], redactor: Redactor, hostConstants: ReadonlyMap<string, string>): HeaderInfo[] {
   const lists = exchanges.map(exchange => exchange.request.headers.filter(header => !isBrowserManagedHeader(header.name)))
   return namesInOrder(lists).map((name) => {
     const context: RedactContext = { in: 'header', name }
@@ -132,12 +168,14 @@ function inferHeaders(exchanges: Exchange[], redactor: Redactor): HeaderInfo[] {
     const sessions = new Set(samples.map(sample => sample.sessionId))
     // Identical in one session says nothing: a CSRF token or a referer is the same for every
     // request of a session. Constants need two or more sessions agreeing (decision 0004).
+    const [first] = distinct
     const constant = present === exchanges.length
       && distinct.size === 1
-      && sessions.size >= MIN_CONSTANT_SESSIONS
+      && (sessions.size >= MIN_CONSTANT_SESSIONS || (first !== undefined && hostConstants.get(name) === first))
       && !isBrowserIdentityHeader(name)
+      && !isTelemetryHeader(name)
     let schema = withExamples(inferSchema(samples, enumGuard(redactor, context)), redactor.examples(samples.map(sample => sample.value), context))
-    if (isBrowserIdentityHeader(name))
+    if (isBrowserIdentityHeader(name) || isTelemetryHeader(name))
       delete schema['x-constant']
     const only = samples[0]?.value
     // A constant that the redactor would change is a secret: it must not become a default.
@@ -145,9 +183,10 @@ function inferHeaders(exchanges: Exchange[], redactor: Redactor): HeaderInfo[] {
       schema = { ...schema, default: only }
     return {
       name,
-      // Every HTTP client sends its own user agent; a generated SDK must not demand one, nor the
-      // page context a browser adds.
-      required: present === exchanges.length && !isBrowserIdentityHeader(name) && !matchesHeaderList(BROWSER_CONTEXT_HEADERS, name.toLowerCase()),
+      // Being sent is not being needed: GitHub's pages send `x-fetch-nonce` with every fetch, but
+      // probe showed the requests work without it. Only probe can prove a header is needed, so
+      // the emitter marks a header required when `x-site-to-api-requires` lists it.
+      required: false,
       constant,
       schema,
     }
@@ -183,7 +222,9 @@ function inferFormSchema(items: Array<{ form: NameValue[], sessionId: string }>,
       .map(field => ({ value: field.value, sessionId: item.sessionId })))
     properties[name] = inferStringSchema(samples, enumGuard(redactor, { in: 'form', name }))
   }
-  const required = names.filter(name => items.every(item => item.form.some(field => field.name === name)))
+  // As for JSON bodies: present in every sample and taking more than one value.
+  const required = names.filter(name => items.every(item => item.form.some(field => field.name === name))
+    && new Set(items.flatMap(item => item.form.filter(field => field.name === name).map(field => field.value))).size > 1)
   return required.length > 0
     ? { type: 'object', properties, required }
     : { type: 'object', properties }
@@ -219,7 +260,12 @@ function inferRequestBody(exchanges: Exchange[], redactor: Redactor): Operation[
     const context: RedactContext = { in: 'body' }
     return {
       ...jsonMediaType(mimeType),
-      schema: inferSchema(group.map(exchange => ({ value: exchange.request.body.json, sessionId: exchange.sessionId })), enumGuard(redactor, context)),
+      // A field sent every time with the same value is the page's setting, not a value the caller
+      // must supply: request fields are required only when present in every sample and varying.
+      schema: inferSchema(group.map(exchange => ({ value: exchange.request.body.json, sessionId: exchange.sessionId })), {
+        ...enumGuard(redactor, context),
+        required: 'varies',
+      }),
       examples: redactor.examples(bodies.map(body => body.json), context),
     }
   }
@@ -322,6 +368,9 @@ function safeDecode(segment: string): string {
  * redactor; operations found only in source code are returned unchanged.
  */
 export function inferOperationSchemas(operations: Operation[], redactor: Redactor): Operation[] {
+  const hostConstants = new Map<string, Map<string, string>>()
+  for (const host of new Set(operations.map(operation => operation.host)))
+    hostConstants.set(host, hostConstantHeaders(operations.filter(operation => operation.host === host).flatMap(operation => operation.exchanges)))
   return operations.map((operation) => {
     const { exchanges } = operation
     if (exchanges.length === 0)
@@ -330,7 +379,7 @@ export function inferOperationSchemas(operations: Operation[], redactor: Redacto
       ...operation,
       pathParams: enrichPathParams(operation, redactor),
       query: inferParams(exchanges, exchange => exchange.request.query, 'query', redactor),
-      headers: inferHeaders(exchanges, redactor),
+      headers: inferHeaders(exchanges, redactor, hostConstants.get(operation.host) ?? new Map()),
       cookies: inferCookies(exchanges),
       requestBody: inferRequestBody(exchanges, redactor),
       responses: inferResponses(exchanges, redactor),

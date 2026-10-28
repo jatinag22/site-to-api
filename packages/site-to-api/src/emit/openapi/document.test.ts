@@ -419,6 +419,44 @@ describe('operation ids shared by two hosts', () => {
   })
 })
 
+describe('required headers', () => {
+  it('requires a header only when probe proved it is needed', () => {
+    const call = (sessionId: string) => exchange({
+      sessionId,
+      url: 'https://shop.test/api/latest',
+      requestHeaders: { 'x-fetch-nonce': `n-${sessionId}`, 'x-api-key': `k-${sessionId}`, 'sentry-trace': `t-${sessionId}` },
+      responseBody: jsonBody({ ok: true }),
+    })
+    const headersOf = (requires: string[] | null) => {
+      const analysis = analyse([
+        page(),
+        call('s1'),
+        call('s2'),
+      ], NO_FLOWS, operations => operations.map(operation => ({ ...operation, requires })))
+      const document = buildOpenApiDocuments(analysis).get('shop.test') as { paths: Record<string, Record<string, { parameters: Array<{ name: string, in: string, required: boolean }> }>> }
+      return document.paths['/api/latest']!.get!.parameters
+        .filter(parameter => parameter.in === 'header')
+        .map(parameter => [parameter.name, parameter.required])
+    }
+    // Before probe, and when probe found nothing needed: sent every time, required never.
+    expect(headersOf(null)).toEqual([
+      ['x-fetch-nonce', false],
+      ['x-api-key', false],
+      ['sentry-trace', false],
+    ])
+    expect(headersOf([])).toEqual([
+      ['x-fetch-nonce', false],
+      ['x-api-key', false],
+      ['sentry-trace', false],
+    ])
+    expect(headersOf(['header:x-api-key', 'header:sentry-trace'])).toEqual([
+      ['x-fetch-nonce', false],
+      ['x-api-key', true],
+      ['sentry-trace', false],
+    ])
+  })
+})
+
 describe('request body media type', () => {
   it('writes JSON text sent under another content type as application/json with the sent type', () => {
     const algoliaBody = {

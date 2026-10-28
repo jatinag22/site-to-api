@@ -76,7 +76,15 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
 
 - `operationId` matches `flows.json` and the generated SDK function.
 - Required cookies are `in: cookie` parameters, names only.
-- Constant headers are parameters with `x-site-to-api-constant: true` and a `default`.
+- Constant headers are parameters with `x-site-to-api-constant: true` and a `default`. A header
+  is constant when it had one value in every request of the operation, and that value was seen
+  in two or more sessions, in the operation itself or in every request to the host.
+- A header parameter is `required` only when `probe` proved it is needed
+  (`x-site-to-api-requires`); being sent in every captured request is not enough. Tracing
+  headers (`baggage`, `sentry-trace`, `traceparent`, `tracestate`, `b3`, `x-b3-*`,
+  `x-datadog-*`) are never required and never get a default.
+- A request body field is `required` only when every sample has it and it took more than one
+  value; a field sent with the same value every time is optional.
 - String `format`s (`date-time`, `date`, `uuid`, `email`, `uri`) are written only when every
   captured sample passes the Zod check the generated client runs for that format;
   `date-time` accepts offsets (`-05:00`) and values without a zone.
