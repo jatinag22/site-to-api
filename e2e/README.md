@@ -85,7 +85,7 @@ Every `/api/*` call answers **403** unless it carries a valid `_abck` cookie fro
 | `GET /stores`, `GET /stores/{slug}` | Store index and details as a `<dl>` and as label `<span>`s; slugs `pine-hill`, `cedar-park`, `maple-cross`, `birch-lane` | HTML label/value extraction, template vs data comparison across slugs |
 | `GET /api/export.csv` | CSV with a header row, downloaded by the "Download price list" button | `text/csv` responses and their extraction spec |
 | `GET /api/stock.txt` | Pipe-delimited `id\|name\|status\|quantity` lines; needs the `pm_store` cookie, which only the store page's JavaScript sets (`document.cookie`) | `text/plain` extraction; cookie origin `script` (no response sets it, but its value traces to the store page, so a wrapper can set it) |
-| `GET /ws/ticker` | WebSocket; client sends `{"type":"subscribe","productId":N}`, server pushes `tick` messages | WebSocket capture in both directions |
+| `GET /ws/ticker` | WebSocket; client sends `{"type":"subscribe","productId":N}`, server pushes `tick` messages | WebSocket capture in both directions; `build` writes it as an AsyncAPI channel |
 | `POST http://127.0.0.1:<port2>/collect`, `GET .../pixel.gif` | `navigator.sendBeacon` and a tracking pixel on a second host | `noise` classification, host filtering, `beacon` initiators |
 | `/assets/site.css`, `/assets/logo.png`, `/assets/fonts/pinewood-sans.woff2` | Static assets (the font is a placeholder the browser downloads but cannot decode) | `asset` classification |
 | `/assets/app.<hash>.js` | Main bundle: whitespace-minified, external sourcemap via `//# sourceMappingURL=` with `sourcesContent`, meaningful function names | sourcemap resolution, call sites in original `src/...` files |

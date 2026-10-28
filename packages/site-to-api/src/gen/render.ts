@@ -5,7 +5,7 @@
 import type { ExtractField, ExtractSpec, FieldType } from '@site-to-api/runtime'
 import type { SessionRequirement } from '../model'
 import type { NamedHtmlValue } from './html-values'
-import type { AuthScheme, ExtractOperation, HostSpec } from './spec'
+import type { AuthScheme, ChannelSummary, ExtractOperation, HostSpec } from './spec'
 import { code, codeBlock, commentText, text } from '../emit/escape'
 import { sdkFunctionName } from '../emit/naming'
 import { toPascalCase } from './spec'
@@ -334,8 +334,43 @@ function renderStringRecord(record: Record<string, string>, indent: string): str
   return `{\n${entries.map(([key, value]) => `${indent}  ${literal(key)}: ${literal(value)},`).join('\n')}\n${indent}}`
 }
 
-/** `client/README.md`: how to set up and create a client for each host and which session it needs. */
-export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessions: SessionRequirement[], htmlValues: NamedHtmlValue[] = []): string {
+/** Inline examples longer than this are left to the AsyncAPI file. */
+const MAX_README_EXAMPLE = 400
+
+function channelLine(channel: ChannelSummary): string {
+  const steps = channel.handshake.map((step) => {
+    const json = step.example === null
+      ? null
+      : typeof step.example === 'string'
+        ? step.example
+        : JSON.stringify(step.example)
+    return json !== null && json !== undefined && json.length <= MAX_README_EXAMPLE
+      ? `${code(step.name)} (${code(json)})`
+      : code(step.name)
+  })
+  const after = steps.length > 0
+    ? `after connecting, send ${steps.join(', then ')}`
+    : 'the server pushes without a subscription message'
+  return `- ${code(channel.url)} (channel ${code(channel.id)} in ${code(`../specs/${channel.file}`)}): ${after}.`
+}
+
+function channelsReadme(channels: readonly ChannelSummary[]): string[] {
+  if (channels.length === 0)
+    return []
+  return [
+    '## Real-time channels',
+    '',
+    'The site also uses WebSockets. The generated code covers HTTP only; open these with any',
+    'WebSocket client, sending the session\'s cookies when the AsyncAPI file lists them',
+    '(`x-site-to-api-cookies`).',
+    '',
+    ...channels.map(channelLine),
+    '',
+  ]
+}
+
+/** `client/README.md`: setup, how to create a client for each host, which session it needs and the WebSocket channels. */
+export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessions: SessionRequirement[], htmlValues: NamedHtmlValue[] = [], channels: readonly ChannelSummary[] = []): string {
   const sections = hosts.map(host => renderHostSection(host, sessions.find(session => session.host === host.host) ?? null))
   const parsers = extracts.length === 0
     ? ['No operation has an HTML or text response with an extraction spec.']
@@ -402,6 +437,7 @@ export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessio
     '',
     ...values,
     '',
+    ...channelsReadme(channels),
   ].join('\n')
 }
 

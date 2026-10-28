@@ -159,8 +159,8 @@ async function writeInside(sessionDir: string, relative: string, data: string | 
 /** Where a script came from, for deciding which sourcemap URLs may be fetched. */
 interface ScriptOrigin {
   url: URL
-  /** The page that loaded the script is on a non-public host (a dev server, a local fixture). */
-  pageIsLocal: boolean
+  /** The page that loaded the script, when it is on a non-public host (a dev server, an intranet app). */
+  localPage: URL | null
 }
 
 function errorText(error: unknown): string {
@@ -237,7 +237,7 @@ export class ScriptCollector {
       await writeInside(this.sessionDir, file, body)
     let sourceMap: ScriptRecord['sourceMap'] = null
     if (this.options.sourcemaps) {
-      const origin = { url, pageIsLocal: await this.isLocalPage(pageUrlOf(response)) }
+      const origin = { url, localPage: await this.localPage(pageUrlOf(response)) }
       const found = await this.findSourceMap(origin, response.headers(), body)
       if (found)
         sourceMap = await this.saveSourceMap(url, file, found)
@@ -252,20 +252,22 @@ export class ScriptCollector {
     }
   }
 
-  /** True when the page is on a non-public host; unknown pages count as public, the safe side. */
-  private async isLocalPage(pageUrl: string | null): Promise<boolean> {
+  /** The page URL when the page is on a non-public host; unknown pages count as public, the safe side. */
+  private async localPage(pageUrl: string | null): Promise<URL | null> {
     if (pageUrl === null)
-      return false
+      return null
     let parsed: URL
     try {
       parsed = new URL(pageUrl)
     }
     catch {
-      return false
+      return null
     }
     if (!/^https?:$/.test(parsed.protocol))
-      return false
-    return await nonPublicReason(parsed.hostname, this.options.lookup) !== null
+      return null
+    return await nonPublicReason(parsed.hostname, this.options.lookup) === null
+      ? null
+      : parsed
   }
 
   private async findSourceMap(script: ScriptOrigin, headers: Record<string, string>, body: string): Promise<FoundMap | null> {
@@ -299,7 +301,7 @@ export class ScriptCollector {
     let current = url
     try {
       for (let hop = 0; hop <= SOURCEMAP_MAX_REDIRECTS; hop++) {
-        const refusal = await sourceMapRefusal(new URL(current), script.url, script.pageIsLocal, this.options.lookup)
+        const refusal = await sourceMapRefusal(new URL(current), script.url, script.localPage, this.options.lookup)
         if (refusal !== null) {
           this.warnings.push(`Did not fetch sourcemap ${current} for ${script.url.href}: ${refusal}.`)
           return null

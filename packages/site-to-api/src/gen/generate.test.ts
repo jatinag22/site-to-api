@@ -9,7 +9,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import ts from 'typescript'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { renderMarkdown } from '../../test/markdown'
+import { tickerChannel } from '../../test/channels'
+import { HOSTILE, injected, renderMarkdown } from '../../test/markdown'
+import { buildAsyncApiDocuments } from '../emit/asyncapi'
+import { toYaml } from '../emit/openapi'
 import { SiteToApiError } from '../errors'
 import { FLOWS_FORMAT_VERSION } from '../model'
 import { generateClient, typeScriptVersionForHeyApi } from './generate'
@@ -536,4 +539,75 @@ describe('typeScriptVersionForHeyApi', () => {
   it('resolves TypeScript 6 for hey-api', () => {
     expect(typeScriptVersionForHeyApi()).toMatch(/^6\./)
   })
+})
+
+describe('generateClient with WebSocket channels', () => {
+  const asyncApi = (channel = tickerChannel({ host: 'shop.example.com' })): string =>
+    toYaml(buildAsyncApiDocuments([channel], 1).get(channel.host) ?? {})
+
+  it('leaves AsyncAPI documents to the README and generates the HTTP client as before', async () => {
+    const dir = await workspace()
+    try {
+      await writeFile(path.join(dir, 'handoff', 'specs', 'shop.example.com.asyncapi.yaml'), asyncApi())
+      const result = await generateClient({
+        handoffDir: path.join(dir, 'handoff'),
+        flows,
+      })
+      expect(result.warnings).toEqual([])
+      expect(result.files.filter(file => file.includes('asyncapi'))).toEqual([])
+      const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
+      expect(readme).toContain('## Real-time channels')
+      expect(readme).toContain('- `ws://shop.example.com/ws/ticker` (channel `wsTicker` in `../specs/shop.example.com.asyncapi.yaml`): after connecting, send `subscribe` (`{"type":"subscribe","productId":1007}`).')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('escapes channel text from the site in the README', async () => {
+    const dir = await workspace()
+    try {
+      const channel = tickerChannel({
+        host: 'shop.example.com',
+        path: `/ws/${HOSTILE}`,
+        handshake: [
+          { message: 'sendSubscribe', example: HOSTILE },
+        ],
+      })
+      await writeFile(path.join(dir, 'handoff', 'specs', 'shop.example.com.asyncapi.yaml'), asyncApi(channel))
+      await generateClient({
+        handoffDir: path.join(dir, 'handoff'),
+        flows,
+      })
+      const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
+      expect(injected(renderMarkdown(readme))).toEqual([])
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('still asks for build when the only specs are AsyncAPI, and warns about unreadable ones', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'site-to-api-gen-'))
+    try {
+      await mkdir(path.join(dir, 'specs'))
+      await writeFile(path.join(dir, 'specs', 'shop.example.com.asyncapi.yaml'), asyncApi())
+      await expect(generateClient({ handoffDir: dir, flows })).rejects.toThrow(/No .yaml specs/)
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+    const work = await workspace()
+    try {
+      await writeFile(path.join(work, 'handoff', 'specs', 'broken.asyncapi.yaml'), 'asyncapi: 3.0.0\nchannels: 3\n')
+      const result = await generateClient({
+        handoffDir: path.join(work, 'handoff'),
+        flows,
+      })
+      expect(result.warnings.some(warning => warning.startsWith('specs/broken.asyncapi.yaml looks like AsyncAPI but could not be read'))).toBe(true)
+    }
+    finally {
+      await rm(work, { recursive: true, force: true })
+    }
+  }, 60_000)
 })

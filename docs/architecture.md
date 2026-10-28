@@ -4,7 +4,7 @@
  capture ──► raw session ──► build ─────────────────────────────► handoff folder ──► gen
  (browser)   (gitignored)    load → classify → operations →        (committed)        (client/)
                              schema → correlate → flows →
-                             source → html → redact → emit
+                             channels → source → html → redact → emit
                                                      ▲
                                         probe ───────┘ (optional, live, updates specs + flows)
 ```
@@ -43,16 +43,23 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
 6. **flows** (`src/analyze/flows`): splits the timeline at the person's actions (click, submit,
    navigate), turns each segment into a flow of steps with typed inputs and outputs, merges flows
    seen in several sessions, and derives per-host session requirements.
-7. **source** (`src/analyze/source`): maps stack frames through sourcemaps to original files
+7. **channels** (`src/analyze/channels`): rebuilds WebSocket connections from the `ws` capture
+   events and turns them into channels (decision 0023). Frames stand in as exchanges for the
+   redactor (so secrets sent over a socket are learnt and scrubbed everywhere) and for value
+   tracing (so a client value such as `productId` links to the HTTP response it came from). The
+   connection URL is templated by the operations stage's path and query rules; messages are
+   grouped per direction by a discriminator field and get schemas from the schema stage. The
+   HTTP upgrade request in the HAR, when present, gives the cookie names and the opening stack.
+8. **source** (`src/analyze/source`): maps stack frames through sourcemaps to original files
    (skipping shared request wrappers, decision 0017),
    parses original sources or bundles with oxc to find request call sites and endpoints that were
    never called, and selects excerpts for computed values and call sites.
-8. **html** (`src/analyze/html`): infers extraction specs for HTML and text responses by comparing
+9. **html** (`src/analyze/html`): infers extraction specs for HTML and text responses by comparing
    samples (template vs data), detecting repeated records, labels and types.
-9. **redact** (`src/analyze/redact`): decides, per value, whether it is a cross-session constant
-   (kept), a secret or personal value (replaced by a shape description or a masked example that
-   keeps the format), or ordinary data.
-10. **emit** (`src/emit`): writes the handoff folder; extraction specs are first checked against
+10. **redact** (`src/analyze/redact`): decides, per value, whether it is a cross-session constant
+    (kept), a secret or personal value (replaced by a shape description or a masked example that
+    keeps the format), or ordinary data.
+11. **emit** (`src/emit`): writes the handoff folder; extraction specs are first checked against
     the runtime's `extract()` and the client is generated (decision 0018). Orchestration lives in
     `src/build/index.ts`.
 
@@ -67,6 +74,7 @@ See `docs/output-format.md` for the full specification.
   flows.json        source of truth for flows, computed values, session needs
   flows.md          readable rendering of flows.json
   specs/<host>.yaml OpenAPI 3.1, with x-site-to-api-* extensions
+  specs/<host>.asyncapi.yaml  AsyncAPI 3.0 for WebSocket channels, when there are any
   source/           code excerpts referenced by flows and specs
   client/           generated TypeScript client (gen)
 ```
