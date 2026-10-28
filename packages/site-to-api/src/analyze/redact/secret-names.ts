@@ -15,9 +15,14 @@ const SECRET_WORDS = new Set([
   'secret',
   'password',
   'passwd',
+  'pass',
   'pwd',
   'passcode',
+  'pin',
   'otp',
+  'totp',
+  'mfa',
+  '2fa',
   'auth',
   'authorization',
   'authenticity',
@@ -59,6 +64,7 @@ const SECRET_JOINED = [
   'privatekey',
   'clientsecret',
   'csrfmiddlewaretoken',
+  'twofactor',
 ]
 
 /** Lower-case words of a name: `x-csrf-token` → `[x, csrf, token]`, `accessToken` → `[access, token]`. */
@@ -102,4 +108,63 @@ const AUTH_SCHEMES: ReadonlySet<string> = new Set([
  */
 export function isAuthScheme(value: string): boolean {
   return AUTH_SCHEMES.has(value.trim().toLowerCase())
+}
+
+/** Joined name words of keys a page embeds for everyone: `x-api-key`, `publishableKey`, `siteKey`. */
+const PUBLISHABLE_JOINED = [
+  'apikey',
+  'publishablekey',
+  'publishable',
+  'sitekey',
+  'clientid',
+  'appid',
+  'appkey',
+  'publickey',
+]
+
+/** Words that make any name a credential, even next to `api key` (`apiKeySecret`). */
+const NEVER_PUBLISHABLE_WORDS = new Set([
+  'secret',
+  'private',
+  'password',
+  'passwd',
+  'pass',
+  'pwd',
+  'passcode',
+  'pin',
+  'otp',
+  'totp',
+  'mfa',
+  '2fa',
+  'session',
+  'sessionid',
+  'sid',
+  'access',
+  'refresh',
+  'token',
+  'tokens',
+  'bearer',
+  'jwt',
+  'credential',
+  'credentials',
+])
+
+/**
+ * True for names of publishable keys: values a page embeds publicly for every visitor (an API
+ * key, a client id, a publishable or site key, and `key` in a query string). Only these may be
+ * kept when identical across sessions (decision 0015). Every other secret name (a password, OTP,
+ * session id, access or refresh token, CSRF token, private key, client secret) is a credential
+ * input or a per-person value: identical in two captures means the same person typed or held
+ * it twice, not that it is public, so it is always redacted.
+ */
+export function isPublishableKeyName(name: string | null | undefined, inQuery = false): boolean {
+  if (name === null || name === undefined || name === '')
+    return false
+  const parts = nameWords(name)
+  if (parts.some(part => NEVER_PUBLISHABLE_WORDS.has(part)))
+    return false
+  const joined = parts.join('')
+  if (joined.includes('privatekey') || joined.includes('clientsecret'))
+    return false
+  return PUBLISHABLE_JOINED.some(word => joined.includes(word)) || (inQuery && parts.includes('key'))
 }

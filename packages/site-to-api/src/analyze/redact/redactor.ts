@@ -5,9 +5,10 @@
  * 1. Cookie and Set-Cookie values, `Authorization`-style headers, configured `fields` and JWTs are
  *    always replaced by `<redacted: shape>`, even when identical across sessions: with a reused
  *    browser profile a login cookie or token stays the same between captures.
- * 2. Values under secret-looking names (`x-csrf-token`, `apiKey`, `password`) are replaced too,
- *    unless the same value appeared in every session (at least two): then it is a constant the
- *    site ships to everyone, such as a public API key, and the client needs it.
+ * 2. Values under secret-looking names (`x-csrf-token`, `password`, `pwd`, `otp`) are replaced
+ *    too, constant or not. Only publishable-key names (`x-api-key`, `clientId`, `publishableKey`,
+ *    `siteKey`, `?key=`) are kept when the same value appeared in every session (at least two):
+ *    then it is a key the site ships to everyone, and the client needs it.
  *    Path segments that are credentials (`/magic/<jwt>`, `/reset/<token>`, see `path-tokens.ts`)
  *    count as rule 1; opaque random segments with no credential word (a signed download link)
  *    count as rule 2. Other random ids in paths (ObjectIds, SHAs) are public, like UUIDs.
@@ -30,7 +31,7 @@ import { SiteToApiError } from '../../errors'
 import { describeShape, inspectJwt } from '../shape'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
 import { isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
-import { CREDENTIAL_HEADERS, isAuthScheme, isSecretName } from './secret-names'
+import { CREDENTIAL_HEADERS, isAuthScheme, isPublishableKeyName, isSecretName } from './secret-names'
 
 interface RedactorInput {
   /** Every exchange of the build, used to find cross-session constants and known secrets. */
@@ -253,10 +254,17 @@ function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: Red
       }
       if (item.value === '')
         continue
-      if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true)
+      if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true) {
         forms.forEach(form => learnt.always.add(form))
-      else if ((isSecretName(item.name, isQueryLike(item.in)) && !isAuthScheme(item.value)) || item.pathOpaque === true)
+      }
+      else if (isSecretName(item.name, isQueryLike(item.in)) && !isAuthScheme(item.value)) {
+        forms.forEach(form => (isPublishableKeyName(item.name, isQueryLike(item.in))
+          ? learnt.unlessConstant
+          : learnt.always).add(form))
+      }
+      else if (item.pathOpaque === true) {
         forms.forEach(form => learnt.unlessConstant.add(form))
+      }
     }
   }
   return learnt
@@ -287,6 +295,10 @@ export function createRedactor(input: RedactorInput): Redactor {
 
   const isConstant = (value: string): boolean =>
     sessionCount >= 2 && (sessionsByValue.get(value)?.size ?? 0) === sessionCount
+  // Only a publishable key (embedded in the page for everyone) survives by being constant; a
+  // password typed the same way in two captures is still the person's password.
+  const keptAsPublicKey = (value: string, context: RedactContext): boolean =>
+    isPublishableKeyName(context.name, isQueryLike(context.in)) && isConstant(value)
 
   // Short values ("1", "en") are too common to hunt for elsewhere; they are still redacted where
   // they sit because their context (cookie, secret name) says so.
@@ -372,7 +384,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     if (context.in === 'path' && isOpaquePathSegment(text) && !isConstant(text))
       return placeholder(text)
     // `tokenType: "Bearer"` names the auth scheme; hiding it hides how to authenticate.
-    if (isSecretName(context.name, isQueryLike(context.in)) && !isAuthScheme(text) && !isConstant(text))
+    if (isSecretName(context.name, isQueryLike(context.in)) && !isAuthScheme(text) && !keptAsPublicKey(text, context))
       return placeholder(text)
     const byName = maskByName(text, context.name, personRecord)
     if (byName !== null)
@@ -387,7 +399,7 @@ export function createRedactor(input: RedactorInput): Redactor {
 
   function redactNumber(value: number, context: RedactContext, personRecord: boolean): number | string {
     const text = String(value)
-    if (isAlwaysSecret(context.in, context.name) || (isSecretName(context.name) && !isConstant(text)))
+    if (isAlwaysSecret(context.in, context.name) || (isSecretName(context.name) && !keptAsPublicKey(text, context)))
       return placeholder(text)
     if (isPhoneField(context.name) && maskPhoneField(text) !== null)
       return maskKeepingFormat(text)

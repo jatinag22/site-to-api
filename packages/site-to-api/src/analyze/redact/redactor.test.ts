@@ -6,7 +6,7 @@ import { CONFIG, fixtureExchanges, SECRETS } from '../../../test/secret-fixture'
 import { SiteToApiError } from '../../errors'
 import { isLuhnValid, isVerhoeffValid, maskPersonalData, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { createRedactor } from './redactor'
-import { isSecretName } from './secret-names'
+import { isPublishableKeyName, isSecretName } from './secret-names'
 
 function redactor(exchanges: Exchange[], config: Partial<ResolvedConfig['redact']> = {}): Redactor {
   return createRedactor({
@@ -106,6 +106,75 @@ describe('createRedactor: rules', () => {
     expect(r2.value(jwt, { in: 'header', name: 'x-jwt' })).toMatch(/^<redacted: JWT/)
     expect(r2.value('csrf-s1-value', { in: 'header', name: 'x-csrf' })).toMatch(/^<redacted/)
     expect(r2.value('yes-all', { in: 'cookie', name: 'consent' })).toMatch(/^<redacted/)
+  })
+
+  it('always redacts credential inputs, even when identical in every session', () => {
+    const typed = 'Same-Pa55word-twice'
+    const list = ['s1', 's2'].map(sessionId => exchange({
+      sessionId,
+      method: 'POST',
+      url: `https://shop.test/api/login?pwd=${encodeURIComponent(typed)}`,
+      requestHeaders: { 'x-api-key': 'public-key-123456', 'x-otp': '482916' },
+      requestBody: jsonBody({
+        password: typed,
+        pin: '4829',
+        client_secret: 'cs-0123456789',
+        refresh_token: 'rt-0123456789',
+        sessionId: 'sid-0123456789',
+        mfa_code: '777001',
+      }),
+    }))
+    const r2 = redactor(list)
+    expect(r2.value(typed, { in: 'query', name: 'pwd' })).toMatch(/^<redacted/)
+    expect(r2.value(typed, { in: 'form', name: 'password' })).toMatch(/^<redacted/)
+    expect(r2.value('482916', { in: 'header', name: 'x-otp' })).toMatch(/^<redacted/)
+    expect(r2.json(list[0]!.request.body?.json, { in: 'body' })).toEqual({
+      password: '<redacted: 19 base64 chars>',
+      pin: '<redacted: 4-digit number>',
+      client_secret: '<redacted: 13 chars>',
+      refresh_token: '<redacted: 13 chars>',
+      sessionId: '<redacted: 14 chars>',
+      mfa_code: '<redacted: 6-digit number>',
+    })
+    // Scrubbed wherever it is echoed, too.
+    expect(r2.value(`echo ${typed} back`, { in: 'response-body' })).not.toContain(typed)
+    // The publishable key stays a constant.
+    expect(r2.value('public-key-123456', { in: 'header', name: 'x-api-key' })).toBe('public-key-123456')
+  })
+
+  it('tells publishable key names from credential names', () => {
+    for (const name of [
+      'x-api-key',
+      'apiKey',
+      'api_key',
+      'publishableKey',
+      'stripe-publishable-key',
+      'siteKey',
+      'recaptcha_site_key',
+      'clientId',
+      'appId',
+    ])
+      expect(isPublishableKeyName(name), name).toBe(true)
+    expect(isPublishableKeyName('key', true)).toBe(true)
+    expect(isPublishableKeyName('key')).toBe(false)
+    for (const name of [
+      'password',
+      'pwd',
+      'pin',
+      'otp',
+      'apiKeySecret',
+      'api_secret_key',
+      'private_key',
+      'privateKey',
+      'client_secret',
+      'access_token',
+      'refresh_token',
+      'sessionId',
+      'x-csrf-token',
+      'apiToken',
+      'mfa_code',
+    ])
+      expect(isPublishableKeyName(name), name).toBe(false)
   })
 
   it('with a single session nothing counts as constant', () => {
