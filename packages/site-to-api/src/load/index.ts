@@ -1,1 +1,1 @@
-export { loadSessions } from './sessions'
+export { countSessions, loadSessions } from './sessions'

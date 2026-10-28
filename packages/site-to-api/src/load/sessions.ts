@@ -4,6 +4,7 @@
 import type { CaptureEvent, Exchange, LoadedSession, RequestEvent, ResponseEvent, SessionMeta } from '../model'
 import type { HarEntry } from './har'
 import type { MatchableEntry } from './initiator'
+import { existsSync } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { SiteToApiError } from '../errors'
@@ -150,6 +151,17 @@ async function loadSession(dir: string, name: string, warnings: string[]): Promi
     session: { meta: meta.data, dir, events },
     exchanges,
   }
+}
+
+/**
+ * Number of session folders (folders with a `meta.json`) under an existing `rawDir`, without
+ * loading them. Used to tell the person after a capture whether a second sample would help.
+ */
+export async function countSessions(rawDir: string): Promise<number> {
+  const root = resolve(rawDir)
+  return (await readdir(root, { withFileTypes: true }))
+    .filter(entry => entry.isDirectory() && existsSync(join(root, entry.name, 'meta.json')))
+    .length
 }
 
 /**

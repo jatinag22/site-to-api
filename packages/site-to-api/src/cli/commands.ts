@@ -10,12 +10,13 @@ import { readFile } from 'node:fs/promises'
 import process from 'node:process'
 import { InvalidArgumentError } from 'commander'
 import { consola } from 'consola'
-import { join, resolve } from 'pathe'
+import { dirname, join, resolve } from 'pathe'
 import { analyzeCaptures, buildHandoff, readBuildRecord, recordClientGenerated, stickyOptions } from '../build'
 import { runCapture } from '../capture'
 import { updateClientState } from '../emit/handoff'
 import { SiteToApiError } from '../errors'
 import { generateClient } from '../gen'
+import { countSessions } from '../load'
 import { FlowsDocumentSchema } from '../model'
 import { probeOperations, summarizeProbe, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
@@ -80,7 +81,10 @@ const captureCommand: CommandRegistrar = (program) => {
       })
       printWarnings(result.warnings)
       consola.success(`Saved capture to ${result.sessionDir}`)
-      consola.info('Next: `site-to-api build` (capture again for a second sample of the same pages first, if you can)')
+      // Two sessions are what separates constants from per-session values; more help less.
+      consola.info(await countSessions(dirname(result.sessionDir)) >= 2
+        ? 'Next: `site-to-api build`'
+        : 'Next: `site-to-api build` (capture again for a second sample of the same pages first, if you can)')
     })
 }
 
