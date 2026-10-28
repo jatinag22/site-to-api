@@ -223,6 +223,32 @@ async function minimize(runner: Runner, exchange: Exchange, full: Variant, maxVa
   return required.sort()
 }
 
+/**
+ * Whether replaying the operation cannot change data: a safe HTTP method, or a GraphQL query
+ * (decision 0027), which GraphQL defines as read-only whatever method carries it. Mutations and
+ * operations of unknown type are not safe, even over GET.
+ */
+function isSafeOperation(operation: Pick<Operation, 'method' | 'graphql'>): boolean {
+  if (operation.graphql)
+    return operation.graphql.operationType === 'query'
+  return SAFE_METHODS.has(operation.method)
+}
+
+/** Why a GraphQL operation is not replayed, or null when it may be. */
+function graphqlSkipReason(operation: Operation, config: ResolvedConfig['probe']): string | null {
+  const graphql = operation.graphql
+  if (!graphql)
+    return null
+  const name = graphql.operationName ?? operation.operationId
+  if (graphql.operationType === 'subscription')
+    return `GraphQL subscription ${name}: it streams over a long-lived connection, so it is never replayed`
+  if (graphql.operationType === 'mutation' && !config.unsafeMethods)
+    return `GraphQL mutation ${name} can change data; pass --unsafe-methods to include it`
+  if (graphql.operationType === 'unknown' && !config.unsafeMethods)
+    return `GraphQL operation ${name} has an unknown type (no query document, and the site's code did not say), so it may change data; pass --unsafe-methods to include it`
+  return null
+}
+
 /** Words in a path that suggest a GET changes state; such requests are never replayed. */
 const STATE_CHANGING = /logout|log-out|signout|sign-out|unsubscribe|delete|remove|cancel|confirm|activate|verify|reset|revoke/i
 
@@ -231,9 +257,13 @@ function skipReason(operation: Operation, config: ResolvedConfig['probe']): stri
     return 'bot-protection step: needs a real browser by design'
   if (operation.sourceOnly)
     return 'seen in code only: it was never called during capture, so there is no request to replay'
-  if (STATE_CHANGING.test(operation.path))
+  // A GraphQL operation's name is in its spec path; its type, not its name, says whether it is safe.
+  if (STATE_CHANGING.test(operation.graphql?.endpoint ?? operation.path))
     return 'its path suggests it changes state (logout, unsubscribe, delete...), so it is never replayed'
-  if (!SAFE_METHODS.has(operation.method) && !config.unsafeMethods)
+  const graphql = graphqlSkipReason(operation, config)
+  if (graphql !== null)
+    return graphql
+  if (!isSafeOperation(operation) && !config.unsafeMethods)
     return `${operation.method} can change data; pass --unsafe-methods to include it`
   if (!representative(operation))
     return 'no successful response was captured'
@@ -272,8 +302,13 @@ async function probeOne(operation: Operation, exchange: Exchange, context: Probe
   if (replay.outcome === 'failed')
     return result('skipped', null, `Could not reach ${operation.host} (${replay.error ?? 'network error'}). Check the site is up and reachable from this machine; nothing was concluded.`)
   // Requests that can change data are sent once, never repeated bare or during minimization.
-  if (!SAFE_METHODS.has(operation.method))
-    return result('skipped', null, `${operation.method} was replayed once only: it can change data, so it was not repeated without cookies or minimized.`)
+  if (!isSafeOperation(operation)) {
+    return result('skipped', null, operation.graphql
+      ? `GraphQL ${operation.graphql.operationType === 'unknown'
+        ? 'operation of unknown type'
+        : operation.graphql.operationType} was replayed once only: it can change data, so it was not repeated without cookies or minimized.`
+      : `${operation.method} was replayed once only: it can change data, so it was not repeated without cookies or minimized.`)
+  }
 
   const plain = record(await context.runner.send(exchange, bare(full)))
   if (plain.outcome === 'ok')

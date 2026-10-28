@@ -3,7 +3,7 @@
  * AGENT.md) and the `gen` step reads from {@link Analysis}; none of them look at raw HAR data.
  */
 import type { ExtractSpec } from '@site-to-api/runtime'
-import type { Exchange, ExchangeKind } from './exchange'
+import type { Exchange, ExchangeKind, GraphqlOperationType } from './exchange'
 import type { FlowsDocument, SourceRef } from './flows'
 
 /** The subset of JSON Schema 2020-12 the inference stage produces. */
@@ -43,6 +43,11 @@ export interface ParamInfo {
   name: string
   required: boolean
   schema: JsonSchema
+  /**
+   * The value is JSON text (GraphQL `variables` and `extensions` in a query string): `schema`
+   * describes the decoded value, and OpenAPI gets `content: application/json` instead of `schema`.
+   */
+  json?: boolean
 }
 
 export interface HeaderInfo extends ParamInfo {
@@ -73,6 +78,30 @@ export interface RequestBodyInfo {
   sentContentType?: string
   schema: JsonSchema
   examples: unknown[]
+}
+
+/** What makes an operation a GraphQL operation (decision 0027). */
+export interface GraphqlOperation {
+  /** The real path the requests go to, e.g. `/graphql`; `Operation.path` may add `#<name>`. */
+  endpoint: string
+  operationName: string | null
+  operationType: GraphqlOperationType
+  /**
+   * Evidence for `operationType`: the captured `document`, `get` (GraphQL over HTTP allows only
+   * queries over GET), `source` (the site's code names the type next to the persisted hash or
+   * the name), or null when unknown.
+   */
+  operationTypeFrom: 'document' | 'get' | 'source' | null
+  /** The persisted query of the most recent sample; null when none was sent. */
+  persistedQuery: { version: number | null, sha256Hash: string } | null
+  /** Every persisted hash seen, sorted; more than one means the site redeployed between captures. */
+  hashes: string[]
+  /** Query document as sent (redacted by the schema stage), or null for persisted queries. */
+  document: string | null
+  /** At least one sample was an element of a batched array body. */
+  batched: boolean
+  /** The GraphQL fields every sample carried, per location (`operationName`, `variables`, ...). */
+  sent: { body: string[], query: string[] }
 }
 
 export interface Operation {
@@ -110,6 +139,8 @@ export interface Operation {
   /** Short description without an LLM: trigger labels, path words, response field names. */
   summary: string
   exchanges: Exchange[]
+  /** Set when the operation is one GraphQL operation (decision 0027). */
+  graphql?: GraphqlOperation
 }
 
 /** Where a value that a WebSocket client sends came from (decision 0023). */

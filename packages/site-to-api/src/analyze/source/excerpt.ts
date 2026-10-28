@@ -1,7 +1,7 @@
 /**
  * Excerpts of the site's code for the handoff folder's `source/` directory: the whole function
  * around a location in an original file, or a readable window of a minified bundle. Each excerpt
- * is a Markdown file with the code in a fence (decision 0028): a fragment is rarely valid code on
+ * is a Markdown file with the code in a fence (decision 0032): a fragment is rarely valid code on
  * its own (a bare class method, a block cut at the window's edge), and as a `.ts` file it broke
  * every project that type-checks the handoff folder; `// @ts-nocheck` does not hide syntax errors.
  */

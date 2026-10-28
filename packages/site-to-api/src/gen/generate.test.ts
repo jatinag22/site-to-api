@@ -10,6 +10,7 @@ import ts from 'typescript'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { tickerChannel } from '../../test/channels'
+import { fakeHash, graphqlGet, graphqlPost, graphqlSpecYaml } from '../../test/graphql'
 import { HOSTILE, injected, renderMarkdown } from '../../test/markdown'
 import { buildAsyncApiDocuments } from '../emit/asyncapi'
 import { toYaml } from '../emit/openapi'
@@ -651,4 +652,182 @@ describe('generateClient with WebSocket channels', () => {
       await rm(work, { recursive: true, force: true })
     }
   }, 60_000)
+})
+
+describe('generateClient with GraphQL operations (decision 0027)', () => {
+  const HOST = 'api.example.test'
+  const HASH = fakeHash('9a')
+  const MUTATION = 'mutation AddToWishlist($productId: Int!) { addToWishlist(productId: $productId) { count } }'
+  const spec = (): string => graphqlSpecYaml([
+    graphqlPost({
+      operationName: 'queryArtistOverview',
+      variables: { uri: 'spotify:artist:1' },
+      hash: HASH,
+      data: {
+        artistUnion: { name: 'A' },
+      },
+    }),
+    graphqlPost({
+      operationName: 'queryArtistOverview',
+      variables: { uri: 'spotify:artist:2' },
+      hash: HASH,
+      data: {
+        artistUnion: { name: 'B' },
+      },
+      sessionId: 's2',
+    }),
+    graphqlGet({
+      operationName: 'StoreHours',
+      variables: { slug: 'pine-hill' },
+      hash: HASH,
+      extraQuery: { locale: 'en' },
+      data: {
+        storeHours: { opens: '08:00' },
+      },
+    }),
+    graphqlPost({
+      query: MUTATION,
+      variables: { productId: 1001 },
+      data: {
+        addToWishlist: { count: 1 },
+      },
+    }),
+    graphqlPost({
+      path: `/api/v3/Header/${HASH}`,
+      operationName: 'Header',
+      variables: {},
+      hash: HASH,
+      data: {
+        header: { title: 'x' },
+      },
+    }),
+  ], HOST)
+
+  const GRAPHQL_DRIVER = `import { createSiteClient } from './handoff/client/index.js'
+
+export async function run(baseUrl: string) {
+  const { sdk } = createSiteClient({ host: '${HOST}', baseUrl, retry: false })
+  const artist = await sdk.queryArtistOverview({ variables: { uri: 'spotify:artist:9' } })
+  const hours = await sdk.storeHours({ variables: { slug: 'cedar-park' }, query: { locale: 'en' } })
+  const added = await sdk.addToWishlist({ variables: { productId: 1002 } })
+  const header = await sdk.header({ variables: {} })
+  return {
+    artist: artist.data?.data.artistUnion.name ?? null,
+    hours: hours.data?.data.storeHours.opens ?? null,
+    added: added.data?.data.addToWishlist.count ?? null,
+    header: header.data?.data.header.title ?? null,
+  }
+}
+`
+
+  it('sends the constants of each operation, the variables as JSON, and goes to the endpoint, not the #name path', async () => {
+    const dir = await workspace()
+    const seen: Array<{ method: string, url: string, body: string }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.setEncoding('utf8')
+      request.on('data', (chunk: string) => {
+        body += chunk
+      })
+      request.on('end', () => {
+        seen.push({ method: request.method ?? '', url: request.url ?? '', body })
+        const url = new URL(request.url ?? '/', 'http://localhost')
+        const parsed: unknown = body === ''
+          ? null
+          : JSON.parse(body)
+        const name = url.searchParams.get('operationName')
+          ?? (parsed !== null && typeof parsed === 'object' && 'operationName' in parsed
+            ? parsed.operationName
+            : null)
+        const data = url.pathname.startsWith('/api/v3/Header/')
+          ? {
+              header: { title: 'Home' },
+            }
+          : name === 'queryArtistOverview'
+            ? {
+                artistUnion: { name: 'Artist' },
+              }
+            : name === 'StoreHours'
+              ? {
+                  storeHours: { opens: '09:00' },
+                }
+              : {
+                  addToWishlist: { count: 2 },
+                }
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ data }))
+      })
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    try {
+      await rm(path.join(dir, 'handoff', 'specs', 'shop.example.com.yaml'))
+      await writeFile(path.join(dir, 'handoff', 'specs', `${HOST}.yaml`), spec())
+      const result = await generateClient({
+        handoffDir: path.join(dir, 'handoff'),
+        flows,
+      })
+      expect(result.warnings).toEqual([])
+      expect(result.files).toContain('client/api_example_test/graphql.ts')
+      await writeFile(path.join(dir, 'driver.ts'), GRAPHQL_DRIVER)
+      const files = [
+        path.join(dir, 'driver.ts'),
+        ...result.files.filter(file => file.endsWith('.ts')).map(file => path.join(dir, 'handoff', file)),
+      ]
+      expect(typeCheck(files)).toBe('')
+      expect(typeCheck(files.slice(1), 'nodenext', path.join(dir, 'handoff'))).toBe('')
+      // Variables are required and typed from the capture.
+      await writeFile(path.join(dir, 'bad.ts'), `import { createSiteClient } from './handoff/client/index.js'\nawait createSiteClient({ host: '${HOST}' }).sdk.queryArtistOverview({ variables: { uri: 1 } })\n`)
+      expect(typeCheck([
+        path.join(dir, 'bad.ts'),
+      ])).toMatch(/TS2322/)
+
+      const address = server.address()
+      if (address === null || typeof address === 'string')
+        throw new Error('test server did not bind to a TCP port')
+      const driver: unknown = await import(pathToFileURL(path.join(dir, 'driver.ts')).href)
+      if (typeof driver !== 'object' || driver === null || !('run' in driver) || typeof driver.run !== 'function')
+        throw new Error('driver did not export run()')
+      expect(await driver.run(`http://127.0.0.1:${address.port}`)).toEqual({
+        artist: 'Artist',
+        hours: '09:00',
+        added: 2,
+        header: 'Home',
+      })
+
+      expect(seen.map(entry => `${entry.method} ${new URL(entry.url, 'http://localhost').pathname}`)).toEqual([
+        'POST /graphql',
+        'GET /graphql',
+        'POST /graphql',
+        `POST /api/v3/Header/${HASH}`,
+      ])
+      expect(JSON.parse(seen[0]?.body ?? '')).toEqual({
+        operationName: 'queryArtistOverview',
+        variables: { uri: 'spotify:artist:9' },
+        extensions: {
+          persistedQuery: { version: 1, sha256Hash: HASH },
+        },
+      })
+      const get = new URL(seen[1]?.url ?? '', 'http://localhost').searchParams
+      expect(Object.fromEntries(get)).toEqual({
+        locale: 'en',
+        operationName: 'StoreHours',
+        variables: JSON.stringify({ slug: 'cedar-park' }),
+        extensions: JSON.stringify({
+          persistedQuery: { version: 1, sha256Hash: HASH },
+        }),
+      })
+      expect(JSON.parse(seen[2]?.body ?? '')).toEqual({
+        query: MUTATION,
+        variables: { productId: 1002 },
+      })
+
+      const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
+      expect(readme).toContain('- GraphQL on `POST /graphql`: `sdk.addToWishlist({ variables })` (mutation), `sdk.queryArtistOverview({ variables })` (unknown).')
+      expect(readme).toContain('- GraphQL on `GET /graphql`: `sdk.storeHours({ variables })` (query).')
+    }
+    finally {
+      await new Promise(resolve => server.close(resolve))
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 120_000)
 })

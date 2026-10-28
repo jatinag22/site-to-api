@@ -102,7 +102,8 @@ site-to-api probe      # optional: checks the session needs against the live sho
 ```
 
 `--script` drives the browser from a file so the run is repeatable; drop it (and `--headless`) to
-browse by hand. The shop's test account is `demo` / `demo-password` (fictional, local only).
+browse by hand. Sites with bot protection usually block headless browsers: for those, use
+`--channel chrome --minimized` instead, a normal browser whose windows stay minimized. The shop's test account is `demo` / `demo-password` (fictional, local only).
 
 ## What you get
 
@@ -151,7 +152,7 @@ The full format is specified in [docs/output-format.md](docs/output-format.md).
 | `init` | Writes `site-to-api.config.ts` and gitignores `.site-to-api/` |
 | `capture [url]` | Opens a browser and records everything until you close it. `--script <file>` drives it from code instead; `--headless`; `--channel chrome\|msedge\|bundled`; `--user-data-dir` keeps logins |
 | `build` | Analyses every capture and writes the handoff folder, including the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client` |
-| `probe` | Replays captured requests against the live site, rate limited, safe methods only unless `--unsafe-methods`; works out the needed cookies and headers for up to `--minimize-per-host <n>` operations per host (default 5); rebuilds the handoff folder with the flags of the last `build` (from `build.json`) and prints a summary |
+| `probe` | Replays captured requests against the live site, rate limited, safe methods (and GraphQL queries) only unless `--unsafe-methods`; works out the needed cookies and headers for up to `--minimize-per-host <n>` operations per host (default 5); rebuilds the handoff folder with the flags of the last `build` (from `build.json`) and prints a summary |
 | `gen` | Regenerates only `client/` from an existing handoff folder (no raw captures needed) and updates the client lines of `AGENT.md` and `API_MAP.md` |
 | `config` | Prints the resolved config and where each value came from; `--json` for machine-readable output |
 
@@ -286,6 +287,11 @@ const orders = await sdk.getApiOrders({})
 console.log(orders.response?.status, orders.data?.orders.length, 'orders')
 ```
 
+GraphQL operations get a function each, named after the operation, that sends the operation name,
+the persisted-query hash or the document itself; you pass only the variables, typed from the
+capture: `await sdk.queryArtistOverview({ variables: { uri } })`. GET operations encode
+`variables` as JSON in the query string, as the site does.
+
 `createSiteClient` configures one shared client per host; calling it again for the same host
 replaces the configuration. Hosts that work with plain HTTP need no browser: leave out `session`, or
 use `tokenSession`. `api-handoff/client/README.md` says what each host needs, which operations are
@@ -302,6 +308,7 @@ Based on each project's README as of October 2026.
 | Sourcemaps and code references | yes | not documented | not documented | not documented | no |
 | Output | specs, flows, docs, TS client | client code, many languages | MCP tools, OpenAPI | Python code | OpenAPI |
 | Secrets redacted by default | yes | not documented | not documented | not documented | not documented |
+| GraphQL, one operation per query or mutation | yes | not documented | not documented | not documented | no |
 
 ## Responsible use
 
@@ -315,7 +322,10 @@ access controls, and never hides that the browser is automated. See
 - Web Workers and Service Workers are not instrumented (their traffic is captured, without stacks).
 - Redaction is pattern-based. Review the handoff folder before publishing it.
 - HTML/text extraction from a single sample is low confidence; capture a second pass.
-- GraphQL requests are treated as plain POST requests; there is no GraphQL-aware schema yet.
+- GraphQL operations are split by operation name, persisted hash or document, but values inside
+  GET `variables` are traced only as the whole query value, and an operation whose type neither
+  the capture nor the site's code shows stays `unknown` (probe skips it). GraphQL subscriptions
+  over WebSockets are documented as channels, not split by operation.
 - Interactive capture (closing the window to finish) is covered by an abort test but not by an
   automated headful test.
 

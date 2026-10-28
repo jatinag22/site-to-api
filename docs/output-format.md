@@ -14,6 +14,10 @@ The entry point for a coding agent. Generated from a template, no LLM. Sections,
    cookie line says either "Needed by N requests (confirmed by probe)" or "Seen in capture, but
    none of the N requests probe tested needed it"; before, "(seen in capture)".
 3. **Flows**: one line per flow (trigger label → steps), linking to `flows.md#<flow-id>`.
+   **GraphQL operations** (only when the capture has GraphQL requests, decision 0027): per
+   endpoint (`POST host/path`), one line per GraphQL operation with its type and the evidence for
+   it, the persisted hash (or that it sends the document), its top-level variables, the client
+   call (`sdk.queryArtistOverview({ variables })`) and its spec path.
    **Real-time channels** (only when the capture has WebSocket traffic): per channel, the URL,
    the AsyncAPI file and channel id, cookies on the upgrade request, the code that opened it, the
    field that names message types, what to send right after connecting (with a redacted example),
@@ -60,6 +64,12 @@ abbreviated), response (JSON / extract / text), needs (cookies, token, browser),
 - A sentence above the tables says whether the Client column exists in `client/` yet (current,
   from an earlier build, or not generated).
 
+GraphQL operations have a row in their host table like any other operation, with kind
+`api (GraphQL query)` (or `mutation`, `subscription`, `operation, type unknown`) and the
+`{ variables }` function in the Client column. When the capture has GraphQL requests, a
+**GraphQL operations** section follows the host tables: one table per endpoint with columns
+operation (the GraphQL name), type, persisted hash, variables and client call.
+
 When the capture has WebSocket traffic, a final **Real-time channels** table has one row per
 channel: channel id, URL, what to send after connecting, client and server message types, traced
 inputs, cookies, and the AsyncAPI file.
@@ -99,8 +109,22 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
   `date-time` accepts offsets (`-05:00`) and values without a zone.
 - HTML/text data responses use `content: text/html` (or `text/plain`, `text/csv`) with
   `x-site-to-api-extract` holding the extraction spec.
+- GraphQL (decision 0027): one path item per GraphQL operation. The path is the endpoint when
+  it names the operation (`/api/v3/StaysPdpSections/<sha256>`, no parameters), otherwise
+  `<endpoint>#<operationName>` (`/pathfinder/v2/query#queryArtistOverview`; operations without a
+  name use `persisted-<hash>` or `document-<hash>`). The fragment is never sent, so the request
+  goes to the endpoint. `operationName`, the persisted query (`extensions.persistedQuery`) and the
+  document (`query`) are `const` with a `default`; `variables` has the operation's own schema.
+  GET `variables` and `extensions` are query parameters with `content: application/json` instead
+  of `schema`.
 - Extensions:
   - `x-site-to-api-kind`: `api` | `page` | `bot-protection`
+  - `x-site-to-api-graphql`: on a GraphQL operation, `{ endpoint, operationName, operationType
+    (query | mutation | subscription | unknown), operationTypeFrom (document | get | source |
+    null), persistedQuery ({ version, sha256Hash } | null), hashes (only when more than one was
+    seen), document (redacted | null), batched, sent: { body, query } }`; `sent` lists the
+    GraphQL fields (`extensions`, `operationName`, `query`, `variables`) every sample carried in
+    each location
   - `x-site-to-api-source`: list of source references (`file`, `line`, `function`)
   - `x-site-to-api-computed`: on a parameter or body property, the computed value id
   - `x-site-to-api-origin`: on a parameter, the value origin (as in `flows.json`)
@@ -144,7 +168,7 @@ generating code and lists the channels and their handshake in `client/README.md`
 Excerpts of the site's own code: the function that computes a value, the call site that sends a
 request. Path mirrors the original source path (or `bundles/<host>/<file>` when no sourcemap was
 available, pretty-printed around the location), with the line range and `.md` added:
-`src/auth/crypto.ts` → `src/auth/crypto.L18-28.ts.md`. Each file is Markdown (decision 0028): a
+`src/auth/crypto.ts` → `src/auth/crypto.L18-28.ts.md`. Each file is Markdown (decision 0032): a
 heading naming the original location, a line naming the capture session, and the code in a
 fence tagged with its language. Fragments are rarely valid code on their own, so they are never
 `.ts` or `.js` files that a project's type check would pick up. The folder exists only when at
@@ -162,7 +186,10 @@ Zod schemas, request and response validation), `index.ts` exporting each host's 
 and `createSiteClient({ host, session?, auth?, jar?, fetch?, baseUrl?, retry?, headers? })` wired
 to `@site-to-api/runtime` (one shared configuration per host), `extract.ts` with
 `extract<Operation>(text)` and a record schema per HTML/text operation plus
-`extract<Input>From<Operation>(html)` per value `flows.json` traces to an HTML page, and
+`extract<Input>From<Operation>(html)` per value `flows.json` traces to an HTML page,
+`<host>/graphql.ts` when the host has GraphQL operations (one function per operation, named like
+its SDK function, that takes `{ variables }` and sends the operation's constants itself;
+`createSiteClient` puts them in `sdk` in place of hey-api's functions of the same name), and
 `README.md` with setup, the session and auth each host needs (with the same cookie lines as
 `AGENT.md`, read from `x-site-to-api-requires` after `probe`) and, when there are AsyncAPI
 files, each WebSocket channel's URL and the message to send after connecting (the code itself is
@@ -184,7 +211,9 @@ rebuild, reads `probe.json` when it exists and folds it into `flows.json` sessio
 `x-site-to-api-requires`, the Needs column of `API_MAP.md`, the cookie lines and gaps of
 `AGENT.md` and the cookie lines of `client/README.md`. At the end, `probe` prints a summary: operations probed, needs found, not minimized
 and why (per-host limit, data-changing method, session no longer accepted, host unreachable), and
-skipped and why.
+skipped and why. GraphQL queries count as safe whatever the method; GraphQL mutations and
+operations of unknown type are skipped unless `--unsafe-methods` (then sent once), and
+subscriptions are never replayed (decision 0027).
 
 ## `build.json`
 

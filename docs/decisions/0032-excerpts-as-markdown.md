@@ -1,4 +1,4 @@
-# 0028 Source excerpts are Markdown files
+# 0032 Source excerpts are Markdown files
 
 Status: Accepted (2026-10-29).
 

@@ -15,3 +15,8 @@ export function sdkFunctionName(operationId: string): string {
 export function responseSchemaName(operationId: string): string {
   return `z${toCase(operationId, 'PascalCase')}Response`
 }
+
+/** The request type hey-api generates for an operation (`body`, `headers`, `path`, `query`). */
+export function dataTypeName(operationId: string): string {
+  return `${toCase(operationId, 'PascalCase')}Data`
+}

@@ -2,7 +2,7 @@
  * Builds one OpenAPI 3.1 document per host from an {@link Analysis} (docs/output-format.md).
  * Objects are built with a fixed key order so the YAML is byte-identical for the same analysis.
  */
-import type { Analysis, JsonSchema, Operation, ParamInfo, ResponseInfo, SourceRef, ValueOrigin } from '../../model'
+import type { Analysis, GraphqlOperation, JsonSchema, Operation, ParamInfo, ResponseInfo, SourceRef, ValueOrigin } from '../../model'
 import { isTelemetryHeader } from '../../analyze/schema'
 import { createStepResolver, operationKey } from '../steps'
 
@@ -131,7 +131,18 @@ function parameter(where: 'path' | 'query' | 'header' | 'cookie', param: ParamIn
     required: where === 'path'
       ? true
       : param.required,
-    schema: schemaObject(param.schema),
+    // JSON text in a query string (GraphQL `variables`): OpenAPI describes it as a media type.
+    ...(param.json === true
+      ? {
+          content: {
+            'application/json': {
+              schema: schemaObject(param.schema),
+            },
+          },
+        }
+      : {
+          schema: schemaObject(param.schema),
+        }),
     ...extra,
     ...originExtensions(origins.get(`${where}.${param.name}`)),
   }
@@ -319,6 +330,28 @@ function usesAuthorization(operation: Operation): boolean {
   return operation.headers.some(header => header.name === 'authorization')
 }
 
+/**
+ * `x-site-to-api-graphql` (decision 0027): what makes this path item one GraphQL operation, and
+ * what the generated client sends for it.
+ */
+function graphqlExtension(graphql: GraphqlOperation): Json {
+  return {
+    'x-site-to-api-graphql': {
+      endpoint: graphql.endpoint,
+      operationName: graphql.operationName,
+      operationType: graphql.operationType,
+      operationTypeFrom: graphql.operationTypeFrom,
+      persistedQuery: graphql.persistedQuery,
+      ...(graphql.hashes.length > 1
+        ? { hashes: graphql.hashes }
+        : {}),
+      document: graphql.document,
+      batched: graphql.batched,
+      sent: graphql.sent,
+    },
+  }
+}
+
 function operationObject(operation: Operation, origins: Map<string, ValueOrigin>): Json {
   const params = parameters(operation, origins)
   return {
@@ -337,6 +370,9 @@ function operationObject(operation: Operation, origins: Map<string, ValueOrigin>
         }
       : {}),
     'x-site-to-api-kind': operation.kind,
+    ...(operation.graphql
+      ? graphqlExtension(operation.graphql)
+      : {}),
     ...sourceExtension(operation.sentFrom),
     ...(operation.sourceOnly
       ? { 'x-site-to-api-source-only': true }

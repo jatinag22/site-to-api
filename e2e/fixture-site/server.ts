@@ -17,6 +17,7 @@ import { z } from 'zod'
 import { createAuth } from './auth'
 import { buildFrontend } from './bundle'
 import { createCatalog, PRODUCTS_PAGE_SIZE } from './catalog'
+import { createGraphql } from './graphql'
 import { parseCookies, parseJson, readBody, send, sendHtml, sendJson, serializeCookie } from './http'
 import {
   renderAccount,
@@ -128,6 +129,7 @@ function createRoutes(deps: {
   livePriceIntervalMs: number
 }): Route[] {
   const { catalog, assets, auth, shield, now } = deps
+  const graphql = createGraphql(catalog)
   const productsById = new Map(catalog.products.map(product => [product.id, product]))
   const livePriceSeq = new Map<number, number>()
 
@@ -216,6 +218,16 @@ function createRoutes(deps: {
       },
     },
 
+    {
+      method: 'POST',
+      pattern: /^\/api\/graphql$/,
+      handler: ctx => graphql.post(ctx),
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/graphql$/,
+      handler: ctx => graphql.get(ctx),
+    },
     {
       method: 'GET',
       pattern: /^\/api\/categories$/,

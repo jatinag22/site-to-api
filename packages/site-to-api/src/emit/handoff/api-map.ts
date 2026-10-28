@@ -12,6 +12,7 @@ import { responseSchemaName, sdkFunctionName } from '../naming'
 import { createStepResolver } from '../steps'
 import { channelsTable } from './channels'
 import { apiMapClientLine } from './client'
+import { graphqlClientCall, graphqlKind, graphqlTables } from './graphql'
 import { describeSource, NO_SOURCE } from './source-ref'
 
 /** Renders a step reference from an origin (`s2` or `<flowId>.<stepId>`) for a table cell. */
@@ -205,6 +206,7 @@ export function renderApiMap(analysis: Analysis, client: ClientState): string {
     if (operations.length > 0)
       lines.push(...hostTable(host, operations, analysis, resolver))
   }
+  lines.push(...graphqlTables(analysis))
   lines.push(...channelsTable(analysis.channels ?? []))
   return `${lines.join('\n').trimEnd()}\n`
 }
@@ -212,7 +214,8 @@ export function renderApiMap(analysis: Analysis, client: ClientState): string {
 function clientSymbols(operation: Operation): string {
   if (operation.kind === 'bot-protection')
     return 'none (browser only)'
-  const fn = cellCode(`${sdkFunctionName(operation.operationId)}()`)
+  const graphql = graphqlClientCall(operation)
+  const fn = cellCode(graphql ?? `${sdkFunctionName(operation.operationId)}()`)
   return operation.kind === 'api'
     ? `${fn}, ${cellCode(responseSchemaName(operation.operationId))}`
     : fn
@@ -228,7 +231,7 @@ function row(operation: Operation, analysis: Analysis, resolver: StepResolver): 
     ? `${operation.kind} (seen in code only${operation.methodUnknown === true
       ? ', method unknown'
       : ''})`
-    : operation.kind
+    : graphqlKind(operation) ?? operation.kind
   // The spec needs a method key; the table must not present that placeholder as a finding.
   const request = operation.methodUnknown === true
     ? `${cellCode(`? ${operation.path}`)} (method unknown)`
