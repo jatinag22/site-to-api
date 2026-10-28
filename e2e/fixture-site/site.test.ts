@@ -8,6 +8,7 @@ import { z } from 'zod'
 import browse from '../scenarios/browse'
 import browseAgain from '../scenarios/browse-again'
 import login from '../scenarios/login'
+import { ADD_TO_WISHLIST_DOCUMENT, PRODUCT_STOCK_DOCUMENT, STORE_HOURS_HASH } from './graphql'
 import { startFixtureSite } from './server'
 
 const FIXED_NOW = Date.UTC(2026, 9, 28, 9, 30)
@@ -187,6 +188,62 @@ describe('fixture site over plain HTTP', () => {
       expect(line).toMatch(/^\d+\|[^|]+\|(?:in-stock|sold-out)\|\d+$/)
   })
 
+  it('answers the GraphQL query, the mutation and the persisted GET query', async () => {
+    const cookie = await shieldCookie(site.origin)
+    const post = async (query: string, variables: Record<string, unknown>): Promise<unknown> => (await fetch(`${site.origin}/api/graphql`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ query, variables }),
+    })).json()
+    expect(await post(PRODUCT_STOCK_DOCUMENT, { productId: 1007 })).toMatchObject({
+      data: {
+        productStock: {
+          quantity: expect.any(Number),
+        },
+      },
+    })
+    expect(await post(ADD_TO_WISHLIST_DOCUMENT, { productId: 1007 })).toEqual({
+      data: {
+        addToWishlist: {
+          count: 1,
+          productIds: [1007],
+        },
+      },
+    })
+    expect(await post('query Other { x }', {})).toEqual({
+      errors: [
+        { message: 'unknown operation Other' },
+      ],
+    })
+
+    const get = async (hash: string): Promise<unknown> => (await fetch(`${site.origin}/api/graphql?${new URLSearchParams({
+      operationName: 'StoreHours',
+      variables: JSON.stringify({ slug: 'cedar-park' }),
+      extensions: JSON.stringify({
+        persistedQuery: { version: 1, sha256Hash: hash },
+      }),
+    }).toString()}`, {
+      headers: { cookie },
+    })).json()
+    expect(await get(STORE_HOURS_HASH)).toMatchObject({
+      data: {
+        storeHours: { slug: 'cedar-park', open: true },
+      },
+    })
+    expect(await get('0'.repeat(64))).toEqual({
+      errors: [
+        { message: 'PersistedQueryNotFound' },
+      ],
+    })
+  })
+
+  it('ships the persisted query hash the server expects in the frontend code', async () => {
+    const source = await readFile(new URL('./app/src/api/graphql.ts', import.meta.url), 'utf8')
+    expect(source).toContain(`sha256Hash: '${STORE_HOURS_HASH}'`)
+    expect(source).toContain(`'${PRODUCT_STOCK_DOCUMENT}'`)
+    expect(source).toContain(`'${ADD_TO_WISHLIST_DOCUMENT}'`)
+  })
+
   it('renders different deals per page and different details per store', async () => {
     const deals1 = await (await fetch(`${site.origin}/deals?page=1`)).text()
     const deals2 = await (await fetch(`${site.origin}/deals?page=2`)).text()
@@ -351,8 +408,11 @@ describe('fixture site in a browser, driven by the capture scenarios', () => {
       '/api/products/1007/reviews',
       '/api/stock.txt',
       '/api/export.csv',
+      '/api/graphql',
     ])
       expect(responsesTo(recorded, path), path).not.toHaveLength(0)
+    const graphql = recorded.requests.filter(request => pathOf(request.url()) === '/api/graphql')
+    expect(graphql.map(request => request.method()).sort()).toEqual(['GET', 'GET', 'POST', 'POST'])
     expect(responsesTo(recorded, '/api/live-price').length).toBeGreaterThanOrEqual(2)
     expect(recorded.requests.some(request => pathOf(request.url()).endsWith('/related'))).toBe(false)
 

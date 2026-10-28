@@ -102,9 +102,11 @@ export function renderProductShell(assets: PageAssets, product: Product, pollMs:
 <h1 id="product-name">Loading…</h1>
 <p id="product-description"></p>
 <p>Price: <strong id="product-price"></strong> <span id="live-price" aria-live="polite"></span></p>
+<p>Stock: <span id="product-stock" aria-live="polite"></span></p>
 <p>Ticker: <span id="ticker" aria-live="polite">connecting…</span></p>
 <button type="button" id="reviews-button">Read reviews</button>
 <button type="button" id="related-button">Similar products</button>
+<button type="button" id="wishlist-button">Add to wishlist</button> <span id="wishlist-status" aria-live="polite"></span>
 <ol id="reviews"></ol>
 <ul id="related" class="product-grid"></ul>
 </article>`,
@@ -183,6 +185,7 @@ export function renderStore(assets: PageAssets, store: Store): string {
 <p><span class="label">Parking</span> <span class="value">${yesNo(store.parking)}</span></p>
 <p><span class="label">Pharmacy</span> <span class="value">${yesNo(store.pharmacy)}</span></p>
 </div>
+<p id="store-hours-live" aria-live="polite"></p>
 <h2>In stock at this store</h2>
 <ul id="store-stock"></ul>
 <p><a href="/stores">All stores</a></p>`,

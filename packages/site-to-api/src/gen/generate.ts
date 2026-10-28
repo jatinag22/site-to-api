@@ -8,6 +8,7 @@ import { createClient } from '@hey-api/openapi-ts'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
+import { graphqlFunctions, renderGraphqlModule } from './graphql'
 import { nameHtmlValues } from './html-values'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
 import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema, withoutBrowserOnlySteps } from './spec'
@@ -52,10 +53,16 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
   assertTypeScript6()
   await rm(clientDir, { recursive: true, force: true })
   await mkdir(clientDir, { recursive: true })
-  for (const { host, document } of loaded)
+  const hosts: HostSpec[] = []
+  for (const { host, document } of loaded) {
     await runHeyApi(document, path.join(clientDir, host.identifier), host.file)
+    // GraphQL operations get a `{ variables }` function beside hey-api's (decision 0027).
+    const graphql = graphqlFunctions(host, warnings)
+    if (graphql.length > 0)
+      await writeFile(path.join(clientDir, host.identifier, 'graphql.ts'), renderGraphqlModule(graphql))
+    hosts.push({ ...host, graphql })
+  }
 
-  const hosts = loaded.map(entry => entry.host)
   const extracts = nameExtracts(hosts, warnings)
   const htmlValues = nameHtmlValues(input.flows, new Set(extracts.map(entry => entry.functionName)), warnings)
   await writeFile(path.join(clientDir, 'extract.ts'), renderExtractModule(extracts, htmlValues))

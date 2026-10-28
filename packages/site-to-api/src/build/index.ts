@@ -14,11 +14,12 @@ import { buildChannels, channelExchanges, collectConnections } from '../analyze/
 import { classifyExchanges, createChannelScope } from '../analyze/classify'
 import { traceValues } from '../analyze/correlate'
 import { buildFlows } from '../analyze/flows'
+import { annotateGraphql, applyGraphqlTypes, graphqlTypeTargets } from '../analyze/graphql'
 import { createHtmlLocator, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
 import { createRedactor } from '../analyze/redact'
 import { inferOperationSchemas } from '../analyze/schema'
-import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findSourceEndpoints, screenSourceRoutes } from '../analyze/source'
+import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findSourceEndpoints, screenSourceRoutes } from '../analyze/source'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
 import { writeFlows } from '../emit/flows'
 import { clientGap, writeHandoffDocs } from '../emit/handoff'
@@ -182,6 +183,8 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   const loaded = await loadSessions(rawDir)
   log(`Loaded ${loaded.sessions.length} session(s), ${loaded.exchanges.length} requests`)
   const classified = classifyExchanges(loaded.exchanges, config.hosts)
+  // GraphQL requests are marked and batches split before anything groups or traces them (0027).
+  const exchanges = annotateGraphql(classified.exchanges)
   const resolver = await createSourceResolver(loaded.sessions)
   const screened = screenSourceRoutes(
     await findSourceEndpoints(loaded.sessions),
@@ -196,14 +199,15 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   const sockets = channelExchanges(collectConnections(loaded.sessions))
   const redactor = createRedactor({
     exchanges: [
-      ...classified.exchanges,
+      ...exchanges,
       ...sockets.exchanges,
     ],
     config: config.redact,
   })
   const wanted = inHostFilter(config.hosts)
-  let operations = buildOperations(classified.exchanges, { sourceRoutes })
+  let operations = buildOperations(exchanges, { sourceRoutes })
     .filter(operation => !operation.sourceOnly || wanted(operation.host))
+  operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
   operations = inferOperationSchemas(operations, redactor)
   const warnings = [
     ...loaded.warnings,
@@ -218,12 +222,12 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   ]
   operations = addExtraction(operations, config.build.minExtractSamples, warnings)
   const operationIdByExchange = new Map(operations.flatMap(operation => operation.exchanges.map(exchange => [exchange.id, operation.operationId] as const)))
-  const callSites = createWrapperAwareResolver(resolver, classified.exchanges, exchange => operationIdByExchange.get(exchange.id) ?? null)
+  const callSites = createWrapperAwareResolver(resolver, exchanges, exchange => operationIdByExchange.get(exchange.id) ?? null)
   operations = addCallSites(operations, callSites)
 
   const allTraces = traceValues({
     exchanges: [
-      ...classified.exchanges,
+      ...exchanges,
       ...sockets.exchanges,
     ],
     sessions: loaded.sessions,
@@ -233,7 +237,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   })
   const traces = allTraces.filter(trace => !sockets.standIns.has(trace.exchangeId))
   const flows = buildFlows({
-    exchanges: classified.exchanges,
+    exchanges,
     operations,
     sessions: loaded.sessions,
     traces,
@@ -245,13 +249,13 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 
   const channels = buildChannels({
     channelExchanges: sockets,
-    exchanges: classified.exchanges,
+    exchanges,
     operations,
     traces: allTraces,
     redactor,
     sourceRoutes,
     sourceResolver: callSites,
-    inScope: createChannelScope(classified.exchanges, config.hosts),
+    inScope: createChannelScope(exchanges, config.hosts),
   })
 
   const probe = await readProbeReport(outDir)

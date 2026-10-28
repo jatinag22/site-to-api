@@ -3,6 +3,7 @@
  */
 import type { Body, Exchange, HeaderInfo, JsonSchema, NameValue, Operation, ParamInfo, RedactContext, Redactor, ResponseInfo, ValueRedactor } from '../../model'
 import type { InferOptions } from './infer'
+import { pinGraphqlSchemas } from '../graphql'
 import { coerceStrings, inferSchema, inferStringSchema } from './infer'
 
 /**
@@ -26,6 +27,9 @@ const BROWSER_MANAGED_HEADERS: readonly string[] = [
   'sec-fetch-*',
   'sec-ch-*',
 ]
+
+/** GraphQL fields a query string carries as JSON text (GraphQL over HTTP, GET requests). */
+const GRAPHQL_JSON_PARAMS: ReadonlySet<string> = new Set(['variables', 'extensions'])
 
 /** Text request bodies longer than this get no example. */
 const MAX_TEXT_EXAMPLE_LENGTH = 2000
@@ -92,7 +96,40 @@ function withExamples(schema: JsonSchema, examples: unknown[]): JsonSchema {
     : schema
 }
 
-function inferParams(exchanges: Exchange[], pick: (exchange: Exchange) => NameValue[], where: RedactContext['in'], redactor: ValueRedactor): ParamInfo[] {
+/** Parses JSON object or array text; undefined for anything else. */
+function parseJsonText(text: string): unknown {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('['))
+    return undefined
+  try {
+    return JSON.parse(trimmed) as unknown
+  }
+  catch {
+    return undefined
+  }
+}
+
+/**
+ * A parameter whose every value is JSON text (GraphQL `variables` in a query string): the schema
+ * describes the decoded value, so the client can take an object and encode it.
+ */
+function inferJsonParam(name: string, samples: Array<{ value: string, sessionId: string }>, present: number, total: number, redactor: ValueRedactor): ParamInfo | null {
+  const decoded = samples.map(sample => ({
+    value: parseJsonText(sample.value),
+    sessionId: sample.sessionId,
+  }))
+  if (decoded.length === 0 || decoded.some(sample => sample.value === undefined))
+    return null
+  const context: RedactContext = { in: 'query', name }
+  return {
+    name,
+    required: present === total,
+    schema: withExamples(inferSchema(decoded, enumGuard(redactor, { in: 'body' })), redactor.examples(decoded.map(sample => sample.value), context)),
+    json: true,
+  }
+}
+
+function inferParams(exchanges: Exchange[], pick: (exchange: Exchange) => NameValue[], where: RedactContext['in'], redactor: ValueRedactor, jsonNames: ReadonlySet<string> = new Set()): ParamInfo[] {
   const lists = exchanges.map(pick)
   return namesInOrder(lists).map((name) => {
     const context: RedactContext = { in: where, name }
@@ -108,6 +145,11 @@ function inferParams(exchanges: Exchange[], pick: (exchange: Exchange) => NameVa
       for (const value of values)
         samples.push({ value, sessionId: exchanges[index]!.sessionId })
     })
+    const json = jsonNames.has(name) && !repeated
+      ? inferJsonParam(name, samples, present, exchanges.length, redactor)
+      : null
+    if (json)
+      return json
     const item = inferStringSchema(samples, enumGuard(redactor, context))
     const examples = redactor.examples(coerceStrings(samples.map(sample => sample.value)), context)
     return {
@@ -306,7 +348,9 @@ function safeDecode(segment: string): string {
 
 /**
  * Infers the request and response shapes of every observed operation. Examples go through the
- * redactor; operations found only in source code are returned unchanged.
+ * redactor; operations found only in source code are returned unchanged. GraphQL operations get
+ * their `variables` and `extensions` query parameters decoded and their constants pinned
+ * (decision 0027).
  */
 export function inferOperationSchemas(operations: Operation[], redactor: Redactor): Operation[] {
   return operations.map((operation) => {
@@ -317,14 +361,16 @@ export function inferOperationSchemas(operations: Operation[], redactor: Redacto
     const values = operation.kind === 'bot-protection'
       ? redactor.browserOnly
       : redactor
-    return {
+    return pinGraphqlSchemas({
       ...operation,
       pathParams: enrichPathParams(operation, values),
-      query: inferParams(exchanges, exchange => exchange.request.query, 'query', values),
+      query: inferParams(exchanges, exchange => exchange.request.query, 'query', values, operation.graphql
+        ? GRAPHQL_JSON_PARAMS
+        : undefined),
       headers: inferHeaders(exchanges, values),
       cookies: inferCookies(exchanges, redactor),
       requestBody: inferRequestBody(exchanges, values),
       responses: inferResponses(exchanges, values),
-    }
+    }, values)
   })
 }

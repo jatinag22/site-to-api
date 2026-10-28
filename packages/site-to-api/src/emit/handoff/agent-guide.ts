@@ -14,6 +14,7 @@ import { specFileName } from '../openapi/write'
 import { createStepResolver } from '../steps'
 import { channelsSection } from './channels'
 import { clientGap, clientReadingLine } from './client'
+import { graphqlSection } from './graphql'
 import { describeSource } from './source-ref'
 
 /** What `probe` could not finish, so AGENT.md can say which needs are still only inferred. */
@@ -280,6 +281,7 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext)
     '',
     ...sessionSection(analysis),
     ...flowsSection(analysis, resolver),
+    ...graphqlSection(analysis),
     ...channelsSection(channels),
     ...computedSection(analysis, resolver),
     ...gapsSection(analysis, context, resolver),

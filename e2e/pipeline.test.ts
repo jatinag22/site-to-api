@@ -552,6 +552,133 @@ describe('generated client', () => {
   }, 120_000)
 })
 
+describe('graphQL (decision 0027)', () => {
+  function graphqlOperation(name: string): Analysis['operations'][number] {
+    const found = analysis.operations.find(op => op.host === host && op.graphql?.operationName === name)
+    if (!found) {
+      throw new Error(`no GraphQL operation ${name}; have: ${analysis.operations.flatMap(op => op.graphql
+        ? [op.graphql.operationName]
+        : []).join(', ')}`)
+    }
+    return found
+  }
+
+  it('splits /api/graphql into one operation per GraphQL operation, with its type', () => {
+    const graphql = analysis.operations.filter(op => op.host === host && op.graphql?.endpoint === '/api/graphql')
+    expect(graphql.map(op => [
+      op.operationId,
+      op.method,
+      op.path,
+      op.graphql?.operationType,
+      op.graphql?.operationTypeFrom,
+    ]).sort()).toEqual([
+      [
+        'addToWishlist',
+        'POST',
+        '/api/graphql#AddToWishlist',
+        'mutation',
+        'document',
+      ],
+      [
+        'productStock',
+        'POST',
+        '/api/graphql#ProductStock',
+        'query',
+        'document',
+      ],
+      [
+        'storeHours',
+        'GET',
+        '/api/graphql#StoreHours',
+        'query',
+        'get',
+      ],
+    ])
+    // The REST templating never sees GraphQL requests: no `/api/{param}` catch-all appears.
+    expect(analysis.operations.some(op => op.host === host && op.path.startsWith('/api/{'))).toBe(false)
+    expect(graphqlOperation('StoreHours').graphql?.persistedQuery?.sha256Hash).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('types each operation\'s own variables, also when GET sends them as JSON text', () => {
+    const stock = graphqlOperation('ProductStock').requestBody?.schema
+    expect(stock?.properties?.variables).toMatchObject({
+      properties: {
+        productId: { type: 'integer' },
+      },
+      required: ['productId'],
+    })
+    expect(stock?.properties?.query?.const).toContain('query ProductStock(')
+    const variables = graphqlOperation('StoreHours').query.find(param => param.name === 'variables')
+    expect(variables).toMatchObject({
+      json: true,
+      schema: {
+        properties: {
+          slug: { type: 'string' },
+        },
+      },
+    })
+  })
+
+  it('traces values into variables like body fields', () => {
+    const steps = analysis.flows.flows.flatMap(flow => flow.steps)
+    const stock = steps.filter(step => step.operationId === 'productStock')
+    expect(stock.length).toBeGreaterThan(0)
+    expect(stock.some(step => step.inputs['body./variables/productId']?.kind === 'step')).toBe(true)
+  })
+
+  it('lists the operations per endpoint in AGENT.md and API_MAP.md', () => {
+    const guide = files.get('AGENT.md') ?? ''
+    const section = guide.split('## GraphQL operations')[1]?.split('\n## ')[0] ?? ''
+    expect(section).toContain(`### \`POST ${host}/api/graphql\``)
+    expect(section).toMatch(/- `AddToWishlist`: mutation \(from the query document\), sends the query document, variables `productId: integer`\. Client: `sdk\.addToWishlist\(\{ variables \}\)`/)
+    expect(section).toMatch(/- `StoreHours`: query \(sent with GET, which GraphQL allows for queries only\), persisted query `[0-9a-f]{64}`, variables `slug: string`/)
+    const map = files.get('API_MAP.md') ?? ''
+    expect(map).toContain(`### GET ${host}/api/graphql`)
+    expect(map).toContain('| `productStock` | `POST /api/graphql#ProductStock` | api (GraphQL query) |')
+  })
+
+  it('calls the operations through the generated client with only their variables', async () => {
+    const driver = join(outDir, 'graphql-check.ts')
+    await writeFile(driver, [
+      `import type { BrowserCookie } from './client/index.js'`,
+      `import { browserSession, CookieJar, createSiteClient } from './client/index.js'`,
+      ``,
+      `export async function run(origin: string, bootstrap: () => Promise<BrowserCookie[]>) {`,
+      `  const jar = new CookieJar()`,
+      `  const session = browserSession({ jar, bootstrap })`,
+      `  await session.refresh()`,
+      `  const { sdk } = createSiteClient({ host: ${JSON.stringify(host)}, jar, session, baseUrl: origin })`,
+      `  const stock = await sdk.productStock({ variables: { productId: 1007 } })`,
+      `  const hours = await sdk.storeHours({ variables: { slug: 'cedar-park' } })`,
+      `  const saved = await sdk.addToWishlist({ variables: { productId: 1008 } })`,
+      `  return {`,
+      `    stock: stock.data?.data.productStock.stores ?? null,`,
+      `    hours: hours.data?.data.storeHours.slug ?? null,`,
+      `    saved: saved.data?.data.addToWishlist.productIds.includes(1008) ?? false,`,
+      `    errors: [stock.error, hours.error, saved.error].filter(error => error !== undefined).map(String),`,
+      `  }`,
+      `}`,
+      ``,
+    ].join('\n'))
+    try {
+      expect(typeCheck([driver], 'bundler')).toEqual([])
+      expect(typeCheck([driver], 'nodenext')).toEqual([])
+      const loaded: unknown = await import(pathToFileURL(driver).href)
+      if (typeof loaded !== 'object' || loaded === null || !('run' in loaded) || typeof loaded.run !== 'function')
+        throw new Error('graphql-check.ts did not export run()')
+      expect(await loaded.run(site.origin, browserCookies)).toEqual({
+        stock: expect.any(Number),
+        hours: 'cedar-park',
+        saved: true,
+        errors: [],
+      })
+    }
+    finally {
+      await rm(driver, { force: true })
+    }
+  }, 120_000)
+})
+
 describe('gen', () => {
   it('regenerates the client from a committed handoff folder, with no raw captures present', async () => {
     const clone = join(work, 'fresh-clone')
@@ -579,6 +706,10 @@ describe('probe', () => {
     const categories = report.operations.find(result => result.operationId === operation('GET', '/api/categories').operationId)
     expect(categories?.bare).toBe('rejected')
     expect(report.skipped.some(entry => entry.reason.includes('--unsafe-methods'))).toBe(true)
+    // GraphQL queries are replayed like GETs, even over POST; the mutation is left alone.
+    expect(report.operations.find(result => result.operationId === 'productStock')).toMatchObject({ method: 'POST', replay: 'ok' })
+    expect(report.operations.find(result => result.operationId === 'storeHours')).toMatchObject({ method: 'GET', replay: 'ok' })
+    expect(report.skipped).toContainEqual({ operationId: 'addToWishlist', reason: 'GraphQL mutation AddToWishlist can change data; pass --unsafe-methods to include it' })
     await writeProbeReport(outDir, report)
     const rebuilt = await buildHandoff({ config, cwd: work })
     expect(rebuilt.analysis.flows.session.find(entry => entry.host === host)?.probed).toBe(true)
