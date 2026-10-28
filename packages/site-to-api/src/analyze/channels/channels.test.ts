@@ -282,6 +282,28 @@ describe('buildChannels', () => {
     expect(channel!.messages.find(message => message.id === 'sendJoin')?.links).toEqual([])
   })
 
+  it('leaves out an HTML origin for a value sent inside a longer string', () => {
+    const exchanges = [
+      exchange({
+        sessionId: 's1',
+        url: `https://${HOST}/`,
+        resourceType: 'document',
+        startedAt: T0,
+        responseBody: textBody('<html><head><meta name="ws-key" content="wk_7Hq2x9Lm4Pz"></head></html>'),
+      }),
+    ]
+    const session = loadedSession('s1', socketEvents({
+      url: `wss://${HOST}/socket`,
+      pageUrl: `https://${HOST}/`,
+      openedAt: T0 + 500,
+      frames: [
+        ['>', '{"type":"auth","key":"wk_7Hq2x9Lm4Pz","header":"Key wk_7Hq2x9Lm4Pz"}'],
+      ],
+    }))
+    const [channel] = channelsOf(exchanges, [session])
+    expect(channel!.messages.find(message => message.id === 'sendAuth')?.links.map(link => link.input)).toEqual(['body./key'])
+  })
+
   it('leaves out sockets to analytics hosts, excluded hosts and pages of hosts not analysed', () => {
     const sessions = [
       loadedSession('s1', [

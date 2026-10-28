@@ -359,7 +359,8 @@ describe('handoff output: HTML origins that embed page text', () => {
       selector: 'p',
       attr: null,
       pattern: 'ref ([^<]*)',
-      confidence: 'high',
+      // A pattern over an element's prose: the site can reword it at any time.
+      confidence: 'low',
     })
   })
 

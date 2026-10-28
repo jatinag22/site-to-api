@@ -396,6 +396,74 @@ describe('buildFlows: segments and merging', () => {
     })
   })
 
+  it('writes an HTML origin only when it reads the value sent, and rates a regex over prose low', () => {
+    const page = exchange({ url: 'https://www.example.test/', startedAt: 1, kind: 'page' })
+    const call = exchange({
+      url: 'https://www.example.test/api?a=1&b=2&c=3',
+      startedAt: 5,
+      requestHeaders: { 'x-auth': 'Token k-77a1b2c3d4' },
+    })
+    const html = (selector: string, pattern: string | null): ValueTrace['origin'] => ({
+      kind: 'response',
+      exchangeId: page.id,
+      location: {
+        in: 'html',
+        selector,
+        attr: null,
+        pattern,
+      },
+      transform: 'none',
+    })
+    const traces: ValueTrace[] = [
+      // The header holds the page value inside a longer string: the origin would read only a part.
+      {
+        exchangeId: call.id,
+        location: { in: 'header', name: 'x-auth' },
+        value: 'Token k-77a1b2c3d4',
+        origin: {
+          kind: 'response',
+          exchangeId: page.id,
+          location: {
+            in: 'html',
+            selector: 'meta',
+            attr: 'content',
+            pattern: null,
+          },
+          transform: 'substring',
+        },
+      },
+      {
+        exchangeId: call.id,
+        location: { in: 'query', name: 'a' },
+        value: 'k-77a1b2c3d4',
+        origin: html('body > script:nth-of-type(2)', 'key:"([^"]*)'),
+      },
+      {
+        exchangeId: call.id,
+        location: { in: 'query', name: 'b' },
+        value: 'k-77a1b2c3d4',
+        origin: html('h1', 'for ([\\w-]+)'),
+      },
+      {
+        exchangeId: call.id,
+        location: { in: 'query', name: 'c' },
+        value: 'k-77a1b2c3d4',
+        origin: html('', 'id=([\\w-]+)'),
+      },
+    ]
+    const doc = build([page, call], [
+      op('getRoot', [page]),
+      op('getApi', [call]),
+    ], [
+      loaded('s1', []),
+    ], traces)
+    const inputs = doc.flows[0]?.steps.find(entry => entry.operationId === 'getApi')?.inputs
+    expect(inputs?.['header.x-auth']).toMatchObject({ kind: 'unknown' })
+    expect(inputs?.['query.a']).toMatchObject({ kind: 'html', confidence: 'high' })
+    expect(inputs?.['query.b']).toMatchObject({ kind: 'html', confidence: 'low' })
+    expect(inputs?.['query.c']).toMatchObject({ kind: 'html', confidence: 'low' })
+  })
+
   it('needs a token when an API sends Authorization, cookies when it sends cookies, nothing otherwise', () => {
     const withToken = exchange({
       url: 'https://token.example.test/a',

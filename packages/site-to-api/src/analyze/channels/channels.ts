@@ -185,7 +185,9 @@ function linkOrigin(trace: ValueTrace, context: LinkContext): ChannelValueOrigin
     // (the value is somewhere in the document) it is usually a coincidence. Selectors embed page
     // text, so one that would change under redaction is not written either.
     const leaks = safeText(location.selector) !== location.selector || (location.attr !== null && safeText(location.attr) !== location.attr)
-    if (location.selector === '' || leaks)
+    // It also reads the value as it was sent, so a value sent encoded or inside a longer string
+    // has no HTML origin.
+    if (location.selector === '' || leaks || origin.transform !== 'none')
       return null
     return {
       kind: 'html',

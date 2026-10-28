@@ -1,6 +1,7 @@
 import type { CaptureEvent, Exchange, ExchangeKind, HtmlLocator, LoadedSession, ValueLocation, ValueTrace } from '../../model'
 import type { LocatedValue } from './values'
 import type { MatchTransform, Variant } from './variants'
+import { registrableHost } from '../../capture'
 import { browserCookieNote, findTransformEvent, findUserInputField } from './fallbacks'
 import { isTrivial } from './trivial'
 import { requestValues, responseText, responseValues } from './values'
@@ -98,31 +99,52 @@ const PLAIN_WORD = /^\p{L}+(?:[-_]\p{L}+)*$/u
 
 /** Attributes that carry data or links, so a word inside them (`/stores/pine-hill`) is a value. */
 const DATA_ATTRIBUTE = /^(?:href|src|action|value|content|data-.+)$/
+/** Attributes that style or name an element: a word in them is markup, not data. */
+const MARKUP_ATTRIBUTE = /^(?:class|id|style)$/
 /** What may come right before a word taken out of a link: a path, query or fragment separator. */
 const URL_BOUNDARY = /[/=?&#:]$/
 
+function siteOf(host: string): string {
+  return registrableHost(host.replace(/:\d+$/, ''))
+}
+
+/** Where a word sits in the page, and whether that place is evidence the request copied it. */
+interface PlainWordPlace {
+  found: NonNullable<ReturnType<HtmlLocator>>
+  /** Host of the page the word is in, and of the request that sent it. */
+  pageHost: string
+  requestHost: string
+}
+
 /**
- * A plain word is in almost every large page somewhere: a script, a class name, prose. Only an
- * attribute or element holding exactly that word, or a whole URL part of a link or data attribute
- * (`/stores/pine-hill`, not `manifest-web-player`), says it came from this page.
+ * A plain word is in almost every large page somewhere: a script, a class name, prose, a link to
+ * another site. It only counts as copied from the page when the page is on the request's own site
+ * and an attribute or element holds exactly that word (not a class, id or style), or it is a whole
+ * URL part of a link to that same site (`/stores/pine-hill`, not `manifest-web-player` or `wired.com/story`).
  */
-function isPlainWordSource(found: NonNullable<ReturnType<HtmlLocator>>): boolean {
-  if (found.selector === '')
+function isPlainWordSource({ found, pageHost, requestHost }: PlainWordPlace): boolean {
+  if (found.selector === '' || siteOf(pageHost) !== siteOf(requestHost))
+    return false
+  if (found.attr !== null && MARKUP_ATTRIBUTE.test(found.attr))
     return false
   if (found.pattern === null)
     return true
   const prefix = found.pattern.slice(0, found.pattern.indexOf('('))
+  const linkedHost = /\/\/([^/]+)/.exec(prefix.replaceAll('\\', ''))?.[1]
   return found.attr !== null && DATA_ATTRIBUTE.test(found.attr) && URL_BOUNDARY.test(prefix)
+    && (linkedHost === undefined || siteOf(linkedHost) === siteOf(requestHost))
 }
 
-function htmlCandidate(exchange: Exchange, text: string, value: string, transform: MatchTransform, locator: HtmlLocator): Candidate | null {
-  const found = locator(text, value)
+function htmlCandidate(page: { exchange: Exchange, text: string }, consumer: Exchange, value: string, transform: MatchTransform, locator: HtmlLocator): Candidate | null {
+  const found = locator(page.text, value)
   // The value is in the document, but nowhere an extraction rule can read it from: not an
   // origin a wrapper can use, and in a large page usually a coincidence.
-  if (found === null || (PLAIN_WORD.test(value) && !isPlainWordSource(found)))
+  if (found === null)
+    return null
+  if (PLAIN_WORD.test(value) && !isPlainWordSource({ found, pageHost: page.exchange.request.host, requestHost: consumer.request.host }))
     return null
   return {
-    exchange,
+    exchange: page.exchange,
     // An empty selector is the whole text document, read with the pattern if there is one.
     location: {
       in: 'html',
@@ -159,16 +181,18 @@ function* exactCandidates(consumer: Exchange, sent: LocatedValue, variants: read
  * `isTrivial`) is found in almost every page by chance: `page=1` in `initial-scale=1`. Such
  * values are only matched against structured response values.
  */
-function* htmlCandidates(consumer: Exchange, value: string, variants: readonly Variant[], index: SessionIndex, locator: HtmlLocator, minValueLength: number): Generator<Candidate> {
+function* htmlCandidates(consumer: Exchange, sent: LocatedValue, variants: readonly Variant[], index: SessionIndex, locator: HtmlLocator, minValueLength: number): Generator<Candidate> {
+  const { value } = sent
   if (value.length < minValueLength)
     return
-  for (const { exchange, text } of index.texts) {
+  for (const page of index.texts) {
+    const { exchange, text } = page
     if (!isBefore(exchange, consumer))
       continue
     // Variants come in rank order, so the first hit is the strongest for this document.
     const variant = variants.find(candidate => text.includes(candidate.value))
     if (variant) {
-      const candidate = htmlCandidate(exchange, text, variant.value, variant.transform, locator)
+      const candidate = htmlCandidate(page, consumer, variant.value, variant.transform, locator)
       if (candidate)
         yield candidate
       continue
@@ -177,7 +201,7 @@ function* htmlCandidates(consumer: Exchange, value: string, variants: readonly V
     const part = value.split(/[\s,;=&]+/).find(piece => piece.length >= SUBSTRING_MIN_LENGTH && piece !== value && text.includes(piece))
     const candidate = part === undefined
       ? null
-      : htmlCandidate(exchange, text, part, 'substring', locator)
+      : htmlCandidate(page, consumer, part, 'substring', locator)
     if (candidate)
       yield candidate
   }
@@ -206,7 +230,7 @@ function pickBest(candidates: Iterable<Candidate>, initial: Candidate | null): C
 }
 
 function findResponseProducer(consumer: Exchange, sent: LocatedValue, variants: readonly Variant[], index: SessionIndex, locator: HtmlLocator, minValueLength: number): Candidate | null {
-  const best = pickBest(htmlCandidates(consumer, sent.value, variants, index, locator, minValueLength), pickBest(exactCandidates(consumer, sent, variants, index), null))
+  const best = pickBest(htmlCandidates(consumer, sent, variants, index, locator, minValueLength), pickBest(exactCandidates(consumer, sent, variants, index), null))
   // Scanning every response value for containment is the slow path; it can only win when
   // nothing better than a substring match was found.
   if ((best && best.transform !== 'substring') || sent.value.length < SUBSTRING_MIN_LENGTH)
@@ -224,6 +248,38 @@ function inputFieldName(sent: LocatedValue): string | null {
 
 function constantKey(exchange: Exchange, location: ValueLocation, value: string): string {
   return `${exchange.request.host}\u0000${JSON.stringify(location)}\u0000${value}`
+}
+
+/**
+ * Values sent while the person was still typing: one session sends the same field of the same
+ * host again and again, each value extending the one before (`c`, `ci`, `cip`, ... a search box
+ * asking for suggestions on every keystroke).
+ */
+function typedPrefixChains(exchanges: readonly Exchange[], sentValues: ReadonlyMap<Exchange, LocatedValue[]>): Set<LocatedValue> {
+  const byField = new Map<string, LocatedValue[]>()
+  for (const exchange of exchanges) {
+    for (const sent of sentValues.get(exchange) ?? []) {
+      if (inputFieldName(sent) === null)
+        continue
+      const key = `${exchange.sessionId}\u0000${exchange.request.host}\u0000${JSON.stringify(sent.location)}`
+      byField.set(key, [
+        ...(byField.get(key) ?? []),
+        sent,
+      ])
+    }
+  }
+  const typing = new Set<LocatedValue>()
+  for (const values of byField.values()) {
+    values.forEach((sent, position) => {
+      const previous = values[position - 1]
+      const next = values[position + 1]
+      const grows = (shorter: LocatedValue | undefined, longer: LocatedValue | undefined): boolean =>
+        shorter !== undefined && longer !== undefined && longer.value.length > shorter.value.length && longer.value.startsWith(shorter.value)
+      if (grows(previous, sent) || grows(sent, next))
+        typing.add(sent)
+    })
+  }
+  return typing
 }
 
 /**
@@ -264,6 +320,7 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
     }
   }
 
+  const typing = typedPrefixChains(exchanges, sentValues)
   const traces: ValueTrace[] = []
   for (const exchange of exchanges) {
     const index = indexes.get(exchange.sessionId)
@@ -279,7 +336,15 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
       const variants = variantsOf(sent.value, minValueLength)
       const resolve = (): Origin => {
         const producer = findResponseProducer(exchange, sent, variants, index, htmlLocator, minValueLength)
-        if (producer) {
+        const fieldName = inputFieldName(sent)
+        const field = fieldName === null
+          ? null
+          : findUserInputField(index.events, fieldName, exchange.startedAt, {
+              stillTyping: typing.has(sent),
+            })
+        // Typing `ciphe` after `ciph`: the longer value contains the earlier one, which the
+        // response echoed. A typed field explains it better than that substring.
+        if (producer && !(producer.transform === 'substring' && field !== null)) {
           return {
             kind: 'response',
             exchangeId: producer.exchange.id,
@@ -290,10 +355,6 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
         const eventIndex = findTransformEvent(index.events, variants, exchange.startedAt)
         if (eventIndex !== null)
           return { kind: 'transform', eventIndex, sessionId: exchange.sessionId }
-        const fieldName = inputFieldName(sent)
-        const field = fieldName === null
-          ? null
-          : findUserInputField(index.events, fieldName, exchange.startedAt)
         if (field !== null)
           return { kind: 'user-input', field }
         const sessions = seenIn.get(constantKey(exchange, sent.location, sent.value))?.size ?? 0

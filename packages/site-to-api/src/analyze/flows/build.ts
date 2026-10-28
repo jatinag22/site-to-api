@@ -156,6 +156,25 @@ function collectInputs(
   return inputs
 }
 
+/** The last compound of a selector names a `<script>`: `body > script:nth-of-type(2)`. */
+const SCRIPT_SELECTOR = /(?:^|[\s>+~])script(?:[.#:[][^\s>+~]*)?$/
+
+/**
+ * `high` when the location reads one element's attribute or whole text, or a pattern inside an
+ * inline script (page data). A pattern over prose (an element's text, a text document) depends on
+ * wording around the value that the site can change at any time: `low`.
+ */
+function htmlConfidence(location: HtmlLocation): 'high' | 'low' {
+  if (location.pattern === null) {
+    return location.selector === ''
+      ? 'low'
+      : 'high'
+  }
+  return location.attr !== null || SCRIPT_SELECTOR.test(location.selector)
+    ? 'high'
+    : 'low'
+}
+
 /**
  * Turns traced traffic into `flows.json`: one flow per action the person took (plus the initial
  * page load), each a list of steps with the origin of every input. Flows with the same trigger
@@ -296,11 +315,11 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
   const responseOrigin = (producerId: string, rawLocation: ValueLocation, transform: Extract<ValueOrigin, { kind: 'step' }>['transform'], value: string, currentFlow: string | null): ValueOrigin => {
     const general = generalLocation(producerId, rawLocation)
     const location = safeLocation(general.location)
-    // Redaction can take away an HTML selector or pattern. What is left would read the wrong text
-    // (the whole element instead of the value inside it) or nothing, so it is not written.
+    // An HTML origin means "read this, send it as is". A value sent encoded or inside a longer
+    // string, or a location redaction took the selector or pattern from, reads something else.
     const original = general.location
     const unreadable = original.in === 'html' && location.in === 'html'
-      && ((original.selector !== '' && location.selector === '') || (original.pattern !== null && location.pattern === null))
+      && (transform !== 'none' || (original.selector !== '' && location.selector === '') || (original.pattern !== null && location.pattern === null))
     const step = unreadable
       ? null
       : reference(producerId, location, currentFlow)
@@ -311,16 +330,13 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       }
     }
     if (location.in === 'html') {
-      const confidence = location.selector === '' && location.pattern === null
-        ? 'low'
-        : 'high'
       return {
         kind: 'html',
         step,
         selector: location.selector,
         attr: location.attr,
         pattern: location.pattern,
-        confidence,
+        confidence: htmlConfidence(location),
         ...(general.repeated && location.selector !== ''
           ? { repeated: true }
           : {}),

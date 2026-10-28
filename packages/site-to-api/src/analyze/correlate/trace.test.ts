@@ -289,6 +289,30 @@ describe('traceValues: response producers', () => {
     })
   })
 
+  it('traces a plain word only to a page of the same site, never to a class name or another site\'s link', () => {
+    const html = '<html><body><input name="tags" value="story"><table><tr><td class="title">x</td></tr></table><a href="https://news.other.test/newest">new</a></body></html>'
+    const page = (url: string): Exchange => exchange({
+      url,
+      startedAt: 1,
+      kind: 'page',
+      responseBody: textBody(html),
+    })
+    const traced = (pageUrl: string, query: string): ValueTrace['origin'] | undefined => {
+      const source = page(pageUrl)
+      const call = exchange({ url: `https://api.news.test/search?${query}`, startedAt: 2 })
+      return originAt(trace([source, call], {
+        htmlLocator: createHtmlLocator(),
+      }), call, `{"in":"query","name":"${query.split('=')[0]}"}`)
+    }
+    expect(traced('https://www.news.test/', 'tag=story')).toMatchObject({
+      kind: 'response',
+      location: { in: 'html', attr: 'value' },
+    })
+    expect(traced('https://www.elsewhere.test/', 'tag=story')).toMatchObject({ kind: 'unknown' })
+    expect(traced('https://www.news.test/', 'restrict=title')).toMatchObject({ kind: 'unknown' })
+    expect(traced('https://www.news.test/', 'kind=newest')).toMatchObject({ kind: 'unknown' })
+  })
+
   it('does not trace a short number to a page that contains it by chance', () => {
     const page = exchange({
       url: 'https://www.example.test/',
@@ -458,6 +482,74 @@ describe('traceValues: values no response produced', () => {
         session('s1', events),
       ],
     })[0]?.origin).toEqual({ kind: 'user-input', field: 'query' })
+  })
+
+  it('marks a search parameter as typed into a search box with another name', () => {
+    const change = (field: string | null, selector: string, label: string): CaptureEvent => ({
+      t: 'action',
+      ts: 10,
+      pageUrl: 'https://x.example.test/',
+      kind: 'change',
+      label,
+      selector,
+      field,
+    })
+    const typed = (event: CaptureEvent, url: string, init: Partial<Parameters<typeof exchange>[0]> = {}): ValueTrace['origin'] | undefined =>
+      trace([
+        exchange({ url, startedAt: 20, ...init }),
+      ], {
+        sessions: [
+          session('s1', [event]),
+        ],
+      })[0]?.origin
+    // Suggestions as the person types: `q` from a field named `search`.
+    expect(typed(change('search', '#searchInput', 'Search the encyclopedia'), 'https://x.example.test/rest/search/title?q=cipher')).toEqual({ kind: 'user-input', field: 'search' })
+    // A nameless box whose label says search, sending a JSON body.
+    expect(typed(change(null, 'header > div > input', 'Search stories by title'), 'https://api.example.test/indexes/query', {
+      method: 'POST',
+      requestBody: jsonBody({ query: 'cipher', page: 0 }),
+    })).toEqual({ kind: 'user-input', field: 'query' })
+    // Not a search box: a search parameter is not credited to it.
+    expect(typed(change('email', '#email', 'Email address'), 'https://x.example.test/rest/search/title?q=cipher')).toMatchObject({ kind: 'unknown' })
+  })
+
+  it('credits the values sent on each keystroke to the change that ends the typing', () => {
+    const action = (ts: number, kind: 'change' | 'click'): CaptureEvent => ({
+      t: 'action',
+      ts,
+      pageUrl: 'https://x.example.test/',
+      kind,
+      label: 'Search stories',
+      selector: kind === 'change'
+        ? 'header > input'
+        : 'li > button',
+      field: null,
+    })
+    // Each answer echoes the query, so `ciphe` also contains the earlier answer's `ciph`.
+    const keystrokes = ['ciph', 'ciphe', 'cipher'].map((query, position) => exchange({
+      method: 'POST',
+      url: 'https://api.example.test/indexes/query',
+      startedAt: 20 + position,
+      requestBody: jsonBody({ query }),
+      responseBody: jsonBody({ query, hits: [] }),
+    }))
+    const origins = (events: CaptureEvent[]): Array<string | undefined> => {
+      const traces = trace(keystrokes, {
+        sessions: [
+          session('s1', events),
+        ],
+      })
+      return keystrokes.map(sent => originAt(traces, sent, '{"in":"body","pointer":"/query"}')?.kind)
+    }
+    expect(origins([
+      action(40, 'change'),
+      action(40, 'click'),
+    ])).toEqual(['user-input', 'user-input', 'user-input'])
+    // A click before the change: the typing that change ends began after these requests.
+    expect(origins([
+      action(30, 'click'),
+      action(40, 'change'),
+    ])).toEqual(['unknown', 'unknown', 'unknown'])
   })
 
   it('does not credit typing that happened after the request', () => {
