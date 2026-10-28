@@ -183,17 +183,43 @@ Environment variables name a config key in upper snake case, with `__` between n
 
 ## Using the generated client
 
-The client needs `@site-to-api/runtime` and `zod` 4 in your project. This runs against the
-fixture shop from the walkthrough above; the shop sits behind (toy) bot protection, so the session
-comes from a real browser:
+### Project setup
+
+The generated client is TypeScript that imports `@site-to-api/runtime` and `zod` 4. Until the first
+npm release, install the runtime from your clone:
+
+```sh
+npm init -y && npm pkg set type=module          # ES modules
+npm install /path/to/site-to-api/packages/runtime zod@4
+npm install playwright tsx typescript            # playwright only for browser sessions
+```
+
+`tsconfig.json`: `"module"` and `"moduleResolution"` set to `"nodenext"` (or `"esnext"` /
+`"bundler"`), `"strict": true`, and `"lib"` including `"DOM"`. Run files with `tsx`, or compile with
+`tsc` and run with `node`. Exclude `api-handoff/source/` from type checking: those are excerpts of
+the site's code for reading, not modules.
+
+### Example: log in and list orders on the fixture shop
+
+This is the complete wrapper an agent would write from the handoff folder of the walkthrough
+above. The shop needs a browser session (bot protection), a CSRF token from the login page, a
+password encrypted in the browser, and a bearer token. It was run as written in a fresh project
+and prints `200 3 orders`:
 
 ```ts
 import { chromium } from 'playwright'
-import { browserSession, CookieJar, createSiteClient, extractGetDeals } from './api-handoff/client'
+import { browserSession, CookieJar, createSiteClient, extractCsrfTokenFromGetLogin } from './api-handoff/client/index.js'
+
+// Ported from the site's own code: api-handoff/source/src/auth/crypto.L18-28.ts
+async function encryptPassword(password: string, publicKeySpki: string): Promise<string> {
+  const spki = Uint8Array.from(atob(publicKeySpki), char => char.charCodeAt(0))
+  const key = await crypto.subtle.importKey('spki', spki, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt'])
+  const ciphertext = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, key, new TextEncoder().encode(password))
+  return btoa(String.fromCharCode(...new Uint8Array(ciphertext)))
+}
 
 const jar = new CookieJar()
-// A real browser loads the site; its cookies are reused for plain HTTP and fetched again when the
-// site answers 401 or 403.
+// The shop sits behind bot protection: a real browser loads it once, its cookies are reused.
 const session = browserSession({
   jar,
   bootstrap: async () => {
@@ -209,19 +235,31 @@ const session = browserSession({
   },
 })
 
-const { sdk } = createSiteClient({ host: 'localhost:4173', session, jar })
+let token: string | undefined
+const { sdk } = createSiteClient({
+  host: 'localhost:4173',
+  session,
+  jar,
+  auth: () => token && `Bearer ${token}`, // sent to operations the spec marks as secured
+})
 
-const categories = await sdk.getApiCategories({}) // typed, validated with Zod
-console.log(categories.data)
-// [{ slug: 'pantry', name: 'Pantry', productCount: 6 }, ...]
+const loginPage = await sdk.getLogin({})
+const csrf = extractCsrfTokenFromGetLogin(String(loginPage.data))
+const { data: key } = await sdk.getApiAuthKey({})
+const login = await sdk.postApiAuthLogin({
+  headers: { 'x-csrf-token': csrf ?? '' },
+  body: { username: 'demo', password: await encryptPassword('demo-password', key!.publicKey) },
+})
+token = login.data?.token
 
-// HTML pages get a generated parser too:
-const deals = extractGetDeals(await fetch('http://localhost:4173/deals?page=1').then(r => r.text()))
-// [{ product: 'Rolled Oats 250 g', productUrl: '/products/1001', price: 1856.25, discount: 10 }, ...]
+const orders = await sdk.getApiOrders({})
+console.log(orders.response?.status, orders.data?.orders.length, 'orders')
 ```
 
-Hosts that work with plain HTTP need no browser: the default cookie session, or `tokenSession`
-for bearer tokens. `client/README.md` says which one each host needs.
+`createSiteClient` configures one shared client per host; calling it again for the same host
+replaces the configuration. Hosts that work with plain HTTP need no browser: leave out `session`, or
+use `tokenSession`. `api-handoff/client/README.md` says what each host needs, which operations are
+secured and how to send `auth`.
 
 ## How it compares
 
