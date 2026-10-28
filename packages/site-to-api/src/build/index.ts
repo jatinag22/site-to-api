@@ -5,7 +5,7 @@
 import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import type { ClientState } from '../emit/handoff'
-import type { Analysis, LoadedSession, Operation, ResponseInfo, SourceRef, SourceResolver } from '../model'
+import type { Analysis, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver } from '../model'
 import type { ProbeReport } from '../model/probe'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
@@ -27,6 +27,7 @@ import { generateClient } from '../gen'
 import { loadSessions } from '../load'
 import { applyProbeReport, minimizeLimit, notMinimized, readProbeReport, requirementsByOperation } from '../probe'
 import { VERSION } from '../version'
+import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
 import { inHostFilter, unmatchedHostPatterns } from './hosts'
 import { buildRecordFor, writeBuildRecord } from './record'
@@ -122,27 +123,6 @@ function addCallSites(operations: Operation[], resolver: SourceResolver): Operat
 }
 
 /** Every source reference that the output mentions, so each gets an excerpt. */
-function referencedSources(analysis: Analysis): SourceRef[] {
-  const refs: SourceRef[] = analysis.operations.flatMap(operation => operation.sentFrom)
-  for (const channel of analysis.channels ?? []) {
-    if (channel.sentFrom)
-      refs.push(channel.sentFrom)
-  }
-  for (const flow of analysis.flows.flows) {
-    for (const step of flow.steps) {
-      if (step.sentFrom)
-        refs.push(step.sentFrom)
-    }
-  }
-  for (const value of analysis.flows.computedValues) {
-    if (value.producedBy)
-      refs.push(value.producedBy)
-    if (value.calledFrom)
-      refs.push(value.calledFrom)
-  }
-  return refs
-}
-
 /** The first session whose saved code can produce an excerpt for this location. */
 async function excerptFor(ref: SourceRef, sessions: LoadedSession[]): Promise<{ path: string, content: string } | null> {
   for (const session of sessions) {
@@ -154,14 +134,15 @@ async function excerptFor(ref: SourceRef, sessions: LoadedSession[]): Promise<{ 
 }
 
 /** Builds excerpts for every referenced location and records their paths on the references. */
-async function addExcerpts(analysis: Analysis, sessions: LoadedSession[]): Promise<void> {
+async function addExcerpts(analysis: Analysis, sessions: LoadedSession[], redactor: Redactor): Promise<void> {
   const byKey = new Map<string, string | null>()
   for (const ref of referencedSources(analysis)) {
     const key = refKey(ref)
     if (!byKey.has(key)) {
       const excerpt = await excerptFor(ref, sessions)
+      // Code can embed what the capture learnt is secret (a token minted into a script).
       if (excerpt)
-        analysis.excerpts.set(excerpt.path, excerpt.content)
+        analysis.excerpts.set(excerpt.path, redactor.value(excerpt.content, { in: 'text' }))
       byKey.set(key, excerpt
         ? `source/${excerpt.path}`
         : null)
@@ -296,7 +277,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     warnings,
   }
   if (config.build.excerpts)
-    await addExcerpts(analysis, loaded.sessions)
+    await addExcerpts(analysis, loaded.sessions, redactor)
   return { analysis, probe }
 }
 
