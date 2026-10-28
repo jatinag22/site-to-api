@@ -3,11 +3,13 @@
  * needs without opening the specs (docs/output-format.md). Every cell is built from values the
  * site controls, so each one goes through `text()` or `cellCode()` (both escape `|`).
  */
-import type { Analysis, Operation, ResponseInfo, SourceRef, ValueOrigin } from '../../model'
+import type { Analysis, Operation, ResponseInfo, ValueOrigin } from '../../model'
 import type { StepResolver } from '../steps'
 import { cellCode, text } from '../escape'
 import { responseSchemaName, sdkFunctionName } from '../naming'
 import { createStepResolver } from '../steps'
+import { channelsTable } from './channels'
+import { describeSource } from './source-ref'
 
 /** Short, readable form of where an input comes from, as Markdown that is safe in a table cell. */
 export function describeOrigin(origin: ValueOrigin): string {
@@ -31,13 +33,6 @@ export function describeOrigin(origin: ValueOrigin): string {
     case 'unknown':
       return `unknown (${text(origin.shape)})`
   }
-}
-
-/** `file:line function` for a source reference, as plain text (callers escape it). */
-export function describeSource(ref: SourceRef): string {
-  return `${ref.file}:${ref.line}${ref.functionName
-    ? ` ${ref.functionName}`
-    : ''}`
 }
 
 function describeResponse(responses: ResponseInfo[]): string {
@@ -107,6 +102,7 @@ export function renderApiMap(analysis: Analysis): string {
     if (operations.length > 0)
       lines.push(...hostTable(host, operations, analysis, resolver))
   }
+  lines.push(...channelsTable(analysis.channels ?? []))
   return `${lines.join('\n').trimEnd()}\n`
 }
 
