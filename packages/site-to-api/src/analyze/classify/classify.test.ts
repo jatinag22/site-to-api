@@ -487,6 +487,37 @@ describe('classifyExchanges: bot protection', () => {
   })
 })
 
+describe('classifyExchanges: telemetry and mirrors', () => {
+  it('drops telemetry, RUM and health checks, and folds search mirrors into their main host', () => {
+    const call = (url: string): Exchange => on({
+      method: 'POST',
+      url,
+      responseBody: jsonBody({ ok: true }),
+    })
+    const result = classify([
+      page(),
+      call('https://telemetry.algolia.com/1/events'),
+      call('https://app.datadoghq.com/rum/v1/input'),
+      call('https://intake-analytics.wikimedia.org/v1/events'),
+      call('https://app1-dsn.algolia.net/1/isalive'),
+      call('https://app1-dsn.algolia.net/1/indexes/items/query'),
+      call('https://app1-2.algolianet.com/1/indexes/items/query'),
+      call('https://app2-3.algolianet.com/1/indexes/items/query'),
+    ])
+    expect(result.exchanges.map(item => item.kind)).toEqual([
+      'page',
+      'noise',
+      'noise',
+      'noise',
+      'noise',
+      'api',
+      'noise',
+      'api',
+    ])
+    expect(result.exchanges[6]!.kindReason).toBe('fallback mirror of app1-dsn.algolia.net, which the specs describe')
+  })
+})
+
 describe('classifyExchanges: challenge pages', () => {
   const doc = (url: string, html: string, status = 200): Exchange => on({
     url,

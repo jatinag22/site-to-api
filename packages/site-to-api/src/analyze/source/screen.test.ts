@@ -76,6 +76,14 @@ describe('screenSourceRoutes', () => {
     ])).toEqual([])
   })
 
+  it('drops analytics and telemetry endpoints, as classify does for traffic', () => {
+    expect(kept([
+      route('app.datadoghq.com', '/rum/sessions'),
+      route('intake-analytics.wikimedia.org', '/v1/events'),
+      route('app.datadoghq.com', '/api/v1/dashboards'),
+    ])).toEqual(['app.datadoghq.com/api/v1/dashboards'])
+  })
+
   it('keeps real route templates', () => {
     expect(kept([
       route(null, '/api/products/{productId}'),

@@ -5,7 +5,7 @@ import type { Body, BotProtectionFinding, Exchange, ExchangeKind } from '../../m
 import type { BotEvidence } from './bot-protection'
 import { detectBotProtection, findAkamaiHosts } from './bot-protection'
 import { compileHostGlobs } from './host-glob'
-import { findNoise } from './noise-hosts'
+import { findNoise, mirrorOf } from './noise-hosts'
 
 interface ClassifyOptions {
   /** Host globs to analyse. Empty: hosts that served a page plus hosts those pages called. */
@@ -155,6 +155,7 @@ export function classifyExchanges(exchanges: Exchange[], options: ClassifyOption
     ? scope.has(host)
     : included(host))
   const akamaiHosts = findAkamaiHosts(exchanges)
+  const observedHosts = new Set(exchanges.map(exchange => exchange.request.host.toLowerCase()))
   const findings = new Map<string, { finding: BotProtectionFinding, evidence: Set<string>, ids: Set<string> }>()
 
   const classified = exchanges.map((exchange): Exchange => {
@@ -176,6 +177,9 @@ export function classifyExchanges(exchanges: Exchange[], options: ClassifyOption
     const noise = findNoise(host, path)
     if (noise !== null)
       return { ...exchange, kind: 'noise', kindReason: `analytics, ads or telemetry (${noise})` }
+    const mirrored = mirrorOf(host, observedHosts)
+    if (mirrored !== null)
+      return { ...exchange, kind: 'noise', kindReason: `fallback mirror of ${mirrored}, which the specs describe` }
     if (excluded(host))
       return { ...exchange, kind: 'noise', kindReason: 'host excluded by hosts.exclude' }
     if (!inScope(host)) {

@@ -1,7 +1,8 @@
 /**
  * Drops endpoints found in code that cannot be real calls: URL templates and test fixtures
  * scanned as hosts (`www.%suffixorigin%`, `a@b`, `stub-host`, `localhost:4318`), XML namespaces
- * (`http://www.w3.org/2000/svg`), file-system paths from bundler output
+ * (`http://www.w3.org/2000/svg`), analytics and telemetry endpoints (dropped from traffic too),
+ * file-system paths from bundler output
  * (`/ROOT/node_modules/.pnpm/...`) and paths that still hold a placeholder the scanner could not
  * resolve (`/{str}.php`, `translations{param1}{toString}`, `{API_ENDPOINT}`). A code-only route
  * becomes an operation, a spec and a client method, so a junk one costs every reader.
@@ -10,6 +11,7 @@
  * name is still that site.
  */
 import type { SourceRoute } from '../../model'
+import { findNoise } from '../classify'
 
 /** Top-level names that never resolve on the public internet (RFC 2606, 6761, 6762, common LAN). */
 const NON_PUBLIC_TLDS: ReadonlySet<string> = new Set([
@@ -135,6 +137,23 @@ function withoutGluedQuery(route: SourceRoute): SourceRoute {
   }
 }
 
+/** Why a code-only route cannot be a real call, or `null` when it can. */
+function routeProblem(route: SourceRoute, observedHosts: ReadonlySet<string>): string | null {
+  const { host, pathTemplate } = route
+  if (host === null)
+    return pathProblem(pathTemplate)
+  if (!observedHosts.has(host)) {
+    const problem = hostProblem(host)
+    if (problem !== null)
+      return problem
+  }
+  if (XML_NAMESPACES.some(namespace => namespace.host === host && namespace.path.test(pathTemplate)))
+    return 'an XML namespace'
+  if (findNoise(host, pathTemplate) !== null)
+    return 'analytics or telemetry'
+  return pathProblem(pathTemplate)
+}
+
 /**
  * Keeps the code-only routes that can be real calls, with a query placeholder glued to the last
  * segment removed. `observedHosts` are the hosts of captured exchanges, which are kept whatever
@@ -146,19 +165,11 @@ export function screenSourceRoutes(routes: readonly SourceRoute[], observedHosts
   const dropped: string[] = []
   for (const found of routes) {
     const route = withoutGluedQuery(found)
-    const host = route.host
-    const observed = host !== null && observedHosts.has(host)
-    const problem = (host !== null && !observed
-      ? hostProblem(host)
-      : null)
-    ?? (host !== null && XML_NAMESPACES.some(namespace => namespace.host === host && namespace.path.test(route.pathTemplate))
-      ? 'an XML namespace'
-      : null)
-    ?? pathProblem(route.pathTemplate)
+    const problem = routeProblem(route, observedHosts)
     if (problem === null)
       kept.push(route)
     else
-      dropped.push(`${quote(`${host ?? ''}${route.pathTemplate}`)} (${problem})`)
+      dropped.push(`${quote(`${route.host ?? ''}${route.pathTemplate}`)} (${problem})`)
   }
   if (dropped.length === 0)
     return { routes: kept, warning: null }

@@ -85,6 +85,10 @@ const NOISE_DOMAINS: readonly string[] = [
   'browser-intake-datadoghq.eu',
   'datadoghq-browser-agent.com',
   'rum.hlx.page',
+  'telemetry.algolia.com',
+  'insights.algolia.io',
+  'intake-analytics.wikimedia.org',
+  'intake-logging.wikimedia.org',
   'cloudflareinsights.com',
   'speedcurve.com',
   'raygun.io',
@@ -162,7 +166,28 @@ const NOISE_ENDPOINTS: ReadonlyArray<{ domain: string, pathPrefix: string }> = [
   { domain: 'www.google.com', pathPrefix: '/ccm/' },
   { domain: 'www.youtube.com', pathPrefix: '/api/stats/' },
   { domain: 'www.linkedin.com', pathPrefix: '/li/track' },
+  // Datadog RUM through the app host; Algolia's client pinging its search hosts for health.
+  { domain: 'datadoghq.com', pathPrefix: '/rum/' },
+  { domain: 'datadoghq.eu', pathPrefix: '/rum/' },
+  { domain: 'algolia.net', pathPrefix: '/1/isalive' },
+  { domain: 'algolianet.com', pathPrefix: '/1/isalive' },
 ]
+
+/** `<app>-1.algolianet.com`: the Algolia client's fallback copies of `<app>-dsn.algolia.net`. */
+const ALGOLIA_MIRROR = /^([a-z0-9]+)-\d+\.algolianet\.com$/i
+
+/**
+ * The host a fallback mirror duplicates, when that host is in `hosts`: the Algolia client retries
+ * the same query on `<app>-1..3.algolianet.com` when `<app>-dsn.algolia.net` is slow, so their
+ * operations would repeat the main host's. `null` for any other host, or when the capture only
+ * reached the mirror.
+ */
+export function mirrorOf(host: string, hosts: ReadonlySet<string>): string | null {
+  const app = ALGOLIA_MIRROR.exec(host.replace(/:\d+$/, ''))?.[1]?.toLowerCase()
+  if (app === undefined)
+    return null
+  return [`${app}-dsn.algolia.net`, `${app}.algolia.net`].find(candidate => hosts.has(candidate)) ?? null
+}
 
 /** True when `host` is `domain` or one of its subdomains. */
 export function hostMatchesDomain(host: string, domain: string): boolean {
