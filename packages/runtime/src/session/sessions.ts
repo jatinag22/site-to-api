@@ -162,6 +162,53 @@ export function browserSession(options: BrowserSessionOptions): BrowserSession {
   }
 }
 
+/**
+ * Joins several sessions into one, for sites that need more than one kind of credential: for
+ * example bot-protection cookies from a real browser **and** a bearer token from a login call.
+ *
+ * - `prepare` runs every session in order, each on the request the previous one returned.
+ * - `onAuthFailure` asks every session in order (so each can refresh what it holds for that
+ *   status) and re-sends the request once when any of them asked for it.
+ * - The jar is the one the sessions share. Sessions with different jars are rejected, because a
+ *   request can only be sent from one jar.
+ *
+ * ```ts
+ * const jar = new CookieJar()
+ * const session = combineSessions(
+ *   browserSession({ jar, bootstrap }),
+ *   tokenSession({ getToken: () => token }),
+ * )
+ * const fetch = createFetch({ session })
+ * ```
+ */
+export function combineSessions(...sessions: Session[]): Session {
+  if (sessions.length === 0)
+    throw new TypeError('combineSessions: pass at least one session')
+  const jars = new Set(sessions.flatMap(session => session.jar === undefined
+    ? []
+    : [session.jar]))
+  if (jars.size > 1)
+    throw new TypeError('combineSessions: the sessions use different cookie jars; create them with the same jar')
+  const [jar] = jars
+  return {
+    jar,
+    async prepare(request) {
+      let current = request
+      for (const session of sessions)
+        current = await session.prepare(current)
+      return current
+    },
+    async onAuthFailure(response, request) {
+      let retry = false
+      for (const session of sessions) {
+        if (await session.onAuthFailure(response, request))
+          retry = true
+      }
+      return retry
+    },
+  }
+}
+
 function browserCookieOptions(cookie: BrowserCookie): SetCookieOptions {
   return {
     domain: cookie.domain,

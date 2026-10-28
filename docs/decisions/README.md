@@ -31,4 +31,5 @@ or `Proposed`.
 | [0021](0021-path-token-tiers-and-cookie-origins.md) | Three tiers of path segments; cookie origins from evidence | Accepted |
 | [0022](0022-binding-scope-by-security-origin.md) | Judge instrumentation calls by the caller's security origin | Accepted |
 | [0023](0023-websocket-channels.md) | WebSocket channels in `build`, as AsyncAPI 3.0 | Accepted |
+| [0024](0024-client-usability.md) | Generated client: request validation, `.js` imports, auth and HTML values | Accepted |
 | [0025](0025-sticky-build-options-and-client-state.md) | Sticky build options in `build.json`; `gen` rewrites the client state in place | Accepted |

@@ -5,14 +5,17 @@
  */
 import type { Analysis, ResolvedConfig } from '../packages/site-to-api/src'
 import type { FixtureSite } from './fixture-site/server'
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { cp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import process from 'node:process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 import { join, relative } from 'pathe'
 import { chromium } from 'playwright'
 import ts from 'typescript'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { ConfigSchema } from '../packages/site-to-api/src'
 import { buildHandoff } from '../packages/site-to-api/src/build'
 import { runCapture } from '../packages/site-to-api/src/capture'
@@ -21,6 +24,7 @@ import { run as runCli } from '../packages/site-to-api/src/cli/program'
 import { probeOperations, writeProbeReport } from '../packages/site-to-api/src/probe'
 import { startFixtureSite } from './fixture-site/server'
 
+const execFileAsync = promisify(execFile)
 const here = fileURLToPath(new URL('.', import.meta.url))
 const work = join(here, '.output', 'pipeline')
 const scenarios = ['browse', 'browse-again', 'login'] as const
@@ -41,6 +45,112 @@ async function readAll(dir: string): Promise<Map<string, string>> {
     }
   }
   return result
+}
+
+/** Strict type check of `files`, as a project with the given module resolution would run it. */
+function typeCheck(files: string[], resolution: 'bundler' | 'nodenext'): string[] {
+  const program = ts.createProgram(files, {
+    strict: true,
+    noEmit: true,
+    target: ts.ScriptTarget.ES2022,
+    module: resolution === 'bundler'
+      ? ts.ModuleKind.ESNext
+      : ts.ModuleKind.NodeNext,
+    moduleResolution: resolution === 'bundler'
+      ? ts.ModuleResolutionKind.Bundler
+      : ts.ModuleResolutionKind.NodeNext,
+    skipLibCheck: true,
+    lib: ['lib.es2023.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
+    types: [],
+  })
+  return ts.getPreEmitDiagnostics(program).map(d => `${d.file
+    ? relative(outDir, d.file.fileName)
+    : ''}: ${ts.flattenDiagnosticMessageText(d.messageText, '\n')}`)
+}
+
+function clientSources(): string[] {
+  return [
+    ...files.keys(),
+  ].filter(name => name.startsWith('client/') && name.endsWith('.ts')).map(name => join(outDir, name))
+}
+
+/**
+ * A first-time user's login, written against the generated client only: the CSRF token read from
+ * the login page, the password encrypted the way the page does it, the bearer token from the
+ * login response, and the browser's bot-protection cookies, sent together.
+ */
+function loginDriver(): string {
+  return [
+    `import type { BrowserCookie } from './client/index.js'`,
+    `import { browserSession, combineSessions, CookieJar, createSiteClient, extractCsrfTokenFromGetLogin, tokenSession } from './client/index.js'`,
+    `import { encryptPassword } from '${relative(outDir, join(here, 'fixture-site', 'app', 'src', 'auth', 'crypto.js'))}'`,
+    ``,
+    `const host = ${JSON.stringify(host)}`,
+    ``,
+    `export async function run(origin: string, bootstrap: () => Promise<BrowserCookie[]>) {`,
+    `  const jar = new CookieJar()`,
+    `  const browser = browserSession({ jar, bootstrap })`,
+    `  let token: string | undefined`,
+    `  const { sdk } = createSiteClient({ host, jar, session: browser, baseUrl: origin, auth: () => token && \`Bearer \${token}\` })`,
+    `  const before = await sdk.getApiOrders({})`,
+    `  const page = await sdk.getLogin({})`,
+    `  const csrf = typeof page.data === 'string' ? extractCsrfTokenFromGetLogin(page.data) : null`,
+    `  if (csrf === null)`,
+    `    throw new Error('no CSRF token on the login page')`,
+    `  const key = await sdk.getApiAuthKey({})`,
+    `  if (key.data === undefined)`,
+    `    throw new Error(\`no login key: \${String(key.error)}\`)`,
+    `  const login = await sdk.postApiAuthLogin({`,
+    `    body: { username: 'demo', password: await encryptPassword('demo-password', key.data.publicKey) },`,
+    `    headers: { 'x-csrf-token': csrf },`,
+    `  })`,
+    `  if (login.data === undefined)`,
+    `    throw new Error(\`login failed: \${String(login.error)}\`)`,
+    `  token = login.data.token`,
+    `  const orders = await sdk.getApiOrders({})`,
+    `  // The same credentials as one session: the token goes on every request instead.`,
+    `  const combined = createSiteClient({`,
+    `    host,`,
+    `    jar,`,
+    `    baseUrl: origin,`,
+    `    session: combineSessions(browser, tokenSession({ getToken: () => token ?? '' })),`,
+    `  })`,
+    `  const again = await combined.sdk.getApiOrders({})`,
+    `  return {`,
+    `    beforeStatus: before.response?.status ?? 0,`,
+    `    loginStatus: login.response?.status ?? 0,`,
+    `    ordersStatus: orders.response?.status ?? 0,`,
+    `    orders: orders.data?.orders.length ?? 0,`,
+    `    combinedStatus: again.response?.status ?? 0,`,
+    `    combinedOrders: again.data?.orders.length ?? 0,`,
+    `    cookies: jar.all().map(cookie => cookie.name).sort(),`,
+    `  }`,
+    `}`,
+    ``,
+  ].join('\n')
+}
+
+const LoginResultSchema = z.object({
+  beforeStatus: z.number(),
+  loginStatus: z.number(),
+  ordersStatus: z.number(),
+  orders: z.number(),
+  combinedStatus: z.number(),
+  combinedOrders: z.number(),
+  cookies: z.array(z.string()),
+})
+
+/** What `bootstrap` of a browser session returns: the cookies a real browser received. */
+async function browserCookies() {
+  const browser = await chromium.launch()
+  try {
+    const page = await browser.newPage()
+    await page.goto(site.origin, { waitUntil: 'networkidle' })
+    return await page.context().cookies()
+  }
+  finally {
+    await browser.close()
+  }
 }
 
 function operation(method: string, path: string): Analysis['operations'][number] {
@@ -262,22 +372,62 @@ describe('real-time channels', () => {
 })
 
 describe('generated client', () => {
-  it('type-checks in strict mode', () => {
-    const clientFiles = [
-      ...files.keys(),
-    ].filter(name => name.startsWith('client/') && name.endsWith('.ts')).map(name => join(outDir, name))
-    const program = ts.createProgram(clientFiles, {
-      strict: true,
-      noEmit: true,
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.ESNext,
-      moduleResolution: ts.ModuleResolutionKind.Bundler,
-      skipLibCheck: true,
-      lib: ['lib.es2023.d.ts', 'lib.dom.d.ts'],
-    })
-    const diagnostics = ts.getPreEmitDiagnostics(program).map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n'))
-    expect(diagnostics).toEqual([])
+  it('type-checks in strict mode under moduleResolution bundler and nodenext', () => {
+    expect(typeCheck(clientSources(), 'bundler')).toEqual([])
+    // nodenext rejects extensionless relative imports (TS2835); the client uses `.js` throughout.
+    expect(typeCheck(clientSources(), 'nodenext')).toEqual([])
   })
+
+  it('runs under plain node once compiled with nodenext settings', async () => {
+    const compiled = join(work, 'compiled-client')
+    await rm(compiled, { recursive: true, force: true })
+    const program = ts.createProgram(clientSources(), {
+      strict: true,
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.NodeNext,
+      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      skipLibCheck: true,
+      lib: ['lib.es2023.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
+      types: [],
+      rootDir: outDir,
+      outDir: compiled,
+    })
+    const emitted = program.emit()
+    expect(emitted.diagnostics.map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n'))).toEqual([])
+    // Plain node, no loader: the compiled client resolves its own files, the runtime and zod.
+    const script = [
+      `const client = await import(${JSON.stringify(pathToFileURL(join(compiled, 'client', 'index.js')).href)})`,
+      `const { sdk } = client.createSiteClient({ host: ${JSON.stringify(host)}, baseUrl: ${JSON.stringify(site.origin)} })`,
+      `const page = await sdk.getLogin({})`,
+      `console.log(JSON.stringify({ status: page.response.status, csrf: client.extractCsrfTokenFromGetLogin(page.data) !== null }))`,
+    ].join('\n')
+    const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '-e', script], { cwd: work })
+    expect(JSON.parse(stdout)).toEqual({ status: 200, csrf: true })
+  }, 60_000)
+
+  it('logs in through the generated SDK and reads the orders with browser cookies and a bearer token', async () => {
+    const driver = join(outDir, 'login-check.ts')
+    await writeFile(driver, loginDriver())
+    try {
+      // The way a user writes it must type-check, under both module resolutions.
+      expect(typeCheck([driver], 'bundler')).toEqual([])
+      expect(typeCheck([driver], 'nodenext')).toEqual([])
+      const loaded: unknown = await import(pathToFileURL(driver).href)
+      if (typeof loaded !== 'object' || loaded === null || !('run' in loaded) || typeof loaded.run !== 'function')
+        throw new Error('login-check.ts did not export run()')
+      const result = LoginResultSchema.parse(await loaded.run(site.origin, browserCookies))
+      expect(result.beforeStatus).toBe(401)
+      expect(result.loginStatus).toBe(200)
+      expect(result.ordersStatus).toBe(200)
+      expect(result.orders).toBeGreaterThan(0)
+      expect(result.combinedStatus).toBe(200)
+      expect(result.combinedOrders).toBe(result.orders)
+      expect(result.cookies).toEqual(expect.arrayContaining(['_abck', 'bm_sz', 'pm_session']))
+    }
+    finally {
+      await rm(driver, { force: true })
+    }
+  }, 120_000)
 
   it('lets callers use an SDK function without passing the captured constant headers', async () => {
     const usage = join(outDir, 'usage-check.ts')
@@ -288,17 +438,7 @@ describe('generated client', () => {
       '',
     ].join('\n'))
     try {
-      const program = ts.createProgram([usage], {
-        strict: true,
-        noEmit: true,
-        target: ts.ScriptTarget.ES2022,
-        module: ts.ModuleKind.ESNext,
-        moduleResolution: ts.ModuleResolutionKind.Bundler,
-        skipLibCheck: true,
-        lib: ['lib.es2023.d.ts', 'lib.dom.d.ts'],
-      })
-      const diagnostics = ts.getPreEmitDiagnostics(program).map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n'))
-      expect(diagnostics).toEqual([])
+      expect(typeCheck([usage], 'bundler')).toEqual([])
     }
     finally {
       await rm(usage, { force: true })
