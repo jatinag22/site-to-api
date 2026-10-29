@@ -214,18 +214,31 @@ function* htmlCandidates(consumer: Exchange, sent: LocatedValue, variants: reado
 /** Characters that separate list items, parameters and words: `ids=1,2`, `Bearer x`, `a=1&b=2`. */
 const PART_SEPARATOR = /[\s,;=&/|:"']/
 
+/** Joiners in slugs, prefixed ids and file names: `48213377-running-shoe`, `item_48213377`, `48213377.jpg`. */
+const JOINER = /[-_.]/
+const LETTER = /\p{L}/u
+
 /**
- * Whether `part` sits in `whole` as a part of its own. A number must be set off by separators: a
- * timestamp inside `1.1.1793209580.1793209580` or a count inside an id is the same clock or
- * counter, not a copied value.
+ * Whether the character next to a number (`side`) ends it: the edge of the value, a separator, or
+ * a joiner (`-`, `_`, `.`) whose other side (`beyond`) is a letter or the edge, not more digits.
+ */
+function endsNumber(side: string, beyond: string): boolean {
+  if (side === '' || PART_SEPARATOR.test(side))
+    return true
+  return JOINER.test(side) && (beyond === '' || LETTER.test(beyond))
+}
+
+/**
+ * Whether `part` sits in `whole` as a part of its own. A number must be set off from other digit
+ * groups: `48213377` is a part of `order-48213377` and `48213377.jpg`, but a timestamp inside
+ * `1.1.1793209580.1793209580` or a count inside an id is the same clock or counter, not a copy.
  */
 function containsAsPart(whole: string, part: string): boolean {
   if (!INTEGER_TEXT.test(part))
     return true
   for (let index = whole.indexOf(part); index !== -1; index = whole.indexOf(part, index + 1)) {
-    const before = whole.charAt(index - 1)
-    const after = whole.charAt(index + part.length)
-    if ((before === '' || PART_SEPARATOR.test(before)) && (after === '' || PART_SEPARATOR.test(after)))
+    const end = index + part.length
+    if (endsNumber(whole.charAt(index - 1), whole.charAt(index - 2)) && endsNumber(whole.charAt(end), whole.charAt(end + 1)))
       return true
   }
   return false

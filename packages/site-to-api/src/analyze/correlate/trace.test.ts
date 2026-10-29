@@ -213,6 +213,32 @@ describe('traceValues: response producers', () => {
     expect(originAt(trace([copy, call]), call, '{"in":"query","name":"view"}')).toMatchObject({ kind: 'unknown' })
   })
 
+  it('matches a number in a slug, a prefixed id or a file name, but not in a dotted run of numbers', () => {
+    const list = exchange({
+      url: 'https://api.example.test/products',
+      startedAt: 1,
+      responseBody: jsonBody({
+        items: [
+          { id: '48213377' },
+        ],
+      }),
+    })
+    const call = (query: string): ValueTrace['origin'] | undefined => {
+      const consumer = exchange({ url: `https://api.example.test/x?v=${query}`, startedAt: 2 })
+      return originAt(trace([list, consumer]), consumer, '{"in":"query","name":"v"}')
+    }
+    for (const value of [
+      '48213377-running-shoe',
+      'order-48213377',
+      'item_48213377',
+      '48213377.jpg',
+      '/products/48213377-running-shoe',
+    ])
+      expect(call(encodeURIComponent(value)), value).toMatchObject({ kind: 'response', transform: 'substring' })
+    for (const value of ['1.1.48213377.1793209581', '48213377.5', 'x9-48213377'])
+      expect(call(encodeURIComponent(value)), value).toMatchObject({ kind: 'unknown' })
+  })
+
   it('never takes a value from a cookie header a response reflects', () => {
     // A bot-protection page echoes the request's cookies back in a `cookie` response header.
     const blocked = exchange({
