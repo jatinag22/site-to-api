@@ -12,6 +12,7 @@ import { cookieLines } from '../cookies'
 import { code, text } from '../escape'
 import { specFileName } from '../openapi/write'
 import { plural } from './context'
+import { tokenSources } from './token-source'
 
 const REQUIREMENT_TEXT: Record<SessionRequirement['requires'], string> = {
   none: 'plain HTTP works; no session needed',
@@ -28,6 +29,30 @@ const SHORT_REQUIREMENT: Record<SessionRequirement['requires'], string> = {
   token: 'plain HTTP with a bearer token from a login step',
   browser: 'a real browser sets up the session',
   unknown: 'session needs unknown',
+}
+
+/** Token sources per analysis: every host line asks, and the flows only need reading once. */
+const tokenSourceCache = new WeakMap<Analysis, ReturnType<typeof tokenSources>>()
+
+/**
+ * The token verdict when the flows show which step hands the token out: an anonymous token from
+ * a token endpoint is not a login (`full` for `hosts/<host>.md`, otherwise the `AGENT.md` line).
+ */
+function tokenText(entry: SessionRequirement, analysis: Analysis, full: boolean): string | null {
+  if (entry.requires !== 'token')
+    return null
+  const cached = tokenSourceCache.get(analysis) ?? tokenSources(analysis)
+  tokenSourceCache.set(analysis, cached)
+  const source = cached.get(entry.host)
+  if (!source)
+    return null
+  const name = code(source.operationId)
+  if (source.anonymous) {
+    return full
+      ? `plain HTTP with an anonymous bearer token: call ${name} (no login needed) and send its token as \`Authorization: Bearer <token>\``
+      : `plain HTTP with an anonymous token from ${name}`
+  }
+  return `plain HTTP with a bearer token from the login step ${name}`
 }
 
 /** `getRoot`, or `getRoot` on `api.site.com` when another host has an operation with the same id. */
@@ -91,7 +116,7 @@ function neededHeaders(tested: string[][]): string[] {
 }
 
 /** The Needs line: the verdict, headers probe found necessary, and where the verdict comes from. */
-function needsLine(entry: SessionRequirement, headers: string[], context: AgentGuideContext): string {
+function needsLine(entry: SessionRequirement, headers: string[], context: AgentGuideContext, analysis: Analysis): string {
   const withHeaders = headers.length > 0
     ? `; requests need ${plural(headers.length, 'header', 'headers')} ${headers.map(code).join(', ')}`
     : ''
@@ -103,7 +128,7 @@ function needsLine(entry: SessionRequirement, headers: string[], context: AgentG
     : entry.requires === 'none' && headers.length > 0
       // Headers are a need of their own: "no session needed" would undersell them.
       ? 'plain HTTP works'
-      : REQUIREMENT_TEXT[entry.requires]
+      : tokenText(entry, analysis, true) ?? REQUIREMENT_TEXT[entry.requires]
   return `- Needs: ${needs}${withHeaders} (${verdictSource(entry, context.probe)}).`
 }
 
@@ -136,7 +161,7 @@ export function sessionLines(entry: SessionRequirement, analysis: Analysis, cont
   const lines: string[] = []
   if (pageOnly)
     lines.push('- Serves pages only: no API calls to this host were captured.')
-  lines.push(needsLine(entry, headers, context))
+  lines.push(needsLine(entry, headers, context, analysis))
   // Probe measured that plain requests work: say so instead of contradicting the verdict.
   // `probed` is false whenever a probed call on the host failed, so this never claims too much.
   const answered = entry.probed && entry.requires !== 'browser'
@@ -177,7 +202,7 @@ function shortFinding(finding: SessionRequirement['botProtection'][number]): str
 export function shortVerdict(entry: SessionRequirement | null, analysis: Analysis, context: AgentGuideContext): string {
   if (entry === null)
     return 'no session requirements recorded'
-  const parts = [`${SHORT_REQUIREMENT[entry.requires]} (${shortSource(entry, context.probe)})`]
+  const parts = [`${tokenText(entry, analysis, false) ?? SHORT_REQUIREMENT[entry.requires]} (${shortSource(entry, context.probe)})`]
   if (entry.botProtection.length > 0)
     parts.push(`bot protection: ${entry.botProtection.map(shortFinding).join(', ')}`)
   if (servedOnlyChallenges(entry.host, analysis))
