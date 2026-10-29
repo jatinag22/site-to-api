@@ -174,7 +174,7 @@ export interface WebSocketChannel {
   sentFrom: SourceRef | null
   messages: ChannelMessage[]
   /**
-   * What the client sends to set up the connection (decision 0029), in order: the most common
+   * What the client sends to set up the connection (decision 0030), in order: the most common
    * setup sequence across connections, with the role of each message and a redacted example.
    */
   handshake: Array<{ message: string, role: HandshakeRole, example: unknown }>

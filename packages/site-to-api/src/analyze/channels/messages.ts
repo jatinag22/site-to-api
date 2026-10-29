@@ -112,7 +112,7 @@ function byStrength(a: Candidate, b: Candidate): number {
 }
 
 /**
- * The field that tells this direction's JSON messages apart (decision 0029).
+ * The field that tells this direction's JSON messages apart (decision 0030).
  *
  * Candidates are string fields at the top level or one object down (`data.e`) that hold a
  * non-empty string in at least {@link MIN_COVERAGE} of the messages, with at most

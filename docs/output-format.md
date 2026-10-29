@@ -101,7 +101,7 @@ are written from the client's point of view: `send` is client → server, `recei
 - Messages are grouped per direction by a discriminator: a string field, top level or one object
   down (`type`, `stream`, `data.e`), on at least 80% of that direction's JSON messages, with at
   most 32 values (`type`, `event`, `op`, `action`, `method`, ... preferred on ties; decision
-  0029). Messages without it form one more group. Each group is a message with `name` = the
+  0030). Messages without it form one more group. Each group is a message with `name` = the
   discriminator value, a JSON Schema `payload` with the discriminator pinned as `const`, and
   redacted examples; its summary says when the schema came from the first 1000 frames only.
   Non-JSON text frames are one `text/plain`
@@ -109,7 +109,7 @@ are written from the client's point of view: `send` is client → server, `recei
 - Extensions:
   - `x-site-to-api-handshake` (channel): the messages that set up the connection, in order, each
     with its `role` (`init`, `auth`, `subscribe`, or `other` when no message type was recognised
-    and the first message the client sent is listed) and a redacted example (decision 0029)
+    and the first message the client sent is listed) and a redacted example (decision 0030)
   - `x-site-to-api-cookies` (channel): `{ status: sent | none | unknown, names }` from the HTTP
     upgrade request; `unknown` when the HAR has none
   - `x-site-to-api-connections` (channel), `x-site-to-api-count` (message): how often each was seen

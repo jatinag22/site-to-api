@@ -1,6 +1,6 @@
 /**
  * What a client sends to set up a connection: authentication and subscriptions, told apart from
- * data, keep-alives and teardown by the message type's name (decision 0029).
+ * data, keep-alives and teardown by the message type's name (decision 0030).
  */
 import type { ChannelMessage, HandshakeRole, Redactor, WebSocketChannel } from '../../model'
 import type { Connection } from './connections'

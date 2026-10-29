@@ -1,4 +1,4 @@
-# 0029 WebSocket setup messages by role; discriminators chosen by how well they group
+# 0030 WebSocket setup messages by role; discriminators chosen by how well they group
 
 Status: Accepted (2026-10-29). Refines 0023.
 

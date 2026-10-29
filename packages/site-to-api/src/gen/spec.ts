@@ -142,7 +142,7 @@ export const AsyncApiSummarySchema = z.object({
     })).default({}),
     'x-site-to-api-handshake': z.array(z.object({
       message: z.string(),
-      // Absent in documents written before roles existed (decision 0029).
+      // Absent in documents written before roles existed (decision 0030).
       role: z.enum(['init', 'auth', 'subscribe', 'other']).optional(),
       example: z.unknown(),
     })).default([]),
