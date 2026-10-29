@@ -6,7 +6,7 @@
  */
 import type { AnyNode } from 'domhandler'
 import type { Element } from './dom'
-import { attr, classes, cssIdent, cssString, nthOfType, parentElement, select } from './dom'
+import { attr, classes, cssIdent, cssString, nthOfType, parentElement, select, tagSelector } from './dom'
 
 /** Attributes whose value names the element rather than carrying data. */
 const NAMING_ATTRIBUTES = [
@@ -85,7 +85,7 @@ function matchesOnly(selector: string, element: Element, root: AnyNode): boolean
 
 /** Selectors that use only the element's own attributes, most stable first. */
 function ownCandidates(element: Element): string[] {
-  const tag = element.name
+  const tag = tagSelector(element)
   const out: string[] = []
   const id = attr(element, 'id')
   if (id !== null && isStableId(id))
@@ -113,7 +113,7 @@ function ownCandidates(element: Element): string[] {
 }
 
 function step(element: Element): string {
-  return `${element.name}:nth-of-type(${nthOfType(element)})`
+  return `${tagSelector(element)}:nth-of-type(${nthOfType(element)})`
 }
 
 /** `ancestor > a:nth-of-type(1) > b:nth-of-type(2)` from an ancestor down to the element. */
