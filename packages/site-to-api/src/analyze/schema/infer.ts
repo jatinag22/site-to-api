@@ -308,12 +308,15 @@ function add(node: Node, value: unknown, sample: Visit, depth: number): void {
 function isEnumWorthy(node: Node, values: string[], name: string | null, options: InferOptions): boolean {
   if (node.stringOverflow || values.length < 2)
     return false
+  // Values that differ across most samples are data, not a closed set: each distinct value must
+  // have been seen at least twice on average.
   if (node.stringCount < ENUM_MIN_SAMPLES || node.stringCount < values.length * ENUM_MIN_SAMPLES_PER_VALUE)
     return false
   if (!values.every(value => value.length > 0 && value.length <= ENUM_MAX_LENGTH && !/\s/.test(value)))
     return false
-  // Digit codes (`storeCode`, `postalCode`) are open-ended: the next store has another number.
-  if (values.every(value => /^\d+$/.test(value)))
+  // Numbers are open-ended: the next store has another code, the next tick another price. A
+  // value that reads as a number (`1234`, `-0.51`, `22749.75`) never makes an enum.
+  if (values.some(value => /^[+-]?\d+(?:\.\d+)?$/.test(value)))
     return false
   if (!isCodeName(name) && (isIdentityName(name) || !values.every(isCodeToken)))
     return false
@@ -368,6 +371,10 @@ function finalize(node: Node, name: string | null, options: InferOptions, totalS
       : list,
   }
   Object.assign(schema, ...nonNull.map(type => keywordsFor(node, type, name, options, totalSessions)))
+  // `enum` constrains every value, whatever its type: strings seen next to numbers (a chart row
+  // `[1793178059000, 22634.3, "PO", 0]`) would make every number "outside the enum".
+  if (nonNull.some(type => type !== 'string'))
+    delete schema.enum
   if (schema.enum && list.includes('null'))
     schema.enum.push(null)
   if (!node.hasContainer && node.scalars.size === 1 && totalSessions >= 2 && node.sessions.size >= totalSessions)

@@ -404,3 +404,89 @@ describe('enums of digit strings', () => {
     expect(letters.enum).toEqual(['IN', 'US'])
   })
 })
+
+describe('enums never come from live data', () => {
+  it('does not put an enum on strings that sit next to numbers in a tuple', () => {
+    // A chart row as NSE sends it: timestamp, price, flag, change, percent.
+    const rows = [
+      [
+        1793178000000,
+        22749.75,
+        'PO',
+        0,
+        -0.01,
+      ],
+      [
+        1793178059000,
+        22634.3,
+        'PO',
+        -115.45,
+        -0.51,
+      ],
+      [
+        1793178119000,
+        22640.1,
+        'NM',
+        -109.65,
+        -0.48,
+      ],
+      [
+        1793178179000,
+        22641.2,
+        'NM',
+        -108.55,
+        -0.48,
+      ],
+      [
+        1793178239000,
+        22650.9,
+        'IC',
+        -98.85,
+        -0.43,
+      ],
+      [
+        1793178299000,
+        22655.4,
+        'IC',
+        -94.35,
+        -0.41,
+      ],
+    ]
+    const schema = inferSchema(s1({ data: rows }))
+    expect(schema.properties?.data?.items?.items).toEqual({
+      type: ['string', 'number'],
+    })
+    // The live rows (other prices, other flags) must validate against the inferred schema.
+    expect(JSON.stringify(schema)).not.toContain('enum')
+  })
+
+  it('does not make enums of numeric-looking strings, signed or with decimals', () => {
+    for (const values of [
+      ['12.50', '12.50', '99.00', '99.00'],
+      ['-0.51', '-0.51', '0.4', '0.4'],
+      ['1', '1', '2', '2'],
+      ['+5', '+5', 'IN', 'IN'],
+    ])
+      expect(inferStringSchema(values.map(value => ({ value, sessionId: 's1' })), { name: 'status' })).not.toHaveProperty('enum')
+  })
+
+  it('does not make an enum of values that differ across most samples', () => {
+    const prices = [
+      'A1',
+      'B2',
+      'C3',
+      'D4',
+      'E5',
+      'F6',
+      'G7',
+      'A1',
+    ]
+    expect(inferStringSchema(prices.map(value => ({ value, sessionId: 's1' })), { name: 'status' })).toEqual({ type: 'string' })
+  })
+
+  it('keeps real enums: status words, letter codes and code tokens', () => {
+    expect(inferStringSchema(['Active', 'Closed', 'Active', 'Closed'].map(value => ({ value, sessionId: 's1' })), { name: 'status' }).enum).toEqual(['Active', 'Closed'])
+    expect(inferStringSchema(['EQ', 'T0', 'EQ', 'T0'].map(value => ({ value, sessionId: 's1' })), { name: 'series' }).enum).toEqual(['EQ', 'T0'])
+    expect(inferSchema(s1('IN_STOCK', 'SOLD_OUT', 'IN_STOCK', 'SOLD_OUT')).enum).toEqual(['IN_STOCK', 'SOLD_OUT'])
+  })
+})
