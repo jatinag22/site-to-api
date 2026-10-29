@@ -24,6 +24,11 @@ const lookup = fakeLookup({
   'static.corp.example': ['10.2.0.2'],
   'printer.lan.example': ['10.3.0.1'],
   'int.evil.example': ['169.254.169.254'],
+  // Mixed answers: a public and a private address for one name.
+  'www.evil.com': ['93.184.216.34', '10.0.0.5'],
+  'meta.evil.com': ['169.254.169.254'],
+  'evil.corp': ['93.184.216.35', '10.0.0.6'],
+  'meta.corp': ['169.254.169.254'],
   'app.intranet.example': ['10.4.0.1'],
 })
 
@@ -285,5 +290,33 @@ describe('localPageOf', () => {
     const page = await localPageOf('http://app.intranet.example/', lookup)
     expect(page).not.toBeNull()
     expect(await sourceMapRefusal(new URL('http://int.evil.example/x.map'), new URL('http://app.intranet.example/a.js'), page, lookup)).toMatch(/not the script's own origin or a host of the page's own site/)
+  })
+})
+
+describe('localPageOf with a mixed DNS answer', () => {
+  const metadata = /169\.254\.169\.254|not the script's own origin|page is on a public host/
+
+  it('counts a page whose name also resolves to a private address as public', async () => {
+    const page = await localPageOf('https://www.evil.com/', lookup)
+    expect(page).toBeNull()
+    expect(await sourceMapRefusal(new URL('http://meta.evil.com/latest/meta-data/'), new URL('https://www.evil.com/app.js'), page, lookup)).toMatch(metadata)
+  })
+
+  it('does the same for a two-label host', async () => {
+    const page = await localPageOf('http://evil.corp/', lookup)
+    expect(page).toBeNull()
+    expect(await sourceMapRefusal(new URL('http://meta.corp/x.map'), new URL('http://evil.corp/app.js'), page, lookup)).toMatch(metadata)
+  })
+
+  it('refuses a same-origin map on a mixed host when the page is public', async () => {
+    const page = await localPageOf('https://www.evil.com/', lookup)
+    expect(await sourceMapRefusal(new URL('https://www.evil.com/app.js.map'), new URL('https://www.evil.com/app.js'), page, lookup)).toMatch(/page is on a public host/)
+  })
+
+  it('goes by the address the browser loaded the page from when it is known', async () => {
+    expect(await localPageOf('https://www.evil.com/', lookup, '93.184.216.34')).toBeNull()
+    expect(await localPageOf('http://app.corp/home', lookup, '10.1.0.10')).toEqual(new URL('http://app.corp/home'))
+    // A private name served from a public address is a public page.
+    expect(await localPageOf('http://app.corp/home', lookup, '93.184.216.34')).toBeNull()
   })
 })

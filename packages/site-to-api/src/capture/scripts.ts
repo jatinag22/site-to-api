@@ -171,6 +171,10 @@ function errorText(error: unknown): string {
 }
 
 /** URL of the top frame that loaded a script, or `null` for worker scripts and closed pages. */
+function withoutHash(url: string): string {
+  return url.split('#')[0] ?? url
+}
+
 function pageUrlOf(response: Response): string | null {
   try {
     return response.frame().page().mainFrame().url()
@@ -192,6 +196,8 @@ export class ScriptCollector {
   private readonly pending = new Set<Promise<void>>()
   readonly scripts: ScriptRecord[] = []
   private readonly log = new WarningLog()
+  /** Address each page document was loaded from, by URL without its fragment. */
+  private readonly documentAddresses = new Map<string, Promise<string | null>>()
   private readonly lookup: Lookup
 
   constructor(
@@ -215,9 +221,14 @@ export class ScriptCollector {
     this.log.addGrouped(key, url, single, summary)
   }
 
-  /** Starts processing a response if it is a script worth keeping. */
+  /** Starts processing a response if it is a script worth keeping; notes where documents came from. */
   onResponse(response: Response): void {
-    if (response.request().resourceType() !== 'script')
+    const resourceType = response.request().resourceType()
+    if (resourceType === 'document') {
+      this.documentAddresses.set(withoutHash(response.url()), response.serverAddr().then(address => address?.ipAddress ?? null, () => null))
+      return
+    }
+    if (resourceType !== 'script')
       return
     const url = response.url()
     let parsed: URL
@@ -271,7 +282,10 @@ export class ScriptCollector {
 
   /** The page URL when the page is on a non-public host (see {@link localPageOf}). */
   private async localPage(pageUrl: string | null): Promise<URL | null> {
-    return await localPageOf(pageUrl, this.lookup)
+    const connected = pageUrl === null
+      ? null
+      : await (this.documentAddresses.get(withoutHash(pageUrl)) ?? Promise.resolve(null))
+    return await localPageOf(pageUrl, this.lookup, connected)
   }
 
   private async findSourceMap(script: ScriptOrigin, headers: Record<string, string>, body: string): Promise<FoundMap | null> {

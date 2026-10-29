@@ -218,10 +218,15 @@ async function hostStatus(hostname: string, lookup: Lookup): Promise<HostStatus>
 
 /**
  * The page URL when the page is on a non-public host, which earns it the intranet allowances of
- * {@link sourceMapRefusal}; otherwise null. A page whose host does not resolve is not known to be
- * private, so it counts as public: the safe side (decision 0019).
+ * {@link sourceMapRefusal}; otherwise null, the safe side (decision 0019).
+ *
+ * The page is judged by `connectedAddress`, the address the browser loaded the document from,
+ * when it is known: a name can resolve to public and private addresses at once, and only the one
+ * used tells which network the page came from. Without it, the page is local only when its name
+ * is a local one or every address it resolves to is non-public; a mixed answer, no answer or a
+ * failed lookup make it public.
  */
-export async function localPageOf(pageUrl: string | null, lookup: Lookup = systemLookup): Promise<URL | null> {
+export async function localPageOf(pageUrl: string | null, lookup: Lookup = systemLookup, connectedAddress: string | null = null): Promise<URL | null> {
   if (pageUrl === null)
     return null
   let parsed: URL
@@ -233,9 +238,27 @@ export async function localPageOf(pageUrl: string | null, lookup: Lookup = syste
   }
   if (!/^https?:$/.test(parsed.protocol))
     return null
-  return (await hostStatus(parsed.hostname, lookup)).kind === 'non-public'
+  return await isPrivatePage(parsed.hostname, lookup, connectedAddress)
     ? parsed
     : null
+}
+
+async function isPrivatePage(hostname: string, lookup: Lookup, connectedAddress: string | null): Promise<boolean> {
+  if (connectedAddress !== null && isIP(connectedAddress) !== 0)
+    return !isPublicAddress(connectedAddress)
+  const host = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '')
+  if (isIP(host) !== 0)
+    return !isPublicAddress(host)
+  if (LOCAL_NAME.test(host) || !host.includes('.'))
+    return true
+  let addresses: string[] = []
+  try {
+    addresses = await lookup(host)
+  }
+  catch {
+    return false
+  }
+  return addresses.length > 0 && addresses.every(address => !isPublicAddress(address))
 }
 
 /**
