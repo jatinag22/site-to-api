@@ -5,7 +5,7 @@
  * selector that finds the same structure in all samples.
  */
 import type { Document, Element } from './dom'
-import { childElements, contentElements, cssIdent, cssString, nthChild, select, selectFirst, text } from './dom'
+import { childElements, contentElements, cssIdent, cssString, nthChild, select, selectFirst, tagSelector, text } from './dom'
 import { stableClasses, uniqueSelector } from './selector'
 
 export interface Group {
@@ -57,6 +57,11 @@ const NOT_COMPANIONS = new Set([
 
 /** A record spread over more siblings than this is a page section, not a record. */
 const MAX_COMPANIONS = 3
+
+/** `.a.b` for the element's stable classes, sorted as in {@link signature}. */
+function classCompound(element: Element): string {
+  return stableClasses(element).sort().map(name => `.${cssIdent(name)}`).join('')
+}
 
 export function signature(element: Element): string {
   return [
@@ -166,10 +171,9 @@ function push(map: Map<string, Element[]>, key: string, element: Element): void 
 function siblingKinds(parent: Element): string[] {
   const byKind = new Map<string, Element[]>()
   for (const child of childElements(parent).filter(element => !NOT_RECORDS.has(element.name))) {
-    const [tag, ...names] = signature(child).split('.')
-    push(byKind, `${tag}${names.map(name => `.${cssIdent(name)}`).join('')}`, child)
+    push(byKind, `${tagSelector(child)}${classCompound(child)}`, child)
     for (const marker of markers(child))
-      push(byKind, `${child.name}${marker}`, child)
+      push(byKind, `${tagSelector(child)}${marker}`, child)
   }
   return [
     ...byKind,
@@ -258,7 +262,7 @@ function dropsContent(children: Element[], indexes: number[], span: number): boo
 }
 
 /** The spanning group anchored on the children at `indexes` of `parent`, or `null`. */
-function spanningGroup(parent: Element, sig: string, indexes: number[], samples: Document[]): Group | null {
+function spanningGroup(parent: Element, indexes: number[], samples: Document[]): Group | null {
   const [first] = samples
   const children = childElements(parent)
   // A spacer row repeats too, but a record starts with content.
@@ -278,9 +282,9 @@ function spanningGroup(parent: Element, sig: string, indexes: number[], samples:
     : uniqueSelector(parent, first, candidate => samples.every(sample => select(candidate, sample).length === 1))
   if (tags === null || parentSelector === null)
     return null
-  const [tag, ...names] = sig.split('.')
-  const compound = names.map(name => `.${cssIdent(name)}`).join('')
-  const selector = `${parentSelector} > ${tag}${compound}`
+  const anchor = children[indexes[0] ?? 0] ?? parent
+  const compound = classCompound(anchor)
+  const selector = `${parentSelector} > ${tagSelector(anchor)}${compound}`
   if (!samples.every(sample => select(selector, sample).length > 0))
     return null
   return {
@@ -314,8 +318,8 @@ export function spanningGroups(samples: Document[]): Group[] {
         index,
       ])
     })
-    for (const [sig, indexes] of bySignature) {
-      const group = spanningGroup(parent, sig, indexes, samples)
+    for (const indexes of bySignature.values()) {
+      const group = spanningGroup(parent, indexes, samples)
       if (group)
         groups.set(group.selector, group)
     }

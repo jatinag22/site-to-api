@@ -6,6 +6,7 @@
 import type { Analysis, ComputedValue, ValueOrigin } from '../../model'
 import type { StepResolver } from '../steps'
 import { code, text } from '../escape'
+import { computedTier } from './importance'
 import { operationName } from './session'
 import { describeSource } from './source-ref'
 
@@ -135,12 +136,18 @@ const EVIDENCE_ORDER: Record<ComputedValue['evidence'], number> = {
 }
 
 /**
- * Computed values, most certain first: a hooked crypto call before a traced source line before a
- * bare stack. Stable, so values of equal evidence keep the order of `flows.json`.
+ * Computed values, most useful first: those feeding login, token and session calls, then the
+ * site's own API, then telemetry and analytics (see {@link computedTier}); within a tier the most
+ * certain first, a hooked crypto call before a traced source line before a bare stack. Stable, so
+ * values of equal rank keep the order of `flows.json`.
  */
-export function rankedComputedValues(values: readonly ComputedValue[]): ComputedValue[] {
+export function rankedComputedValues(values: readonly ComputedValue[], analysis: Analysis, resolver: StepResolver): ComputedValue[] {
   return values
-    .map((value, index) => ({ value, index }))
-    .sort((a, b) => EVIDENCE_ORDER[a.value.evidence] - EVIDENCE_ORDER[b.value.evidence] || a.index - b.index)
+    .map((value, index) => ({
+      value,
+      index,
+      tier: computedTier(value, analysis, resolver),
+    }))
+    .sort((a, b) => a.tier - b.tier || EVIDENCE_ORDER[a.value.evidence] - EVIDENCE_ORDER[b.value.evidence] || a.index - b.index)
     .map(({ value }) => value)
 }

@@ -1,8 +1,9 @@
-import type { Analysis, Flow } from '../../model'
+import type { Analysis, ComputedValue, Flow, Operation } from '../../model'
 import { describe, expect, it } from 'vitest'
 import { exchange } from '../../../test/helpers'
 import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { createStepResolver } from '../steps'
+import { rankedComputedValues } from './computed'
 import { rankFlows, rankHosts } from './importance'
 
 function flow(id: string, init: Partial<Flow> = {}): Flow {
@@ -124,5 +125,49 @@ describe('rankHosts', () => {
   it('counts every host as the site\'s own when no page was captured', () => {
     const analysis: Analysis = twoHostAnalysis()
     expect(rankHosts(analysis, []).every(entry => entry.role === 'first-party')).toBe(true)
+  })
+})
+
+describe('rankedComputedValues', () => {
+  const operation = (operationId: string, path: string): Operation => ({
+    ...twoHostAnalysis().operations[0]!,
+    operationId,
+    host: 'open.music.test',
+    path,
+  })
+  const computed = (id: string, operationId: string, input: string, evidence: ComputedValue['evidence'] = 'transform-hook'): ComputedValue => ({
+    id,
+    operationId,
+    input,
+    producedBy: null,
+    calledFrom: null,
+    api: 'btoa',
+    details: null,
+    uses: [],
+    evidence,
+  })
+
+  it('puts values for token and login calls first and telemetry last, however many telemetry values come first', () => {
+    const analysis: Analysis = twoHostAnalysis()
+    analysis.operations = [
+      operation('postEvents', '/gabo-receiver-service/public/v3/events'),
+      operation('getApiToken', '/api/token'),
+      operation('queryArtist', '/pathfinder/v2/query'),
+      operation('postLogin', '/account/sign-in'),
+    ]
+    analysis.flows.computedValues = [
+      ...Array.from({ length: 12 }, (_, index) => computed(`events-${index}`, 'postEvents', `body./events/${index}/sequence_id`)),
+      computed('artist-hash', 'queryArtist', 'body./extensions/hash'),
+      computed('token-totp', 'getApiToken', 'query.totp', 'source-trace'),
+      computed('login-password', 'postLogin', 'body./password'),
+    ]
+    const ranked = rankedComputedValues(analysis.flows.computedValues, analysis, createStepResolver(analysis.operations, analysis.flows)).map(value => value.id)
+    expect(ranked.slice(0, 4)).toEqual([
+      'login-password',
+      'token-totp',
+      'artist-hash',
+      'events-0',
+    ])
+    expect(ranked.at(-1)).toBe('events-11')
   })
 })

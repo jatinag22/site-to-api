@@ -51,4 +51,5 @@ or `Proposed`.
 | [0041](0041-compact-agent-md-and-host-files.md) | A short `AGENT.md` index and one `hosts/<host>.md` per host (refines 0011) | Accepted |
 | [0042](0042-secret-object-keys.md) | Secret and personal object keys: maps in schemas, shapes in examples (refines 0004, 0015) | Accepted |
 | [0044](0044-check-api-drift.md) | `check` replays safe requests and compares the answers with the specs to detect API drift (builds on 0012, 0036) | Accepted |
-| [0046](0046-real-site-verdicts-and-first-party-hosts.md) | Verdicts follow tested calls, trailing slugs, first-party hosts and build assets (refines 0033, 0035, 0036) | Accepted |
+| [0045](0045-tracking-identifiers.md) | Visitor, device and client ids are redacted unless constant (refines 0004, 0015) | Accepted |
+| [0046](0046-real-site-verdicts-and-first-party-hosts.md) | Verdicts follow tested calls, trailing slugs, first-party hosts and build assets (refines 0033, 0035, 0036, 0037) | Accepted |

@@ -90,7 +90,7 @@ function json(status: number, body: unknown) {
   })
 }
 
-async function run(operations: Operation[], answers: Record<string, () => Response>, extra: { operationIds?: string[], redactText?: (text: string) => string } = {}) {
+async function run(operations: Operation[], answers: Record<string, () => Response>, extra: { operationIds?: string[], redactText?: (text: string) => string, staleInputs?: ReadonlyMap<string, readonly string[]>, skippedHosts?: string[] } = {}) {
   const site = fakeFetch(answers)
   const report = await checkOperations({
     operations,
@@ -516,5 +516,65 @@ describe('summarizeCheck', () => {
     expect(lines).toContain('  type: $.id integer -> string')
     expect(lines.some(line => line.startsWith('UNREACHABLE GET shop.test/api/down'))).toBe(true)
     expect(lines.some(line => line.includes('(ok)'))).toBe(false)
+  })
+})
+
+describe('stale inputs', () => {
+  it('reports a drift on an operation with a time-based input as unchecked, not drift', async () => {
+    const { report } = await run([
+      op('token'),
+    ], {
+      '/api/token': json(400, { error: 'bad totp' }),
+    }, {
+      staleInputs: new Map([
+        [
+          'token',
+          ['query.totp'],
+        ],
+      ]),
+    })
+    expect(report.operations[0]).toMatchObject({
+      verdict: 'unchecked',
+      added: [],
+      removed: [],
+      typeChanged: [],
+    })
+    expect(report.operations[0]?.note).toContain('query.totp')
+    expect(report.exitCode).toBe(2)
+  })
+
+  it('still reports ok when the replay works anyway, and drift for operations without such inputs', async () => {
+    const stale = new Map([
+      [
+        'token',
+        ['query.totp'],
+      ],
+    ])
+    const { report } = await run([
+      op('token'),
+      op('gone'),
+    ], {
+      '/api/token': json(200, { id: 1, name: 'a' }),
+      '/api/gone': json(404, {}),
+    }, { staleInputs: stale })
+    expect(report.operations.map(entry => [entry.operationId, entry.verdict])).toEqual([
+      ['gone', 'drift'],
+      ['token', 'ok'],
+    ])
+    expect(report.exitCode).toBe(1)
+  })
+})
+
+describe('skipped hosts', () => {
+  it('records the third-party hosts that were left out, sorted, and prints them', async () => {
+    const { report } = await run([
+      op('ok'),
+    ], {
+      '/api/ok': json(200, { id: 1, name: 'a' }),
+    }, {
+      skippedHosts: ['z.ads.test', 'accounts.google.com'],
+    })
+    expect(report.skippedHosts).toEqual(['accounts.google.com', 'z.ads.test'])
+    expect(summarizeCheck(report)).toContain('Third-party hosts not checked (name one with --include to check it): accounts.google.com, z.ads.test.')
   })
 })

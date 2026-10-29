@@ -5,7 +5,7 @@
 import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import type { ClientState } from '../emit/handoff'
-import type { Analysis, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver } from '../model'
+import type { Analysis, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver, ValueTrace } from '../model'
 import type { ProbeReport } from '../model/probe'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
@@ -19,7 +19,7 @@ import { createHtmlLocator, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
 import { createRedactor, probeReportWithRedactedNames, withRedactedNames } from '../analyze/redact'
 import { inferOperationSchemas } from '../analyze/schema'
-import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findSourceEndpoints, isOpaqueFrame, screenSourceRoutes } from '../analyze/source'
+import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findOneTimeCodes, findSourceEndpoints, isOpaqueFrame, screenSourceRoutes } from '../analyze/source'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
 import { writeFlows } from '../emit/flows'
 import { clientGap, handoffStems, writeHandoffDocs } from '../emit/handoff'
@@ -76,23 +76,37 @@ function addExtraction(operations: Operation[], minSamples: number, warnings: st
               { text: exchange.response.body.text, mimeType: response.mimeType },
             ]
           : [])
-      const inferred = samples.length > 0
-        ? inferExtraction(samples, { minSamples })
-        : null
-      if (!inferred)
+      // The pages are site input: markup the analysis cannot handle costs this operation its
+      // extraction spec, never the build.
+      try {
+        const inferred = samples.length > 0
+          ? inferExtraction(samples, { minSamples })
+          : null
+        if (!inferred)
+          return { ...response, extract: null }
+        // Generated clients run the runtime's extract(); make sure it reads the spec the same way.
+        const aligned = alignWithRuntime(inferred.spec, samples.map(sample => sample.text))
+        if (aligned.error !== null)
+          warnings.push(`${operation.operationId}: the inferred record layout was rejected by the runtime's extract() (${aligned.error}); no extraction spec was written.`)
+        return {
+          ...response,
+          extract: aligned.spec
+            ? { ...inferred, spec: aligned.spec }
+            : null,
+        }
+      }
+      catch (error) {
+        warnings.push(`${operation.operationId}: HTML extraction failed on the captured pages (${errorMessage(error)}); no extraction spec was written.`)
         return { ...response, extract: null }
-      // Generated clients run the runtime's extract(); make sure it reads the spec the same way.
-      const aligned = alignWithRuntime(inferred.spec, samples.map(sample => sample.text))
-      if (aligned.error !== null)
-        warnings.push(`${operation.operationId}: the inferred record layout was rejected by the runtime's extract() (${aligned.error}); no extraction spec was written.`)
-      return {
-        ...response,
-        extract: aligned.spec
-          ? { ...inferred, spec: aligned.spec }
-          : null,
       }
     }),
   }))
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : String(error)
 }
 
 function refKey(ref: SourceRef): string {
@@ -179,6 +193,21 @@ function hostsOf(operations: Operation[]): string[] {
   ].sort()
 }
 
+/** Names of fields that sent an untraced 6 to 8 digit value: candidates for a one-time code. */
+function oneTimeCodeFields(traces: readonly ValueTrace[]): Set<string> {
+  const names = new Set<string>()
+  for (const trace of traces) {
+    const { location } = trace
+    if (trace.origin.kind !== 'unknown' || !/^\d{6,8}$/.test(trace.value))
+      continue
+    if (location.in === 'query' || location.in === 'form' || location.in === 'header')
+      names.add(location.name)
+    else if (location.in === 'body')
+      names.add(location.pointer.slice(location.pointer.lastIndexOf('/') + 1).replace(/~1/g, '/').replace(/~0/g, '~'))
+  }
+  return names
+}
+
 interface Analyzed {
   analysis: Analysis
   /** `probe.json` with its entries matched to this build's operations (`alignProbeReport`). */
@@ -205,7 +234,8 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   )
   const sourceRoutes = screened.routes
   const staticStrings = await collectStaticStrings(loaded.sessions)
-  const htmlLocator = createHtmlLocator()
+  const locatorErrors: string[] = []
+  const htmlLocator = createHtmlLocator(error => locatorErrors.push(errorMessage(error)))
 
   // WebSocket frames stand in as exchanges, so the redactor learns secrets sent over a socket and
   // tracing finds where the client's frame values came from (decision 0023).
@@ -255,7 +285,10 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     staticStrings,
     minValueLength: config.build.minTraceValueLength,
   })
+  if (locatorErrors.length > 0)
+    warnings.push(`Value tracing could not read ${locatorErrors.length} HTML page(s) and skipped them (first error: ${locatorErrors[0]}).`)
   const traces = allTraces.filter(trace => !sockets.standIns.has(trace.exchangeId))
+  const oneTimeCodes = await findOneTimeCodes(loaded.sessions, oneTimeCodeFields(traces))
   const flows = buildFlows({
     exchanges,
     operations,
@@ -265,6 +298,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     botProtection: classified.botProtection,
     redactor,
     toolVersion: VERSION,
+    oneTimeCodes,
   })
 
   const channels = buildChannels({
