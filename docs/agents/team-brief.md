@@ -28,12 +28,22 @@ records in `docs/decisions/` that touch your module, and every file in
   cases and every rule your module implements. Use `packages/site-to-api/test/helpers.ts` to build
   `Exchange`s. Tests must be deterministic and must not touch the network except local servers
   your test starts itself.
-- **Never** access real third-party websites, in tests or otherwise. **Never** use any
-  `mcp__claude-in-chrome__*` browser tools. If you need a browser, use Playwright's bundled
-  Chromium headless in tests (`pnpm --filter site-to-api exec playwright install chromium` once).
+- Automated tests **never** access real third-party websites. Manual real-site checks follow
+  `docs/testing.md` exactly (minimized Chrome, read-only, stop at captchas) and only when your
+  brief asks for them. **Never** use any `mcp__claude-in-chrome__*` browser tools. In tests, use
+  Playwright's bundled Chromium (`pnpm --filter site-to-api exec playwright install chromium`).
 - Never write real cookies, tokens or personal data anywhere, including fixtures.
 - No features that defeat or emulate bot protection, captchas, rate limits or access controls,
   and no stealth or fingerprint patching (decision 0008).
+
+## Review and merge
+
+The lead opens the pull request and asks a reviewer who did not write the change to read the
+diff (a security-focused reviewer for redaction, capture trust, decoders of site data, or anything
+that runs code or sends credentials). Findings come back to you: fix each with a test, re-run only
+the affected tests while working, then the full `ci` once and any browser loop once on the final
+state, merged with the latest `main`. The same reviewer re-checks only your new commits; the lead
+merges after CI. See `docs/testing.md` for the testing layers.
 
 ## Finishing
 
@@ -46,7 +56,9 @@ records in `docs/decisions/` that touch your module, and every file in
    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
    Claude-Session: https://claude.ai/code/session_016PsDqjY9ijiJANk2gcbYGS
    ```
-   and sign off with `git commit -s`. Do **not** push; the lead merges.
+   and sign off with `git commit -s`. Push your branch (`git push -u origin <branch>`; the
+   pre-push hook runs `pnpm run ci`, never bypass it). Do **not** open or merge a pull request;
+   the lead does, after review.
 3. Final report (your last message), concise:
    - What you built, file by file (one line each)
    - Public functions with signatures
