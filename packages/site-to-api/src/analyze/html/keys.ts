@@ -38,12 +38,6 @@ export interface RawField {
 const ID_PARAMETER = /(?:^|[?&])(?:id|key|[a-z]+_?id)=$/i
 
 /**
- * `/products/1001-blue-kettle` or `item?id=1001` → an `id` field with pattern
- * `^/products/(\d+)`. The number must end at a path, query or slug boundary: the `2011` of
- * `front?day=2011-03-11` is part of a date, and a parameter not named like an id (`?p=2`) does
- * not make one.
- */
-/**
  * True when no value repeats within one sample. Identical samples (the same page captured
  * twice) repeat every value across samples, which says nothing against a key.
  */
@@ -60,6 +54,12 @@ function uniquePerSample(raw: Array<string | null>, sampleOf: number[]): boolean
   })
 }
 
+/**
+ * `/products/1001-blue-kettle` or `item?id=1001` → an `id` field with pattern
+ * `^/products/(\d+)`. The number must end at a path, query or slug boundary: the `2011` of
+ * `front?day=2011-03-11` is part of a date, and a parameter not named like an id (`?p=2`) does
+ * not make one.
+ */
 export function idFromLinks(field: RawField, sampleOf: number[]): RawField | null {
   const links = field.raw.filter((value): value is string => value !== null)
   if (links.length < 2 || new Set(links).size < 2 || !uniquePerSample(field.raw, sampleOf))

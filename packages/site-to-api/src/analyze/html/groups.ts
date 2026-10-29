@@ -5,7 +5,7 @@
  * selector that finds the same structure in all samples.
  */
 import type { Document, Element } from './dom'
-import { childElements, contentElements, cssIdent, cssString, nthChild, select, selectFirst, text } from './dom'
+import { attr, childElements, contentElements, cssIdent, cssString, nthChild, select, selectFirst, text } from './dom'
 import { stableClasses, uniqueSelector } from './selector'
 
 export interface Group {
@@ -92,6 +92,13 @@ function isKeyValueTable(table: Element): boolean {
   })
 }
 
+/** True when the table mixes data rows of several cells with rows of one cell spanning columns. */
+export function hasHeadingRows(table: Element): boolean {
+  const rows = select('tr', table).map(row => childElements(row).filter(cell => cell.name === 'td'))
+  const heading = rows.filter(cells => cells.length === 1 && Number(attr(cells[0] ?? table, 'colspan') ?? '1') > 1)
+  return heading.length > 0 && rows.filter(cells => cells.length >= 2).length > heading.length
+}
+
 export function tableGroups(samples: Document[]): Group[] {
   const [first] = samples
   if (!first)
@@ -103,10 +110,14 @@ export function tableGroups(samples: Document[]): Group[] {
     const tableSelector = uniqueSelector(table, first, candidate => samples.every(sample => select(candidate, sample).length === 1))
     if (tableSelector === null)
       continue
-    // Rows of tables nested inside this one belong to those tables.
+    // Rows of tables nested inside this one belong to those tables. Rows that are one cell
+    // across the table (`<td colspan="3">Day 1</td>`) head the data rows below them.
+    const row = hasHeadingRows(table)
+      ? 'tr:has(> td + td)'
+      : 'tr:has(> td)'
     const selector = select('table', table).length === 0
-      ? `${tableSelector} tr:has(> td)`
-      : `${tableSelector} > tr:has(> td), ${tableSelector} > tbody > tr:has(> td)`
+      ? `${tableSelector} ${row}`
+      : `${tableSelector} > ${row}, ${tableSelector} > tbody > ${row}`
     if (samples.every(sample => select(selector, sample).length > 0)) {
       groups.push({
         selector,
@@ -129,7 +140,7 @@ const NOT_MARKERS = /^(?:class|id|style|href|src|srcset|alt|title|tabindex|aria-
  * own value (`[data-asin]`). Result cards often differ in layout classes between pages and
  * between ads and organic results; these markers do not.
  */
-function markers(element: Element): string[] {
+export function markers(element: Element): string[] {
   return Object.entries(element.attribs)
     .filter(([name]) => !NOT_MARKERS.test(name) && /^[a-z][\w-]*$/.test(name))
     .flatMap(([name, value]) => {
@@ -216,6 +227,16 @@ function companionTags(children: Element[], indexes: number[], span: number): st
       return null
     tags.push(tag)
   }
+  // Companions of one shape at two offsets are repeated rows (entries under a day heading), not
+  // the parts of one record.
+  const shapes = indexes.flatMap(index => tags.map((_, offset) => {
+    const companion = children[index + offset + 1]
+    return companion === undefined
+      ? ''
+      : shape(companion)
+  }).filter((value, offset, all) => value !== '' && all.indexOf(value) !== offset))
+  if (shapes.length > 0)
+    return null
   const hasContent = indexes.some(index => tags.some((_, offset) => {
     const companion = children[index + offset + 1]
     return companion !== undefined && text(companion) !== ''
@@ -223,6 +244,14 @@ function companionTags(children: Element[], indexes: number[], span: number): st
   return tags.length > 0 && hasContent
     ? tags
     : null
+}
+
+/** True when a sibling more than `span` after an anchor, before the next one, shows text. */
+function dropsContent(children: Element[], indexes: number[], span: number): boolean {
+  return indexes.slice(0, -1).some((index, position) => {
+    const next = indexes[position + 1] ?? index
+    return children.slice(index + span + 1, next).some(child => text(child) !== '')
+  })
 }
 
 /** The spanning group anchored on the children at `indexes` of `parent`, or `null`. */
@@ -234,6 +263,10 @@ function spanningGroup(parent: Element, sig: string, indexes: number[], samples:
     return null
   const gaps = indexes.slice(1).map((index, position) => index - (indexes[position] ?? index))
   const span = Math.min(MAX_COMPANIONS, Math.min(...gaps) - 1)
+  // Every sibling between two anchors must belong to a record: a longer gap with content would
+  // be dropped (a day heading with a varying number of entries under it).
+  if (dropsContent(children, indexes, span))
+    return null
   const tags = span < 1
     ? null
     : companionTags(children, indexes, span)

@@ -2,8 +2,11 @@ import type { ExtractSpec, HtmlExtractSpec } from '@site-to-api/runtime'
 import type { Product, Question, Story } from './fixtures'
 import { extract } from '@site-to-api/runtime'
 import { describe, expect, it } from 'vitest'
+import { parseHtml } from './dom'
 import { productTable, profileTable, questionList, searchResults, storyTable } from './fixtures'
+import { repeatedGroups } from './groups'
 import { applyExtractSpec, inferExtraction } from './index'
+import { distinctGroups } from './records'
 
 const html = (text: string): { text: string, mimeType: string } => ({ text, mimeType: 'text/html' })
 
@@ -263,5 +266,75 @@ describe('tables', () => {
     ], { minSamples: 2 })?.spec)
     expect(spec.records).toBe('#products tr:has(> td)')
     expect(spec.recordsName).toBe('listings')
+  })
+})
+
+describe('tables with heading rows (a statement grouped by day)', () => {
+  const statement = (seed: number, sizes: number[]): string => {
+    let k = seed * 100
+    const rows = sizes.map((count, day) => `<tr class="day"><td colspan="3">Day ${day + 1}</td></tr>${Array.from({ length: count }, () => {
+      k++
+      return `<tr><td>Payee ${String.fromCharCode(65 + (k % 26))}${k}</td><td>${k * 3}.00</td><td>R${k % 7}</td></tr>`
+    }).join('')}`).join('')
+    return `<html><body><table id="t"><tr><th>Name</th><th>Amount</th><th>Ref</th></tr>${rows}</table></body></html>`
+  }
+
+  it('reads every entry as a row when each day has as many', () => {
+    const spec = htmlSpec(inferExtraction([
+      html(statement(1, [4, 4, 4])),
+      html(statement(2, [4, 4, 4])),
+    ], { minSamples: 2 })?.spec)
+    expect(spec.records).toBe('#t tr:has(> td + td)')
+    expect(Object.keys(spec.fields)).toEqual(['name', 'amount', 'ref'])
+    expect(applyExtractSpec(statement(3, [4, 4, 4]), spec)).toHaveLength(12)
+  })
+
+  it('reads every entry as a row when days have different numbers of entries', () => {
+    const spec = htmlSpec(inferExtraction([
+      html(statement(1, [1, 3, 2, 2, 1, 4])),
+      html(statement(2, [2, 1, 4])),
+    ], { minSamples: 2 })?.spec)
+    expect(Object.keys(spec.fields)).toEqual(['name', 'amount', 'ref'])
+    const records = applyExtractSpec(statement(1, [1, 3, 2, 2, 1, 4]), spec)
+    expect(records).toHaveLength(13)
+    expect(records[0]).toEqual({ name: 'Payee X101', amount: 303, ref: 'R3' })
+  })
+})
+
+describe('distinctGroups', () => {
+  it('keeps one group per set of records, a class before a marker, then the shortest', () => {
+    const page = (n: number) => `<html><body><div id="r">${Array.from({ length: n }, (_, i) => `<div class="result" data-asin="B0DQ212K${i}" data-type="card">${i}</div>`).join('')}</div></body></html>`
+    const samples = [
+      parseHtml(page(3)),
+      parseHtml(page(4)),
+    ]
+    const groups = repeatedGroups(samples)
+    expect(groups.map(group => group.selector)).toEqual(['#r > div.result', '#r > div[data-asin]', '#r > div[data-type="card"]'])
+    expect(distinctGroups([...groups].reverse(), samples).map(group => group.selector)).toEqual(['#r > div.result'])
+  })
+
+  it('ranks a class with a `__` part, which may be a build hash, after a marker', () => {
+    const page = (n: number) => `<html><body><ul id="r">${Array.from({ length: n }, (_, i) => `<li class="row__klorrw" data-density="normal">${i}</li>`).join('')}</ul></body></html>`
+    const samples = [
+      parseHtml(page(3)),
+      parseHtml(page(4)),
+    ]
+    expect(distinctGroups(repeatedGroups(samples), samples).map(group => group.selector)).toEqual(['#r > li[data-density="normal"]'])
+  })
+})
+
+describe('fields named like Object members', () => {
+  it('keeps an optional `constructor` column in specs and generated-client records', () => {
+    const results = (seed: number) => `<html><body><table id="r"><tr><th>Driver</th><th>Constructor</th></tr>${[1, 2, 3, 4].map(i => `<tr><td>D${seed}${i}</td><td>${i === 2
+      ? ''
+      : `<a href="/c/${seed}${i}">C${seed}${i}</a>`}</td></tr>`).join('')}</table></body></html>`
+    const spec = htmlSpec(inferExtraction([
+      html(results(1)),
+      html(results(2)),
+    ], { minSamples: 2 })?.spec)
+    expect(Object.keys(spec.fields)).toContain('constructor')
+    const runtime = extract(results(3), spec)
+    expect(Array.isArray(runtime) && Object.hasOwn(runtime[1] ?? {}, 'constructor')).toBe(false)
+    expect(Array.isArray(runtime) && runtime[1]?.constructor).toBeUndefined()
   })
 })

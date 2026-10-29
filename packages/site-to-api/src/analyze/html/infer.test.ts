@@ -167,6 +167,30 @@ describe('inferExtraction: tables', () => {
   })
 })
 
+describe('inferExtraction: a list beside values that vary', () => {
+  // A product page: cards of related items, and five values about the product itself.
+  const page = (seed: number, cards: number): string => `<html><body><main><h1 class="name">Item ${seed}</h1>
+<span class="price">${seed * 10}</span><span class="stock">${seed + 3} left</span><span class="seller">Shop ${seed}</span>
+<span class="ship">${seed} days</span><span class="code">C-${seed}9</span></main>
+<ul id="related">${Array.from({ length: cards }, (_, i) => `<li class="card"><b class="title">Related ${seed}${i}</b><i class="cost">${seed + i}</i></li>`).join('')}</ul></body></html>`
+
+  it('prefers the values when the list has only two records a page', () => {
+    const spec = htmlSpec(inferExtraction([
+      html(page(1, 2)),
+      html(page(2, 2)),
+    ], { minSamples: 2 })?.spec)
+    expect(spec).toMatchObject({ records: ':root', many: false })
+  })
+
+  it('prefers a list of three or more records a page over values without labels', () => {
+    const spec = htmlSpec(inferExtraction([
+      html(page(1, 3)),
+      html(page(2, 3)),
+    ], { minSamples: 2 })?.spec)
+    expect(spec).toMatchObject({ records: '#related > li.card', many: true })
+  })
+})
+
 describe('inferExtraction: detail pages', () => {
   it('reads definition lists, two-column tables and "Label: value" text from one sample', () => {
     const result = inferExtraction([

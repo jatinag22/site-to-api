@@ -669,6 +669,57 @@ function scoreGroup(group: Group, samples: Document[]): { draft: Draft, score: n
 }
 
 /**
+ * How a selector ranks among others for the same records: plain classes, then marker attributes,
+ * then classes with a `__` part. Those are BEM elements or CSS-module hashes in lowercase
+ * (`withMetadata__klorrw`), which cannot be told apart and the latter change with each deploy.
+ */
+function selectorRank(selector: string): number {
+  if (/\.[\w-]*__/.test(selector))
+    return 2
+  return selector.includes('[')
+    ? 1
+    : 0
+}
+
+/**
+ * One group per set of records: `div[data-asin]`, `div[data-component-type="s-search-result"]`
+ * and `div.s-result-item` often select the same cards, and each would be scored in full. The
+ * kept selector is the one a reader expects and a redeploy keeps (see {@link selectorRank}),
+ * then the shortest, then the first in code-point order.
+ */
+export function distinctGroups(groups: Group[], samples: Document[]): Group[] {
+  const ids = new Map<Element, number>()
+  const id = (element: Element): number => {
+    let value = ids.get(element)
+    if (value === undefined) {
+      value = ids.size
+      ids.set(element, value)
+    }
+    return value
+  }
+  const preferred = (a: Group, b: Group): number => selectorRank(a.selector) - selectorRank(b.selector)
+    || a.selector.length - b.selector.length
+    || (a.selector < b.selector
+      ? -1
+      : Number(a.selector > b.selector))
+  const byRecords = new Map<string, Group>()
+  for (const group of groups) {
+    const key = JSON.stringify([
+      group.kind === 'spanning'
+        ? group.companions
+        : [],
+      samples.map(sample => select(group.selector, sample).map(id)),
+    ])
+    const kept = byRecords.get(key)
+    if (!kept || preferred(group, kept) < 0)
+      byRecords.set(key, group)
+  }
+  return [
+    ...byRecords.values(),
+  ]
+}
+
+/**
  * The best record structure in the samples, as a `many: true` spec. Tables and records that
  * span table rows are always considered; other repeated structures only with `allowRepeated`
  * (two or more samples, so template and data can be told apart). Structures are ranked by how
@@ -677,18 +728,14 @@ function scoreGroup(group: Group, samples: Document[]): { draft: Draft, score: n
  */
 export function inferRecords(samples: Document[], allowRepeated: boolean): Draft | null {
   const [first] = samples
-  const spanning = spanningGroups(samples).filter(group => allowRepeated || (first && select(group.selector, first)[0]?.name === 'tr'))
-  const anchors = new Set(first
-    ? spanning.flatMap(group => select(group.selector, first))
-    : [])
-  const groups = [
-    ...spanning,
-    // A table whose rows pair up into records is read through those records.
-    ...tableGroups(samples).filter(group => !first || !select(group.selector, first).some(row => anchors.has(row))),
+  const groups = distinctGroups([
+    ...spanningGroups(samples).filter(group => allowRepeated || (first && select(group.selector, first)[0]?.name === 'tr')),
+    // A table competes with the records spanning its rows: day headings over entries are rows.
+    ...tableGroups(samples),
     ...(allowRepeated
       ? repeatedGroups(samples)
       : []),
-  ]
+  ], samples)
   let best: { draft: Draft, score: number } | null = null
   for (const group of groups) {
     const scored = scoreGroup(group, samples)
