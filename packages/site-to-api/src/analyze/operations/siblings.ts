@@ -75,7 +75,8 @@ export interface SiblingFacts {
   seenBefore: Map<string, Set<string>>
 }
 
-interface Structure {
+/** A response's comparable structure; see {@link structureOf}. */
+export interface Structure {
   kind: 'json' | 'html'
   shape: Set<string>
   /** The body itself, to tell one app shell served for every route from pages of one template. */
@@ -172,7 +173,7 @@ function flatShape(value: object): Set<string> {
  * their classes. Only 2xx responses with content count; errors, 204s, empty bodies, plain text
  * and JSON without inner structure are unknown, never evidence that two paths are alike.
  */
-function structureOf(exchange: Exchange): Structure | null {
+export function structureOf(exchange: Exchange): Structure | null {
   const { status, body } = exchange.response
   if (status < 200 || status >= 300 || status === 204 || body === null)
     return null
@@ -195,7 +196,8 @@ function structureOf(exchange: Exchange): Structure | null {
   return null
 }
 
-function alike(a: Structure, b: Structure): boolean {
+/** Two responses come from one template (Jaccard similarity of their structures, decision 0035). */
+export function alike(a: Structure, b: Structure): boolean {
   return a.kind === b.kind && similarity(a.shape, b.shape) >= MIN_SIMILARITY[a.kind]
 }
 

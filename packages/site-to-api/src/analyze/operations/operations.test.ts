@@ -991,3 +991,73 @@ describe('buildOperations: scale', () => {
     expect(performance.now() - started).toBeLessThan(4_000)
   }, 30_000)
 })
+
+describe('buildOperations: dispatcher endpoints (decision 0039)', () => {
+  const quote = (query: Record<string, string>, response: unknown): Exchange => get(`/api/quote?${new URLSearchParams(query).toString()}`, {
+    responseBody: jsonBody(response),
+  })
+
+  it('splits a GET dispatcher into one operation per value at <endpoint>#<value>', () => {
+    const operations = buildOperations([
+      quote({ functionName: 'getSymbolData', symbol: 'A' }, {
+        equity: [
+          { price: 1, change: 2 },
+        ],
+      }),
+      quote({ functionName: 'getMetaData', symbol: 'A' }, { companyName: 'x', isin: 'y' }),
+      quote({ functionName: 'getMetaData', symbol: 'B' }, { companyName: 'z', isin: 'w' }),
+    ], { sourceRoutes: [] })
+    expect(operations.map(operation => [operation.operationId, operation.path, operation.exchanges.length])).toEqual([
+      ['getMetaData', '/api/quote#getMetaData', 2],
+      ['getSymbolData', '/api/quote#getSymbolData', 1],
+    ])
+    expect(operations[1]?.dispatch).toEqual({
+      endpoint: '/api/quote',
+      parameter: 'functionName',
+      in: 'query',
+      value: 'getSymbolData',
+      values: ['getMetaData', 'getSymbolData'],
+    })
+    expect(operations[1]?.summary).toBe('Function getSymbolData of GET /api/quote (functionName=getSymbolData). Returns equity.')
+  })
+
+  it('prefixes a function name another operation of the host already has, and reserved words', () => {
+    const operations = buildOperations([
+      get('/api/items', {
+        responseBody: jsonBody([
+          { id: 1 },
+        ]),
+      }),
+      quote({ action: 'getApiItems', page: '1' }, {
+        list: [
+          { id: 1, name: 'a' },
+        ],
+      }),
+      quote({ action: 'delete' }, {
+        removed: { count: 1 },
+      }),
+    ], { sourceRoutes: [] })
+    expect(operations.map(operation => operation.operationId).sort()).toEqual([
+      'getApiItems',
+      'getApiQuoteDelete',
+      'getApiQuoteGetApiItems',
+    ])
+  })
+
+  it('keeps an endpoint whole when its parameter only filters', () => {
+    const operations = buildOperations([
+      quote({ action: 'active' }, {
+        orders: [
+          { id: 1, total: 2 },
+        ],
+      }),
+      quote({ action: 'archived' }, {
+        orders: [
+          { id: 2, total: 3 },
+        ],
+      }),
+    ], { sourceRoutes: [] })
+    expect(paths(operations)).toEqual(['GET /api/quote'])
+    expect(operations[0]?.dispatch).toBeUndefined()
+  })
+})

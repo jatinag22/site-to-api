@@ -636,3 +636,42 @@ describe('probeOperations: GraphQL (decision 0027)', () => {
     expect(report.operations[0]).toMatchObject({ operationId: 'Rename', bare: 'skipped' })
   })
 })
+
+describe('probeOperations: dispatcher functions (decision 0039)', () => {
+  function dispatchOp(value: string, method: string): Operation {
+    return {
+      ...op(value, method, `/rpc#${value}`, {
+        method,
+        url: `${origin}/rpc?fn=${value}`,
+        responseBody: jsonBody({ a: 1 }),
+      }),
+      dispatch: {
+        endpoint: '/rpc',
+        parameter: 'fn',
+        in: 'query',
+        value,
+        values: [value],
+      },
+    }
+  }
+
+  it('never replays a POST function on its name alone, nor a GET one whose name changes state', async () => {
+    const before = requests
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        dispatchOp('getQuote', 'POST'),
+        dispatchOp('deletePost', 'GET'),
+      ],
+    })
+    expect(requests).toBe(before)
+    expect(report.skipped).toEqual([
+      {
+        operationId: 'deletePost',
+        reason: expect.stringContaining('changes state'),
+      },
+      { operationId: 'getQuote', reason: 'POST dispatcher function getQuote can change data (its name is no evidence it only reads); pass --unsafe-methods to include it' },
+    ])
+  })
+})

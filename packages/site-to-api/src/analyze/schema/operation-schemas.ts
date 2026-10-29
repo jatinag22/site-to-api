@@ -4,6 +4,7 @@
 import type { Body, Exchange, HeaderInfo, JsonSchema, NameValue, Operation, ParamInfo, RedactContext, Redactor, RequestBodyInfo, ResponseInfo, ValueRedactor } from '../../model'
 import type { InferOptions } from './infer'
 import { pinGraphqlSchemas } from '../graphql'
+import { pinDispatchSchemas } from './dispatch'
 import { coerceStrings, inferSchema, inferStringSchema } from './infer'
 
 /**
@@ -519,7 +520,7 @@ function safeDecode(segment: string): string {
  * Infers the request and response shapes of every observed operation. Examples go through the
  * redactor; operations found only in source code are returned unchanged. GraphQL operations get
  * their `variables` and `extensions` query parameters decoded and their constants pinned
- * (decision 0027).
+ * (decision 0027); dispatcher functions get their dispatcher parameter pinned (decision 0039).
  */
 export function inferOperationSchemas(operations: Operation[], redactor: Redactor): Operation[] {
   const hostConstants = new Map<string, Map<string, string>>()
@@ -533,7 +534,7 @@ export function inferOperationSchemas(operations: Operation[], redactor: Redacto
     const values = operation.kind === 'bot-protection'
       ? redactor.browserOnly
       : redactor
-    return pinGraphqlSchemas({
+    return pinDispatchSchemas(pinGraphqlSchemas({
       ...operation,
       pathParams: enrichPathParams(operation, values),
       query: inferParams(exchanges, exchange => exchange.request.query, 'query', values, operation.graphql
@@ -543,6 +544,6 @@ export function inferOperationSchemas(operations: Operation[], redactor: Redacto
       cookies: inferCookies(exchanges),
       requestBody: inferRequestBody(exchanges, values),
       responses: inferResponses(exchanges, values),
-    }, values)
+    }, values))
   })
 }

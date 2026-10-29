@@ -353,6 +353,10 @@ function skipReason(operation: Operation, config: ResolvedConfig['probe']): stri
   const graphql = graphqlSkipReason(operation, config)
   if (graphql !== null)
     return graphql
+  // A dispatcher function's name (`getQuote`) can only stop a replay, never allow one (decision
+  // 0039): only the method says it is safe.
+  if (operation.dispatch && !isSafeOperation(operation) && !config.unsafeMethods)
+    return `${operation.method} dispatcher function ${operation.dispatch.value} can change data (its name is no evidence it only reads); pass --unsafe-methods to include it`
   if (!isSafeOperation(operation) && !config.unsafeMethods)
     return `${operation.method} can change data; pass --unsafe-methods to include it`
   if (!representative(operation))

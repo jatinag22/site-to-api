@@ -1,12 +1,14 @@
 /**
  * Groups exchanges into operations by host + method + path template.
  */
-import type { Exchange, Operation, PathParam, SourceRoute } from '../../model'
+import type { DispatchOperation, Exchange, Operation, PathParam, SourceRoute } from '../../model'
 import type { GraphqlExchange } from '../graphql'
+import type { Dispatcher } from './dispatch'
 import type { Evidence, Marks } from './templates'
 import { isChallengeAnswer } from '../classify'
 import { graphqlGroupKey, graphqlOperationId, graphqlOperationOf, graphqlSpecPath, graphqlSummary, isGraphqlExchange } from '../graphql'
 import { inferStringSchema } from '../schema'
+import { detectDispatcher } from './dispatch'
 import { isSlug } from './identifiers'
 import { linkedSlugs } from './links'
 import { camelCase, nounFor, operationIdFor, pathPhrase, singular, words } from './naming'
@@ -195,6 +197,17 @@ function responseFields(exchanges: Exchange[]): { list: boolean, fields: string[
       }
 }
 
+function withResponseFields(base: string, exchanges: Exchange[]): string {
+  const response = responseFields(exchanges)
+  if (!response)
+    return base
+  const shown = response.fields.slice(0, MAX_SUMMARY_FIELDS)
+  const more = response.fields.length > shown.length
+    ? `, +${response.fields.length - shown.length} more`
+    : ''
+  return `${base} Returns ${response.list ? 'a list of ' : ''}${shown.join(', ')}${more}.`
+}
+
 function summarize(kind: OperationKind, method: string, path: string, exchanges: Exchange[]): string {
   const phrase = pathPhrase(path)
   if (kind === 'page') {
@@ -207,17 +220,9 @@ function summarize(kind: OperationKind, method: string, path: string, exchanges:
     return `Bot protection (${vendor}), browser only.`
   }
   const verb = method.charAt(0) + method.slice(1).toLowerCase()
-  const base = `${verb} ${phrase === ''
+  return withResponseFields(`${verb} ${phrase === ''
     ? 'root'
-    : phrase}.`
-  const response = responseFields(exchanges)
-  if (!response)
-    return base
-  const shown = response.fields.slice(0, MAX_SUMMARY_FIELDS)
-  const more = response.fields.length > shown.length
-    ? `, +${response.fields.length - shown.length} more`
-    : ''
-  return `${base} Returns ${response.list ? 'a list of ' : ''}${shown.join(', ')}${more}.`
+    : phrase}.`, exchanges)
 }
 
 function pathParamsFor(members: Classified[], names: Map<number, string>): PathParam[] {
@@ -339,6 +344,33 @@ function vendorStepMarks(exchange: Exchange, segments: readonly string[], marks:
   return result
 }
 
+/**
+ * The operation of one host + method + template, or one per function when a parameter picks the
+ * function (decision 0039).
+ */
+function templateOperations(method: string, group: Classified[], names: Map<number, string>): Operation[] {
+  const path = templateFor(group[0]!.segments, names)
+  const kind = kindOf(group)
+  const groupExchanges = group.map(member => member.exchange)
+  const dispatcher = kind === 'api'
+    ? detectDispatcher(groupExchanges)
+    : null
+  if (dispatcher)
+    return dispatchOperations(dispatcher, group, names, path)
+  return [
+    emptyOperation({
+      host: group[0]!.exchange.request.host,
+      method,
+      path,
+      kind,
+      pathParams: pathParamsFor(group, names),
+      summary: summarize(kind, method, path, groupExchanges),
+      exchanges: groupExchanges,
+      sourceOnly: false,
+    }),
+  ]
+}
+
 function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Operation[] {
   // GraphQL requests get their own operations; templating their paths would merge them.
   const relevant = exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind) && !isGraphqlExchange(exchange))
@@ -389,23 +421,49 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Opera
         member,
       ])
     }
-    for (const [method, group] of byMethod) {
-      const path = templateFor(group[0]!.segments, names)
-      const kind = kindOf(group)
-      const groupExchanges = group.map(member => member.exchange)
-      operations.push(emptyOperation({
-        host: group[0]!.exchange.request.host,
-        method,
-        path,
-        kind,
-        pathParams: pathParamsFor(group, names),
-        summary: summarize(kind, method, path, groupExchanges),
-        exchanges: groupExchanges,
-        sourceOnly: false,
-      }))
-    }
+    for (const [method, group] of byMethod)
+      operations.push(...templateOperations(method, group, names))
   }
   return operations
+}
+
+/**
+ * One operation per function of a dispatcher endpoint (decision 0039), at `<endpoint>#<value>`
+ * like GraphQL operations on a shared endpoint (0027): the fragment is never sent, and the
+ * generated client fills the dispatcher parameter in.
+ */
+function dispatchOperations(dispatcher: Dispatcher, members: Classified[], names: Map<number, string>, endpoint: string): Operation[] {
+  const byExchange = new Map(members.map(member => [member.exchange, member]))
+  const values = dispatcher.groups.map(group => group.value)
+  return dispatcher.groups.map(({ value, exchanges }) => {
+    const group = exchanges.flatMap((exchange) => {
+      const member = byExchange.get(exchange)
+      return member
+        ? [member]
+        : []
+    })
+    const { method, host } = exchanges[0]!.request
+    const dispatch: DispatchOperation = {
+      endpoint,
+      parameter: dispatcher.parameter,
+      in: dispatcher.in,
+      value,
+      values,
+    }
+    return {
+      ...emptyOperation({
+        host,
+        method,
+        path: `${endpoint}#${value}`,
+        kind: 'api',
+        pathParams: pathParamsFor(group, names),
+        summary: withResponseFields(`Function ${value} of ${method} ${endpoint} (${dispatcher.parameter}=${value}).`, exchanges),
+        exchanges,
+        sourceOnly: false,
+      }),
+      dispatch,
+    }
+  })
 }
 
 /** The operation for a route found in code and never called. */
@@ -516,7 +574,7 @@ function sourceOnlyOperations(allRoutes: SourceRoute[], observed: Operation[], e
       seen.add(anyMethod)
       const matched = observed.some(operation => operation.host === host
         && (route.method === null || operation.method === method)
-        && templateMatches(template, segmentsOf(operation.graphql?.endpoint ?? operation.path)))
+        && templateMatches(template, segmentsOf(operation.graphql?.endpoint ?? operation.dispatch?.endpoint ?? operation.path)))
       if (matched)
         continue
       result.push(sourceOnlyOperation(route, host, template))
@@ -525,19 +583,95 @@ function sourceOnlyOperations(allRoutes: SourceRoute[], observed: Operation[], e
   return result
 }
 
+function baseOperationId(operation: Operation): string {
+  if (operation.graphql)
+    return graphqlOperationId(operation.graphql, operation.exchanges[0]?.graphql?.key ?? '')
+  if (operation.dispatch)
+    return dispatchOperationId(operation.dispatch)
+  return operationIdFor(operation.method, operation.path)
+}
+
+/**
+ * Words a dispatcher value cannot be named by on its own: JavaScript reserved words, which no SDK
+ * function can be called, and names the client already uses.
+ */
+const NOT_AN_ID = new Set([
+  'break',
+  'case',
+  'catch',
+  'class',
+  'client',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'import',
+  'in',
+  'instanceof',
+  'new',
+  'null',
+  'return',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield',
+])
+
+/** `getSymbolData` for that value; empty when the value alone cannot name an operation. */
+function dispatchOperationId(dispatch: DispatchOperation): string {
+  const id = camelCase(dispatch.value)
+  return NOT_AN_ID.has(id)
+    ? ''
+    : id
+}
+
+/** The endpoint's id with the value after it: `getApiNextApiApiClientGetQuoteApiGetSymbolData`. */
+function prefixedDispatchId(operation: Operation & { dispatch: DispatchOperation }): string {
+  const value = camelCase(operation.dispatch.value)
+  return `${operationIdFor(operation.method, operation.dispatch.endpoint)}${value.charAt(0).toUpperCase()}${value.slice(1)}`
+}
+
 function assignOperationIds(operations: Operation[]): Operation[] {
   const sorted = [...operations].sort((a, b) =>
     a.host.localeCompare(b.host)
     || a.path.localeCompare(b.path)
     || a.method.localeCompare(b.method)
     || Number(a.sourceOnly) - Number(b.sourceOnly))
+  // A dispatcher function is named by its value unless another operation of the host would
+  // take the same name; then it is prefixed with its endpoint, whatever the order.
+  const bases = sorted.map(baseOperationId)
+  const counts = new Map<string, number>()
+  sorted.forEach((operation, index) => {
+    const key = `${operation.host} ${bases[index]}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  })
   const used = new Map<string, Set<string>>()
-  return sorted.map((operation) => {
+  return sorted.map((operation, index) => {
     const ids = used.get(operation.host) ?? new Set<string>()
     used.set(operation.host, ids)
-    const base = operation.graphql
-      ? graphqlOperationId(operation.graphql, operation.exchanges[0]?.graphql?.key ?? '')
-      : operationIdFor(operation.method, operation.path)
+    const own = bases[index] ?? ''
+    const base = operation.dispatch && (own === '' || (counts.get(`${operation.host} ${own}`) ?? 0) > 1)
+      ? prefixedDispatchId({ ...operation, dispatch: operation.dispatch })
+      : own
     let id = base
     for (let suffix = 2; ids.has(id); suffix++)
       id = `${base}${suffix}`

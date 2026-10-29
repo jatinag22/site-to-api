@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { validate } from '@scalar/openapi-parser'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
+import { dispatchExchanges } from '../../../test/dispatch'
 import { fakeHash, graphqlGet, graphqlPost, graphqlSpecYaml } from '../../../test/graphql'
 import { exchange, jsonBody, textBody } from '../../../test/helpers'
 import { CONFIG, fixtureExchanges, SECRETS } from '../../../test/secret-fixture'
@@ -625,5 +626,42 @@ describe('graphQL operations (decision 0027)', () => {
     expect(parameters.find(parameter => parameter.name === 'operationName')).toMatchObject({
       schema: { const: 'StoreHours' },
     })
+  })
+})
+
+describe('dispatcher functions (decision 0039)', () => {
+  const yaml = graphqlSpecYaml(dispatchExchanges('api.example.test'), 'api.example.test')
+
+  it('writes a valid document with one path item per function', async () => {
+    const result = await validate(yaml)
+    expect(result.errors ?? []).toEqual([])
+    expect(result.valid).toBe(true)
+    expect(Object.keys(parse(yaml).paths)).toEqual([
+      '/api/quote#getMarketStatus',
+      '/api/quote#getSymbolData',
+      '/wp-admin/admin-ajax.php#heartbeat',
+      '/wp-admin/admin-ajax.php#load_more',
+    ])
+  })
+
+  it('describes the dispatcher in x-site-to-api-dispatch and pins its value', () => {
+    const document = parse(yaml)
+    const quote = document.paths['/api/quote#getSymbolData'].get
+    expect(quote['x-site-to-api-dispatch']).toEqual({
+      endpoint: '/api/quote',
+      parameter: 'functionName',
+      in: 'query',
+      value: 'getSymbolData',
+    })
+    expect(quote.parameters.find((parameter: { name: string }) => parameter.name === 'functionName')).toMatchObject({
+      in: 'query',
+      required: true,
+      schema: { type: 'string', const: 'getSymbolData', default: 'getSymbolData' },
+    })
+    const ajax = document.paths['/wp-admin/admin-ajax.php#load_more'].post
+    expect(ajax['x-site-to-api-dispatch']).toMatchObject({ parameter: 'action', in: 'form', value: 'load_more' })
+    const schema = ajax.requestBody.content['application/x-www-form-urlencoded'].schema
+    expect(schema.properties.action).toEqual({ type: 'string', const: 'load_more', default: 'load_more' })
+    expect(schema.required).toContain('action')
   })
 })
