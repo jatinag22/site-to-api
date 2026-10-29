@@ -6,45 +6,88 @@ captures, options and `probe.json` produce byte-identical files.
 
 ## `AGENT.md`
 
-The entry point for a coding agent. Generated from a template, no LLM. Sections, in order:
+The entry point for a coding agent: a short index, at most about 25 KB on any site (decision
+0041). Generated from a template, no LLM. Every list is capped and ends with "N more ... in
+<file>" when something was left out; the details are in `hosts/<host>.md`, `flows.md` and
+`API_MAP.md`, so nothing is dropped. Sections, in order:
 
-1. **What this folder is**: one paragraph, the hosts covered, the sessions used, the tool version.
-2. **Session requirements per host**: plain HTTP / cookies / token / browser, the bot protection
-   detected, which step sets each cookie, and whether `probe` confirmed it. After `probe`, each
-   cookie line says either "Needed by N requests (confirmed by probe)" or "Seen in capture, but
-   none of the N requests probe tested needed it"; before, "(seen in capture)". Every analysed
-   host has a section, including hosts that served only pages. The Needs verdict says where it
-   comes from: "confirmed by probe" (a replay of this host worked), "probe could not confirm it,
-   see Gaps", "probe tested no operation on this host" or "not yet probed"; it never contradicts
-   the bot-protection line.
-3. **Flows**: one line per flow (trigger label → steps), linking to `flows.md#<flow-id>`.
-   **GraphQL operations** (only when the capture has GraphQL requests, decision 0027): per
-   endpoint (`POST host/path`), one line per GraphQL operation with its type and the evidence for
-   it, the persisted hash (or that it sends the document), its top-level variables, the client
-   call (`sdk.queryArtistOverview({ variables })`) and its spec path.
-   **Dispatcher endpoints** (only when the capture has one, decision 0039): per endpoint
-   (`GET host/path`), the dispatcher parameter and where it is sent, then one line per function
-   with its own parameters, the client call (`sdk.getSymbolData({ query: { symbol } })`) and its
-   spec path.
-   **Real-time channels** (only when the capture has WebSocket traffic): per channel, the URL,
-   the AsyncAPI file and channel id, the framing protocol and what showed it (decision 0038),
-   cookies on the upgrade request, the upgrade facts (`Origin`, subprotocol, URL token names,
-   how many upgrades the server accepted or rejected, Engine.IO long-polling), the first
-   connect or authentication message and the server's answer, the code that opened it, the
-   field that names message types, what to send right after connecting (with its wire form for
-   a protocol message and a redacted example), the message types per direction with counts
-   (MessagePack and protobuf marked), and which HTTP operation each client value comes from.
-4. **Computed values**: one line each, with the file and function to port.
-5. **Reading order**: `API_MAP.md` → `flows.md` → the spec for the host → `source/` excerpts
-   (only when an excerpt was written) →
-   `client/` usage.
-6. **Gaps**: operations with low-confidence extraction, unresolved value origins, endpoints seen
-   only in source (with "method unknown" when the code did not show the method), host patterns
-   that matched nothing, operations `probe` did not minimize because of `probe.minimizePerHost`,
-   operations probe could not confirm (session refused, blocked by bot protection, answered
-   differently, unreachable), a probe run that replayed nothing, WebSocket messages that could
-   not be grouped by type or whose schema came from the first 1000 frames, and the state of
-   `client/` (last). Each gap says what would resolve it (usually "capture again and do X").
+1. **What this folder is**: one paragraph, the first five hosts covered (then "and N more
+   hosts"), the sessions used, the tool version. Hosts that answered only with bot challenges
+   get a bold banner above it (at most three).
+2. **Reading order**: `hosts/<host>.md` → `API_MAP.md` → `flows.md` → the spec for the host →
+   `source/` excerpts (only when an excerpt was written) → `client/` usage.
+3. **Hosts**: one line per host, most important first, under three headings: the site's own hosts
+   (the registrable domain of a captured page, or every host when no page was captured), hosts
+   that served only pages, third-party hosts; within each, by observed API operations, then
+   name. A line gives the verdict (plain HTTP / cookie jar / bearer token / real browser / unknown),
+   where it comes from (confirmed by probe, not yet probed, probe could not confirm it, probe
+   tested nothing here), the bot protection with its first three evidence items, "no real
+   content" when it served only challenges, the counts of API operations (and how many were
+   seen in code only), pages, bot-protection steps, channels and gaps, and a link to its file.
+   At most 30 hosts get a line; the rest are linked in one line.
+4. **Key flows**: one line per flow (trigger label → steps), linking to `flows.md#<flow-id>`, at
+   most 12. Order: a flow with an API call whose path says login (`auth`, `login`, `session`,
+   `password`, ...); then one whose name or trigger says so; then one with an API call that hands
+   out a token or sets a response cookie; then flows whose steps feed each other or that submit a
+   form; then the rest; within each, by sessions that showed it, then capture order. A flow shows
+   six steps (runs of one step as `` `op` ×5 ``, then "… (N more steps)") and 80 characters of its
+   name.
+   **GraphQL operations** (only when the capture has GraphQL requests, decision 0027): one line
+   per endpoint (`POST host/path`) with its operation count by type and a link to the host file.
+   **Dispatcher endpoints** (only when the capture has one, decision 0039): one line per
+   endpoint with its dispatcher parameter, function count and a link.
+   **Real-time channels** (only when the capture has WebSocket traffic): one line per channel with
+   its URL, protocol, what to send after connecting and a link.
+5. **Computed values**: one line each, with the file and function to port, at most 12 lines.
+   Values that set the same input with the same function are one line ("`header.device-info`
+   of 54 operations (...)"). A value whose host is unknown is always listed.
+6. **Gaps**: grouped by host and kind, most important first, at most 15 grouped lines: probe
+   could not confirm what operations need (session refused, blocked by bot protection, answered
+   differently, unreachable); request inputs with no known origin (with their commonest shapes);
+   responses whose record layout was inferred from one sample; endpoints seen only in source
+   (how many with the method unknown); operations `probe` did not minimize because of
+   `probe.minimizePerHost`; WebSocket messages that could not be grouped by type or whose schema
+   came from the first 1000 frames. A group of one keeps its full sentence ("On `host`: ...").
+   A grouped line names three items, then "and N more in `hosts/<host>.md`". Listed in full:
+   whether `probe` ran or replayed nothing, gaps whose operation is gone, host patterns that
+   matched nothing and other build warnings, and the state of `client/` (always last). Each gap
+   says what would resolve it (usually "capture again and do X").
+
+## `hosts/<host>.md`
+
+One file per host the folder documents (decision 0041), named like the spec (`localhost:4173` →
+`hosts/localhost_4173.md`). Code-span paths in it are relative to the handoff folder. Sections,
+in order, each only when it has something:
+
+1. **Session**: "Serves pages only" for a page host; the Needs verdict and where it comes from:
+   "confirmed by probe" (a replay of this host worked), "probe could not confirm it, see Gaps",
+   "probe tested no operation on this host" or "not yet probed"; it never contradicts the
+   bot-protection line. Then every bot-protection finding with its whole evidence, "No real
+   content" when every response was a challenge, the calls that send the bot-protection script's
+   headers, one line per cookie (which step sets it, and after `probe` either "Needed by N
+   requests (confirmed by probe)" or "Seen in capture, but none of the N requests probe tested
+   needed it"; before, "(seen in capture)"), and the spec. A host with operations but no session
+   entry says so.
+2. **Operations**: one line per operation: id, `METHOD path` (`? path` when the method is
+   unknown) and kind, "seen in code only" when it was never called.
+3. **Flows**: the flows with a step on this host, linking to `flows.md`.
+4. **GraphQL operations**: per endpoint, one line per GraphQL operation with its type and the
+   evidence for it, the persisted hash (or that it sends the document), its top-level variables,
+   the client call (`sdk.queryArtistOverview({ variables })`) and its spec path.
+5. **Dispatcher endpoints**: per endpoint (`GET host/path`), the dispatcher parameter and where
+   it is sent, then one line per function with its own parameters, the client call
+   (`sdk.getSymbolData({ query: { symbol } })`) and its spec path.
+6. **Real-time channels**: per channel, the URL, the AsyncAPI file and channel id, the framing
+   protocol and what showed it (decision 0038), cookies on the upgrade request, the upgrade facts
+   (`Origin`, subprotocol, URL token names, how many upgrades the server accepted or rejected,
+   Engine.IO long-polling), the first connect or authentication message and the server's answer,
+   the code that opened it, the field that names message types, what to send right after
+   connecting (with its wire form for a protocol message and a redacted example), the message
+   types per direction with counts (MessagePack and protobuf marked), and which HTTP operation
+   each client value comes from.
+7. **Values computed in the browser**: every computed value of the host, one line each.
+8. **Gaps**: every gap of the host, one per line; inputs with no known origin are nested under
+   their flow. "None found for this host." when there are none.
 
 ## `API_MAP.md`
 
@@ -234,7 +277,7 @@ least one excerpt was written.
 ## `client/`
 
 `gen` reads only the handoff folder, so it cannot re-run the analysis; instead it rewrites the
-client sentences of `AGENT.md` (reading order line 5 and the client gap) and `API_MAP.md` in
+client sentences of `AGENT.md` (the last reading-order line and the client gap) and `API_MAP.md` in
 place, so both say the client is current (decision 0025). `build --no-client` keeps an existing
 `client/` and marks it as from an earlier build in both files and in its warning.
 
@@ -253,7 +296,7 @@ its SDK function, that takes `{ variables }` and sends the operation's constants
 the SDK options with `query` or `body` holding only the function's own fields and sends the
 dispatcher parameter itself; also in `sdk` in place of the raw functions), and
 `README.md` with setup, the session and auth each host needs (with the same cookie lines as
-`AGENT.md`, read from `x-site-to-api-requires` after `probe`) and, when there are AsyncAPI
+`hosts/<host>.md`, read from `x-site-to-api-requires` after `probe`) and, when there are AsyncAPI
 files, each WebSocket channel's URL and the message to send after connecting (the code itself is
 HTTP only). Relative imports end in `.js`, so
 the client works under `moduleResolution` `bundler` and `nodenext`. The generated code needs
@@ -273,8 +316,8 @@ automated)`), never the capture browser's. Names only.
 
 `probe` writes `probe.json` and then rebuilds the handoff folder. Every `build`, including that
 rebuild, reads `probe.json` when it exists and folds it into `flows.json` session requirements,
-`x-site-to-api-requires`, the Needs column of `API_MAP.md`, the cookie lines and gaps of
-`AGENT.md` and the cookie lines of `client/README.md`. At the end, `probe` prints a summary: operations probed, needs found, not minimized
+`x-site-to-api-requires`, the Needs column of `API_MAP.md`, the verdicts and gaps of `AGENT.md`,
+the cookie lines and gaps of `hosts/<host>.md` and the cookie lines of `client/README.md`. At the end, `probe` prints a summary: operations probed, needs found, not minimized
 and why (per-host limit, data-changing method, session no longer accepted, blocked by bot protection, answered differently, host unreachable), and
 skipped and why. GraphQL queries count as safe whatever the method; GraphQL mutations and
 operations of unknown type are skipped unless `--unsafe-methods` (then sent once), and

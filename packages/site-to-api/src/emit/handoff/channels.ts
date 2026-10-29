@@ -7,7 +7,9 @@ import type { ChannelConnectionFacts, ChannelMessage, ChannelProtocolId, Channel
 import { CHANNEL_PROTOCOL_LABELS } from '../../model'
 import { cellCode, code, text } from '../escape'
 import { asyncApiFileName } from '../openapi'
+import { hostLink } from './host-path'
 import { describeSource } from './source-ref'
+import { MAX_SUMMARY_LINES, moreLine } from './summary'
 
 /** Examples longer than this are left to the AsyncAPI file instead of filling a Markdown line. */
 const MAX_INLINE_EXAMPLE = 400
@@ -275,7 +277,40 @@ export function channelGaps(channels: readonly WebSocketChannel[]): string[] {
   })
 }
 
-/** The "Real-time channels" section of `AGENT.md`; empty when the capture had no WebSocket. */
+/**
+ * The "Real-time channels" section of `AGENT.md`: one line per channel with its protocol and what
+ * to send after connecting, pointing at the host file for the rest.
+ */
+export function channelsSummary(channels: readonly WebSocketChannel[]): string[] {
+  if (channels.length === 0)
+    return []
+  const lines = channels.slice(0, MAX_SUMMARY_LINES).map((channel) => {
+    const protocol = channel.protocol === null
+      ? 'JSON / text'
+      : CHANNEL_PROTOCOL_LABELS[channel.protocol.id]
+    const handshake = channel.handshake.map((step) => {
+      const message = channel.messages.find(candidate => candidate.id === step.message)
+      return code(message
+        ? messageName(message)
+        : step.message)
+    })
+    const send = handshake.length > 0
+      ? `send ${handshake.join(' → ')} after connecting`
+      : 'no setup message recognised'
+    return `- ${code(channelUrl(channel))}: ${protocol}; ${send}; details in ${hostLink(channel.host, 'real-time-channels')}.`
+  })
+  return [
+    '## Real-time channels',
+    '',
+    'WebSocket connections the pages opened; `specs/<host>.asyncapi.yaml` has each message\'s schema and redacted examples.',
+    '',
+    ...lines,
+    ...moreLine(channels.length - lines.length, 'channel', 'the host files'),
+    '',
+  ]
+}
+
+/** The "Real-time channels" section of `hosts/<host>.md`; empty when the host has no WebSocket. */
 export function channelsSection(channels: readonly WebSocketChannel[]): string[] {
   if (channels.length === 0)
     return []
@@ -336,7 +371,7 @@ export function channelsTable(channels: readonly WebSocketChannel[]): string[] {
   return [
     '## Real-time channels',
     '',
-    'One row per WebSocket channel; details in `AGENT.md` and `specs/<host>.asyncapi.yaml`.',
+    'One row per WebSocket channel; details in `hosts/<host>.md` and `specs/<host>.asyncapi.yaml`.',
     '',
     '| Channel | URL | Protocol | Send after connecting | Client sends | Server sends | Inputs | Needs | Spec |',
     '|---|---|---|---|---|---|---|---|---|',

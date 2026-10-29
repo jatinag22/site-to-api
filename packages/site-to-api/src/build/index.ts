@@ -323,6 +323,7 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     'source',
     'AGENT.md',
     'API_MAP.md',
+    'hosts',
     'flows.json',
     'flows.md',
     'flows.schema.json',
