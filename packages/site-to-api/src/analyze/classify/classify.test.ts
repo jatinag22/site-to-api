@@ -567,6 +567,7 @@ describe('classifyExchanges: telemetry and mirrors', () => {
       'https://event-ingestor.judy.pnap.aditude.cloud/e',
       'https://geo-location.prebid.cloud/',
       'https://www.temu.com/api/adx/cm/pixel-pubmatic',
+      'https://collect.shop.test/g/collect?v=2&tid=G-ABC123',
     ]
     expect(kinds([
       page(),

@@ -209,6 +209,14 @@ const NOISE_HOST_PATTERNS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
   { pattern: /^unagi(?:-[a-z]+)?\.amazon\.[a-z.]+$/, label: 'Amazon client telemetry (unagi)' },
 ]
 
+/**
+ * Analytics paths on any host: Google Analytics 4 hits sent through a first-party server-side tag
+ * manager (`collect.shop.com/g/collect?v=2&tid=G-…`).
+ */
+const NOISE_PATHS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
+  { pattern: /^\/[gj]\/collect$/, label: 'Google Analytics hits (/g/collect)' },
+]
+
 /** Noise on domains that also serve real content: host suffix + path prefix. */
 const NOISE_ENDPOINTS: ReadonlyArray<{ domain: string, pathPrefix: string }> = [
   { domain: 'www.facebook.com', pathPrefix: '/tr' },
@@ -257,6 +265,9 @@ export function findNoise(host: string, path: string): string | null {
   const named = NOISE_HOST_PATTERNS.find(entry => entry.pattern.test(hostname))
   if (named)
     return named.label
+  const analyticsPath = NOISE_PATHS.find(entry => entry.pattern.test(path))
+  if (analyticsPath)
+    return analyticsPath.label
   const endpoint = NOISE_ENDPOINTS.find(entry => hostMatchesDomain(host, entry.domain) && path.startsWith(entry.pathPrefix))
   return endpoint
     ? `${endpoint.domain}${endpoint.pathPrefix}`
