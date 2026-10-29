@@ -62,6 +62,20 @@ export function ownText(element: Element): string {
   return element.children.filter(isText).map(child => child.data).join('').trim()
 }
 
+/**
+ * True when an element's own text is data rather than glue between its children: `points by`
+ * … `| hide |` around child elements is glue, and so is `(` … `)` around a link.
+ */
+export function holdsText(element: Element): boolean {
+  const own = ownText(element)
+  if (own === '')
+    return false
+  if (childElements(element).length === 0 || /\d/.test(own))
+    return true
+  const words = own.replace(/[\s\p{P}\p{S}]+/gu, ' ').trim().split(' ').filter(Boolean)
+  return words.length > 2 || words.some(word => word.length > 3)
+}
+
 /** Every element under `root` in document order, skipping `<head>`, scripts, styles and templates. */
 export function contentElements(root: AnyNode): Element[] {
   const out: Element[] = []

@@ -1,18 +1,25 @@
 /**
- * Wrapper induction for pages that list records: table rows or repeated sibling structures (card
- * grids, result lists). Positions inside a record that hold different values across records and
- * samples are fields; positions with one value everywhere are template ("Add to cart").
+ * Wrapper induction for pages that list records: table rows, repeated sibling structures (card
+ * grids, result lists) and records spread over several sibling elements (a Hacker News story is
+ * a `tr.athing` row plus the row after it). Positions inside a record that hold different values
+ * across records and samples are fields; positions with one value everywhere are template
+ * ("Add to cart").
  */
 import type { ExtractField, FieldType, HtmlExtractSpec } from '@site-to-api/runtime'
 import type { Document, Element } from './dom'
+import type { Group } from './groups'
+import type { Hints, RawField } from './keys'
 import type { ExtractedValue } from './values'
 import { isTag } from 'domhandler'
 import { readRaw } from './apply'
-import { attr, childElements, contentElements, cssIdent, cssString, nthChild, nthOfType, ownText, parentElement, select, selectFirst, text } from './dom'
+import { attr, childElements, contentElements, cssIdent, cssString, holdsText, nthChild, nthOfType, ownText, parentElement, select, selectFirst, text } from './dom'
 import { typeField } from './fields'
-import { NameAllocator } from './naming'
-import { capture, escapeRegex } from './pattern'
-import { stableClasses, uniqueSelector } from './selector'
+import { partsOf, repeatedGroups, signature, spanningGroups, tableGroups } from './groups'
+import { classHint, linkWord, recordKind } from './hints'
+import { commonPrefix, idFromLinks, idFromRecordIds, isDerived } from './keys'
+import { NameAllocator, plural } from './naming'
+import { capture } from './pattern'
+import { stableClasses } from './selector'
 import { coerce } from './values'
 
 /** An inferred spec together with the values it is expected to extract, for verification. */
@@ -20,50 +27,29 @@ export interface Draft {
   spec: HtmlExtractSpec
   /** Per field, the coerced value of every record of every sample, in document order. */
   expected: Record<string, Array<ExtractedValue | null>>
-}
-
-interface Group {
-  selector: string
-  kind: 'table' | 'repeated'
-  /** Header text by `:nth-child` position of the cell. */
-  headers: Map<number, string>
+  /**
+   * Selectors, relative to each record element, of the sibling elements that belong to the same
+   * record (`:scope + tr:not(.athing)`). Empty or absent when a record is one element.
+   */
+  companions?: string[]
 }
 
 interface Entry {
+  /** 0 for the record element, `n` for its `n`th companion sibling. */
+  part: number
   attr: string | null
   /** The element holding the point in each record that has it, by record index. */
   byRecord: Map<number, Element>
   first: Element
-  firstRecord: Element
+  /** The part (record element or companion) that holds `first`. */
+  firstRoot: Element
 }
 
-/** Children that never form records of their own. */
-const NOT_RECORDS = new Set([
-  'tr',
-  'td',
-  'th',
-  'thead',
-  'tbody',
-  'tfoot',
-  'option',
-  'br',
-  'hr',
-  'col',
-  'colgroup',
-  'script',
-  'style',
-  'link',
-  'meta',
-  'head',
-  'source',
-  'track',
-  'wbr',
-])
-
 /** Keeps a pathological page from producing thousands of candidate fields. */
-const MAX_POINTS_PER_RECORD = 60
+const MAX_POINTS_PER_RECORD = 120
 
-function dataAttributes(element: Element): string[] {
+/** Attributes read as fields: data, links, images, machine-readable times and values. */
+function readableAttributes(element: Element, isRecord: boolean): string[] {
   const names = Object.keys(element.attribs).filter(name => name.startsWith('data-') && /^[\w-]+$/.test(name))
   const own: Record<string, string> = {
     a: 'href',
@@ -75,14 +61,13 @@ function dataAttributes(element: Element): string[] {
   const extra = own[element.name]
   if (extra !== undefined && attr(element, extra) !== null)
     names.unshift(extra)
+  // A tooltip holding the exact time behind `3 hours ago`; kept only when it reads as a date.
+  if (attr(element, 'title') !== null)
+    names.push('title')
+  // The record element's own id is often the record's key (`<tr id="50275375">`).
+  if (isRecord && attr(element, 'id') !== null)
+    names.unshift('id')
   return names
-}
-
-function signature(element: Element): string {
-  return [
-    element.name,
-    ...stableClasses(element).sort(),
-  ].join('.')
 }
 
 /** Path of tag+class steps from the record down, indexed only where siblings share a step. */
@@ -101,112 +86,129 @@ function structuralKey(record: Element, element: Element): string {
   return steps.join('/')
 }
 
-function headerMap(table: Element): Map<number, string> {
-  const headers = new Map<number, string>()
-  const row = select('thead tr', table)[0]
-    ?? select('tr', table).find(tr => childElements(tr).length > 0 && childElements(tr).every(cell => cell.name === 'th'))
-  for (const cell of row
-    ? childElements(row)
-    : [])
-    headers.set(nthChild(cell), text(cell))
-  return headers
-}
-
-/** `<tr><th>Label</th><td>value</td></tr>` rows describe one item, not a list of records. */
-function isKeyValueTable(table: Element): boolean {
-  const rows = select('tr', table)
-  return rows.length > 0 && rows.every((row) => {
-    const cells = childElements(row)
-    return cells.length === 2 && (cells[0]?.name === 'th' || text(cells[0] ?? row).endsWith(':'))
-  })
-}
-
-function tableGroups(samples: Document[]): Group[] {
-  const [first] = samples
-  if (!first)
-    return []
-  const groups: Group[] = []
-  for (const table of contentElements(first).filter(element => element.name === 'table')) {
-    if (isKeyValueTable(table) || select('tr', table).every(row => !childElements(row).some(cell => cell.name === 'td')))
-      continue
-    const tableSelector = uniqueSelector(table, first, candidate => samples.every(sample => select(candidate, sample).length === 1))
-    if (tableSelector === null)
-      continue
-    const selector = `${tableSelector} tr:has(> td)`
-    if (samples.every(sample => select(selector, sample).length > 0)) {
-      groups.push({
-        selector,
-        kind: 'table',
-        headers: headerMap(table),
-      })
-    }
+/**
+ * Where a point sits relative to its nearest ancestor with a stable class: `span.age>a`. Rows
+ * of one list differ in layout (a job ad has no score before its age), and points with the same
+ * classed position are the same field. `null` when nothing up to the record has a class.
+ */
+function classedKey(root: Element, element: Element): string | null {
+  const tags: string[] = []
+  for (let current: Element | null = element; current && current !== root; current = parentElement(current)) {
+    // The first class names the thing; later ones are often states (`commtext c5a` when faded).
+    const named = firstClass(current)
+    if (named !== null)
+      return [named, ...tags].join('>')
+    tags.unshift(current.name)
   }
-  return groups
+  return null
 }
 
-function repeatedGroups(samples: Document[]): Group[] {
-  const [first] = samples
-  if (!first)
-    return []
-  const groups = new Map<string, Group>()
-  for (const parent of contentElements(first)) {
-    const bySignature = new Map<string, Element[]>()
-    for (const child of childElements(parent).filter(element => !NOT_RECORDS.has(element.name))) {
-      bySignature.set(signature(child), [
-        ...bySignature.get(signature(child)) ?? [],
-        child,
-      ])
+/** Tags that format running text: inside a block of prose they are part of it, not fields. */
+const PROSE_TAGS = new Set([
+  'a',
+  'b',
+  'blockquote',
+  'br',
+  'code',
+  'em',
+  'font',
+  'i',
+  'li',
+  'ol',
+  'p',
+  'pre',
+  'small',
+  'strong',
+  'sub',
+  'sup',
+  'u',
+  'ul',
+])
+
+/** A block of prose (a comment, a description): long own text, only formatting inside. */
+function isProse(element: Element): boolean {
+  const inner = contentElements(element)
+  return inner.length > 0 && ownText(element).length >= 40 && inner.every(child => PROSE_TAGS.has(child.name))
+}
+
+/** Joins entries that sit at the same classed position and never meet in one record. */
+function mergeEntries(entries: Map<string, Entry>): Map<string, Entry> {
+  const merged = new Map<string, Entry>()
+  const byClassed = new Map<string, Entry>()
+  for (const [key, entry] of entries) {
+    const classed = classedKey(entry.firstRoot, entry.first)
+    const group = classed === null
+      ? null
+      : `${entry.part}|${classed}|${entry.attr ?? '#text'}`
+    const into = group === null
+      ? undefined
+      : byClassed.get(group)
+    if (into && [
+      ...entry.byRecord.keys(),
+    ].every(index => !into.byRecord.has(index))) {
+      for (const [index, element] of entry.byRecord)
+        into.byRecord.set(index, element)
+      continue
     }
-    for (const [sig, members] of bySignature) {
-      if (members.length < 2)
-        continue
-      const parentSelector = uniqueSelector(parent, first, candidate => samples.every(sample => select(candidate, sample).length === 1))
-      if (parentSelector === null)
-        break
-      const [tag, ...names] = sig.split('.')
-      const selector = `${parentSelector} > ${tag}${names.map(name => `.${cssIdent(name)}`).join('')}`
-      if (samples.every(sample => select(selector, sample).length > 0)) {
-        groups.set(selector, {
-          selector,
-          kind: 'repeated',
-          headers: new Map(),
-        })
-      }
-    }
+    if (group !== null && !into)
+      byClassed.set(group, entry)
+    merged.set(key, entry)
   }
-  return [
-    ...groups.values(),
-  ]
+  return merged
 }
 
-function collectEntries(records: Element[]): Map<string, Entry> {
+interface Point {
+  element: Element
+  attr: string | null
+}
+
+/**
+ * The points of one part in document order: an element's text when it holds some, then its
+ * readable attributes. Formatting inside a block of prose belongs to the prose.
+ */
+function pointsOf(root: Element, isRecord: boolean): Point[] {
+  const points: Point[] = []
+  const inProse = new Set<Element>()
+  for (const element of [
+    root,
+    ...contentElements(root),
+  ]) {
+    if (inProse.has(element))
+      continue
+    if (element !== root && isProse(element)) {
+      for (const child of contentElements(element))
+        inProse.add(child)
+    }
+    if (holdsText(element))
+      points.push({ element, attr: null })
+    for (const name of readableAttributes(element, isRecord && element === root))
+      points.push({ element, attr: name })
+  }
+  return points
+}
+
+function collectEntries(parts: Array<Array<Element | null>>): Map<string, Entry> {
   const entries = new Map<string, Entry>()
-  records.forEach((record, index) => {
-    let points = 0
-    for (const element of [
-      record,
-      ...contentElements(record),
-    ]) {
-      const attrs: Array<string | null> = ownText(element) === ''
-        ? []
-        : [null]
-      attrs.push(...dataAttributes(element))
-      for (const attrName of attrs) {
-        if (++points > MAX_POINTS_PER_RECORD)
-          return
-        const key = `${structuralKey(record, element)}|${attrName ?? '#text'}`
-        const entry = entries.get(key) ?? {
-          attr: attrName,
-          byRecord: new Map(),
-          first: element,
-          firstRecord: record,
-        }
-        entry.byRecord.set(index, element)
-        entries.set(key, entry)
+  parts.forEach((recordParts, index) => {
+    const points = recordParts
+      .flatMap((root, part) => root
+        ? pointsOf(root, part === 0).map(point => ({ ...point, root, part }))
+        : [])
+      .slice(0, MAX_POINTS_PER_RECORD)
+    for (const { element, attr: attrName, root, part } of points) {
+      const key = `${part}|${structuralKey(root, element)}|${attrName ?? '#text'}`
+      const entry = entries.get(key) ?? {
+        part,
+        attr: attrName,
+        byRecord: new Map(),
+        first: element,
+        firstRoot: root,
       }
+      entry.byRecord.set(index, element)
+      entries.set(key, entry)
     }
   })
-  return entries
+  return mergeEntries(entries)
 }
 
 function relativePath(record: Element, element: Element): string {
@@ -216,10 +218,18 @@ function relativePath(record: Element, element: Element): string {
   return `:scope > ${steps.join(' > ')}`
 }
 
-/** A selector, relative to the record, that finds the entry's element in every record that has it. */
-function chooseSelector(entry: Entry, records: Element[]): string | null {
-  if (entry.first === entry.firstRecord)
-    return ''
+/**
+ * A selector, relative to the record element, that finds the entry's element in every record
+ * that has it. Points in a companion are reached through the companion's selector.
+ */
+function chooseSelector(entry: Entry, records: Element[], companions: string[]): string | null {
+  const prefix = entry.part === 0
+    ? ''
+    : companions[entry.part - 1] ?? null
+  if (prefix === null)
+    return null
+  if (entry.first === entry.firstRoot)
+    return prefix
   const element = entry.first
   const itemprop = attr(element, 'itemprop')
   const candidates = [
@@ -228,132 +238,161 @@ function chooseSelector(entry: Entry, records: Element[]): string | null {
       ? [`[itemprop=${cssString(itemprop)}]`]
       : []),
     element.name,
-    relativePath(entry.firstRecord, element),
-  ]
-  const fits = (candidate: string, strict: boolean): boolean => records.every((record, index) => {
+    ...classedPath(entry.firstRoot, element),
+    relativePath(entry.firstRoot, element),
+  ].map((candidate) => {
+    if (prefix === '')
+      return candidate
+    return candidate.startsWith(':scope')
+      ? `${prefix}${candidate.slice(':scope'.length)}`
+      : `${prefix} ${candidate}`
+  })
+  // Records without the point must find nothing, or the same kind of element (a comment whose
+  // text is all inside a link): a selector that reads another element would mix two fields.
+  const kind = firstClass(element)
+  return candidates.find(candidate => records.every((record, index) => {
     const expected = entry.byRecord.get(index) ?? null
     const found = selectFirst(candidate, record)
-    return found === expected || (!strict && expected === null)
-  })
-  return candidates.find(candidate => fits(candidate, true)) ?? candidates.find(candidate => fits(candidate, false)) ?? null
+    return found === expected || (expected === null && kind !== null && found !== null && firstClass(found) === kind)
+  })) ?? null
 }
 
-/** Class name without the record's own prefix: `card-title` in `.card` → `title`, BEM `__price` → `price`. */
-function cleanClass(name: string, recordClasses: string[]): string {
-  const bem = name.split('__').at(-1) ?? name
-  const prefix = recordClasses.find(recordClass => bem.startsWith(`${recordClass}-`) || bem.startsWith(`${recordClass}_`))
-  return prefix === undefined
-    ? bem
-    : bem.slice(prefix.length + 1)
+/** `div.commtext` for `<div class="commtext c00">`, or `null` without a stable class. */
+function firstClass(element: Element): string | null {
+  const [name] = stableClasses(element)
+  return name === undefined
+    ? null
+    : `${element.name}.${name}`
 }
 
-function textHint(element: Element, record: Element): string | null {
-  const itemprop = attr(element, 'itemprop') ?? attr(element, 'aria-label')
-  if (itemprop)
-    return itemprop
+/** `span.age > a`: the point under its nearest ancestor with a stable class, if any. */
+function classedPath(root: Element, element: Element): string[] {
+  const tags = [element.name]
+  for (let current: Element | null = parentElement(element); current && current !== root; current = parentElement(current)) {
+    const names = stableClasses(current)
+    if (names.length > 0) {
+      const tag = current.name
+      return names.map(name => `${tag}.${cssIdent(name)} > ${tags.join(' > ')}`)
+    }
+    tags.unshift(current.name)
+  }
+  return []
+}
+
+function isHeading(element: Element): boolean {
+  return /^h[1-6]$/.test(element.name)
+}
+
+/** The noun the point's links point at, from the part all records share. */
+function sharedLinkWord(entry: Entry): string | null {
+  if (entry.first.name !== 'a')
+    return null
+  const links = [
+    ...entry.byRecord.values(),
+  ].map(link => attr(link, 'href')).filter((href): href is string => href !== null)
+  return links.length < 2
+    ? null
+    : linkWord(commonPrefix(links))
+}
+
+/**
+ * Hints from the markup around a point. Strong: a heading, a `Label:` before it, the `itemprop`
+ * of the point and of the wrappers that hold exactly its text, the point's own classes. Weak:
+ * the wrappers' classes, the noun its link points at, then the classes of other ancestors.
+ */
+function markupHints(entry: Entry, recordClasses: string[]): Hints {
+  const element = entry.first
+  const link = sharedLinkWord(entry)
+  const own = text(element)
+  const chain: Element[] = []
+  for (let current: Element | null = element; current && current !== entry.firstRoot; current = parentElement(current))
+    chain.push(current)
+  const wrappers = chain.filter(current => current === element || text(current) === own)
+  const strong: string[] = []
+  if (wrappers.some(isHeading))
+    strong.push('title')
   const previous = element.prev && isTag(element.prev)
     ? text(element.prev)
     : ''
   if (previous.endsWith(':') && previous.length <= 40)
-    return previous
-  const recordClasses = stableClasses(record)
-  for (let current: Element | null = element; current && current !== record; current = parentElement(current)) {
-    const name = stableClasses(current)[0]
-    if (name !== undefined)
-      return cleanClass(name, recordClasses)
+    strong.push(previous)
+  const classHints = (current: Element): string[] => stableClasses(current)
+    .map(name => classHint(name, recordClasses, link))
+    .filter((hint): hint is string => hint !== null)
+  for (const current of wrappers) {
+    const itemprop = attr(current, 'itemprop')
+    if (itemprop)
+      strong.push(itemprop)
   }
-  return /^h[1-6]$/.test(element.name)
-    ? 'title'
-    : null
+  strong.push(...classHints(element))
+  // Wrappers' classes come after a counted noun (`4.1 out of 5 stars` is a rating whatever
+  // the popover around it is called).
+  const weak = [
+    ...wrappers.filter(current => current !== element).flatMap(classHints),
+    ...(link === null
+      ? []
+      : [link]),
+    ...chain.filter(current => !wrappers.includes(current)).flatMap(classHints),
+    // Minified classes (`p` for price) still beat a position.
+    ...wrappers.flatMap(current => stableClasses(current).filter(name => /^[a-z]{1,2}$/i.test(name))),
+  ]
+  return { strong, weak }
 }
 
-function hintFor(entry: Entry, group: Group): string | null {
-  const element = entry.first
-  if (entry.attr?.startsWith('data-'))
-    return entry.attr.slice(5)
-  let base: string | null
-  if (group.kind === 'table') {
-    let cell: Element = element
-    while (parentElement(cell) && parentElement(cell) !== entry.firstRecord)
-      cell = parentElement(cell) ?? cell
-    base = group.headers.get(nthChild(cell)) ?? null
-  }
-  else {
-    base = textHint(element, entry.firstRecord)
-  }
-  if (entry.attr === 'src') {
-    return base === null || /image|img|photo|picture|thumb/i.test(base)
-      ? base ?? 'image'
-      : `${base} image`
-  }
-  if (entry.attr === 'href') {
-    return base === null || /url|link|href/i.test(base)
-      ? base ?? 'url'
-      : `${base} url`
-  }
-  return base ?? entry.attr
-}
-
-interface RawField {
-  hint: string | null
-  selector: string
-  attr: string | null
-  /** Pattern the raw values were already cut with (ids taken from links). */
-  pattern: string | null
-  raw: Array<string | null>
-}
-
-function commonPrefix(values: string[]): string {
-  let prefix = values[0] ?? ''
-  for (const value of values) {
-    while (!value.startsWith(prefix))
-      prefix = prefix.slice(0, -1)
-  }
-  return prefix
-}
-
-/** `/products/1001-blue-kettle` → an `id` field with pattern `^/products/(\d+)`. */
-function idFromLinks(field: RawField): RawField | null {
-  const links = field.raw.filter((value): value is string => value !== null)
-  if (links.length < 2 || new Set(links).size !== links.length)
+function tableHeader(entry: Entry, group: Group): string | null {
+  if (group.kind !== 'table')
     return null
-  const shared = commonPrefix(links)
-  const cut = Math.max(shared.lastIndexOf('/'), shared.lastIndexOf('='))
-  if (cut === -1)
-    return null
-  const prefix = shared.slice(0, cut + 1)
-  const rests = links.map(link => link.slice(prefix.length))
-  const core = rests.every(rest => /^\d+/.test(rest))
-    ? '(\\d+)'
-    : rests.every(rest => /^[\w-]{1,64}$/.test(rest))
-      ? '([\\w-]+)'
-      : null
-  if (core === null)
-    return null
-  const pattern = `^${escapeRegex(prefix)}${core}`
+  let cell: Element = entry.first
+  while (parentElement(cell) && parentElement(cell) !== entry.firstRoot)
+    cell = parentElement(cell) ?? cell
+  return group.headers.get(nthChild(cell)) ?? null
+}
+
+/** Hints for an attribute's value from the element's own: `title` → `url`, `price` → `price url`. */
+function attributeHints(attrName: string, base: Hints, isDate: boolean): Hints {
+  // The plain word (`url`) comes before names taken from wrappers: a link the markup does not
+  // name is the record's url, not its `rushComponentUrl`.
+  const suffixed = (word: string, already: RegExp, primary: RegExp): Hints => {
+    const suffix = (hint: string): string => {
+      if (primary.test(hint))
+        return word
+      return already.test(hint)
+        ? hint
+        : `${hint} ${word}`
+    }
+    return {
+      strong: [
+        ...base.strong.map(suffix),
+        word,
+      ],
+      weak: base.weak.map(suffix),
+    }
+  }
+  if (attrName === 'href')
+    return suffixed('url', /url|link|href/i, /^(?:title|name|headline)$/i)
+  if (attrName === 'src')
+    return suffixed('image', /image|img|photo|picture|thumb/i, /^(?:image|photo|picture)$/i)
+  if (isDate)
+    return suffixed('date', /date|time/i, /^$/)
   return {
-    hint: field.hint === null
-      ? 'id'
-      : field.hint.replace(/\s*url$/i, ' id'),
-    selector: field.selector,
-    attr: field.attr,
-    pattern,
-    raw: field.raw.map(value => value === null
-      ? null
-      : capture(pattern, value)),
+    strong: [
+      ...base.strong,
+      ...base.weak,
+      attrName,
+    ],
+    weak: [],
   }
 }
 
-/**
- * Template text: one value everywhere (unless a lone table sample has nothing to compare), or,
- * with several samples, the same values in the same order in every sample (navigation menus).
- */
-function isTemplate(raw: Array<string | null>, sampleOf: number[], group: Group): boolean {
-  const sampleCount = new Set(sampleOf).size
+/** Text that is template: one value everywhere (unless a lone table sample has nothing to compare). */
+function isConstant(raw: Array<string | null>, sampleOf: number[], group: Group): boolean {
   const present = raw.filter((value): value is string => value !== null && value !== '')
-  if (present.length === 0 || (new Set(present).size <= 1 && (sampleCount > 1 || group.kind === 'repeated')))
-    return true
-  if (sampleCount < 2)
+  return present.length === 0 || (new Set(present).size <= 1 && (new Set(sampleOf).size > 1 || group.kind !== 'table'))
+}
+
+/** The same values in the same order in every one of several samples. */
+function repeatsEverySample(raw: Array<string | null>, sampleOf: number[]): boolean {
+  if (new Set(sampleOf).size < 2)
     return false
   const perSample = new Map<number, Array<string | null>>()
   raw.forEach((value, index) => {
@@ -368,36 +407,107 @@ function isTemplate(raw: Array<string | null>, sampleOf: number[], group: Group)
   ].map(values => JSON.stringify(values))).size === 1
 }
 
+function hintsFor(entry: Entry, group: Group, recordClasses: string[], isDate: boolean): Hints {
+  if (entry.attr?.startsWith('data-')) {
+    return {
+      strong: [
+        entry.attr.slice(5),
+      ],
+      weak: [],
+    }
+  }
+  const header = tableHeader(entry, group)
+  const markup = markupHints(entry, recordClasses)
+  const base: Hints = {
+    strong: [
+      ...(header === null
+        ? []
+        : [header]),
+      ...markup.strong,
+    ],
+    weak: markup.weak,
+  }
+  return entry.attr === null
+    ? base
+    : attributeHints(entry.attr, base, isDate)
+}
+
+/** The fields one point gives: none (in-page anchors, tooltips), itself, or itself plus an id. */
+function fieldsOf(point: Located, group: Group, records: Element[], sampleOf: number[]): RawField[] {
+  const { key, entry, selector, raw } = point
+  // `#installation` is a jump within the page, not data about the record.
+  if (entry.attr === 'href' && raw.every(value => value === null || value.startsWith('#')))
+    return []
+  const isDate = entry.attr !== null && typeField(raw.filter((value): value is string => value !== null)).type === 'date'
+  // Tooltips that are not times repeat or describe the text (`Score of 12`).
+  if (entry.attr === 'title' && !isDate)
+    return []
+  const recordClasses = records[0]
+    ? stableClasses(records[0])
+    : []
+  const field: RawField = {
+    hints: hintsFor(entry, group, recordClasses, isDate),
+    selector,
+    attr: entry.attr,
+    pattern: null,
+    raw,
+    source: key,
+    shown: text(entry.first) !== '',
+  }
+  if (entry.attr === 'id' && selector === '') {
+    const id = idFromRecordIds(field, sampleOf)
+    return id
+      ? [id]
+      : []
+  }
+  const id = entry.attr === 'href'
+    ? idFromLinks(field, sampleOf)
+    : null
+  return id
+    ? [field, id]
+    : [field]
+}
+
+/** A point with the selector that finds it and the text it reads in every record. */
+interface Located {
+  key: string
+  entry: Entry
+  selector: string
+  raw: Array<string | null>
+}
+
+/**
+ * Fields of the records. Text that reads the same in the same order in every sample is a menu,
+ * unless something else in the records changed: then the samples are one list fetched twice
+ * (the same questions, with new view counts) and unchanged titles are still data.
+ */
 function rawFields(group: Group, records: Element[], sampleOf: number[]): RawField[] {
-  const fields: RawField[] = []
-  for (const entry of collectEntries(records).values()) {
-    const selector = chooseSelector(entry, records)
+  const parts = records.map(record => partsOf(record, group.companions))
+  const located: Located[] = []
+  for (const [key, entry] of collectEntries(parts)) {
+    const selector = chooseSelector(entry, records, group.companions)
     if (selector === null)
       continue
     const raw = records.map(record => readRaw(record, selector, entry.attr, null))
-    if (isTemplate(raw, sampleOf, group))
-      continue
-    const field = {
-      hint: hintFor(entry, group),
-      selector,
-      attr: entry.attr,
-      pattern: null,
-      raw,
-    }
-    fields.push(field)
-    const id = entry.attr === 'href'
-      ? idFromLinks(field)
-      : null
-    if (id)
-      fields.push(id)
+    if (!isConstant(raw, sampleOf, group))
+      located.push({ key, entry, selector, raw })
   }
-  return fields
+  const changed = located.some(point => !repeatsEverySample(point.raw, sampleOf))
+  return located
+    .filter(point => changed || !repeatsEverySample(point.raw, sampleOf))
+    .flatMap(point => fieldsOf(point, group, records, sampleOf))
+}
+
+interface TypedRaw {
+  raw: RawField
+  type: FieldType
+  pattern: string | null
+  unit: string | null
+  values: Array<ExtractedValue | null>
 }
 
 function toDraft(group: Group, records: Element[], sampleOf: number[]): Draft | null {
-  const names = new NameAllocator()
-  const fields: Record<string, ExtractField> = {}
-  const expected: Record<string, Array<ExtractedValue | null>> = {}
+  const typedFields: TypedRaw[] = []
   const seen = new Set<string>()
   for (const raw of rawFields(group, records, sampleOf)) {
     const typed = typeField(raw.raw.filter((value): value is string => value !== null))
@@ -409,26 +519,66 @@ function toDraft(group: Group, records: Element[], sampleOf: number[]): Draft | 
     if (seen.has(key) || values.every(value => value === null))
       continue
     seen.add(key)
-    const name = names.take(raw.hint)
-    fields[name] = {
-      selector: raw.selector,
-      attr: raw.attr,
-      pattern: raw.pattern ?? typed.pattern,
+    typedFields.push({
+      raw,
       type: typed.type,
-      optional: values.includes(null),
+      pattern: typed.pattern,
+      unit: typed.unit ?? null,
+      values,
+    })
+  }
+  // The record's main link (the first one that shows text) stays even when it is built from
+  // the id: it is how a client opens the record.
+  const main = typedFields.find(field => field.raw.attr === 'href' && field.raw.shown)
+  // …unless it is built from its own text (`user?id=bob` on `bob`).
+  const ownText = main && typedFields.find(field => field.raw.attr === null && field.raw.source === main.raw.source.replace(/\|href$/, '|#text'))
+  const exempt = main && !(ownText && isDerived(main.values, ownText.values, sampleOf))
+    ? main
+    : undefined
+  const kept = typedFields.filter(field => field.raw.attr !== 'href' || field === exempt || !typedFields.some(other => other.raw.attr !== 'href'
+    && other.raw.source !== field.raw.source
+    && isDerived(field.values, other.values, sampleOf)))
+  const names = new NameAllocator()
+  const fields: Record<string, ExtractField> = {}
+  const expected: Record<string, Array<ExtractedValue | null>> = {}
+  for (const field of kept) {
+    const name = names.takeFree([
+      ...field.raw.hints.strong,
+      ...(field.unit === null
+        ? []
+        : [field.unit]),
+      ...field.raw.hints.weak,
+    ])
+    fields[name] = {
+      selector: field.raw.selector,
+      attr: field.raw.attr,
+      pattern: field.raw.pattern ?? field.pattern,
+      type: field.type,
+      optional: field.values.includes(null),
     }
-    expected[name] = values
+    expected[name] = field.values
   }
   if (Object.keys(fields).length === 0)
     return null
+  // The first record can be a header row without the classes the others share.
+  const named = records.find(record => stableClasses(record).length > 0) ?? records[0]
+  const kind = named
+    ? recordKind(named, group.container)
+    : null
   return {
     spec: {
       kind: 'html',
       records: group.selector,
       many: true,
+      ...(kind === null
+        ? {}
+        : {
+            recordsName: plural(kind),
+          }),
       fields,
     },
     expected,
+    companions: group.companions,
   }
 }
 
@@ -450,32 +600,147 @@ function recordsOf(group: Group, samples: Document[]): { records: Element[], sam
   }
 }
 
+/** True when a record sits inside another one: the selector matched a layout, not a list. */
+function nests(records: Element[]): boolean {
+  const set = new Set(records)
+  return records.some((record) => {
+    for (let current = parentElement(record); current; current = parentElement(current)) {
+      if (set.has(current))
+        return true
+    }
+    return false
+  })
+}
+
+/** Every element a draft's records cover in a document, companions included. */
+export function recordElements(draft: Draft, document: Document): Element[] {
+  return select(draft.spec.records, document)
+    .flatMap(record => partsOf(record, draft.companions ?? []))
+    .filter((element): element is Element => element !== null)
+}
+
 /**
- * The best record structure in the samples, as a `many: true` spec. Tables are always
- * considered; repeated sibling structures only with `allowRepeated` (two or more samples, so
- * template and data can be told apart). `null` when no structure yields a field.
+ * How well the fields fill the records: a field present in every record counts 1, one present
+ * in 80% counts 0.64, and one in half of them or fewer counts nothing, so many sparse fields (rows of
+ * a layout table, sections of an article, each holding something else) do not outweigh a few
+ * that every record has.
+ */
+function coverage(draft: Draft): number {
+  return Object.values(draft.expected).reduce((sum, values) => {
+    const share = values.length === 0
+      ? 0
+      : values.filter(value => value !== null).length / values.length
+    return share <= 0.5
+      ? sum
+      : sum + share * share
+  }, 0)
+}
+
+/** False for structures that are page layout or a detail page rather than a list of records. */
+function looksLikeList(group: Group, records: Element[], sampleOf: number[], samples: Document[]): boolean {
+  if (group.kind !== 'table')
+    return records.length >= 2 * Math.max(1, samples.length - 1) && !nests(records)
+  // One row per page is a detail laid out as a table, not a list.
+  if (samples.length > 1 && !samples.some((_, sample) => sampleOf.filter(of => of === sample).length >= 2))
+    return false
+  // A few rows that each hold a whole table are page layout; many such rows are a list whose
+  // entries are laid out with tables, like HN comments.
+  const layoutRows = records.length < 5 * samples.length && records.some(record => select('table', record).length > 0)
+  return !layoutRows && !nests(records)
+}
+
+/**
+ * The group's draft and score: how well its fields fill the records, times the evidence of how
+ * many records there are (30 stories beat a two-step breadcrumb with as many fields). Table rows
+ * are data the page itself marks as tabular, unlike a list in an article's prose.
+ */
+function scoreGroup(group: Group, samples: Document[]): { draft: Draft, score: number } | null {
+  const { records, sampleOf } = recordsOf(group, samples)
+  if (!looksLikeList(group, records, sampleOf, samples))
+    return null
+  const draft = toDraft(group, records, sampleOf)
+  if (!draft || (group.kind !== 'table' && Object.keys(draft.spec.fields).length < 2))
+    return null
+  const tabular = records[0]?.name === 'tr'
+    ? 1.5
+    : 1
+  const score = coverage(draft) * tabular * Math.log2(1 + records.length / samples.length)
+  return { draft, score }
+}
+
+/**
+ * How a selector ranks among others for the same records: plain classes, then marker attributes,
+ * then classes with a `__` part. Those are BEM elements or CSS-module hashes in lowercase
+ * (`withMetadata__klorrw`), which cannot be told apart and the latter change with each deploy.
+ */
+function selectorRank(selector: string): number {
+  if (/\.[\w-]*__/.test(selector))
+    return 2
+  return selector.includes('[')
+    ? 1
+    : 0
+}
+
+/**
+ * One group per set of records: `div[data-asin]`, `div[data-component-type="s-search-result"]`
+ * and `div.s-result-item` often select the same cards, and each would be scored in full. The
+ * kept selector is the one a reader expects and a redeploy keeps (see {@link selectorRank}),
+ * then the shortest, then the first in code-point order.
+ */
+export function distinctGroups(groups: Group[], samples: Document[]): Group[] {
+  const ids = new Map<Element, number>()
+  const id = (element: Element): number => {
+    let value = ids.get(element)
+    if (value === undefined) {
+      value = ids.size
+      ids.set(element, value)
+    }
+    return value
+  }
+  const preferred = (a: Group, b: Group): number => selectorRank(a.selector) - selectorRank(b.selector)
+    || a.selector.length - b.selector.length
+    || (a.selector < b.selector
+      ? -1
+      : Number(a.selector > b.selector))
+  const byRecords = new Map<string, Group>()
+  for (const group of groups) {
+    const key = JSON.stringify([
+      group.kind === 'spanning'
+        ? group.companions
+        : [],
+      samples.map(sample => select(group.selector, sample).map(id)),
+    ])
+    const kept = byRecords.get(key)
+    if (!kept || preferred(group, kept) < 0)
+      byRecords.set(key, group)
+  }
+  return [
+    ...byRecords.values(),
+  ]
+}
+
+/**
+ * The best record structure in the samples, as a `many: true` spec. Tables and records that
+ * span table rows are always considered; other repeated structures only with `allowRepeated`
+ * (two or more samples, so template and data can be told apart). Structures are ranked by how
+ * well their fields fill the records, so uniform records beat a layout table whose one row
+ * holds the whole page. `null` when no structure yields a field.
  */
 export function inferRecords(samples: Document[], allowRepeated: boolean): Draft | null {
-  const groups = [
+  const [first] = samples
+  const groups = distinctGroups([
+    ...spanningGroups(samples).filter(group => allowRepeated || (first && select(group.selector, first)[0]?.name === 'tr')),
+    // A table competes with the records spanning its rows: day headings over entries are rows.
     ...tableGroups(samples),
     ...(allowRepeated
       ? repeatedGroups(samples)
       : []),
-  ]
+  ], samples)
   let best: { draft: Draft, score: number } | null = null
   for (const group of groups) {
-    const { records, sampleOf } = recordsOf(group, samples)
-    if (group.kind === 'repeated' && records.length < 2 * Math.max(1, samples.length - 1))
-      continue
-    const draft = toDraft(group, records, sampleOf)
-    if (!draft)
-      continue
-    const fieldCount = Object.keys(draft.spec.fields).length
-    if (group.kind === 'repeated' && fieldCount < 2)
-      continue
-    const score = fieldCount * 100 + records.length / samples.length
-    if (!best || score > best.score)
-      best = { draft, score }
+    const scored = scoreGroup(group, samples)
+    if (scored && (!best || scored.score > best.score))
+      best = scored
   }
   return best?.draft ?? null
 }

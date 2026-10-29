@@ -36,5 +36,6 @@ or `Proposed`.
 | [0026](0026-fitting-and-credential-rules.md) | Fit output to the site, not the samples; credentials are never constants (refines 0015) | Accepted |
 | [0027](0027-graphql-operations.md) | One operation per GraphQL operation: `<endpoint>#<name>` paths and `x-site-to-api-graphql` | Accepted |
 | [0028](0028-graphql-detection-refinements.md) | Stricter GraphQL detection and type evidence (refines 0027) | Accepted |
+| [0029](0029-html-records-and-field-names.md) | HTML records that span siblings, ranked by coverage; names from the markup | Accepted |
 | [0032](0032-excerpts-as-markdown.md) | Source excerpts are Markdown files | Accepted |
 | [0034](0034-required-from-evidence.md) | `required` in responses needs two distinct requests; GraphQL variables follow the document | Accepted |
