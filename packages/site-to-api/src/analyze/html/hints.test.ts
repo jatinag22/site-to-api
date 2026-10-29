@@ -46,6 +46,8 @@ describe('recordKind', () => {
   it('uses the last meaningful class, skipping utilities, then the container', () => {
     expect(recordKind(first('<table><tr class="athing submission"></tr></table>', 'tr'), null)).toBe('submission')
     expect(recordKind(first('<div class="bb bc-black-200 py16"></div>', 'div'), null)).toBeNull()
+    const list = first('<ul class="withMetadata__klorrw"><li>1</li></ul>', 'ul')
+    expect(recordKind(first('<ul class="withMetadata__klorrw"><li>1</li></ul>', 'li'), list)).toBeNull()
     const table = first('<table class="deals"><tr><td>1</td></tr></table>', 'table')
     expect(recordKind(first('<table class="deals"><tr><td>1</td></tr></table>', 'tr'), table)).toBe('deal')
   })
@@ -60,6 +62,21 @@ describe('naming', () => {
       'questions',
     ])
     expect(['stories', 'boxes', 'deals', 'status'].map(singular)).toEqual(['story', 'box', 'deal', 'status'])
+  })
+
+  it('never hands out a name twice, numbered names included', () => {
+    const names = new NameAllocator()
+    expect(['Price', 'Price', 'Price 2', 'price2'].map(hint => names.takeFree([hint]))).toEqual([
+      'price',
+      'price2',
+      'price22',
+      'price23',
+    ])
+    const unnamed = new NameAllocator()
+    expect([
+      unnamed.take('field1'),
+      unnamed.take(null),
+    ]).toEqual(['field1', 'field2'])
   })
 
   it('takes the first free hint before numbering one', () => {

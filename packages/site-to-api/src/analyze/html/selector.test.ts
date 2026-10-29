@@ -12,8 +12,23 @@ describe('selectors', () => {
   })
 
   it('rejects CSS-module hashes but keeps BEM elements', () => {
-    const [element] = select('span', parseHtml('<span class="NarrowOnly__KfauzV withMetadata__klorrw OverviewTable__rPbUfl prc-Token-Token-A5-r7 card__title card__priceValue Link--primary"></span>'))
+    const [element] = select('span', parseHtml('<span class="NarrowOnly__KfauzV OverviewTable__rPbUfl Box__a1b2c prc-Token-Token-A5-r7 card__title card__priceValue Link--primary"></span>'))
     expect(element && stableClasses(element)).toEqual(['card__title', 'card__priceValue', 'Link--primary'])
+  })
+
+  it('anchors on a data attribute before a class with a `__` part', () => {
+    const document = parseHtml('<ul class="withMetadata__klorrw" data-density="normal"><li>a</li></ul><ul><li>b</li></ul>')
+    expect(uniqueSelector(select('ul', document)[0]!, document)).toBe('ul[data-density]')
+  })
+
+  it('keeps BEM elements of camelCase and PascalCase blocks', () => {
+    const [element] = select('span', parseHtml('<span class="ProductCard__title searchResult__price UserCard__author withMetadata__klorrw"></span>'))
+    expect(element && stableClasses(element)).toEqual([
+      'ProductCard__title',
+      'searchResult__price',
+      'UserCard__author',
+      'withMetadata__klorrw',
+    ])
   })
 
   it('prefers id, then name, then a unique class, then an anchored path', () => {

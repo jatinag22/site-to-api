@@ -207,8 +207,9 @@ export function recordKind(anchor: Element, container: Element | null): string |
   if (typed !== null)
     return `${typed.charAt(0).toLowerCase()}${typed.slice(1)}`
   const fromClasses = (element: Element): string | null => {
-    // Utility classes (`bc-black-200`, `py16`, `d-flex`) describe looks, not the record.
-    const named = stableClasses(element).filter(name => !/\d/.test(name) && !/(?:^|-)[a-z]{1,2}(?:-|$)/i.test(name))
+    // Utility classes (`bc-black-200`, `py16`, `d-flex`) describe looks, not the record; a class
+    // with a `__` part may end in a CSS-module hash (`withMetadata__klorrw`), not a word.
+    const named = stableClasses(element).filter(name => !/\d/.test(name) && !/(?:^|-)[a-z]{1,2}(?:-|$)/i.test(name) && !name.includes('__'))
     for (const name of [...named].reverse()) {
       const kept = words(name).filter(word => meaningful(word) && !CONTAINER_WORDS.has(word))
       const word = kept.at(-1)

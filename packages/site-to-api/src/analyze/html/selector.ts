@@ -26,19 +26,20 @@ const GENERATED_PREFIX = /^(?:ember|ext-gen|yui_|react-|radix-|headlessui-|mui-|
 
 /**
  * The hash CSS modules and component libraries append: `NarrowOnly__KfauzV`,
- * `withMetadata__klorrw`, `prc-Token-Token-A5-r7`. A BEM element (`card__title`) is a word
- * after a kebab-case block and stays.
+ * `OverviewTable__rPbUfl`, `prc-Token-Token-A5-r7`. A BEM element (`card__title`,
+ * `ProductCard__title`, `card__priceValue`) is a word or camelCase word and stays; so does an
+ * all-lowercase hash (`withMetadata__klorrw`), which cannot be told from a word.
  */
 function hasModuleHash(token: string): boolean {
   const split = token.lastIndexOf('__')
   if (split > 0) {
     const block = token.slice(0, split)
     const tail = token.slice(split + 2)
-    if (/^[\w-]{5,8}$/.test(tail)) {
-      const camelBlock = /[a-z][A-Z]/.test(block) || /^[A-Z][a-z]/.test(block)
-      const odd = /[\d_-]/.test(tail) || (/[A-Z]/.test(tail) && !/^[a-z]{2,}(?:[A-Z][a-z]{2,})+$/.test(tail))
-      if (odd || (camelBlock && /^[a-z]{5,6}$/.test(tail)))
-        return true
+    // Only an irregular tail is a hash: mixed case that is not camelCase, digits, `_` or `-`.
+    // `ProductCard__title` and `searchResult__price` are BEM elements of a camelCase block.
+    if (block !== '' && /^[\w-]{5,8}$/.test(tail)
+      && (/[\d_-]/.test(tail) || (/[A-Z]/.test(tail) && !/^[a-z]{2,}(?:[A-Z][a-z]{2,})+$/.test(tail)))) {
+      return true
     }
   }
   // `Component-Part-hash`: whatever follows the last PascalCase piece is short and irregular.
@@ -70,6 +71,13 @@ export function stableClasses(element: Element): string[] {
   return classes(element).filter(name => /^[a-z_][\w-]*$/i.test(name) && !looksGenerated(name))
 }
 
+function partition<T>(items: T[], keep: (item: T) => boolean): [T[], T[]] {
+  return [
+    items.filter(keep),
+    items.filter(item => !keep(item)),
+  ]
+}
+
 function matchesOnly(selector: string, element: Element, root: AnyNode): boolean {
   const found = select(selector, root)
   return found.length === 1 && found[0] === element
@@ -90,12 +98,17 @@ function ownCandidates(element: Element): string[] {
     if (value !== null && value !== '' && value.length <= 80)
       out.push(`${tag}[${attribute}=${cssString(value)}]`)
   }
-  for (const name of stableClasses(element))
+  // A class with a `__` part may be a lowercase CSS-module hash (`withMetadata__klorrw`) that
+  // changes with each deploy, so it comes after the element's data attributes.
+  const [plain, scoped] = partition(stableClasses(element), name => !name.includes('__'))
+  for (const name of plain)
     out.push(`${tag}.${cssIdent(name)}`)
   for (const attribute of Object.keys(element.attribs).sort()) {
     if (attribute.startsWith('data-') && /^[\w-]+$/.test(attribute))
       out.push(`${tag}[${attribute}]`)
   }
+  for (const name of scoped)
+    out.push(`${tag}.${cssIdent(name)}`)
   return out
 }
 
