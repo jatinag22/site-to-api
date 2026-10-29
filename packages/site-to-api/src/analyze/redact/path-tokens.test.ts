@@ -176,6 +176,12 @@ describe('path segments joined by colons', () => {
       .toBe('/cdn-cgi/challenge-platform/h/g/jsd/oneshot/0a1b2c3d4e5f/{token}/9f8e7d6c5b4a3210')
   })
 
+  it('judges the token after the last colon whole, with - and _ in it', () => {
+    const segment = '0.4182736455:1700000000:Hq7ZpL2x_Vb9KmR4tWc-8NyD3fJs6GaE1u'
+    expect(isRandomPathSegment(segment)).toBe(true)
+    expect(isOpaquePathSegment(segment)).toBe(true)
+  })
+
   it('keeps words and times joined by colons', () => {
     expect(isRandomPathSegment('urn:isbn:0451450523')).toBe(false)
     expect(isRandomPathSegment('2026-10-28T12:30:00')).toBe(false)

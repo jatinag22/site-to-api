@@ -235,6 +235,30 @@ function graphqlOperations(exchanges: Exchange[]): Operation[] {
   })
 }
 
+/** A path word a vendor's endpoint keeps fixed: `cdn-cgi`, `challenge-platform`, `h`, `oneshot`, `fp`. */
+const VENDOR_PATH_WORD = /^[a-z][a-z-]{0,23}$/i
+
+/**
+ * For a request to a vendor's challenge endpoint (not a site page answered with a challenge),
+ * every segment that is not a plain word is a parameter: challenge paths pack tokens, timestamps
+ * and ray ids into segments (`0.41:1700000000:Hq7Z_pL2x-…`) that no id rule recognises, and a
+ * literal one would be written into spec paths and operation ids.
+ */
+function vendorStepMarks(exchange: Exchange, segments: readonly string[], marks: Marks): Marks {
+  if (exchange.kind !== 'bot-protection' || isChallengeAnswer(exchange))
+    return marks
+  const result: Marks = new Map(marks)
+  segments.forEach((segment, index) => {
+    if (segment !== '' && !result.has(index) && !VENDOR_PATH_WORD.test(segment)) {
+      result.set(index, {
+        evidence: ['looks-like-id'],
+        sourceName: null,
+      })
+    }
+  })
+  return result
+}
+
 function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Operation[] {
   // GraphQL requests get their own operations; templating their paths would merge them.
   const relevant = exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind) && !isGraphqlExchange(exchange))
@@ -254,10 +278,11 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Opera
       ...new Set(members.map(exchange => exchange.request.path)),
     ], routesFor(routes, host, method), linkedSlugs(members, relevant))
     for (const exchange of members) {
+      const segments = segmentsOf(exchange.request.path)
       classified.push({
         exchange,
-        segments: segmentsOf(exchange.request.path),
-        marks: marks.get(exchange.request.path) ?? new Map(),
+        segments,
+        marks: vendorStepMarks(exchange, segments, marks.get(exchange.request.path) ?? new Map()),
       })
     }
   }

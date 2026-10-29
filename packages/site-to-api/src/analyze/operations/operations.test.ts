@@ -154,6 +154,19 @@ describe('buildOperations: grouping, ids and summaries', () => {
     ])
   })
 
+  it('turns every non-word segment of a vendor challenge path into a parameter', () => {
+    const vendor = (path: string): Exchange => ({
+      ...get(path, { kind: 'bot-protection', method: 'POST' }),
+      kindReason: 'Cloudflare: request to shop.test/cdn-cgi/challenge-platform/…',
+    })
+    const operations = build([
+      vendor('/cdn-cgi/challenge-platform/h/g/fo/0.4182736455:1700000000:Hq7ZpL2x_Vb9KmR4tWc-8NyD3fJs6GaE1u/9f8e7d6c5b4a'),
+      vendor('/cdn-cgi/challenge-platform/h/g/fo/0.9918273645:1700000100:Zx9Qw8Er_7Ty6Ui5Op-4AsDf3Gh2Jk1Lm/0a1b2c3d4e5f'),
+    ])
+    expect(operations.map(item => item.path)).toEqual(['/cdn-cgi/challenge-platform/h/g/fo/{foId}/{param2}'])
+    expect(operations[0]!.operationId).not.toMatch(/Hq7Z|Zx9Q/)
+  })
+
   it('keeps a page that was challenged once a page', () => {
     const operations = build([
       {

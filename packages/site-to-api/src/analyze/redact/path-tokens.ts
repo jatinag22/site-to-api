@@ -117,7 +117,16 @@ function looksRandom(run: string): boolean {
  * so `Xy7+Qw9/Zt3=Lm2Pk8Rs` is one run like its base64url form.
  */
 function runsOf(value: string): string[] {
-  return value.split(SEPARATOR).map(run => run.replace(/[+/=]/g, '')).filter(run => run !== '')
+  const runs = value.split(SEPARATOR).map(run => run.replace(/[+/=]/g, '')).filter(run => run !== '')
+  // After the last `:` of `<float>:<epoch>:<token>` comes one base64url token, `-` and `_`
+  // included; split there it would read as short words.
+  const colon = value.lastIndexOf(':')
+  const tail = colon === -1
+    ? ''
+    : value.slice(colon + 1).replace(/[-_+/=]/g, '')
+  return tail === '' || runs.includes(tail)
+    ? runs
+    : [...runs, tail]
 }
 
 /** Decodes a percent-encoded path segment. `+` stays `+`: it means a space only in queries. */
