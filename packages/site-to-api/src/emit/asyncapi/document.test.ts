@@ -75,7 +75,9 @@ describe('buildAsyncApiDocuments', () => {
     ]).toEqual(['rt.shop.test', 'shop.test:8080'])
     for (const document of documents.values())
       expect(await validate(document)).toEqual([])
-  })
+    // Legitimately heavy: the official AsyncAPI parser (spectral rules, schema compile) validates two
+    // documents. ~360 ms alone, 5 s+ when the machine is saturated, so it gets an explicit budget.
+  }, 30_000)
 
   it('describes channels, messages and operations from the client side', () => {
     const document = buildAsyncApiDocuments([

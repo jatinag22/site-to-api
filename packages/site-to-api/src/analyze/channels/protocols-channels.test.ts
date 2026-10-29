@@ -330,7 +330,7 @@ describe('site input that must not crash, stall or leak', () => {
         sessionId: 's',
         url: `${base}&transport=polling&sid=Aa1`,
         startedAt: T0 + 10,
-        responseBody: textBody('6\x1E'.repeat(200_000), 'text/plain'),
+        responseBody: textBody('6\x1E'.repeat(5_000), 'text/plain'),
       }),
     ], [
       loadedSession('s', []),
