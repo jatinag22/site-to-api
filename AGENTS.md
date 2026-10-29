@@ -80,6 +80,8 @@ uses it, add or update a decision record when the change affects the on-disk for
 - A test that drives a real browser (capture, e2e) must pass 10 consecutive runs before it is
   committed (`for i in $(seq 1 10); do pnpm exec vitest --run <file> -t "<name>" || break; done`).
   Timing bugs (background-tab timer throttling, load events, popups) do not show up in one run.
+- Before a release and after changes to capture, analysis or redaction, run the manual real-site
+  checks in `docs/testing.md`. Automated tests never visit third-party sites.
 
 ## Commands
 

@@ -25,6 +25,26 @@ describe('createHtmlLocator', () => {
     expect(locate(signIn, 'f0rm-token-value')).toEqual({ selector: 'input[name="_token"]', attr: 'value', pattern: null })
   })
 
+  it('finds a value on a namespaced tag with a selector css-select accepts', () => {
+    const html = '<html><body><dptags:queryLogOperation token="q-77aa31"></dptags:queryLogOperation><dptags:queryLogOperation token="z-11"></dptags:queryLogOperation></body></html>'
+    const found = locate(html, 'q-77aa31')
+    expect(found?.selector).toContain('dptags\\:querylogoperation:nth-of-type(1)')
+    expect(readBack(html, found!)).toBe('q-77aa31')
+  })
+
+  it('reports a page it cannot read and returns null instead of throwing', () => {
+    const errors: unknown[] = []
+    const failing = createHtmlLocator(error => errors.push(error))
+    // A document that throws when read stands in for markup the analysis trips over.
+    const hostile = {
+      includes: () => { throw new Error('unreadable') },
+    }
+    expect(Reflect.apply(failing, undefined, [hostile, 'abc'])).toBeNull()
+    expect(errors).toEqual([
+      new Error('unreadable'),
+    ])
+  })
+
   it('finds a value inside __NEXT_DATA__ and an inline state assignment', () => {
     const html = nextDataPage('demo-key-778', 'u_42')
     const apiKey = locate(html, 'demo-key-778')

@@ -12,7 +12,7 @@ import type { Hints, RawField } from './keys'
 import type { ExtractedValue } from './values'
 import { isTag } from 'domhandler'
 import { readRaw } from './apply'
-import { attr, childElements, contentElements, cssIdent, cssString, holdsText, nthChild, nthOfType, ownText, parentElement, select, selectFirst, text } from './dom'
+import { attr, childElements, contentElements, cssIdent, cssString, holdsText, nthChild, nthOfType, ownText, parentElement, select, selectFirst, tagSelector, text } from './dom'
 import { typeField } from './fields'
 import { partsOf, repeatedGroups, signature, spanningGroups, tableGroups } from './groups'
 import { classHint, linkWord, recordKind } from './hints'
@@ -98,7 +98,7 @@ function classedKey(root: Element, element: Element): string | null {
     const named = firstClass(current)
     if (named !== null)
       return [named, ...tags].join('>')
-    tags.unshift(current.name)
+    tags.unshift(tagSelector(current))
   }
   return null
 }
@@ -214,7 +214,7 @@ function collectEntries(parts: Array<Array<Element | null>>): Map<string, Entry>
 function relativePath(record: Element, element: Element): string {
   const steps: string[] = []
   for (let current: Element | null = element; current && current !== record; current = parentElement(current))
-    steps.unshift(`${current.name}:nth-of-type(${nthOfType(current)})`)
+    steps.unshift(`${tagSelector(current)}:nth-of-type(${nthOfType(current)})`)
   return `:scope > ${steps.join(' > ')}`
 }
 
@@ -233,11 +233,11 @@ function chooseSelector(entry: Entry, records: Element[], companions: string[]):
   const element = entry.first
   const itemprop = attr(element, 'itemprop')
   const candidates = [
-    ...stableClasses(element).map(name => `${element.name}.${cssIdent(name)}`),
+    ...stableClasses(element).map(name => `${tagSelector(element)}.${cssIdent(name)}`),
     ...(itemprop
       ? [`[itemprop=${cssString(itemprop)}]`]
       : []),
-    element.name,
+    tagSelector(element),
     ...classedPath(entry.firstRoot, element),
     relativePath(entry.firstRoot, element),
   ].map((candidate) => {
@@ -267,14 +267,16 @@ function firstClass(element: Element): string | null {
 
 /** `span.age > a`: the point under its nearest ancestor with a stable class, if any. */
 function classedPath(root: Element, element: Element): string[] {
-  const tags = [element.name]
+  const tags = [
+    tagSelector(element),
+  ]
   for (let current: Element | null = parentElement(element); current && current !== root; current = parentElement(current)) {
     const names = stableClasses(current)
     if (names.length > 0) {
-      const tag = current.name
+      const tag = tagSelector(current)
       return names.map(name => `${tag}.${cssIdent(name)} > ${tags.join(' > ')}`)
     }
-    tags.unshift(current.name)
+    tags.unshift(tagSelector(current))
   }
   return []
 }

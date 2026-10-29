@@ -8,7 +8,7 @@ import type { Document, Element } from './dom'
 import type { Draft } from './records'
 import type { ExtractedValue } from './values'
 import { readRaw } from './apply'
-import { attr, childElements, contentElements, cssString, holdsText, parentElement, select, text } from './dom'
+import { attr, childElements, contentElements, cssString, holdsText, parentElement, select, tagSelector, text } from './dom'
 import { afterLabel, typeField } from './fields'
 import { classHint, linkWord } from './hints'
 import { NameAllocator } from './naming'
@@ -50,7 +50,7 @@ function pairFromSiblings(labelElement: Element, value: Element | null, label: s
     label,
     value,
     labelElement,
-    selector: `${labelElement.name}:contains(${cssString(label)}) + ${value.name}`,
+    selector: `${tagSelector(labelElement)}:contains(${cssString(label)}) + ${tagSelector(value)}`,
     inline: false,
   }
 }

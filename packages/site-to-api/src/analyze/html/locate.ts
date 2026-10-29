@@ -120,8 +120,10 @@ function locateInText(document: string, value: string): HtmlLocation | null {
  * attribute that contains it. Each answer is read back from the document before it is returned.
  * Text documents get `selector: ''` (the whole document) and a pattern.
  */
-export function createHtmlLocator(): HtmlLocator {
-  return (document, value) => {
+export function createHtmlLocator(onError: (error: unknown) => void = () => {}): HtmlLocator {
+  // A page the analysis cannot read (markup it builds an invalid selector from) loses this value
+  // origin, not the build.
+  const locate: HtmlLocator = (document, value) => {
     if (value.trim() === '' || !document.includes(value.length > 200
       ? value.slice(0, 200)
       : value.split(/[&<>"']/)[0] ?? value)) {
@@ -137,5 +139,14 @@ export function createHtmlLocator(): HtmlLocator {
       ?? byText(dom, scripts, value, false)
       ?? byText(dom, content, value, false)
       ?? byPartialAttribute(dom, allElements(dom), value)
+  }
+  return (document, value) => {
+    try {
+      return locate(document, value)
+    }
+    catch (error) {
+      onError(error)
+      return null
+    }
   }
 }

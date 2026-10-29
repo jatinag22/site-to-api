@@ -76,23 +76,37 @@ function addExtraction(operations: Operation[], minSamples: number, warnings: st
               { text: exchange.response.body.text, mimeType: response.mimeType },
             ]
           : [])
-      const inferred = samples.length > 0
-        ? inferExtraction(samples, { minSamples })
-        : null
-      if (!inferred)
+      // The pages are site input: markup the analysis cannot handle costs this operation its
+      // extraction spec, never the build.
+      try {
+        const inferred = samples.length > 0
+          ? inferExtraction(samples, { minSamples })
+          : null
+        if (!inferred)
+          return { ...response, extract: null }
+        // Generated clients run the runtime's extract(); make sure it reads the spec the same way.
+        const aligned = alignWithRuntime(inferred.spec, samples.map(sample => sample.text))
+        if (aligned.error !== null)
+          warnings.push(`${operation.operationId}: the inferred record layout was rejected by the runtime's extract() (${aligned.error}); no extraction spec was written.`)
+        return {
+          ...response,
+          extract: aligned.spec
+            ? { ...inferred, spec: aligned.spec }
+            : null,
+        }
+      }
+      catch (error) {
+        warnings.push(`${operation.operationId}: HTML extraction failed on the captured pages (${errorMessage(error)}); no extraction spec was written.`)
         return { ...response, extract: null }
-      // Generated clients run the runtime's extract(); make sure it reads the spec the same way.
-      const aligned = alignWithRuntime(inferred.spec, samples.map(sample => sample.text))
-      if (aligned.error !== null)
-        warnings.push(`${operation.operationId}: the inferred record layout was rejected by the runtime's extract() (${aligned.error}); no extraction spec was written.`)
-      return {
-        ...response,
-        extract: aligned.spec
-          ? { ...inferred, spec: aligned.spec }
-          : null,
       }
     }),
   }))
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : String(error)
 }
 
 function refKey(ref: SourceRef): string {
@@ -202,7 +216,8 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   )
   const sourceRoutes = screened.routes
   const staticStrings = await collectStaticStrings(loaded.sessions)
-  const htmlLocator = createHtmlLocator()
+  const locatorErrors: string[] = []
+  const htmlLocator = createHtmlLocator(error => locatorErrors.push(errorMessage(error)))
 
   // WebSocket frames stand in as exchanges, so the redactor learns secrets sent over a socket and
   // tracing finds where the client's frame values came from (decision 0023).
@@ -252,6 +267,8 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     staticStrings,
     minValueLength: config.build.minTraceValueLength,
   })
+  if (locatorErrors.length > 0)
+    warnings.push(`Value tracing could not read ${locatorErrors.length} HTML page(s) and skipped them (first error: ${locatorErrors[0]}).`)
   const traces = allTraces.filter(trace => !sockets.standIns.has(trace.exchangeId))
   const flows = buildFlows({
     exchanges,
