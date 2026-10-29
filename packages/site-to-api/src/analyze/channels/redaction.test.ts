@@ -13,7 +13,7 @@ import { exchange, jsonBody, loadedSession, socketEvents, textBody } from '../..
 import { fakeSourceResolver } from '../../../test/scenarios'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../../emit/asyncapi'
 import { writeFlows } from '../../emit/flows'
-import { writeHandoffDocs } from '../../emit/handoff'
+import { handoffStems, writeHandoffDocs } from '../../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../../emit/openapi'
 import { classifyExchanges, createChannelScope } from '../classify'
 import { traceValues } from '../correlate'
@@ -219,10 +219,11 @@ afterEach(async () => {
 
 async function emitAll(analysis: Analysis, examples: ResolvedConfig['redact']['examples']): Promise<string> {
   const openApi = buildOpenApiDocuments(analysis)
-  await writeOpenApiDocuments(dir, openApi)
+  const stems = handoffStems(analysis)
+  await writeOpenApiDocuments(dir, openApi, stems)
   await writeAsyncApiDocuments(dir, buildAsyncApiDocuments(analysis.channels ?? [], analysis.sessions.length), [
     ...openApi.keys(),
-  ])
+  ], stems)
   await writeFlows(dir, analysis.flows, { operations: analysis.operations })
   await writeHandoffDocs(dir, analysis, {
     toolVersion: 'test',

@@ -97,7 +97,7 @@ for s in browse browse-again login; do
   site-to-api capture http://localhost:4173 --headless --channel bundled --session $s \
     --script "$REPO/e2e/scenarios/$s.ts"
 done
-site-to-api build      # 21 operations, 19 flows → ./api-handoff
+site-to-api build      # 27 operations, 20 flows → ./api-handoff
 site-to-api probe      # optional: checks the session needs against the live shop
 ```
 
@@ -109,7 +109,9 @@ browse by hand. Sites with bot protection usually block headless browsers: for t
 
 ```
 api-handoff/
-  AGENT.md            start here: session needs per host, flows, computed values, gaps
+  AGENT.md            start here: a short index of the hosts, key flows, computed values, top gaps
+  hosts/<host>.md     everything about one host: session needs, cookies, operations, channels, gaps
+  GAPS.md             gaps of the whole build: probe state, build warnings (in full)
   API_MAP.md          one row per operation: inputs and their origins, response, client symbols
   flows.json          source of truth for flows (schema: flows.schema.json)
   flows.md            the same, readable
@@ -121,11 +123,35 @@ api-handoff/
   build.json          the options of the last build, which `probe` reuses
 ```
 
-An excerpt of the `AGENT.md` generated from the fixture shop walkthrough above:
+`AGENT.md` stays short on any site (under about 25 KB): one line per host, the login flow first,
+grouped gaps, and links to the details. An excerpt generated from the fixture shop walkthrough
+above:
 
 ```markdown
-### localhost:4173
+## Hosts
 
+### The site's own hosts
+
+- `localhost:4173`: a real browser sets up the session (confirmed by probe); bot protection:
+  Akamai (cookie \_abck; cookie bm\_sz; request body matches sensor\_data); 18 API operations
+  (1 seen in code only), 8 pages, 1 bot-protection step, 3 channels, 19 gaps.
+  [`hosts/localhost_4173.md`](hosts/localhost_4173.md)
+
+## Key flows
+
+- [Sign in](flows.md#sign-in-2) (submit): `getApiAuthKey` → `postApiAuthLogin` → `getAccount` →
+  `postShieldCollect` → `getApiMe`
+
+## Values computed in the browser
+
+- `body./password` of `postApiAuthLogin`: `src/auth/crypto.ts:26 encryptPassword` using
+  `crypto.subtle.encrypt` (name=RSA-OAEP); it uses `body./publicKey` from `getApiAuthKey`, the
+  `password` field.
+```
+
+And from `hosts/localhost_4173.md`, the session needs of that host:
+
+```markdown
 - Needs: a real browser is needed to establish the session; reuse its cookies for plain HTTP
   calls (confirmed by probe).
 - Bot protection: Akamai (cookie \_abck; cookie bm\_sz; request body matches sensor\_data). Do
@@ -133,15 +159,10 @@ An excerpt of the `AGENT.md` generated from the fixture shop walkthrough above:
 - Cookie `_abck`: set by `postShieldCollect`. Needed by 5 requests (confirmed by probe).
 - Cookie `bm_sz`: set by `getRoot`. Seen in capture, but none of the 13 requests probe tested
   needed it.
-- Cookie `pm_session`: set by `postApiAuthLogin`. Needed by 1 request (confirmed by probe).
+- Cookie `pm_session`: set by `postApiAuthLogin`. Seen in capture, but none of the 13 requests
+  probe tested needed it.
 - Cookie `pm_store`: set by a script in the page; the wrapper can set its value itself. Seen in
   capture, but none of the 13 requests probe tested needed it.
-
-## Values computed in the browser
-
-- `body./password` of `postApiAuthLogin`: `src/auth/crypto.ts:26 encryptPassword` using
-  `crypto.subtle.encrypt` (name=RSA-OAEP); it uses `body./publicKey` from `getApiAuthKey`, the
-  `password` field.
 ```
 
 The full format is specified in [docs/output-format.md](docs/output-format.md).

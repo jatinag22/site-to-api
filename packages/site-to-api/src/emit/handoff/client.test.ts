@@ -1,5 +1,5 @@
-import type { AgentGuideContext } from './agent-guide'
 import type { ClientState } from './client'
+import type { AgentGuideContext } from './context'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
@@ -36,11 +36,11 @@ function guide(client: ClientState, warnings: string[] = [], excerpts = new Map<
 
 describe('client state in AGENT.md and API_MAP.md', () => {
   it('describes each state the same way in the reading order, the gaps and API_MAP.md', () => {
-    expect(guide('current')).toContain('4. `client/`: typed client with Zod validation')
+    expect(guide('current')).toContain('5. `client/`: typed client with Zod validation')
     expect(guide('current')).toContain('## Gaps\n\nNone found.')
-    expect(guide('stale')).toContain('4. `client/`: from an earlier build and not regenerated (`--no-client`)')
+    expect(guide('stale')).toContain('5. `client/`: from an earlier build and not regenerated (`--no-client`)')
     expect(guide('stale')).toContain('- `client/` is from an earlier build and was not regenerated (`--no-client`); run `site-to-api gen` to bring it up to date.')
-    expect(guide('none')).toContain('4. `client/`: not generated; run `site-to-api gen`.')
+    expect(guide('none')).toContain('5. `client/`: not generated; run `site-to-api gen`.')
     expect(guide('none')).toContain('- No client generated: run `site-to-api gen`.')
     expect(renderApiMap(twoHostAnalysis(), 'none')).toContain('no client has been generated yet')
     expect(renderApiMap(twoHostAnalysis(), 'stale')).toContain('`client/` is from an earlier build and may not match it')
@@ -50,8 +50,8 @@ describe('client state in AGENT.md and API_MAP.md', () => {
     const withSource = guide('current', [], new Map([
       ['src/a.L1-3.ts.md', '# Excerpt'],
     ]))
-    expect(withSource).toContain('4. `source/`: the site\'s own code')
-    expect(withSource).toContain('5. `client/`: typed client with Zod validation')
+    expect(withSource).toContain('5. `source/`: the site\'s own code')
+    expect(withSource).toContain('6. `client/`: typed client with Zod validation')
     expect(guide('current')).not.toContain('`source/`')
     for (const to of STATES) {
       expect(withClientState(withSource, to)).toBe(guide(to, [], new Map([
