@@ -17,7 +17,7 @@ import { buildFlows } from '../analyze/flows'
 import { annotateGraphql, applyGraphqlTypes, graphqlTypeTargets } from '../analyze/graphql'
 import { createHtmlLocator, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
-import { createRedactor } from '../analyze/redact'
+import { createRedactor, probeReportWithRedactedNames, withRedactedNames } from '../analyze/redact'
 import { inferOperationSchemas } from '../analyze/schema'
 import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findSourceEndpoints, screenSourceRoutes } from '../analyze/source'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
@@ -26,7 +26,7 @@ import { clientGap, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
 import { loadSessions } from '../load'
-import { applyProbeReport, minimizeLimit, notMinimized, readProbeReport, requirementsByOperation } from '../probe'
+import { applyProbeReport, minimizeLimit, notMinimized, readProbeReport, requirementsByOperation, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
@@ -177,6 +177,7 @@ function hostsOf(operations: Operation[]): string[] {
 interface Analyzed {
   analysis: Analysis
   probe: ProbeReport | null
+  redactor: Redactor
 }
 
 async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, log: (message: string) => void): Promise<Analyzed> {
@@ -260,7 +261,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 
   const probe = await readProbeReport(outDir)
   if (probe) {
-    flows.session = applyProbeReport(flows.session, probe, operations)
+    flows.session = applyProbeReport(flows.session, probe, operations, redactor.text)
     const requires = requirementsByOperation(probe)
     operations = operations.map(operation => ({
       ...operation,
@@ -282,7 +283,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   }
   if (config.build.excerpts)
     await addExcerpts(analysis, loaded.sessions, redactor)
-  return { analysis, probe }
+  return { analysis, probe, redactor }
 }
 
 /**
@@ -293,7 +294,12 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
   const log = options.log ?? (() => {})
   const rawDir = resolve(options.cwd, options.config.rawDir)
   const outDir = resolve(options.cwd, options.config.outDir)
-  const { analysis, probe } = await analyze(options.config, rawDir, outDir, log)
+  const analyzed = await analyze(options.config, rawDir, outDir, log)
+  // Matching is done on raw names; everything written from here on gets the redacted spelling.
+  const analysis = withRedactedNames(analyzed.analysis, analyzed.redactor.text)
+  const probe = analyzed.probe && probeReportWithRedactedNames(analyzed.probe, analyzed.redactor.text)
+  if (analyzed.probe && probe && JSON.stringify(probe) !== JSON.stringify(analyzed.probe))
+    await writeProbeReport(outDir, probe)
 
   // Remove generated files from a previous build so deleted operations do not linger.
   for (const stale of [

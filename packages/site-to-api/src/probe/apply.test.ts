@@ -1,4 +1,4 @@
-import type { HeaderInfo, SessionRequirement } from '../model'
+import type { HeaderInfo, ParamInfo, SessionRequirement } from '../model'
 import type { OperationProbe, ProbeReport } from '../model/probe'
 import { describe, expect, it } from 'vitest'
 import { applyProbeReport, requirementsByOperation } from './apply'
@@ -43,6 +43,7 @@ const OPS = Array.from({ length: 4 }, (_, index) => ({
   operationId: `op${index}`,
   kind: 'api' as const,
   headers: [],
+  cookies: [],
 }))
 
 describe('applyProbeReport', () => {
@@ -119,12 +120,14 @@ describe('applyProbeReport: bot protection', () => {
         operationId: 'op0',
         kind: 'api' as const,
         headers: [],
+        cookies: [],
       },
       {
         host: 'shop.example',
         operationId: 'op1',
         kind: 'bot-protection' as const,
         headers: [],
+        cookies: [],
       },
     ]
     expect(applyProbeReport([guarded], report([
@@ -149,7 +152,7 @@ describe('applyProbeReport: bot protection', () => {
         bare: 'rejected',
         requires: ['header:x-api-caller-id'],
       },
-    ]), OPS)[0]?.requires).toBe('none')
+    ]), OPS)[0]?.requires).toBe('browser')
     expect(applyProbeReport([guarded], report([
       {
         bare: 'rejected',
@@ -190,6 +193,7 @@ describe('applyProbeReport: calls probe could not test', () => {
         operationId: 'putCart',
         kind: 'api' as const,
         headers: [kpsdk],
+        cookies: [],
       },
     ]
     expect(applyProbeReport([guarded], report([
@@ -202,6 +206,62 @@ describe('applyProbeReport: calls probe could not test', () => {
     expect(applyProbeReport([base], report([
       { bare: 'ok' },
     ]), ops)[0]?.requires).toBe('none')
+  })
+})
+
+describe('applyProbeReport: vendor cookies and redacted names', () => {
+  const akamai: SessionRequirement = {
+    ...base,
+    requires: 'browser',
+    botProtection: [
+      { vendor: 'Akamai', evidence: 'cookie _abck' },
+    ],
+  }
+
+  it('keeps browser while an untested call sends a vendor cookie', () => {
+    const abck: ParamInfo = {
+      name: '_abck',
+      required: true,
+      schema: { type: 'string' },
+    }
+    const ops = [
+      ...OPS,
+      {
+        host: 'shop.example',
+        operationId: 'postCheckout',
+        kind: 'api' as const,
+        headers: [],
+        cookies: [abck],
+      },
+    ]
+    expect(applyProbeReport([akamai], report([
+      { bare: 'ok' },
+    ]), ops)[0]?.requires).toBe('browser')
+  })
+
+  it('keeps the inferred verdict when tested calls needed only plain headers', () => {
+    expect(applyProbeReport([akamai], report([
+      {
+        bare: 'rejected',
+        requires: ['header:x-csrf-token'],
+      },
+    ]), OPS)[0]?.requires).toBe('browser')
+  })
+
+  it('matches a redacted cookie name in probe.json against the raw name in the model', () => {
+    const raw = 'https://shop.example_7c9e6679-7425-40de-944b-e07fc1f90ae7$$a1$$session_state'
+    const redactName = (name: string): string => name.replace(/[0-9a-f-]{36}/, '<redacted: UUID>')
+    const entry: SessionRequirement = {
+      ...base,
+      cookies: [
+        { name: raw, setBy: null, source: 'browser' },
+      ],
+    }
+    expect(applyProbeReport([entry], report([
+      {
+        requires: [`cookie:${redactName(raw)}`],
+      },
+    ]), OPS, redactName)[0]?.requires).toBe('browser')
   })
 })
 

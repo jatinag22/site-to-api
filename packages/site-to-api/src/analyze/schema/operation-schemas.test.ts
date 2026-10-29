@@ -79,20 +79,6 @@ describe('inferOperationSchemas: bot-protection steps', () => {
   })
 })
 
-describe('inferOperationSchemas: cookie names', () => {
-  it('redacts a secret carried in a cookie name, as every other emitter does', () => {
-    const id = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
-    const items = [
-      exchange({
-        url: `https://shop.test/api/x?session=${id}`,
-        cookies: { [`https://shop.test_${id}$$a1$$session_state`]: 'v' },
-      }),
-    ]
-    const result = infer(items, {}, 'masked', ['session'])
-    expect(result.cookies.map(cookie => cookie.name)).toEqual(['https://shop.test_<redacted: UUID>$$a1$$session_state'])
-  })
-})
-
 describe('inferOperationSchemas', () => {
   it('infers query parameters with types, required flags, examples and repeats', () => {
     const result = infer([
