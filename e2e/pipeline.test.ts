@@ -414,10 +414,12 @@ describe('fitted to the site, not to the captured samples', () => {
     expect(written.every(name => name.endsWith('.md'))).toBe(true)
   })
 
-  it('writes the minified sensor excerpt one statement per line', () => {
-    const excerpt = [...files].find(([name]) => name.includes('shield/sensor'))?.[1] ?? ''
-    expect(excerpt.split('\n').length).toBeGreaterThan(8)
-    expect(excerpt).toMatch(/\n {2}async function t\(\)\{\n/)
+  it('writes no excerpt of the bot-protection sensor script, only of the site\'s own code', () => {
+    const excerpts = [
+      ...files.keys(),
+    ].filter(name => name.startsWith('source/'))
+    expect(excerpts.length).toBeGreaterThan(0)
+    expect(excerpts.filter(name => name.includes('shield/sensor'))).toEqual([])
   })
 })
 

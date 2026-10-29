@@ -1,11 +1,12 @@
+import type { LoadedSession, SessionMeta } from '../../model'
+import { readFile } from 'node:fs/promises'
+import { isAbsolute, relative, resolve } from 'node:path'
 /**
  * Access to the scripts, sourcemaps and unpacked original sources a capture saved
  * (`meta.scripts`, see `src/model/capture.ts`). Paths in `meta.json` come from disk, so every one
  * is checked to stay inside the session directory before it is read.
  */
-import type { LoadedSession, SessionMeta } from '../../model'
-import { readFile } from 'node:fs/promises'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { redactPathTokens } from '../redact'
 
 type ScriptEntry = SessionMeta['scripts'][number]
 
@@ -61,10 +62,28 @@ export function normalizeSourcePath(source: string): string {
 /** URL path of a script (`/static/js/main.js`), or the input when it is not a URL. */
 export function urlPath(url: string): string {
   try {
-    return new URL(url).pathname
+    return redactPathTokens(new URL(url).pathname)
   }
   catch {
-    return url
+    return redactPathTokens(url.split(/[?#]/)[0] ?? '')
+  }
+}
+
+/**
+ * A script URL as the handoff folder may show it: origin and path with token segments replaced,
+ * and no query or fragment. Script URLs carry session values (`ips.js?KP_UIDz=...`,
+ * `app.js?token=...`) that no rule would recognise by shape.
+ */
+export function displayScriptUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    const rest = parsed.search !== '' || parsed.hash !== ''
+      ? '?<query omitted>'
+      : ''
+    return `${parsed.origin}${redactPathTokens(parsed.pathname)}${rest}`
+  }
+  catch {
+    return urlPath(url)
   }
 }
 

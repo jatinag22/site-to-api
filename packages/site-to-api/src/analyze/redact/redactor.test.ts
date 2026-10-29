@@ -443,6 +443,141 @@ describe('createRedactor: rules', () => {
   })
 })
 
+describe('createRedactor: bot protection', () => {
+  const answer = '{"workTime":1700000000000,"id":"c0ffee00c0ffee00c0ffee00c0ffee00","answers":[3,7]}'
+
+  it('redacts bot-protection headers on ordinary calls, even when constant', () => {
+    const items = ['s1', 's2'].map(sessionId => exchange({
+      url: 'https://shop.test/api/cart',
+      sessionId,
+      requestHeaders: { 'x-kpsdk-cd': answer, 'x-kpsdk-v': 'j-1.2.3', 'x-aws-waf-token': 'Zm9vYmFyYmF6cXV4' },
+      responseHeaders: { 'x-kpsdk-cr': 'true' },
+    }))
+    const r = redactor(items)
+    expect(r.value(answer, { in: 'header', name: 'x-kpsdk-cd' })).toMatch(/^<redacted: /)
+    expect(r.value('j-1.2.3', { in: 'header', name: 'X-Kpsdk-V' })).toMatch(/^<redacted: /)
+    expect(r.value('Zm9vYmFyYmF6cXV4', { in: 'header', name: 'x-aws-waf-token' })).toMatch(/^<redacted: /)
+    expect(r.value('true', { in: 'response-header', name: 'x-kpsdk-cr' })).toMatch(/^<redacted: /)
+    // The answer is learnt as a secret, so an echo elsewhere is scrubbed too.
+    expect(r.value(`echo ${answer}`, { in: 'text' })).not.toContain('c0ffee00')
+    expect(r.value('v-2.0.0', { in: 'header', name: 'x-app-version' })).toBe('v-2.0.0')
+  })
+
+  it('masks every value of a browser-only step by its shape, keeping the structure', () => {
+    const r = redactor([])
+    const challenge = {
+      challenge: { input: 'eyJ2ZXJzaW9uIjoxfQ', hmac: 'a1b2c3d4e5f6a7b8' },
+      difficulty: 4,
+      region: 'eu-west-1',
+      ok: true,
+      none: null,
+      empty: '',
+    }
+    expect(r.browserOnly.json(challenge, { in: 'response-body' })).toEqual({
+      challenge: { input: '<redacted: 18 base64 chars>', hmac: '<redacted: 16 hex chars>' },
+      difficulty: '<redacted: 1-digit number>',
+      region: '<redacted: 9 chars>',
+      ok: true,
+      none: null,
+      empty: '',
+    })
+    expect(r.browserOnly.value('solution', { in: 'form', name: 'solution_data' })).toBe('<redacted: 8 chars>')
+    expect(r.browserOnly.examples(['x', 'y', 'z'], { in: 'query' })).toEqual(['<redacted: 1 chars>'])
+    expect(redactor([], { examples: 'none' }).browserOnly.examples(['a'], { in: 'query' })).toEqual([])
+    expect(redactor([], { examples: 'raw' }).browserOnly.value('solution', { in: 'form' })).toBe('solution')
+  })
+})
+
+describe('createRedactor: captcha and challenge tokens', () => {
+  it('redacts captcha answers and Cloudflare challenge tokens, constant or not', () => {
+    const turnstile = '0.Hq7ZpL2xVb9KmR4tWc8NyD3fJs6GaE1uYo5Tk0Xi.d62306d4ee00c77dda697f959ebbd7bd'
+    const items = ['s1', 's2'].map(sessionId => exchange({
+      method: 'POST',
+      url: 'https://shop.test/questions?__cf_chl_tk=Zq8Wm3Np5Rt7Vx9Bc2Df-1700000000-0-gaNycGzNCuU',
+      sessionId,
+      requestBody: jsonBody({ 'cf-turnstile-response': turnstile, 'g-recaptcha-response': 'r3c4ptch4-answer', 'h-captcha-response': 'hc4ptch4-answer' }),
+    }))
+    const r = redactor(items)
+    expect(r.value(turnstile, { in: 'form', name: 'cf-turnstile-response' })).toMatch(/^<redacted: /)
+    expect(r.value('r3c4ptch4-answer', { in: 'body', name: 'g-recaptcha-response' })).toMatch(/^<redacted: /)
+    expect(r.value('hc4ptch4-answer', { in: 'body', name: 'h-captcha-response' })).toMatch(/^<redacted: /)
+    for (const name of ['__cf_chl_tk', '__cf_chl_rt_tk', '__cf_chl_f_tk'])
+      expect(r.value('Zq8Wm3Np5Rt7Vx9Bc2Df-1700000000-0-gaNycGzNCuU', { in: 'query', name })).toMatch(/^<redacted: /)
+    expect(r.value(`echo ${turnstile}`, { in: 'text' })).not.toContain('Hq7ZpL2x')
+  })
+})
+
+describe('createRedactor: free text and percent-encoding', () => {
+  const withCookie = (value: string): Redactor => redactor([
+    exchange({
+      url: 'https://shop.test/api/x',
+      cookies: { sid: value },
+    }),
+  ])
+
+  it('scrubs a percent-encoded cookie from text that also holds other %xx sequences', () => {
+    const cookie = 'AbC123xYz%2BqWe%3D'
+    const text = `// excerpt\nconst q = "a%20b";\nconst t = "${cookie}";\n`
+    for (const out of [
+      withCookie(cookie).value(text, { in: 'text' }),
+      withCookie(cookie).text(text),
+    ]) {
+      expect(out).not.toContain(cookie)
+      expect(out).not.toContain('AbC123xYz+qWe=')
+      expect(out).toContain('const q = "a%20b";')
+    }
+  })
+
+  it('scrubs a cookie with + and / beside unrelated %20, and the decoded form of an encoded one', () => {
+    const plus = 'AbC123+xYz/qWeRtY='
+    expect(withCookie(plus).value(`const q = "a%20b";\nconst t = "${plus}";`, { in: 'text' })).not.toContain(plus)
+    expect(withCookie('AbC123xYz%2BqWe%3D').text('t = "AbC123xYz+qWe="')).not.toContain('AbC123xYz+qWe=')
+  })
+
+  it('never decodes or rewrites code it scans', () => {
+    const code = '// x\nconst u = "/a%2Fb?q=%20"; i = a + b; t = "Zq81kLmN03pp"\n'
+    const out = withCookie('Zq81kLmN03pp').text(code)
+    expect(out).toBe(code.replace('Zq81kLmN03pp', '<redacted: 12 chars>'))
+    expect(withCookie('Zq81kLmN03pp').value(code, { in: 'text' })).toBe(out)
+  })
+})
+
+describe('createRedactor: opaque blobs', () => {
+  const blob = 'Qm9vT2pLcFh5ZVd6M1JhTnNUdUlvUG1BYkNkRWZHaElqS2xNbk9wUXJTdFV2V3hZeg'.repeat(5)
+  const fingerprint = 'hX7kQ2mZpL9vRt4WcB8nYd3JfS6gAe1U'
+
+  it('masks long opaque strings in examples by shape, nested or not', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/dlg',
+        method: 'POST',
+        requestBody: jsonBody({
+          body: { a13: blob, a14: fingerprint, a2: 'www.shop.test' },
+        }),
+      }),
+    ])
+    expect(r.examples([
+      {
+        body: { a13: blob, a14: fingerprint, a2: 'www.shop.test' },
+      },
+    ], { in: 'body' })).toEqual([
+      {
+        body: { a13: `<redacted: ${blob.length} base64 chars>`, a14: '<redacted: 32 base64 chars>', a2: 'www.shop.test' },
+      },
+    ])
+    expect(r.value(JSON.stringify({ data: blob }), { in: 'body' })).toBe(`{"data":"<redacted: ${blob.length} base64 chars>"}`)
+  })
+
+  it('keeps a blob identical in every session, like any constant', () => {
+    const items = ['s1', 's2'].map(sessionId => exchange({
+      url: 'https://shop.test/api/key',
+      sessionId,
+      responseBody: jsonBody({ publicKey: blob }),
+    }))
+    expect(redactor(items).value(blob, { in: 'response-body', name: 'publicKey' })).toBe(blob)
+  })
+})
+
 describe('createRedactor: modes and examples', () => {
   const exchanges = fixtureExchanges()
 

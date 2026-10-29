@@ -7,7 +7,7 @@
  * decide which variables are required (`$id: Int!` is, `$id: Int` is not); persisted queries
  * keep the evidence rule of the samples.
  */
-import type { GraphqlOperation, JsonSchema, Operation, ParamInfo, Redactor } from '../../model'
+import type { GraphqlOperation, JsonSchema, Operation, ParamInfo, ValueRedactor } from '../../model'
 import { GRAPHQL_FIELDS } from './detect'
 import { readVariables } from './document'
 
@@ -128,7 +128,7 @@ function pinQuery(params: ParamInfo[], graphql: GraphqlOperation, declared: Map<
  * Returns the operation with its GraphQL constants pinned and the query document redacted like
  * any other request value. Operations without `graphql` are returned unchanged.
  */
-export function pinGraphqlSchemas(operation: Operation, redactor: Redactor): Operation {
+export function pinGraphqlSchemas(operation: Operation, redactor: ValueRedactor): Operation {
   if (!operation.graphql)
     return operation
   const graphql: GraphqlOperation = {

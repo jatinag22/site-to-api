@@ -1,7 +1,7 @@
 /**
  * Fills each operation's query, headers, cookies, request body and responses from its exchanges.
  */
-import type { Body, Exchange, HeaderInfo, JsonSchema, NameValue, Operation, ParamInfo, RedactContext, Redactor, RequestBodyInfo, ResponseInfo } from '../../model'
+import type { Body, Exchange, HeaderInfo, JsonSchema, NameValue, Operation, ParamInfo, RedactContext, Redactor, RequestBodyInfo, ResponseInfo, ValueRedactor } from '../../model'
 import type { InferOptions } from './infer'
 import { pinGraphqlSchemas } from '../graphql'
 import { coerceStrings, inferSchema, inferStringSchema } from './infer'
@@ -72,7 +72,7 @@ function isBrowserIdentityHeader(name: string): boolean {
   return matchesHeaderList(BROWSER_IDENTITY_HEADERS, name.toLowerCase())
 }
 
-function enumGuard(redactor: Redactor, context: RedactContext): InferOptions {
+function enumGuard(redactor: ValueRedactor, context: RedactContext): InferOptions {
   return {
     allowEnumValue: value => redactor.value(value, context) === value,
     name: context.name ?? null,
@@ -102,7 +102,7 @@ function parseJsonText(text: string): unknown {
  * A parameter whose every value is JSON text (GraphQL `variables` in a query string): the schema
  * describes the decoded value, so the client can take an object and encode it.
  */
-function inferJsonParam(name: string, samples: Array<{ value: string, sessionId: string }>, present: number, total: number, redactor: Redactor): ParamInfo | null {
+function inferJsonParam(name: string, samples: Array<{ value: string, sessionId: string }>, present: number, total: number, redactor: ValueRedactor): ParamInfo | null {
   const decoded = samples.map(sample => ({
     value: parseJsonText(sample.value),
     sessionId: sample.sessionId,
@@ -118,7 +118,7 @@ function inferJsonParam(name: string, samples: Array<{ value: string, sessionId:
   }
 }
 
-function inferParams(exchanges: Exchange[], pick: (exchange: Exchange) => NameValue[], where: RedactContext['in'], redactor: Redactor, jsonNames: ReadonlySet<string> = new Set()): ParamInfo[] {
+function inferParams(exchanges: Exchange[], pick: (exchange: Exchange) => NameValue[], where: RedactContext['in'], redactor: ValueRedactor, jsonNames: ReadonlySet<string> = new Set()): ParamInfo[] {
   const lists = exchanges.map(pick)
   return namesInOrder(lists).map((name) => {
     const context: RedactContext = { in: where, name }
@@ -199,7 +199,7 @@ function hostConstantHeaders(exchanges: Exchange[]): Map<string, string> {
   return constants
 }
 
-function inferHeaders(exchanges: Exchange[], redactor: Redactor, hostConstants: ReadonlyMap<string, string>): HeaderInfo[] {
+function inferHeaders(exchanges: Exchange[], redactor: ValueRedactor, hostConstants: ReadonlyMap<string, string>): HeaderInfo[] {
   const lists = exchanges.map(exchange => exchange.request.headers.filter(header => !isBrowserManagedHeader(header.name)))
   return namesInOrder(lists).map((name) => {
     const context: RedactContext = { in: 'header', name }
@@ -256,7 +256,7 @@ function formObject(form: NameValue[]): Record<string, string> {
   return Object.fromEntries(form.map(field => [field.name, field.value]))
 }
 
-function inferFormSchema(items: Array<{ form: NameValue[], sessionId: string }>, redactor: Redactor): JsonSchema {
+function inferFormSchema(items: Array<{ form: NameValue[], sessionId: string }>, redactor: ValueRedactor): JsonSchema {
   const names = namesInOrder(items.map(item => item.form))
   const properties: Record<string, JsonSchema> = {}
   for (const name of names) {
@@ -291,7 +291,7 @@ function jsonMediaType(mimeType: string): Pick<RequestBodyInfo, 'mimeType' | 'se
     : { mimeType: 'application/json', sentContentType: mimeType }
 }
 
-function inferRequestBody(exchanges: Exchange[], redactor: Redactor): Operation['requestBody'] {
+function inferRequestBody(exchanges: Exchange[], redactor: ValueRedactor): Operation['requestBody'] {
   const withBody = exchanges.filter((exchange): exchange is Exchange & { request: { body: Body } } => exchange.request.body !== null)
   if (withBody.length === 0)
     return null
@@ -404,7 +404,7 @@ function cacheBusters(exchanges: readonly Exchange[]): Set<string> {
  * exchanges with the same identity are the same request repeated, which says nothing about what
  * the response depends on.
  */
-function requestIdentity(exchange: Exchange, redactor: Redactor, busters: ReadonlySet<string>): string {
+function requestIdentity(exchange: Exchange, redactor: ValueRedactor, busters: ReadonlySet<string>): string {
   const { path, body } = exchange.request
   const fields = requestFields(exchange)
     .filter(field => !busters.has(field.name))
@@ -434,7 +434,7 @@ function requestIdentity(exchange: Exchange, redactor: Redactor, busters: Readon
   ])
 }
 
-function inferResponses(exchanges: Exchange[], redactor: Redactor): ResponseInfo[] {
+function inferResponses(exchanges: Exchange[], redactor: ValueRedactor): ResponseInfo[] {
   const groups = new Map<string, { status: number, mimeType: string, exchanges: Exchange[] }>()
   for (const exchange of exchanges) {
     const mimeType = exchange.response.body?.mimeType ?? ''
@@ -482,7 +482,7 @@ function inferResponses(exchanges: Exchange[], redactor: Redactor): ResponseInfo
     })
 }
 
-function enrichPathParams(operation: Operation, redactor: Redactor): Operation['pathParams'] {
+function enrichPathParams(operation: Operation, redactor: ValueRedactor): Operation['pathParams'] {
   return operation.pathParams.map((param) => {
     const samples = operation.exchanges
       .map(exchange => ({ value: exchange.request.path.split('/').filter(segment => segment !== '')[param.index], sessionId: exchange.sessionId }))
@@ -529,16 +529,20 @@ export function inferOperationSchemas(operations: Operation[], redactor: Redacto
     const { exchanges } = operation
     if (exchanges.length === 0)
       return operation
+    // Challenge inputs, solutions and sensor data are no example for anyone (decision 0008).
+    const values = operation.kind === 'bot-protection'
+      ? redactor.browserOnly
+      : redactor
     return pinGraphqlSchemas({
       ...operation,
-      pathParams: enrichPathParams(operation, redactor),
-      query: inferParams(exchanges, exchange => exchange.request.query, 'query', redactor, operation.graphql
+      pathParams: enrichPathParams(operation, values),
+      query: inferParams(exchanges, exchange => exchange.request.query, 'query', values, operation.graphql
         ? GRAPHQL_JSON_PARAMS
         : undefined),
-      headers: inferHeaders(exchanges, redactor, hostConstants.get(operation.host) ?? new Map()),
+      headers: inferHeaders(exchanges, values, hostConstants.get(operation.host) ?? new Map()),
       cookies: inferCookies(exchanges),
-      requestBody: inferRequestBody(exchanges, redactor),
-      responses: inferResponses(exchanges, redactor),
-    }, redactor)
+      requestBody: inferRequestBody(exchanges, values),
+      responses: inferResponses(exchanges, values),
+    }, values)
   })
 }

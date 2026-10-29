@@ -5,7 +5,7 @@
 import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import type { ClientState } from '../emit/handoff'
-import type { Analysis, LoadedSession, Operation, ResponseInfo, SourceRef, SourceResolver } from '../model'
+import type { Analysis, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver } from '../model'
 import type { ProbeReport } from '../model/probe'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
@@ -17,17 +17,18 @@ import { buildFlows } from '../analyze/flows'
 import { annotateGraphql, applyGraphqlTypes, graphqlTypeTargets } from '../analyze/graphql'
 import { createHtmlLocator, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
-import { createRedactor } from '../analyze/redact'
+import { createRedactor, probeReportWithRedactedNames, withRedactedNames } from '../analyze/redact'
 import { inferOperationSchemas } from '../analyze/schema'
-import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findSourceEndpoints, isOpaqueFrame } from '../analyze/source'
+import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findSourceEndpoints, isOpaqueFrame, screenSourceRoutes } from '../analyze/source'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
 import { writeFlows } from '../emit/flows'
 import { clientGap, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
 import { loadSessions } from '../load'
-import { applyProbeReport, minimizeLimit, notMinimized, readProbeReport, requirementsByOperation } from '../probe'
+import { applyProbeReport, minimizeLimit, notMinimized, readProbeReport, requirementsByOperation, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
+import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
 import { inHostFilter, unmatchedHostPatterns } from './hosts'
 import { buildRecordFor, writeBuildRecord } from './record'
@@ -128,27 +129,6 @@ function addCallSites(operations: Operation[], resolver: SourceResolver): Operat
 }
 
 /** Every source reference that the output mentions, so each gets an excerpt. */
-function referencedSources(analysis: Analysis): SourceRef[] {
-  const refs: SourceRef[] = analysis.operations.flatMap(operation => operation.sentFrom)
-  for (const channel of analysis.channels ?? []) {
-    if (channel.sentFrom)
-      refs.push(channel.sentFrom)
-  }
-  for (const flow of analysis.flows.flows) {
-    for (const step of flow.steps) {
-      if (step.sentFrom)
-        refs.push(step.sentFrom)
-    }
-  }
-  for (const value of analysis.flows.computedValues) {
-    if (value.producedBy)
-      refs.push(value.producedBy)
-    if (value.calledFrom)
-      refs.push(value.calledFrom)
-  }
-  return refs
-}
-
 /** The first session whose saved code can produce an excerpt for this location. */
 async function excerptFor(ref: SourceRef, sessions: LoadedSession[]): Promise<{ path: string, content: string } | null> {
   for (const session of sessions) {
@@ -160,14 +140,15 @@ async function excerptFor(ref: SourceRef, sessions: LoadedSession[]): Promise<{ 
 }
 
 /** Builds excerpts for every referenced location and records their paths on the references. */
-async function addExcerpts(analysis: Analysis, sessions: LoadedSession[]): Promise<void> {
+async function addExcerpts(analysis: Analysis, sessions: LoadedSession[], redactor: Redactor): Promise<void> {
   const byKey = new Map<string, string | null>()
   for (const ref of referencedSources(analysis)) {
     const key = refKey(ref)
     if (!byKey.has(key)) {
       const excerpt = await excerptFor(ref, sessions)
+      // Code can embed what the capture learnt is secret (a token minted into a script).
       if (excerpt)
-        analysis.excerpts.set(excerpt.path, excerpt.content)
+        analysis.excerpts.set(excerpt.path, redactor.text(excerpt.content))
       byKey.set(key, excerpt
         ? `source/${excerpt.path}`
         : null)
@@ -201,6 +182,7 @@ function hostsOf(operations: Operation[]): string[] {
 interface Analyzed {
   analysis: Analysis
   probe: ProbeReport | null
+  redactor: Redactor
 }
 
 async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, log: (message: string) => void): Promise<Analyzed> {
@@ -210,7 +192,11 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   // GraphQL requests are marked and batches split before anything groups or traces them (0027).
   const exchanges = annotateGraphql(classified.exchanges)
   const resolver = await createSourceResolver(loaded.sessions)
-  const sourceRoutes = await findSourceEndpoints(loaded.sessions)
+  const screened = screenSourceRoutes(
+    await findSourceEndpoints(loaded.sessions),
+    new Set(loaded.exchanges.map(exchange => exchange.request.host)),
+  )
+  const sourceRoutes = screened.routes
   const staticStrings = await collectStaticStrings(loaded.sessions)
   const htmlLocator = createHtmlLocator()
 
@@ -231,6 +217,9 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   operations = inferOperationSchemas(operations, redactor)
   const warnings = [
     ...loaded.warnings,
+    ...(screened.warning === null
+      ? []
+      : [screened.warning]),
     // WebSocket hosts count as captured: a pattern that only matches a socket host is not a typo.
     ...unmatchedHostPatterns([
       ...loaded.exchanges,
@@ -277,9 +266,14 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 
   const probe = await readProbeReport(outDir)
   if (probe) {
-    flows.session = applyProbeReport(flows.session, probe)
+    flows.session = applyProbeReport(flows.session, probe, operations, redactor.text)
     const requires = requirementsByOperation(probe)
-    operations = operations.map(operation => ({ ...operation, requires: requires.get(`${operation.host} ${operation.operationId}`) ?? null }))
+    operations = operations.map(operation => ({
+      ...operation,
+      requires: operation.kind === 'bot-protection'
+        ? null
+        : requires.get(`${operation.host} ${operation.operationId}`) ?? null,
+    }))
   }
 
   const analysis: Analysis = {
@@ -293,8 +287,8 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     warnings,
   }
   if (config.build.excerpts)
-    await addExcerpts(analysis, loaded.sessions)
-  return { analysis, probe }
+    await addExcerpts(analysis, loaded.sessions, redactor)
+  return { analysis, probe, redactor }
 }
 
 /**
@@ -305,7 +299,12 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
   const log = options.log ?? (() => {})
   const rawDir = resolve(options.cwd, options.config.rawDir)
   const outDir = resolve(options.cwd, options.config.outDir)
-  const { analysis, probe } = await analyze(options.config, rawDir, outDir, log)
+  const analyzed = await analyze(options.config, rawDir, outDir, log)
+  // Matching is done on raw names; everything written from here on gets the redacted spelling.
+  const analysis = withRedactedNames(analyzed.analysis, analyzed.redactor.text)
+  const probe = analyzed.probe && probeReportWithRedactedNames(analyzed.probe, analyzed.redactor.text)
+  if (analyzed.probe && probe && JSON.stringify(probe) !== JSON.stringify(analyzed.probe))
+    await writeProbeReport(outDir, probe)
 
   // Remove generated files from a previous build so deleted operations do not linger.
   for (const stale of [
@@ -371,7 +370,19 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
 
 /** Analysis without writing anything, used by `probe` to get operations and exchanges. */
 export async function analyzeCaptures(options: BuildOptions): Promise<Analysis> {
+  return (await analyzeForProbe(options)).analysis
+}
+
+/**
+ * The analysis plus the name redaction the handoff folder uses, so `probe` writes `probe.json`
+ * with redacted names itself, even when the rebuild after it fails.
+ */
+export async function analyzeForProbe(options: BuildOptions): Promise<{ analysis: Analysis, redactProbeReport: (report: ProbeReport) => ProbeReport }> {
   const rawDir = resolve(options.cwd, options.config.rawDir)
   const outDir = resolve(options.cwd, options.config.outDir)
-  return (await analyze(options.config, rawDir, outDir, options.log ?? (() => {}))).analysis
+  const { analysis, redactor } = await analyze(options.config, rawDir, outDir, options.log ?? (() => {}))
+  return {
+    analysis,
+    redactProbeReport: report => probeReportWithRedactedNames(report, redactor.text),
+  }
 }

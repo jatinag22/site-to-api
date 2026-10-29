@@ -16,7 +16,8 @@ import type {
 } from '../../model'
 import type { DraftStep, Segment, Trigger } from './segments'
 import { FLOWS_FORMAT_VERSION } from '../../model'
-import { responseText, responseValues } from '../correlate'
+import { isBotProtectionHeader } from '../classify'
+import { botProtectionVendor, responseText, responseValues } from '../correlate'
 import { describeShape } from '../shape'
 import { createLocationGeneralizer } from './items'
 import { formatLocation, lastPointerToken, outputName, slugify, uniqueName } from './locations'
@@ -189,6 +190,19 @@ function htmlConfidence(location: HtmlLocation): 'high' | 'low' {
  * origin or by shape. Trigger labels, page URLs, HTML selectors and patterns, location texts and
  * computed-value details pass through the redactor too, and token path segments become `{token}`.
  */
+
+/** Why a request value is the bot-protection script's to produce, or `null`: its header or cookie. */
+function botProtectionInput(location: ValueTrace['location']): string | null {
+  if (location.in === 'header' && isBotProtectionHeader(location.name))
+    return 'set by the bot-protection script'
+  if (location.in === 'cookie') {
+    const vendor = botProtectionVendor(location.name)
+    if (vendor !== null)
+      return `set by page script (${vendor})`
+  }
+  return null
+}
+
 export function buildFlows(input: BuildFlowsInput): FlowsDocument {
   const { redactor } = input
   /** Text copied from the capture, redacted like any other free text. */
@@ -447,6 +461,14 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
 
   const originOf = (trace: ValueTrace, exchange: Exchange, operation: Operation, flowId: string): ValueOrigin => {
     const origin = trace.origin
+    // A vendor token or a value read from a challenge page is the bot-protection script's to
+    // produce (decision 0008): no extraction recipe, pattern or constant for it.
+    const vendor = botProtectionInput(trace.location)
+      ?? (origin.kind === 'response' && exchangeById.get(origin.exchangeId)?.kind === 'bot-protection'
+        ? 'read from a bot-protection step'
+        : null)
+    if (vendor !== null)
+      return { kind: 'browser', note: vendor }
     switch (origin.kind) {
       case 'response':
         return responseOrigin(origin.exchangeId, origin.location, origin.transform, trace.value, flowId)

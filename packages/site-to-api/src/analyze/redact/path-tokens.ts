@@ -37,9 +37,14 @@ const MAX_WORD_LENGTH = 20
 const MIN_WORD_VOWEL_RATIO = 0.2
 
 const HEX = /^[0-9a-f]+$/i
-const SEPARATOR = /[-_.~]+/
-/** Unreserved URL characters plus the standard base64 alphabet and its `=` padding. */
-const SEGMENT_CHARS = /^[\w.~+/=-]+$/
+/**
+ * Characters that join the runs of a segment: unreserved punctuation plus the sub-delimiters and
+ * `:`/`@` a path segment may hold unencoded. Cloudflare's challenge path packs a token into
+ * `<float>:<epoch>:<token>`, so a segment with `:` must still be read run by run.
+ */
+const SEPARATOR = /[-_.~:;,!*@$&'()]+/
+/** Characters a path segment may hold unencoded, plus the base64 alphabet and its `=` padding. */
+const SEGMENT_CHARS = /^[\w.~+/=:;,!*@$&'()-]+$/
 const BASE64 = /^[\w+/-]+={0,2}$/
 /** `getAllUpcomingIssues`, `MarketStatus`: words joined in camelCase, not random. */
 const CAMEL_WORDS = /^[a-z]+(?:[A-Z][a-z]+)*\d{0,4}$|^(?:[A-Z][a-z]+)+\d{0,4}$/
@@ -112,7 +117,16 @@ function looksRandom(run: string): boolean {
  * so `Xy7+Qw9/Zt3=Lm2Pk8Rs` is one run like its base64url form.
  */
 function runsOf(value: string): string[] {
-  return value.split(SEPARATOR).map(run => run.replace(/[+/=]/g, '')).filter(run => run !== '')
+  const runs = value.split(SEPARATOR).map(run => run.replace(/[+/=]/g, '')).filter(run => run !== '')
+  // After the last `:` of `<float>:<epoch>:<token>` comes one base64url token, `-` and `_`
+  // included; split there it would read as short words.
+  const colon = value.lastIndexOf(':')
+  const tail = colon === -1
+    ? ''
+    : value.slice(colon + 1).replace(/[-_+/=]/g, '')
+  return tail === '' || runs.includes(tail)
+    ? runs
+    : [...runs, tail]
 }
 
 /** Decodes a percent-encoded path segment. `+` stays `+`: it means a space only in queries. */
@@ -204,7 +218,7 @@ export function isRandomPathSegment(segment: string): boolean {
 }
 
 /** Base64 that decodes to readable text (`Z2lkOi8vc2hvcGlmeS9Qcm9kdWN0LzE=` → `gid://...`). */
-function isEncodedText(value: string): boolean {
+export function isEncodedText(value: string): boolean {
   if (!BASE64.test(value))
     return false
   const standard = value.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '')
