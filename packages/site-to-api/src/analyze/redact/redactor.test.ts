@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { exchange, jsonBody } from '../../../test/helpers'
 import { CONFIG, fixtureExchanges, SECRETS } from '../../../test/secret-fixture'
 import { SiteToApiError } from '../../errors'
-import { isLuhnValid, isVerhoeffValid, maskPersonalData, PERSONAL_DATA_PATTERNS } from './personal-data'
+import { isLuhnValid, isTrackingIdName, isVerhoeffValid, maskPersonalData, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { createRedactor } from './redactor'
 import { isPublishableKeyName, isSecretName } from './secret-names'
 
@@ -713,6 +713,92 @@ describe('createRedactor: secret object keys (decision 0042)', () => {
     }
     expect(r.json(body, { in: 'body' })).toEqual(body)
     expect(r.isSecretKey(sessionToken)).toBe(true)
+  })
+})
+
+describe('createRedactor: tracking identifiers (decision 0045)', () => {
+  const visitor = '7a72e88f-a0f1-4326-9b1c-2f4d6e8a0b13'
+  const device = 'dev-4f9a2c71e3'
+
+  function visit(sessionId: string, visitorId = visitor): Exchange {
+    return exchange({
+      url: `https://api.shop.test/feed?cid=${sessionId}.1700000000&uid=88${sessionId}21`,
+      sessionId,
+      requestHeaders: { 'x-nike-visitorid': visitorId },
+      requestBody: jsonBody({
+        consumer: { visitorId, deviceId: device, adobeMarketingCloudId: 80364217152279 },
+        anonymousId: `anon-${sessionId}-77`,
+      }),
+    })
+  }
+
+  it('recognises visitor, device, anonymous and client id names, and leaves other ids alone', () => {
+    for (const name of [
+      'x-nike-visitorid',
+      'visitorId',
+      'visitor_id',
+      'deviceid',
+      'anonymousId',
+      'clientId',
+      'cid',
+      'uid',
+      '_ga',
+      'adobeMarketingCloudId',
+    ])
+      expect(isTrackingIdName(name), name).toBe(true)
+    for (const name of [
+      'productId',
+      'guid',
+      'acid',
+      'orderId',
+      'visitor',
+      'id',
+      null,
+    ])
+      expect(isTrackingIdName(name), String(name)).toBe(false)
+  })
+
+  it('masks tracking ids in headers, query, bodies, numbers and examples', () => {
+    const r = redactor([
+      visit('s1'),
+    ])
+    expect(r.value(visitor, { in: 'header', name: 'x-nike-visitorid' })).toBe('<redacted: UUID>')
+    expect(r.value('s1.1700000000', { in: 'query', name: 'cid' })).toBe('<redacted: 13 chars, separators ".">')
+    expect(r.json({
+      consumer: { visitorId: visitor, adobeMarketingCloudId: 80364217152279 },
+    }, { in: 'body' })).toEqual({
+      consumer: { visitorId: '<redacted: UUID>', adobeMarketingCloudId: '<redacted: 14-digit number>' },
+    })
+    expect(r.examples([
+      { anonymousId: 'anon-s1-77', deviceId: device },
+    ], { in: 'body' })).toEqual([
+      { anonymousId: '<redacted: 10 chars>', deviceId: '<redacted: 14 chars>' },
+    ])
+    expect(r.value('42', { in: 'query', name: 'uid' })).toBe('<redacted: 2-digit number>')
+  })
+
+  it('removes a learnt tracking id wherever else it appears', () => {
+    const r = redactor([
+      visit('s1'),
+    ])
+    expect(r.value(`https://www.shop.test/p?ref=${visitor}`, { in: 'text' })).toBe('https://www.shop.test/p?ref=<redacted: UUID>')
+    expect(r.value(`seen ${device} today`, { in: 'text' })).toBe('seen <redacted: 14 chars> today')
+  })
+
+  it('keeps an id identical in every session, like a publishable key, but never a session id', () => {
+    const r = redactor([
+      visit('s1'),
+      visit('s2'),
+    ])
+    expect(r.value(visitor, { in: 'header', name: 'x-nike-visitorid' })).toBe(visitor)
+    expect(r.value(device, { in: 'body', name: 'deviceId' })).toBe(device)
+    expect(r.value('anon-s1-77', { in: 'body', name: 'anonymousId' })).toBe('<redacted: 10 chars>')
+    const sessions = redactor(['s1', 's2'].map(sessionId => exchange({
+      url: 'https://api.shop.test/x',
+      sessionId,
+      requestHeaders: { 'x-session-id': visitor },
+    })))
+    expect(sessions.value(visitor, { in: 'header', name: 'x-session-id' })).toBe('<redacted: UUID>')
   })
 })
 
