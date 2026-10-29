@@ -1,7 +1,6 @@
 ---
 description: Record a browsing session of a website with site-to-api in a real Chrome window
 argument-hint: <url> [--script <file>] [--session <id>] [--user-data-dir <dir>]
-allowed-tools: Bash(site-to-api capture:*)
 ---
 
 Run the capture from the project root:

@@ -81,7 +81,11 @@ may change.
   hold any code there, and `--allow-calls`, `--generated` or importing the client runs it with
   the person's environment. Both MCP modes refuse a client this machine did not generate; never
   pass `--trust-client`, and never run `client/mcp/server.ts` directly, unless the person has
-  reviewed that code or regenerates it with `site-to-api gen`.
+  reviewed that code.
+- `capture`, `build`, `probe`, `gen` and `check` run the project's `site-to-api.config.ts`/`.js`,
+  which is code too. In a project you did not create, never run them without the person's
+  explicit go-ahead; to regenerate an untrusted client, have them review or delete that config
+  first, then `site-to-api gen --config site-to-api.config.json` (or with no config).
 - Never bypass bot protection: no stealth plugins, no solving or replaying challenges, no faking
   sensor payloads. Browser-only steps stay in a real browser.
 - Never commit `.site-to-api/` (raw captures: real cookies, tokens, personal data). Commit only

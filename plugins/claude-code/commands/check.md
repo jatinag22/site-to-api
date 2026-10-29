@@ -1,7 +1,6 @@
 ---
 description: Detect API drift by replaying safe requests and comparing the answers with the specs
 argument-hint: [--include <host>] [--exclude <host>] [--operations <ids>] [--max-rps <n>]
-allowed-tools: Bash(site-to-api check:*)
 ---
 
 Run `site-to-api check $ARGUMENTS` from the project root. It replays safe requests only (GET, HEAD,

@@ -1,7 +1,6 @@
 ---
 description: Replay captured requests against the live site (safe methods, rate limited) to learn what plain HTTP needs
 argument-hint: [--max-rps <n>] [--minimize-per-host <n>]
-allowed-tools: Bash(site-to-api probe:*)
 ---
 
 Run `site-to-api probe $ARGUMENTS` from the project root. It sends real requests to the site,

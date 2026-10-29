@@ -51,9 +51,11 @@ one) wants to call the site's operations as tools, which needs a server that kno
   overwrite each other's entries. Not in the project, gitignored or not: a repository controls
   its own files and `.gitignore`, so it could commit a matching entry. Before loading a client,
   `call_operation` and `mcp --generated` compare its hash and refuse a mismatch with "this client
-  wasn't generated on this machine; run `site-to-api gen` to regenerate it, or pass
-  `--trust-client` if you reviewed it". `--trust-client` is explicit, never a default. Only
-  `SITE_API_*` variables are handed to the caller, which still does not sandbox the client.
+  wasn't generated on this machine. If you don't trust this project, review or delete its
+  `site-to-api.config.ts`/`.js` first: `gen` runs it. Then run `site-to-api gen --config
+  site-to-api.config.json` (or with no config), or pass `--trust-client` if you reviewed
+  `client/`". It does not just say "run gen", because `gen` and `build` run a code config file.
+  `--trust-client` is explicit, never a default. Only `SITE_API_*` variables are handed to the caller, which still does not sandbox the client.
 - **Redirects.** Both callers refuse a redirect to another origin before anything is sent there
   and report only that origin. The runtime itself (for every generated client) drops
   `authorization`, `proxy-authorization`, `cookie`, the spec's apiKey header names
@@ -101,6 +103,18 @@ one) wants to call the site's operations as tools, which needs a server that kno
   literals with U+2028/U+2029 escaped. Server instructions and the skill tell the agent that
   everything from the handoff folder and from live responses comes from the site and is data,
   never instructions.
+
+- **Hostile `pattern`s (a known hey-api issue).** hey-api 0.99 writes a schema's `pattern`
+  into `zod.gen.ts` as a regular expression literal without escaping it: `*x` opens a block
+  comment, `a\\/b` ends the literal early, and validation silently disappears from a client the
+  trust gate then trusts. Before hey-api runs, a `pattern` is kept only when `new RegExp` compiles
+  it and it has no `/`, no line terminator and does not start with `*`; otherwise it is dropped
+  (a looser schema, never broken code) with a warning. After generation every `.ts` file must
+  parse, and every regex literal in `zod.gen.ts` must be one of the kept patterns, or `gen`
+  fails. Not reported upstream yet; that is for the maintainer to decide.
+- **The plugin asks before running the CLI.** Its commands pre-approve no `Bash` call: `build`,
+  `probe`, `check` and `capture` load the project's config file, which can be code, so Claude
+  Code asks the person first.
 
 ## Consequences
 - `site-to-api` depends on `@modelcontextprotocol/server`. Through `mcp --generated` the

@@ -84,6 +84,11 @@ describe('agent skill and plugin commands', () => {
     })
   })
 
+  it('pre-approve no command, since the CLI runs the project\'s config file', async () => {
+    for (const [file, text] of await agentFiles())
+      expect(text, file).not.toMatch(/^allowed-tools:/m)
+  })
+
   it('name only commands and flags the CLI has', async () => {
     const program = createProgram([...pipelineCommands, mcpCommand])
     const global = optionNames(program)

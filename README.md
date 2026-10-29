@@ -422,7 +422,9 @@ credentials stay on the site.
 environment. So `gen` (and `build`) records a hash of `client/` in
 `~/.config/site-to-api/trusted-clients/` (or under `$XDG_CONFIG_HOME`), outside every
 project, and both refuse a client whose files do not match: "this client wasn't generated on this
-machine; run `site-to-api gen` to regenerate it, or pass `--trust-client` if you reviewed it".
+machine. If you don't trust this project, review or delete its `site-to-api.config.ts`/`.js`
+first: `gen` runs it. Then run `site-to-api gen --config site-to-api.config.json` (or with no
+config), or pass `--trust-client` if you reviewed `client/`".
 This check is the protection; the per-host variable names are not, since code in the process can
 read any of them.
 
@@ -447,7 +449,8 @@ The repository is also a Claude Code plugin marketplace. The plugin adds the `si
 server above (on the project's `api-handoff/`), the commands `/site-to-api:capture` (a normal
 Chrome window; minimized only with `--script`), `/site-to-api:build`, `/site-to-api:probe` and `/site-to-api:check` (drift against the specs), and a skill
 that walks an agent through capture, reading the handoff folder, writing the wrapper and the
-safety rules. Nothing is published yet, so install it from a clone (the `site-to-api` CLI must be
+safety rules. The commands pre-approve nothing: they run the project's config file, which can be
+code, so Claude Code asks before each run. Nothing is published yet, so install it from a clone (the `site-to-api` CLI must be
 on your `PATH`, see [Install](#install)):
 
 ```sh

@@ -1,7 +1,6 @@
 ---
 description: Analyse the captures and write the api-handoff folder (specs, flows, docs, client)
 argument-hint: [--include <host>] [--exclude <host>] [--examples masked|none] [--no-client] [--mcp [read|write]]
-allowed-tools: Bash(site-to-api build:*)
 ---
 
 Run `site-to-api build $ARGUMENTS` from the project root and report the warnings it prints.

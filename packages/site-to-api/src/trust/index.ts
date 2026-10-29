@@ -21,8 +21,11 @@ const EntrySchema = z.object({
   sha256: z.string(),
 })
 
-/** The message for a client this machine did not generate (or that changed since). */
-export const UNTRUSTED_CLIENT = 'this client wasn\'t generated on this machine; run `site-to-api gen` to regenerate it, or pass `--trust-client` if you reviewed it'
+/**
+ * The message for a client this machine did not generate (or that changed since). It does not
+ * just say "run gen": `gen` runs the project's `site-to-api.config.ts`, which is code too.
+ */
+export const UNTRUSTED_CLIENT = 'this client wasn\'t generated on this machine. If you don\'t trust this project, review or delete its `site-to-api.config.ts`/`.js` first: `gen` runs it. Then run `site-to-api gen --config site-to-api.config.json` (or with no config), or pass `--trust-client` if you reviewed `client/`'
 
 /**
  * `$XDG_CONFIG_HOME/site-to-api/trusted-clients/`, or `~/.config/...` without it: one file per
