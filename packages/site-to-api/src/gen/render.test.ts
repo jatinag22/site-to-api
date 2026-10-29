@@ -246,6 +246,40 @@ describe('renderIndexModule', () => {
   })
 })
 
+describe('renderIndexModule credentials', () => {
+  it('passes the apiKey header names, which the runtime drops on a redirect to another origin', () => {
+    const code = renderIndexModule([
+      host({
+        auth: [
+          {
+            name: 'key',
+            type: 'apiKey',
+            in: 'header',
+            parameter: 'X-Api-Key',
+            scheme: null,
+          },
+          {
+            name: 'query',
+            type: 'apiKey',
+            in: 'query',
+            parameter: 'api_key',
+            scheme: null,
+          },
+          {
+            name: 'bearer',
+            type: 'http',
+            in: null,
+            parameter: null,
+            scheme: 'bearer',
+          },
+        ],
+      }),
+    ], [])
+    expect(code).toContain('    credentialHeaders: ["x-api-key"],')
+    expect(code).toContain('    credentialHeaders: defaults.credentialHeaders,')
+  })
+})
+
 describe('dispatcher wrappers (decision 0039)', () => {
   const dispatch = [
     {
