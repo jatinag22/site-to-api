@@ -28,6 +28,7 @@ packages/site-to-api/   CLI + analysis engine (published as `site-to-api`)
   src/cli/              commander wiring only; no logic
   src/config/           config schema, loading, precedence
   src/model/            shared data contracts (capture format, Exchange, flows.json, Analysis)
+  src/hosts/            which host names are one site (shared by capture and analysis)
   src/capture/          Playwright session, instrumentation, sourcemaps, scripts
   src/load/             raw session → Exchange[]
   src/analyze/          classify, operations, schema inference, correlate, flows, source, html, redact

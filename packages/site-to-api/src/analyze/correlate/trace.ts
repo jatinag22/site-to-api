@@ -1,7 +1,7 @@
 import type { CaptureEvent, Exchange, ExchangeKind, HtmlLocator, LoadedSession, ValueLocation, ValueTrace } from '../../model'
 import type { LocatedValue } from './values'
 import type { MatchTransform, Variant } from './variants'
-import { registrableHost } from '../../capture'
+import { registrableHost } from '../../hosts'
 import { browserCookieNote, findTransformEvent, findUserInputField } from './fallbacks'
 import { isTrivial } from './trivial'
 import { requestValues, responseText, responseValues } from './values'

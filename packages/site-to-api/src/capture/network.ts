@@ -17,7 +17,7 @@
  */
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { BlockList, isIP } from 'node:net'
-import { registrableHost } from './frames'
+import { registrableHost } from '../hosts'
 
 /** Resolves a host name to its IP addresses. Injected in tests so they need no DNS. */
 export type Lookup = (hostname: string) => Promise<string[]>
