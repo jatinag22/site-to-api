@@ -122,9 +122,30 @@ export function cssString(value: string): string {
   return `"${value.replace(/["\\]/g, ch => `\\${ch}`).replace(/\n/g, '\\a ')}"`
 }
 
-/** Escapes an identifier (class or id) for use in a selector. */
+/**
+ * Escapes an identifier (tag name, class or id) for a selector, like `CSS.escape`: pages use
+ * namespaced tags (`dptags:queryLogOperation`), dots in classes and ids that start with a digit.
+ */
 export function cssIdent(value: string): string {
-  return value.replace(/^-?\d/, ch => `\\3${ch.at(-1)} `).replace(/[^\w-]/g, ch => `\\${ch}`)
+  const chars = [...value]
+  return chars.map((ch, index) => {
+    const code = ch.codePointAt(0) ?? 0
+    if (code === 0)
+      return '\uFFFD'
+    const leadingDigit = /\d/.test(ch) && (index === 0 || (index === 1 && chars[0] === '-'))
+    if ((code >= 0x01 && code <= 0x1F) || code === 0x7F || leadingDigit)
+      return `\\${code.toString(16)} `
+    if (index === 0 && ch === '-' && chars.length === 1)
+      return '\\-'
+    return code >= 0x80 || /[\w-]/.test(ch)
+      ? ch
+      : `\\${ch}`
+  }).join('')
+}
+
+/** The element's tag name as a selector: `dptags\:querylogoperation` for a namespaced tag. */
+export function tagSelector(element: Element): string {
+  return cssIdent(element.name)
 }
 
 /** Position of an element among siblings with the same tag, 1-based (`:nth-of-type`). */

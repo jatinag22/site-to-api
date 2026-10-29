@@ -338,3 +338,26 @@ describe('fields named like Object members', () => {
     expect(Array.isArray(runtime) && runtime[1]?.constructor).toBeUndefined()
   })
 })
+
+describe('pages with namespaced tags and odd class names', () => {
+  // An Amazon product page logs with `<dptags:queryLogOperation>`; tags and classes must be escaped.
+  const page = (seed: number): string => `<html><body><dptags:queryLogOperation operation="q${seed}"></dptags:queryLogOperation>
+<ul id="list">${[1, 2, 3].map(i => `<li class="item w-1/2"><dptags:price value="${seed * 10 + i}">${seed * 10 + i}</dptags:price><span class="name:x">${['Kettle', 'Lamp', 'Mug'][i - 1]} ${['red', 'blue'][seed % 2]}</span></li>`).join('')}</ul></body></html>`
+
+  it('infers a spec the runtime accepts and reads like inference', () => {
+    const samples = [
+      page(1),
+      page(2),
+    ]
+    const spec = htmlSpec(inferExtraction(samples.map(html), { minSamples: 2 })?.spec)
+    expect(spec.records).toBe('#list > li.item')
+    expect(Object.values(spec.fields).map(field => field.selector)).toContain('dptags\\:price')
+    const runtime = extract(page(3), spec)
+    expect(runtime).toEqual(applyExtractSpec(page(3), spec))
+    expect(Array.isArray(runtime) && runtime.map(record => Object.values(record))).toEqual([
+      [31, 'Kettle blue'],
+      [32, 'Lamp blue'],
+      [33, 'Mug blue'],
+    ])
+  })
+})
