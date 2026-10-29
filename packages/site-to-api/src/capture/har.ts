@@ -80,12 +80,19 @@ export interface HarFiles {
 
 const NODE_FILES: HarFiles = { readFile: readFileDefault, writeFile: writeFileDefault }
 
+/** What {@link finishHar} did: the compaction applied, or a warning when it could not be saved. */
+export interface FinishedHar extends HarCompaction {
+  /** One warning when the compacted HAR could not be written; the original HAR is then kept. */
+  warnings: string[]
+}
+
 /**
  * Checks the HAR the browser wrote, then compacts it (decision 0031). The compacted file is
  * written next to the original and renamed over it, so a crash, a second Ctrl+C or a full disk
- * mid-write leaves the original HAR whole instead of a truncated one.
+ * mid-write leaves the original HAR whole instead of a truncated one. A failed write is not
+ * fatal: the session keeps the uncompacted HAR and the result carries a warning.
  */
-export async function finishHar(file: string, files: HarFiles = NODE_FILES): Promise<HarCompaction> {
+export async function finishHar(file: string, files: HarFiles = NODE_FILES): Promise<FinishedHar> {
   let size = 0
   try {
     size = (await stat(file)).size
@@ -101,19 +108,26 @@ export async function finishHar(file: string, files: HarFiles = NODE_FILES): Pro
     throw new SiteToApiError(`${file} is not a valid HAR file. Capture again.`)
   const compaction = compactHar(har)
   if (compaction.bodiesOmitted === 0 && compaction.framesOmitted === 0)
-    return compaction
+    return { ...compaction, warnings: [] }
   const temporary = `${file}.tmp`
   try {
     await files.writeFile(temporary, JSON.stringify(har))
     await rename(temporary, file)
   }
   catch (error) {
-    await rm(temporary, { force: true })
-    throw new SiteToApiError(`Could not write the compacted ${file}; the original HAR is unchanged. ${error instanceof Error
+    // A leftover temporary file is harmless; failing the capture over it would lose the session.
+    const cleanup = await rm(temporary, { force: true }).then(() => '', () => ` ${temporary} may be left behind.`)
+    const reason = error instanceof Error
       ? error.message
-      : String(error)}`, { cause: error })
+      : String(error)
+    return {
+      entries: compaction.entries,
+      bodiesOmitted: 0,
+      framesOmitted: 0,
+      warnings: [`Could not save the compacted HAR (${reason}); kept the original ${file} with every body and frame.${cleanup}`],
+    }
   }
-  return compaction
+  return { ...compaction, warnings: [] }
 }
 
 /**

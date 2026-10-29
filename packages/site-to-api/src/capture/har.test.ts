@@ -91,7 +91,12 @@ describe('finishHar', () => {
   it('rewrites the HAR compacted, keeping fields the schema does not list, and leaves no temporary file', async () => {
     const file = path.join(dir, 'traffic.har')
     await writeFile(file, capturedHar())
-    expect(await finishHar(file)).toEqual({ entries: 2, bodiesOmitted: 1, framesOmitted: 0 })
+    expect(await finishHar(file)).toEqual({
+      entries: 2,
+      bodiesOmitted: 1,
+      framesOmitted: 0,
+      warnings: [],
+    })
     const written = JSON.parse(await readFile(file, 'utf8')) as { log: { version: string, entries: Array<Record<string, unknown>> } }
     expect(written.log.version).toBe('1.2')
     expect(written.log.entries[0]).toMatchObject({
@@ -103,19 +108,21 @@ describe('finishHar', () => {
     expect(await readdir(dir)).toEqual(['traffic.har'])
   })
 
-  it('leaves the original HAR whole when writing the compacted one fails', async () => {
+  it('keeps the original HAR and warns, without failing, when the disk is full', async () => {
     const file = path.join(dir, 'traffic.har')
     const original = capturedHar()
     await writeFile(file, original)
     const failing = {
       readFile: async (target: string): Promise<string> => await readFile(target, 'utf8'),
-      // Writes half the file, then the disk is full.
+      // Writes part of the file, then the disk is full.
       writeFile: async (target: string, data: string): Promise<void> => {
         await writeFile(target, data.slice(0, 20))
         throw new Error('ENOSPC: no space left on device')
       },
     }
-    await expect(finishHar(file, failing)).rejects.toThrow(/original HAR is unchanged.*ENOSPC/)
+    const result = await finishHar(file, failing)
+    expect(result).toMatchObject({ entries: 2, bodiesOmitted: 0, framesOmitted: 0 })
+    expect(result.warnings.join('\n')).toMatch(/Could not save the compacted HAR \(ENOSPC: no space left on device\); kept the original/)
     expect(await readFile(file, 'utf8')).toBe(original)
     expect(await readdir(dir)).toEqual(['traffic.har'])
   })

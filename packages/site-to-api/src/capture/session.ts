@@ -275,6 +275,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     const omitted = harOmissionNote(har, { websockets: capture.websockets, saveScripts: capture.saveScripts, eventsFile: EVENTS_FILE })
     if (omitted !== null)
       log(omitted)
+    warnings.push(...har.warnings)
     if (entries === 0)
       warnings.push('The HAR has no requests. Did the page load?')
     warnings.push(...collector.warnings, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
