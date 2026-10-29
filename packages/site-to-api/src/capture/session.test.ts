@@ -96,6 +96,15 @@ const INDEX_HTML = `<!doctype html><html><head><title>Fixture Home</title></head
 </script>
 </body></html>`
 
+// Keeps a stream open and then never yields the main thread again, so anything that waits on the
+// page (its title, an evaluate) waits forever: the shape of a capture that never finished.
+const HANG_HTML = `<!doctype html><html><head><title>Endless</title></head><body>
+<script>
+fetch('/stream')
+addEventListener('load', () => { for (;;) {} })
+</script>
+</body></html>`
+
 const SECOND_HTML = '<!doctype html><html><head><title>Second Page</title></head><body>second</body></html>'
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
@@ -198,6 +207,16 @@ function startServer(): Promise<{ url: string, close: () => Promise<void> }> {
     }
     if (url === '/')
       return send('text/html', INDEX_HTML)
+    if (url === '/hang')
+      return send('text/html', HANG_HTML)
+    if (url === '/stream') {
+      // A long-poll or event stream that never ends.
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write('data: hello\n\n')
+      const timer = setInterval(() => res.write('data: tick\n\n'), 200)
+      res.on('close', () => clearInterval(timer))
+      return
+    }
     if (url === '/second')
       return send('text/html', SECOND_HTML)
     if (url === '/declared')
@@ -472,9 +491,13 @@ describe('runCapture errors and interactive mode', () => {
     await expect(runCapture(headlessConfig('missing.ts'), { url: null, sessionId: 'missing', cwd: work })).rejects.toThrow(/does not exist/)
   })
 
-  it('reports a failing capture script and still closes the browser', async () => {
-    await writeFile(path.join(work, 'failing.mjs'), 'export default async () => { throw new Error("boom") }\n')
-    await expect(runCapture(headlessConfig('failing.mjs'), { url: null, sessionId: 'failing', cwd: work })).rejects.toThrow(/Capture script failed: boom/)
+  it('saves the session of a failing capture script, marked incomplete with the error', async () => {
+    await writeFile(path.join(work, 'failing.mjs'), 'export default async ({ page, baseUrl }) => { await page.goto(baseUrl + "/second"); throw new Error("boom") }\n')
+    const result = await runCapture(headlessConfig('failing.mjs'), { url: site.url, sessionId: 'failing', cwd: work })
+    const onDisk = SessionMetaSchema.parse(JSON.parse(await readFile(path.join(result.sessionDir, 'meta.json'), 'utf8')))
+    expect(onDisk.incomplete).toEqual({ reason: 'script-failed', error: 'boom' })
+    expect(result.warnings.some(warning => warning.includes('is incomplete (script-failed: boom)'))).toBe(true)
+    expect(await readFile(path.join(result.sessionDir, 'traffic.har'), 'utf8')).toContain('/second')
   }, 60_000)
 
   it('ends an interactive session on abort and still writes a valid HAR', async () => {
@@ -491,6 +514,10 @@ describe('runCapture errors and interactive mode', () => {
       },
     })
     expect(path.basename(result.sessionDir)).toMatch(/^127\.0\.0\.1-\d{8}-\d{6}$/)
+    // Ending an interactive session (abort, Ctrl+C) is the normal way to finish it: nothing is
+    // marked incomplete and pending work (the navigation label checked below) is still saved.
+    expect(result.meta.incomplete).toBeUndefined()
+    expect(result.warnings.some(warning => warning.includes('interrupted'))).toBe(false)
     expect(logs.some(m => m.includes('close the browser window'))).toBe(true)
     const files = await readdir(result.sessionDir)
     expect(files).toEqual(expect.arrayContaining(['meta.json', 'traffic.har', 'events.jsonl']))
@@ -820,4 +847,63 @@ describe('runCapture frame scope', () => {
     expect(action('Popup')).toMatchObject({ frameOrigin: shop, pageUrl: `${shop}/popup` })
     expect(events.find(e => e.t === 'request' && e.url === `${shop}/api/popup`)).toMatchObject({ frameOrigin: shop })
   })
+})
+
+const HANG_SCRIPT = `
+export default async ({ page, baseUrl }) => {
+  await page.goto(baseUrl + '/hang', { waitUntil: 'commit' })
+  await new Promise(resolve => setTimeout(resolve, 2000))
+}
+`
+
+describe('runCapture with a page that never finishes', () => {
+  it('stops waiting after its timeout and saves the session, marked incomplete', async () => {
+    await writeFile(path.join(work, 'hang.mjs'), HANG_SCRIPT)
+    const started = Date.now()
+    const result = await runCapture(headlessConfig('hang.mjs'), {
+      url: site.url,
+      sessionId: 'hang',
+      cwd: work,
+      timeouts: { settleMs: 2_000, closeMs: 15_000 },
+    })
+    expect(Date.now() - started).toBeLessThan(40_000)
+    expect(await readdir(result.sessionDir)).toEqual(expect.arrayContaining(['meta.json', 'traffic.har', 'events.jsonl']))
+    expect(result.meta.incomplete).toMatchObject({ reason: 'timeout' })
+    expect(result.warnings.some(warning => warning.startsWith('Stopped waiting for the pages after 2 s'))).toBe(true)
+    expect(await readFile(path.join(result.sessionDir, 'traffic.har'), 'utf8')).toContain('/hang')
+  }, 90_000)
+
+  it('saves on SIGTERM while waiting on the page', async () => {
+    const running = runCapture(headlessConfig('hang.mjs'), {
+      url: site.url,
+      sessionId: 'hang-sigterm',
+      cwd: work,
+      timeouts: { settleMs: 120_000, closeMs: 15_000 },
+    })
+    await new Promise(resolve => setTimeout(resolve, 6_000))
+    process.emit('SIGTERM')
+    const result = await running
+    expect(result.meta.incomplete).toEqual({ reason: 'interrupted', error: null })
+    expect(await readFile(path.join(result.sessionDir, 'traffic.har'), 'utf8')).toContain('/hang')
+  }, 90_000)
+
+  it('saves on SIGINT after the script ended, while waiting on the page', async () => {
+    await writeFile(path.join(work, 'hang.mjs'), HANG_SCRIPT)
+    const logs: string[] = []
+    const running = runCapture(headlessConfig('hang.mjs'), {
+      url: site.url,
+      sessionId: 'hang-sigint',
+      cwd: work,
+      // Long enough that only the signal can end the wait.
+      timeouts: { settleMs: 120_000, closeMs: 15_000 },
+      log: message => logs.push(message),
+    })
+    // The handlers stay installed while saving, so this does not kill the test process.
+    await new Promise(resolve => setTimeout(resolve, 6_000))
+    process.emit('SIGINT')
+    const result = await running
+    expect(result.meta.incomplete).toEqual({ reason: 'interrupted', error: null })
+    expect(result.warnings).toContain('Stopped waiting for the pages: the capture was interrupted.')
+    expect(await readFile(path.join(result.sessionDir, 'traffic.har'), 'utf8')).toContain('/hang')
+  }, 90_000)
 })

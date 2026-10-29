@@ -303,6 +303,19 @@ describe('renderReadme', () => {
     expect(readme).toContain('- Cookie `bm_sz`: set by a script in the page; only a real browser produces its value. Seen in capture, but none of the 2 requests probe tested needed it.')
   })
 
+  it('names the plain headers probe found necessary on a plain-HTTP host, as AGENT.md does', () => {
+    const readme = renderReadme([
+      host({
+        probedRequires: [
+          ['header:x-client-id'],
+        ],
+      }),
+    ], [], [
+      session('none', { probed: true }),
+    ])
+    expect(readme).toContain('- Session: plain HTTP works; requests need header `x-client-id` (confirmed by `probe`).')
+  })
+
   it('shows browserSession for browser-only hosts and lists the bot protection', () => {
     const readme = renderReadme([
       host(),

@@ -83,7 +83,14 @@ const captureCommand: CommandRegistrar = (program) => {
         log: message => consola.info(message),
       })
       printWarnings(result.warnings)
-      consola.success(`Saved capture to ${result.sessionDir}`)
+      if (result.meta.incomplete) {
+        // Saved, but not a clean run: scripts and CI should notice.
+        process.exitCode = 1
+        consola.warn(`Saved an incomplete capture to ${result.sessionDir}`)
+      }
+      else {
+        consola.success(`Saved capture to ${result.sessionDir}`)
+      }
       // Two sessions are what separates constants from per-session values; more help less.
       consola.info(await countSessions(dirname(result.sessionDir)) >= 2
         ? 'Next: `site-to-api build`'

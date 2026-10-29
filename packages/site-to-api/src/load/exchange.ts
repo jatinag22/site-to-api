@@ -132,7 +132,8 @@ export function buildExchange({ entry, harIndex, sessionId, event }: BuildExchan
     },
     response: {
       status: entry.response.status,
-      statusText: entry.response.statusText ?? '',
+      // A request that got no response has no status text; the browser's error stands in for it.
+      statusText: entry.response.statusText || entry.response._failureText || '',
       headers: responseHeaders,
       setCookies: responseSetCookies(entry.response.cookies, allResponseHeaders),
       body: content

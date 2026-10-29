@@ -25,8 +25,8 @@ import { writeFlows } from '../emit/flows'
 import { clientGap, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
-import { loadSessions } from '../load'
-import { applyProbeReport, minimizeLimit, notMinimized, readProbeReport, requirementsByOperation, writeProbeReport } from '../probe'
+import { failedNavigationsWarning, loadSessions } from '../load'
+import { applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
@@ -221,7 +221,12 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     .filter(operation => !operation.sourceOnly || (wanted(operation.host) && !pollingPaths.has(`${operation.host} ${operation.path}`)))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
   operations = inferOperationSchemas(operations, redactor)
+  const blocked = failedNavigationsWarning(loaded.navigations)
   const warnings = [
+    // First: when the site blocked the browser, nothing else in the folder is representative.
+    ...(blocked === null
+      ? []
+      : [blocked]),
     ...loaded.warnings,
     ...(screened.warning === null
       ? []
@@ -365,8 +370,15 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
         ? {
             minimizePerHost: minimizeLimit(probe),
             notMinimized: notMinimized(probe, analysis.operations),
+            failures: probeFailures(probe, analysis.operations),
+            triedHosts: [
+              ...new Set(probe.operations.map(entry => entry.host)),
+            ].sort(),
+            replayed: probe.operations.length,
+            skipped: probe.skipped.length,
           }
         : null,
+      pageHosts: pageHostRequirements(analysis.operations, analysis.flows.session, probe),
     }),
     await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION)),
   )

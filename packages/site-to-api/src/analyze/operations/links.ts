@@ -72,7 +72,7 @@ function isHtml(exchange: Exchange): boolean {
 }
 
 /** Same-host paths a response links to: `href`/`src`/`action` attributes, or JSON string values. */
-function linkedPaths(exchange: Exchange): Set<string> {
+export function linkedPaths(exchange: Exchange): Set<string> {
   const body = exchange.response.body
   const paths = new Set<string>()
   if (!body)
@@ -90,6 +90,22 @@ function linkedPaths(exchange: Exchange): Set<string> {
       paths.add(path)
   }
   return paths
+}
+
+/**
+ * `tag.class` of every element of a page. Unlike the capped shape above, this reads the whole
+ * page: two articles share most of it, an article and a listing of the same site do not.
+ */
+export function htmlShape(html: string): Set<string> {
+  const shape = new Set<string>()
+  const parser = new Parser({
+    onopentag(name, attributes) {
+      shape.add(`${name}.${(attributes.class ?? '').trim()}`)
+    },
+  }, { decodeEntities: true })
+  parser.write(html)
+  parser.end()
+  return shape
 }
 
 /** A response's structure: JSON keys, or HTML element names with their classes. */

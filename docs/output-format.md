@@ -12,7 +12,11 @@ The entry point for a coding agent. Generated from a template, no LLM. Sections,
 2. **Session requirements per host**: plain HTTP / cookies / token / browser, the bot protection
    detected, which step sets each cookie, and whether `probe` confirmed it. After `probe`, each
    cookie line says either "Needed by N requests (confirmed by probe)" or "Seen in capture, but
-   none of the N requests probe tested needed it"; before, "(seen in capture)".
+   none of the N requests probe tested needed it"; before, "(seen in capture)". Every analysed
+   host has a section, including hosts that served only pages. The Needs verdict says where it
+   comes from: "confirmed by probe" (a replay of this host worked), "probe could not confirm it,
+   see Gaps", "probe tested no operation on this host" or "not yet probed"; it never contradicts
+   the bot-protection line.
 3. **Flows**: one line per flow (trigger label → steps), linking to `flows.md#<flow-id>`.
    **GraphQL operations** (only when the capture has GraphQL requests, decision 0027): per
    endpoint (`POST host/path`), one line per GraphQL operation with its type and the evidence for
@@ -33,9 +37,10 @@ The entry point for a coding agent. Generated from a template, no LLM. Sections,
 6. **Gaps**: operations with low-confidence extraction, unresolved value origins, endpoints seen
    only in source (with "method unknown" when the code did not show the method), host patterns
    that matched nothing, operations `probe` did not minimize because of `probe.minimizePerHost`,
-   WebSocket messages that could not be grouped by type or whose schema came from the first 1000
-   frames, and the state of `client/` (last). Each gap says what would resolve it (usually
-   "capture again and do X").
+   operations probe could not confirm (session refused, blocked by bot protection, answered
+   differently, unreachable), a probe run that replayed nothing, WebSocket messages that could
+   not be grouped by type or whose schema came from the first 1000 frames, and the state of
+   `client/` (last). Each gap says what would resolve it (usually "capture again and do X").
 
 ## `API_MAP.md`
 
@@ -243,13 +248,16 @@ captured request still works (`replay`), whether it works with no cookies or aut
 the cookies and headers it needs (`requires`, names only; `null` when not worked out). Finding
 `requires` costs one request per cookie and header, so it is done for at most
 `probe.minimizePerHost` operations per host (default 5, `--minimize-per-host <n>`), recorded as
-`minimizePerHost`. Names only.
+`minimizePerHost`. When neither the captured session nor a bare request was accepted,
+`rejection` says why: `bot-protection`, `session` (401/403) or `other`, and `note` says what the
+site answered (decision 0036). Probe sends its own `user-agent` (`site-to-api/<version> (probe;
+automated)`), never the capture browser's. Names only.
 
 `probe` writes `probe.json` and then rebuilds the handoff folder. Every `build`, including that
 rebuild, reads `probe.json` when it exists and folds it into `flows.json` session requirements,
 `x-site-to-api-requires`, the Needs column of `API_MAP.md`, the cookie lines and gaps of
 `AGENT.md` and the cookie lines of `client/README.md`. At the end, `probe` prints a summary: operations probed, needs found, not minimized
-and why (per-host limit, data-changing method, session no longer accepted, host unreachable), and
+and why (per-host limit, data-changing method, session no longer accepted, blocked by bot protection, answered differently, host unreachable), and
 skipped and why. GraphQL queries count as safe whatever the method; GraphQL mutations and
 operations of unknown type are skipped unless `--unsafe-methods` (then sent once), and
 subscriptions are never replayed (decision 0027).

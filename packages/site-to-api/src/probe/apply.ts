@@ -6,6 +6,7 @@ import type { Operation, SessionRequirement } from '../model'
 import type { OperationProbe, ProbeReport } from '../model/probe'
 import { isBotProtectionHeader, sendsBotProtectionHeaders } from '../analyze/classify'
 import { botProtectionVendor } from '../analyze/correlate'
+import { ANALYTICS_COOKIE } from '../analyze/flows'
 import { redactRequirement } from '../analyze/redact'
 import { cookieNeedsBrowser } from '../model'
 
@@ -50,8 +51,11 @@ function requirementFor(entry: SessionRequirement, probes: OperationProbe[], gua
     return 'token'
   if ([...needed].some(item => item.startsWith('cookie:')))
     return 'cookies'
-  // Tested calls needed headers (a CSRF token, a caller id) that no verdict word names: the
-  // inferred verdict stands, and each operation's `x-site-to-api-requires` lists them.
+  // Every tested call was worked out and needed only plain headers: plain HTTP with those
+  // headers, listed in `x-site-to-api-requires` (decision 0036). An untested call sending vendor
+  // traces keeps the inferred verdict; failures are handled in applyProbeReport.
+  if (!open && !guardedUntested)
+    return 'none'
   return entry.requires
 }
 
@@ -70,18 +74,49 @@ export function applyProbeReport(session: SessionRequirement[], report: ProbeRep
     .map(operation => `${operation.host} ${operation.operationId}`))
   return session.map((entry) => {
     const probes = report.operations.filter(probe => probe.host === entry.host && real.has(`${probe.host} ${probe.operationId}`))
-    const probed = probes.some(probe => probe.replay === 'ok')
+    // One call that worked bare does not confirm a host where other calls were refused, blocked
+    // or unreachable: the verdict stays inferred, and never becomes "no session needed".
+    const failed = probes.some(probe => probe.replay !== 'ok')
     const tested = new Set(probes.filter(probe => probe.replay === 'ok').map(probe => probe.operationId))
     const guardedUntested = operations.some(operation => operation.host === entry.host
       && operation.kind === 'api'
       && !tested.has(operation.operationId)
       && sendsBotProtectionTraces(operation))
+    const measured = requirementFor(entry, probes, guardedUntested, redactName)
     return {
       ...entry,
-      requires: requirementFor(entry, probes, guardedUntested, redactName),
-      probed,
+      requires: failed && measured === 'none'
+        ? entry.requires
+        : measured,
+      probed: !failed && tested.size > 0,
     }
   })
+}
+
+/**
+ * Hosts that served only pages (no `api` operation), which the session requirements of
+ * `flows.json` do not cover. AGENT.md still gives each one a section: the main host of a
+ * server-rendered site is often one of them. The verdict is inferred from the cookies the pages
+ * were requested with, then corrected by probe like any other host.
+ */
+export function pageHostRequirements(operations: readonly Operation[], session: readonly SessionRequirement[], report: ProbeReport | null, redactName: (name: string) => string = name => name): SessionRequirement[] {
+  const covered = new Set(session.map(entry => entry.host))
+  const hosts = [
+    ...new Set(operations.filter(operation => !operation.sourceOnly && !covered.has(operation.host)).map(operation => operation.host)),
+  ].sort()
+  const entries = hosts.map((host): SessionRequirement => ({
+    host,
+    // Analytics cookies travel with every page request; no page depends on them.
+    requires: operations.some(operation => operation.host === host && operation.cookies.some(cookie => !ANALYTICS_COOKIE.test(cookie.name)))
+      ? 'cookies'
+      : 'none',
+    cookies: [],
+    botProtection: [],
+    probed: false,
+  }))
+  return report
+    ? applyProbeReport(entries, report, operations, redactName)
+    : entries
 }
 
 /** `x-site-to-api-requires` per operation: what probing showed each request needs. */

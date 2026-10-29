@@ -3,9 +3,11 @@
  * and every WebSocket frame; on a busy site most of the file is bodies nothing reads.
  */
 
+import type { Navigation } from '../load'
 import { readFile as readFileDefault, rename, rm, stat, writeFile as writeFileDefault } from 'node:fs/promises'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
+import { harNavigations } from '../load'
 
 /** Resource types classified as assets by type alone: their bodies are never read from the HAR. */
 const ASSET_RESOURCE_TYPES = new Set([
@@ -84,6 +86,8 @@ const NODE_FILES: HarFiles = { readFile: readFileDefault, writeFile: writeFileDe
 export interface FinishedHar extends HarCompaction {
   /** One warning when the compacted HAR could not be written; the original HAR is then kept. */
   warnings: string[]
+  /** Top-level page loads, to tell a capture the site blocked (decision 0037). */
+  navigations: Navigation[]
 }
 
 /**
@@ -106,9 +110,10 @@ export async function finishHar(file: string, files: HarFiles = NODE_FILES): Pro
   // The document itself, not Zod's copy: that one drops every field the schema does not list.
   if (!isHarDocument(har))
     throw new SiteToApiError(`${file} is not a valid HAR file. Capture again.`)
+  const navigations = harNavigations(har.log.entries)
   const compaction = compactHar(har)
   if (compaction.bodiesOmitted === 0 && compaction.framesOmitted === 0)
-    return { ...compaction, warnings: [] }
+    return { ...compaction, warnings: [], navigations }
   const temporary = `${file}.tmp`
   try {
     await files.writeFile(temporary, JSON.stringify(har))
@@ -125,9 +130,10 @@ export async function finishHar(file: string, files: HarFiles = NODE_FILES): Pro
       bodiesOmitted: 0,
       framesOmitted: 0,
       warnings: [`Could not save the compacted HAR (${reason}); kept the original ${file} with every body and frame.${cleanup}`],
+      navigations,
     }
   }
-  return { ...compaction, warnings: [] }
+  return { ...compaction, warnings: [], navigations }
 }
 
 /**

@@ -9,31 +9,88 @@ import { summarizeProbe } from './summary'
 
 let origin: string
 let requests = 0
+const userAgents: string[] = []
+const clientHints: string[] = []
+function challenge(res: import('node:http').ServerResponse): void {
+  res.writeHead(403, { 'content-type': 'text/html', 'cf-mitigated': 'challenge', 'server': 'cloudflare' }).end('<title>Just a moment...</title>')
+}
+type Handler = (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void
+
+function json(status: number, body: string): Handler {
+  return (_req, res) => {
+    res.writeHead(status, { 'content-type': 'application/json' }).end(body)
+  }
+}
+
+const ROUTES: Record<string, Handler> = {
+  '/api/tags': (req, res) => {
+    // As Cloudflare did on Stack Overflow: the `HeadlessChrome` token alone gets a challenge.
+    userAgents.push(req.headers['user-agent'] ?? '')
+    clientHints.push(String(req.headers['sec-ch-ua'] ?? ''))
+    if ((req.headers['user-agent'] ?? '').includes('HeadlessChrome'))
+      challenge(res)
+    else
+      res.writeHead(200, { 'content-type': 'application/json' }).end('{"items":[]}')
+  },
+  '/api/walled': (_req, res) => challenge(res),
+  '/api/teapot': json(419, '{"error":"page expired"}'),
+  '/api/login-only': json(401, '{"error":"login"}'),
+  // Cloudflare's WAF rule against non-browser clients: a 403 with no sign of a login.
+  '/api/firewalled': (_req, res) => {
+    res.writeHead(403, { 'content-type': 'text/plain', 'server': 'cloudflare' }).end('error code: 1020')
+  },
+  '/api/redirected': (_req, res) => {
+    res.writeHead(302, { location: '/login?next=/api/redirected' }).end()
+  },
+  '/api/login-form': (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' }).end('<form action="/session"><input name="user"><input type="password" name="pw"></form>')
+  },
+  '/api/open': json(200, '{"items":[1]}'),
+  '/api/px': json(403, JSON.stringify({
+    appId: 'PXabc123',
+    jsClientSrc: '/abc/init.js',
+    blockScript: '/abc/captcha/captcha.js?a=c',
+    uuid: 'u',
+    vid: 'v',
+  })),
+  '/api/denied-list': json(403, '{"items":[]}'),
+  '/api/private': (req, res) => {
+    const ok = (req.headers.cookie ?? '').includes('sid=good') && req.headers['x-api-key'] === 'k1'
+    res.writeHead(ok ? 200 : 403, { 'content-type': 'application/json' }).end(ok ? '{"items":[1],"total":1}' : '{"error":"forbidden"}')
+  },
+  '/humanity': (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' }).end('<html><head><title>Shop - Prove your humanity</title></head><body>'.padEnd(1200, 'x'))
+  },
+  '/api/challenge': (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' }).end('<html>checking your browser</html>')
+  },
+}
+
+const REDIRECTS: Record<string, string> = {
+  '/r/devise': '/users/sign_in',
+  '/r/wordpress': '/wp-login.php?redirect_to=%2Fapi',
+  '/r/rails': '/sessions/new',
+  '/r/oauth': 'https://id.example.com/oauth2/authorize?client_id=1',
+  '/r/home': '/',
+  '/r/products': '/products',
+}
+
+for (const [from, to] of Object.entries(REDIRECTS)) {
+  ROUTES[from] = (_req, res) => {
+    res.writeHead(302, { location: to }).end()
+  }
+}
+
 const server = createServer((req, res) => {
   requests++
-  const cookie = req.headers.cookie ?? ''
-  if (req.url === '/api/open') {
-    res.writeHead(200, { 'content-type': 'application/json' }).end('{"items":[1]}')
-    return
-  }
-  if (req.url === '/api/private') {
-    const ok = cookie.includes('sid=good') && req.headers['x-api-key'] === 'k1'
-    res.writeHead(ok ? 200 : 403, { 'content-type': 'application/json' }).end(ok ? '{"items":[1],"total":1}' : '{"error":"forbidden"}')
-    return
-  }
-  if (req.url?.startsWith('/graphql')) {
-    res.writeHead(200, { 'content-type': 'application/json' }).end('{"data":{"a":1}}')
-    return
-  }
-  if (req.url === '/humanity') {
-    res.writeHead(200, { 'content-type': 'text/html' }).end('<html><head><title>Shop - Prove your humanity</title></head><body>'.padEnd(1200, 'x'))
-    return
-  }
-  if (req.url === '/api/challenge') {
-    res.writeHead(200, { 'content-type': 'text/html' }).end('<html>checking your browser</html>')
-    return
-  }
-  res.writeHead(404).end()
+  const url = req.url ?? ''
+  const route = ROUTES[url] ?? (url.startsWith('/graphql')
+    ? json(200, '{"data":{"a":1}}')
+    : null)
+  if (route)
+    route(req, res)
+  else
+    res.writeHead(404).end()
 })
 
 beforeAll(async () => {
@@ -123,8 +180,107 @@ describe('probeOperations', () => {
         }),
       ],
     })
-    expect(report.operations[0]).toMatchObject({ replay: 'rejected', requires: null })
-    expect(report.operations[0]?.note).toContain('not accepted')
+    expect(report.operations[0]).toMatchObject({ replay: 'rejected', requires: null, rejection: 'other' })
+    // Both answers were 200: what differed is the body, not the session.
+    expect(report.operations[0]?.note).toContain('text/html where the capture had application/json')
+    expect(report.operations[0]?.note).not.toContain('not accepted')
+  })
+
+  it('names itself instead of replaying the capture browser\'s user agent and client hints', async () => {
+    const report = await probeOperations({
+      toolVersion: '1.2.3',
+      config,
+      operations: [
+        op('getTags', 'GET', '/api/tags', {
+          url: `${origin}/api/tags`,
+          requestHeaders: {
+            'user-agent': 'Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36',
+            'sec-ch-ua': '"Chromium";v="156", "HeadlessChrome";v="156"',
+          },
+          responseBody: jsonBody({ items: [] }),
+        }),
+      ],
+    })
+    expect(report.operations[0]).toMatchObject({ replay: 'ok', bare: 'ok', requires: [] })
+    expect(userAgents.length).toBeGreaterThan(0)
+    expect(userAgents.every(agent => agent === 'site-to-api/1.2.3 (probe; automated)')).toBe(true)
+    expect(clientHints.every(hint => hint === '')).toBe(true)
+  })
+
+  it('tells bot protection, a refused session (only on login evidence) and other refusals apart', async () => {
+    const sample = (path: string): Parameters<typeof op>[3] => ({
+      url: `${origin}${path}`,
+      cookies: { sid: 'old' },
+      responseBody: jsonBody({ items: [] }),
+    })
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getWalled', 'GET', '/api/walled', sample('/api/walled')),
+        op('getTeapot', 'GET', '/api/teapot', sample('/api/teapot')),
+        op('getLoginOnly', 'GET', '/api/login-only', sample('/api/login-only')),
+        op('getFirewalled', 'GET', '/api/firewalled', sample('/api/firewalled')),
+        op('getRedirected', 'GET', '/api/redirected', sample('/api/redirected')),
+        op('getLoginForm', 'GET', '/api/login-form', sample('/api/login-form')),
+      ],
+    })
+    const byId = new Map(report.operations.map(entry => [entry.operationId, entry]))
+    expect(byId.get('getWalled')).toMatchObject({
+      replay: 'rejected',
+      rejection: 'bot-protection',
+      statuses: [403, 403],
+    })
+    expect(byId.get('getWalled')?.note).toContain('Blocked by bot protection (Cloudflare: header cf-mitigated, status 403)')
+    expect(byId.get('getWalled')?.note).not.toContain('not accepted')
+    // Laravel's 419 is an expired session or CSRF token.
+    expect(byId.get('getTeapot')).toMatchObject({
+      rejection: 'session',
+      statuses: [419, 419],
+    })
+    expect(byId.get('getTeapot')?.note).toContain('status 419 (session or CSRF token expired)')
+    expect(byId.get('getLoginOnly')).toMatchObject({
+      rejection: 'session',
+      statuses: [401, 401],
+    })
+    expect(byId.get('getLoginOnly')?.note).toContain('not accepted any more: the site answered with status 401 with a JSON error')
+    expect(byId.get('getFirewalled')).toMatchObject({
+      rejection: 'other',
+      statuses: [403, 403],
+    })
+    expect(byId.get('getFirewalled')?.note).toContain('showed no sign of a login')
+    expect(byId.get('getFirewalled')?.note).not.toContain('not an authentication failure')
+    expect(byId.get('getRedirected')).toMatchObject({ rejection: 'session' })
+    expect(byId.get('getRedirected')?.note).toContain('a redirect to /login')
+    expect(byId.get('getLoginForm')).toMatchObject({ rejection: 'session' })
+    expect(byId.get('getLoginForm')?.note).toContain('a login form where the capture had JSON')
+  })
+
+  it('reads login redirects of common frameworks as a refused session, and other redirects not', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        ...Object.keys(REDIRECTS),
+        '/api/px',
+        '/api/denied-list',
+      ].map(path => op(`get${path.replace(/\W/g, '')}`, 'GET', path, {
+        url: `${origin}${path}`,
+        cookies: { sid: 'old' },
+        responseBody: jsonBody({ items: [] }),
+      })),
+    })
+    const rejection = Object.fromEntries(report.operations.map(entry => [entry.operationId, entry.rejection]))
+    expect(rejection).toEqual({
+      getrdevise: 'session',
+      getrwordpress: 'session',
+      getrrails: 'session',
+      getroauth: 'session',
+      getrhome: 'other',
+      getrproducts: 'other',
+      getapipx: 'bot-protection',
+      getapideniedlist: 'other',
+    })
   })
 
   it('says the site answered with a challenge page, not that the session expired', async () => {
@@ -140,8 +296,9 @@ describe('probeOperations', () => {
       operations: [page],
     })
     expect(report.operations[0]).toMatchObject({ replay: 'rejected', requires: null })
-    expect(report.operations[0]?.note).toContain('bot challenge page')
-    expect(summarizeProbe(report).join('\n')).toContain('the site answered with a bot challenge page: 1 (getHumanity)')
+    expect(report.operations[0]).toMatchObject({ rejection: 'bot-protection' })
+    expect(report.operations[0]?.note).toContain('Blocked by bot protection (challenge page')
+    expect(summarizeProbe(report).join('\n')).toContain('blocked by bot protection (not a session problem; these need a real browser): 1 (getHumanity)')
   })
 
   it('skips unsafe methods and bot-protection steps by default, without sending anything', async () => {

@@ -383,6 +383,10 @@ describe('probe evidence, qualified references and unknown methods', () => {
         notMinimized: [
           { host: 'shop.example', operationId: 'getDeals' },
         ],
+        failures: [],
+        triedHosts: ['shop.example'],
+        replayed: 3,
+        skipped: 0,
       },
     })
     expect(guide).toContain('- Cookie `pm_session`: set by `postApiAuthLogin`. Needed by 1 request (confirmed by probe).')
@@ -890,6 +894,119 @@ describe('real-time channels', () => {
     expect(rows).toHaveLength(2)
     for (const row of rows)
       expect(row.match(/<t[dh][\s>]/g)).toHaveLength(9)
+  })
+})
+
+describe('host sections follow the probe results', () => {
+  const probeRun = (init: Partial<NonNullable<Parameters<typeof renderAgentGuide>[1]['probe']>> = {}): NonNullable<Parameters<typeof renderAgentGuide>[1]['probe']> => ({
+    minimizePerHost: 5,
+    notMinimized: [],
+    failures: [],
+    triedHosts: ['shop.example'],
+    replayed: 2,
+    skipped: 0,
+    ...init,
+  })
+
+  function render(probe: ReturnType<typeof probeRun> | null, change: (analysis: Analysis) => void = () => {}, pageHosts: Parameters<typeof renderAgentGuide>[1]['pageHosts'] = []): string {
+    const analysis = fixture()
+    change(analysis)
+    return renderAgentGuide(analysis, {
+      toolVersion: '0.1.0',
+      examples: 'masked',
+      probed: false,
+      client: 'current',
+      probe,
+      pageHosts,
+    })
+  }
+
+  it('gives a host that only served pages its own section', () => {
+    const guide = render(null, () => {}, [
+      {
+        host: 'news.example',
+        requires: 'none',
+        cookies: [],
+        botProtection: [],
+        probed: false,
+      },
+    ])
+    expect(guide).toContain('### news.example\n\n- Serves pages only: no API calls to this host were captured.\n- Needs: plain HTTP works; no session needed (inferred from the capture, not yet probed).')
+    expect(guide).toContain('### shop.example')
+  })
+
+  it('does not tell the reader to use a browser for a host probe answered without one', () => {
+    const guide = render(probeRun(), (analysis) => {
+      analysis.flows.session[0]!.requires = 'none'
+      analysis.flows.session[0]!.probed = true
+      analysis.operations[1]!.requires = ['header:x-client-id']
+    })
+    expect(guide).toContain('- Needs: plain HTTP works; requests need header `x-client-id` (confirmed by probe).')
+    expect(guide).toContain('- Bot protection seen: Akamai')
+    expect(guide).not.toContain('let a real browser run it')
+  })
+
+  it('names the bot-protection headers when they are why a browser is needed', () => {
+    const guide = render(probeRun(), (analysis) => {
+      analysis.flows.session[0]!.probed = true
+      analysis.operations[1]!.requires = ['header:x-kpsdk-h', 'header:x-kpsdk-v']
+    })
+    expect(guide).toContain('- Needs: a real browser is needed: `x-kpsdk-h`, `x-kpsdk-v` are computed by a bot-protection script in the page; requests need headers `x-kpsdk-h`, `x-kpsdk-v` (confirmed by probe).')
+  })
+
+  it('names the kinds of failure instead of claiming confirmation when some calls failed', () => {
+    const guide = render(probeRun({
+      failures: [
+        {
+          host: 'shop.example',
+          operationId: 'getDeals',
+          kind: 'blocked',
+          reason: 'blocked by bot protection (status 403, 403)',
+        },
+        {
+          host: 'shop.example',
+          operationId: 'getApiOrders',
+          kind: 'differs',
+          reason: 'answered differently from the capture (status 500, 500)',
+        },
+      ],
+    }), (analysis) => {
+      analysis.operations[1]!.requires = []
+    })
+    expect(guide).toContain('(inferred from the capture; probe could not confirm it: 1 blocked by bot protection, 1 answered differently; see Gaps).')
+    expect(guide).not.toContain('confirmed by probe)')
+    expect(guide).toContain('- Bot protection: Akamai')
+    expect(guide).not.toContain('answered without it')
+  })
+
+  it('reflects a probe run that confirmed nothing, and lists its failures as gaps', () => {
+    const guide = render(probeRun({
+      failures: [
+        {
+          host: 'shop.example',
+          operationId: 'getApiOrders',
+          kind: 'blocked',
+          reason: 'blocked by bot protection (status 403, 403)',
+        },
+        {
+          host: 'shop.example',
+          operationId: 'getDeals',
+          kind: 'differs',
+          reason: 'answered differently from the capture (status 419, 419)',
+        },
+      ],
+    }))
+    expect(guide).not.toContain('not yet probed')
+    expect(guide).not.toContain('has not been run')
+    expect(guide).toContain('(inferred from the capture; probe could not confirm it: 1 blocked by bot protection, 1 answered differently; see Gaps)')
+    expect(guide).toContain('- `probe` could not confirm what 2 operations on `shop.example` need: `getApiOrders` (blocked by bot protection (status 403, 403)), `getDeals` (answered differently from the capture (status 419, 419)).')
+  })
+
+  it('says when probe ran but replayed nothing', () => {
+    const guide = render(probeRun({ triedHosts: [], replayed: 0, skipped: 4 }))
+    expect(guide).toContain('`site-to-api probe` ran but replayed no operation (4 skipped')
+    expect(guide).toContain('(inferred from the capture; probe tested no operation on this host)')
+    expect(guide).not.toContain('has not been run')
   })
 })
 

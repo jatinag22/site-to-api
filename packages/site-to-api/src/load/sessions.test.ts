@@ -365,6 +365,27 @@ describe('loadSessions', () => {
       expect(warning).not.toContain(root)
   })
 
+  it('uses an incomplete session with a warning, and keeps the network error of a failed page load', async () => {
+    const failed = entry({ url: 'https://shop.test/', status: -1, resourceType: 'document' })
+    const response = failed.response as Record<string, unknown>
+    response.statusText = ''
+    response._failureText = 'net::ERR_HTTP2_PROTOCOL_ERROR'
+    await writeSession('s1', {
+      ...meta('s1', '2026-01-01T10:00:00.000Z'),
+      incomplete: { reason: 'script-failed', error: 'boom' },
+    }, [failed], [])
+    const { exchanges, sessions, warnings } = await loadSessions(root)
+    expect(sessions).toHaveLength(1)
+    expect(exchanges[0]?.response).toMatchObject({ status: -1, statusText: 'net::ERR_HTTP2_PROTOCOL_ERROR' })
+    expect(warnings).toEqual(['s1: incomplete capture (the capture script failed: boom). It is used as recorded; pages after that point are missing, so capture again for full coverage.'])
+  })
+
+  it('explains a session folder that has a HAR but no meta.json', async () => {
+    await mkdir(join(root, 'lost'), { recursive: true })
+    await writeFile(join(root, 'lost', 'traffic.har'), '{"log":{"entries":[]}}')
+    await expect(loadSessions(root)).rejects.toThrow(/lost: has traffic\.har but no meta\.json, so the capture never finished saving/)
+  })
+
   it('sorts by session start, then by request time, and numbers seq within each session', async () => {
     await writeSession('b-first', meta('b-first', '2026-01-01T09:00:00.000Z'), [
       entry({ url: 'https://shop.test/2', at: T0 + 50 }),

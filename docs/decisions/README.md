@@ -42,4 +42,7 @@ or `Proposed`.
 | [0032](0032-excerpts-as-markdown.md) | Source excerpts are Markdown files | Accepted |
 | [0033](0033-bot-protection-output-and-code-only-evidence.md) | Bot-protection output, challenge pages and code-only evidence (refines 0008, 0015, 0017, 0021) | Accepted |
 | [0034](0034-required-from-evidence.md) | `required` in responses needs two distinct requests; GraphQL variables follow the document | Accepted |
+| [0035](0035-sibling-path-templates.md) | Sibling paths with word values become one template, on evidence | Accepted |
+| [0036](0036-probe-identity-and-outcomes.md) | Probe names itself and says why a request was refused (refines 0012) | Accepted |
+| [0037](0037-capture-always-saves.md) | Capture always saves the session, with bounded waits | Accepted |
 | [0038](0038-websocket-framing-protocols.md) | WebSocket framing protocols, MessagePack and protobuf frames, connection facts (refines 0023, 0030) | Accepted |

@@ -7,7 +7,7 @@ import { botProtectionVendor } from '../correlate'
  * Analytics cookies travel with every request but no API depends on them; counting them would
  * make every site look like it needs a browser.
  */
-const ANALYTICS_COOKIE = /^(?:_ga|_gid|_gcl_|_fbp|_fbc|_hj|_clck|_clsk|_uetsid|_uetvid|ajs_|mp_|_ttp|_pin_unauth)/
+export const ANALYTICS_COOKIE = /^(?:_ga|_gid|_gcl_|_fbp|_fbc|_hj|_clck|_clsk|_uetsid|_uetvid|ajs_|mp_|_ttp|_pin_unauth)/
 
 type TraceOriginKind = ValueTrace['origin']['kind']
 

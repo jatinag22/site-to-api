@@ -24,7 +24,8 @@
 
 All stages are pure functions over the data contracts in `packages/site-to-api/src/model/`.
 
-1. **load** (`src/load`): reads `meta.json`, `traffic.har` and `events.jsonl` of every session,
+1. **load** (`src/load`): reads `meta.json`, `traffic.har` and `events.jsonl` of every session
+   (sessions marked `incomplete` are used with a warning, decision 0037),
    validates them with Zod, and produces `Exchange[]`. Instrumentation `request` events are matched
    to HAR entries (method + URL + time window + body preview) to attach the initiator stack, and
    `response` events fill bodies the HAR lost when the page navigated (decision 0016).
@@ -36,7 +37,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    path template. GraphQL requests, recognised by content and split out of batches by
    `src/analyze/graphql` first, become one operation per GraphQL operation instead (decision
    0027); the source stage reads the site's code for the type of persisted queries. Path parameters come from source route templates, value tracing, variation
-   across samples and ID-like segments (UUID, hex, base58, numbers, upper-case slugs).
+   across samples, ID-like segments (UUID, hex, base58, numbers, upper-case slugs) and sibling
+   paths whose word values the capture shows are data (decision 0035).
 4. **schema** (`src/analyze/schema`): infers JSON Schema for query, headers, request bodies and
    JSON responses from all samples: required vs optional, enums, formats, constants.
 5. **correlate** (`src/analyze/correlate`): indexes every response value (JSON leaves, Set-Cookie,
