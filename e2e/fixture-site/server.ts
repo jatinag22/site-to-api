@@ -433,8 +433,17 @@ function createRoutes(deps: {
       pattern: /^\/api\/me$/,
       handler: (ctx) => {
         const user = requireUser(ctx)
-        if (user !== null)
-          sendJson(ctx.res, 200, user)
+        // Signed-in sessions keyed by session id, as account pages often list them: the key is
+        // the session cookie's value, which must never reach the handoff folder (decision 0042).
+        const sessionId = ctx.cookies.get(SESSION_COOKIE)
+        if (user !== null && sessionId !== undefined) {
+          sendJson(ctx.res, 200, {
+            ...user,
+            sessions: {
+              [sessionId]: { current: true },
+            },
+          })
+        }
       },
     },
     {

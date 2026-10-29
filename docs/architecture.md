@@ -72,7 +72,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    rows), labels and types, and naming fields and records from the page's markup (0029).
 10. **redact** (`src/analyze/redact`): decides, per value, whether it is a cross-session constant
     (kept), a secret or personal value (replaced by a shape description or a masked example that
-    keeps the format), or ordinary data.
+    keeps the format), or ordinary data. Object keys that are secret or personal values are
+    replaced by their shape, and schemas describe those objects as maps (0042).
 11. **emit** (`src/emit`): writes the handoff folder; extraction specs are first checked against
     the runtime's `extract()` and the client is generated (decision 0018). Orchestration lives in
     `src/build/index.ts`.

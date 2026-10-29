@@ -263,4 +263,25 @@ describe('groupMessages', () => {
     expect(text).not.toContain('john.doe')
     expect(messages[0]!.schema?.properties?.email?.enum).toBeUndefined()
   })
+
+  it('describes frames keyed by tokens or emails as maps and never writes the keys', () => {
+    const token = 'Zq8xT2mLp4VwRk7YbN3c'
+    const { messages } = groupMessages('receive', frames([
+      `{"type":"presence","users":{"jane.doe@example.org":{"online":true}}}`,
+      `{"type":"presence","users":{"${token}":{"online":false}}}`,
+    ]), redactor, new Set())
+    const text = JSON.stringify(messages)
+    expect(text).not.toContain('jane.doe')
+    expect(text).not.toContain(token)
+    expect(messages[0]!.schema?.properties?.users).toEqual({
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          online: { type: 'boolean' },
+        },
+        required: ['online'],
+      },
+    })
+  })
 })

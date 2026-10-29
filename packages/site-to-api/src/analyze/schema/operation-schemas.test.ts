@@ -431,6 +431,87 @@ describe('inferOperationSchemas', () => {
     })
   })
 
+  it('describes responses keyed by a session cookie value as maps and masks the keys in examples', () => {
+    const sid = 'c0ffee00deadbeef0123456789abcdef'
+    const result = infer([
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { sid },
+        responseBody: jsonBody({
+          sessions: {
+            [sid]: { device: 'web' },
+          },
+        }),
+      }),
+    ])
+    const response = result.responses[0]
+    expect(response?.schema?.properties?.sessions).toEqual({
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          device: { type: 'string' },
+        },
+      },
+    })
+    expect(response?.examples).toEqual([
+      {
+        sessions: {
+          '<redacted: 32 hex chars>': { device: 'web' },
+        },
+      },
+    ])
+    expect(JSON.stringify(result.responses)).not.toContain(sid)
+  })
+
+  it('describes form fields named by a token as a map', () => {
+    const token = 'Zq8xT2mLp4VwRk7YbN3c'
+    const result = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: formBody({ q: 'a', [token]: 'yes' }),
+      }),
+    ])
+    expect(result.requestBody?.schema).toEqual({
+      type: 'object',
+      properties: {
+        q: { type: 'string' },
+      },
+      additionalProperties: { type: 'string' },
+    })
+    expect(JSON.stringify(result.requestBody)).not.toContain(token)
+  })
+
+  it('keeps a form field named __proto__ as a property', () => {
+    const fields = (value: string): Record<string, string> => Object.fromEntries([
+      ['__proto__', value],
+      ['q', value],
+    ])
+    const result = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: formBody(fields('a')),
+      }),
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: formBody(fields('b')),
+      }),
+    ])
+    const schema = result.requestBody?.schema
+    expect(Object.keys(schema?.properties ?? {})).toEqual([
+      '__proto__',
+      'q',
+    ])
+    expect(Object.getPrototypeOf(schema?.properties)).toBe(Object.prototype)
+    expect(schema?.required).toEqual([
+      '__proto__',
+      'q',
+    ])
+  })
+
   it('handles text and binary request bodies', () => {
     const binary = {
       mimeType: 'application/octet-stream',

@@ -211,9 +211,11 @@ function pinDiscriminator(schema: JsonSchema, path: readonly string[], value: st
   }
 }
 
-function enumGuard(redactor: Redactor, context: RedactContext): { allowEnumValue: (value: string) => boolean } {
+function enumGuard(redactor: Redactor, context: RedactContext): { allowEnumValue: (value: string) => boolean, isMapKey: (key: string) => boolean } {
   return {
     allowEnumValue: value => redactor.value(value, context) === value,
+    // Frames keyed by a session or user id describe a map, not fields named after the capture.
+    isMapKey: key => redactor.isSecretKey(key),
   }
 }
 

@@ -20,7 +20,7 @@ function analyse(exchanges: Exchange[]): Operation[] {
       fields: [],
     },
   })
-  return inferOperationSchemas(buildOperations(annotated, { sourceRoutes: [] }), redactor)
+  return inferOperationSchemas(buildOperations(annotated, { sourceRoutes: [], isSecretKey: redactor.isSecretKey }), redactor)
 }
 
 describe('graphQL request schemas', () => {

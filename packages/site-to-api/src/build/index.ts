@@ -217,7 +217,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   const wanted = inHostFilter(config.hosts)
   // The page's own calls to a long-polling path are the channel's transport, not unused endpoints.
   const pollingPaths = new Set(exchanges.filter(isEnginePolling).map(exchange => `${exchange.request.host} ${exchange.request.path}`))
-  let operations = buildOperations(exchanges, { sourceRoutes })
+  let operations = buildOperations(exchanges, { sourceRoutes, isSecretKey: redactor.isSecretKey })
     .filter(operation => !operation.sourceOnly || (wanted(operation.host) && !pollingPaths.has(`${operation.host} ${operation.path}`)))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
   operations = inferOperationSchemas(operations, redactor)

@@ -185,7 +185,7 @@ function capture(): { exchanges: Exchange[], sessions: LoadedSession[] } {
 function analyse(config: ResolvedConfig['redact'], input = capture(), htmlLocator: HtmlLocator = createHtmlLocator()): Analysis {
   const { exchanges, botProtection } = classifyExchanges(input.exchanges, { include: [], exclude: [] })
   const redactor = createRedactor({ exchanges, config })
-  const operations = inferOperationSchemas(buildOperations(exchanges, { sourceRoutes: [] }), redactor)
+  const operations = inferOperationSchemas(buildOperations(exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey }), redactor)
   const traces = traceValues({
     exchanges,
     sessions: input.sessions,

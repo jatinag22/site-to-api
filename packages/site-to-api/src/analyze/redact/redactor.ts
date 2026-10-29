@@ -23,6 +23,12 @@
  *    `firstName`, `address`, `city`, `zip`, `dob`, `userId`, see `personal-data.ts`), and `name`
  *    and `id` inside an object that describes a person (under `user`, `account`, `profile`,
  *    `customer`, or holding a `username`/`email` itself).
+ * 6. JSON object keys that are themselves secret or personal values are replaced by their shape
+ *    (decision 0042): sites key maps by session tokens, emails or user ids
+ *    (`{"sessions": {"<token>": {...}}}`). A key is secret when it is a JWT, a learnt secret, a
+ *    value seen under a personal field name, contains personal data or a learnt secret, or is an
+ *    opaque blob or random token (as path segments are judged) not identical in every session.
+ *    Ordinary keys never change. Schemas describe such objects as maps (`additionalProperties`).
  * Well-known auth scheme words (`Bearer`, `Basic`) under secret names (`tokenType`) are kept:
  * they say how to authenticate and are the same for everyone.
  * Values inside JSON strings, URLs, URL-encoded text and percent-encoded text are handled
@@ -64,6 +70,10 @@ interface Located {
   pathOpaque?: boolean
   /** For path segments: the segment as sent, when percent-decoding changed it. */
   raw?: string
+  /** A JSON object key (with the parent's name), not a value. */
+  key?: boolean
+  /** The value sits directly in an object describing a person (see `isPersonObject`). */
+  person?: boolean
 }
 
 function isQueryLike(where: RedactContext['in']): boolean {
@@ -160,24 +170,35 @@ function* valuesOf(exchange: Exchange): Generator<Located> {
   yield* bodyValues(response.body, 'response-body')
 }
 
-function* jsonValues(value: unknown, where: RedactContext['in'], name: string | null, depth: number): Generator<Located> {
+function* jsonValues(value: unknown, where: RedactContext['in'], name: string | null, depth: number, person = false): Generator<Located> {
   if (depth > MAX_DEPTH)
     return
   if (typeof value === 'string') {
-    yield* expand({ value, in: where, name }, depth)
+    yield* expand({ value, in: where, name, person }, depth)
   }
   else if (typeof value === 'number') {
     yield {
       value: String(value),
       in: where,
       name,
+      person,
     }
   }
   else if (Array.isArray(value)) {
-    for (const item of value) yield* jsonValues(item, where, name, depth + 1)
+    for (const item of value) yield* jsonValues(item, where, name, depth + 1, person)
   }
   else if (value !== null && typeof value === 'object') {
-    for (const [key, item] of Object.entries(value)) yield* jsonValues(item, where, key, depth + 1)
+    const entries = Object.entries(value)
+    const isPerson = isPersonObject(name, entries.map(([key]) => key))
+    for (const [key, item] of entries) {
+      yield {
+        value: key,
+        in: where,
+        name,
+        key: true,
+      }
+      yield* jsonValues(item, where, key, depth + 1, isPerson)
+    }
   }
 }
 
@@ -241,6 +262,11 @@ interface Learnt {
   sessionsByValue: Map<string, Set<string>>
   always: Set<string>
   unlessConstant: Set<string>
+  /**
+   * Values masked because of their field name (`userId`, `username`, a person's `id`). Only used
+   * to recognise the same value as an object key; they are not searched for in other text.
+   */
+  personal: Set<string>
 }
 
 /**
@@ -253,12 +279,41 @@ function formsOf(item: Located): string[] {
     : [item.value, item.raw]
 }
 
+/**
+ * Records an object key. A key is judged by what it looks like, never by the name of the object
+ * holding it: `token: {type, expiresIn}` has ordinary keys.
+ */
+function learnKey(key: string, learnt: Learnt): void {
+  if (inspectJwt(key))
+    learnt.always.add(key)
+  else if (isOpaquePathSegment(key))
+    learnt.unlessConstant.add(key)
+}
+
+/** Records which secret set a non-empty value belongs to, if any. */
+function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean): void {
+  if (item.value.length >= MIN_SEARCHED_SECRET_LENGTH && maskByName(item.value, item.name, item.person === true) !== null)
+    learnt.personal.add(item.value)
+  if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true) {
+    forms.forEach(form => learnt.always.add(form))
+  }
+  else if (isSecretName(item.name, isQueryLike(item.in)) && !isAuthScheme(item.value)) {
+    forms.forEach(form => (isPublishableKeyName(item.name, isQueryLike(item.in))
+      ? learnt.unlessConstant
+      : learnt.always).add(form))
+  }
+  else if (item.pathOpaque === true) {
+    forms.forEach(form => learnt.unlessConstant.add(form))
+  }
+}
+
 /** One pass over every value of the capture: where each value was seen and which are secrets. */
 function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean): Learnt {
   const learnt: Learnt = {
     sessionsByValue: new Map(),
     always: new Set(),
     unlessConstant: new Set(),
+    personal: new Set(),
   }
   for (const exchange of exchanges) {
     for (const item of valuesOf(exchange)) {
@@ -270,17 +325,10 @@ function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: Red
       }
       if (item.value === '')
         continue
-      if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true) {
-        forms.forEach(form => learnt.always.add(form))
-      }
-      else if (isSecretName(item.name, isQueryLike(item.in)) && !isAuthScheme(item.value)) {
-        forms.forEach(form => (isPublishableKeyName(item.name, isQueryLike(item.in))
-          ? learnt.unlessConstant
-          : learnt.always).add(form))
-      }
-      else if (item.pathOpaque === true) {
-        forms.forEach(form => learnt.unlessConstant.add(form))
-      }
+      if (item.key === true)
+        learnKey(item.value, learnt)
+      else
+        learnValue(item, forms, learnt, isAlwaysSecret)
     }
   }
   return learnt
@@ -307,7 +355,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     return fields.has(lower)
   }
 
-  const { sessionsByValue, always, unlessConstant } = learnValues(input.exchanges, isAlwaysSecret)
+  const { sessionsByValue, always, unlessConstant, personal } = learnValues(input.exchanges, isAlwaysSecret)
 
   const isConstant = (value: string): boolean =>
     sessionCount >= 2 && (sessionsByValue.get(value)?.size ?? 0) === sessionCount
@@ -341,6 +389,21 @@ export function createRedactor(input: RedactorInput): Redactor {
       ? placeholder(match)
       : match)
     return maskPersonalData(result, patterns)
+  }
+
+  const keyVerdicts = new Map<string, boolean>()
+  /** See rule 6 above. Memoised: the same keys repeat in every sample. */
+  function isSecretKey(key: string): boolean {
+    let verdict = keyVerdicts.get(key)
+    if (verdict === undefined) {
+      verdict = key !== '' && (inspectJwt(key) !== null
+        || secrets.has(key)
+        || personal.has(key)
+        || ((isOpaqueBlob(key) || isOpaquePathSegment(key)) && !isConstant(key))
+        || scanText(key) !== key)
+      keyVerdicts.set(key, verdict)
+    }
+    return verdict
   }
 
   function redactQuery(query: string, depth: number): string {
@@ -455,10 +518,16 @@ export function createRedactor(input: RedactorInput): Redactor {
     if (value !== null && typeof value === 'object') {
       const entries = Object.entries(value)
       const person = isPersonObject(context.name, entries.map(([key]) => key))
-      return Object.fromEntries(entries.map(([key, item]) =>
+      // A value under a secret key is named by the map that holds it, as array items are.
+      return Object.fromEntries(withSafeKeys(entries, isSecretKey).map(entry =>
         [
-          key,
-          redactJson(item, { in: context.in, name: key }, depth + 1, person),
+          entry.key,
+          redactJson(entry.item, {
+            in: context.in,
+            name: entry.secret
+              ? context.name ?? null
+              : entry.key,
+          }, depth + 1, person),
         ]))
     }
     return value
@@ -497,14 +566,16 @@ export function createRedactor(input: RedactorInput): Redactor {
     examples: (values, context) => examplesOf(value => typeof value === 'string'
       ? redactString(value, context, 0)
       : redactJson(value, context, 0))(values),
+    isSecretKey,
     browserOnly: {
       value: text => raw || text === ''
         ? text
         : placeholder(text),
       json: value => raw
         ? value
-        : maskEveryValue(value, 0),
-      examples: values => examplesOf(value => maskEveryValue(value, 0))(values),
+        : maskEveryValue(value, isSecretKey, 0),
+      examples: values => examplesOf(value => maskEveryValue(value, isSecretKey, 0))(values),
+      isSecretKey,
     },
   }
 }
@@ -513,7 +584,7 @@ export function createRedactor(input: RedactorInput): Redactor {
  * Every string and number replaced by its shape, keeping the JSON structure, booleans and nulls:
  * what a bot-protection step's challenge or sensor payload looks like, never what it says.
  */
-function maskEveryValue(value: unknown, depth: number): unknown {
+function maskEveryValue(value: unknown, isSecretKey: (key: string) => boolean, depth: number): unknown {
   if (depth > MAX_DEPTH)
     return '<redacted: nested too deep>'
   if (typeof value === 'string') {
@@ -524,12 +595,38 @@ function maskEveryValue(value: unknown, depth: number): unknown {
   if (typeof value === 'number')
     return placeholder(String(value))
   if (Array.isArray(value))
-    return value.map(item => maskEveryValue(item, depth + 1))
+    return value.map(item => maskEveryValue(item, isSecretKey, depth + 1))
   if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-      key,
-      maskEveryValue(item, depth + 1),
+    return Object.fromEntries(withSafeKeys(Object.entries(value), isSecretKey).map(entry => [
+      entry.key,
+      maskEveryValue(entry.item, isSecretKey, depth + 1),
     ]))
   }
   return value
+}
+
+interface SafeEntry {
+  key: string
+  item: unknown
+  /** The key as captured was secret and `key` is its shape. */
+  secret: boolean
+}
+
+/**
+ * Object entries with every secret key replaced by `<redacted: shape>`, in the original order.
+ * Keys of one shape are numbered (`<redacted: UUID> (2)`) so none is lost; ordinary keys keep
+ * their name and are never renumbered.
+ */
+function withSafeKeys(entries: ReadonlyArray<[string, unknown]>, isSecretKey: (key: string) => boolean): SafeEntry[] {
+  const taken = new Set(entries.map(([key]) => key).filter(key => !isSecretKey(key)))
+  return entries.map(([key, item]) => {
+    if (!isSecretKey(key))
+      return { key, item, secret: false }
+    const shape = placeholder(key)
+    let safe = shape
+    for (let index = 2; taken.has(safe); index++)
+      safe = `${shape} (${index})`
+    taken.add(safe)
+    return { key: safe, item, secret: true }
+  })
 }

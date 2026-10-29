@@ -45,7 +45,7 @@ function channelsOf(input: Exchange[], sessions: LoadedSession[]): WebSocketChan
     ],
     config: REDACT,
   })
-  const operations = inferOperationSchemas(buildOperations(http, { sourceRoutes: [] }), redactor)
+  const operations = inferOperationSchemas(buildOperations(http, { sourceRoutes: [], isSecretKey: redactor.isSecretKey }), redactor)
   const traces = traceValues({
     exchanges: [
       ...http,
