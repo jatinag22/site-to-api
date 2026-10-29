@@ -49,6 +49,23 @@ export interface SourceRoute {
   onlyInBotProtectionScripts: boolean
 }
 
+/**
+ * Where the site's code builds a time-based one-time code that a request sends under `field`
+ * (found by `analyze/source`): the object property that holds it, in a file that configures an
+ * OTP generator with these settings.
+ */
+export interface OneTimeCodeSite {
+  field: string
+  ref: SourceRef
+  config: {
+    digits: number
+    /** Seconds each code is valid for, when the config states it. */
+    period: number | null
+    /** HMAC hash, e.g. `SHA1`, when the config states it. */
+    algorithm: string | null
+  }
+}
+
 /** Finds where a value appears inside an HTML or text document (implemented in `analyze/html`). */
 export type HtmlLocator = (document: string, value: string) => {
   selector: string

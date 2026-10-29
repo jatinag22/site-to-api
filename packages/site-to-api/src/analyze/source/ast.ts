@@ -3,7 +3,7 @@
  * a language picked from the file name, offset ↔ line/column conversion, and a walk that knows
  * the name of the function enclosing each node.
  */
-import type { ArrayExpression, ArrowFunctionExpression as ArrowNode, BinaryExpression, CallExpression, Expression, Function as FunctionNode, MemberExpression, NewExpression, ParserOptions, Program, PropertyKey, TemplateLiteral, VariableDeclarator, VisitorObject } from 'oxc-parser'
+import type { ArrayExpression, ArrowFunctionExpression as ArrowNode, BinaryExpression, CallExpression, Expression, Function as FunctionNode, MemberExpression, NewExpression, ObjectExpression, ParserOptions, Program, PropertyKey, TemplateLiteral, VariableDeclarator, VisitorObject } from 'oxc-parser'
 import { parseSync, Visitor } from 'oxc-parser'
 
 type Lang = NonNullable<ParserOptions['lang']>
@@ -164,6 +164,7 @@ export interface CodeHandlers {
   BinaryExpression?: (node: BinaryExpression) => void
   VariableDeclarator?: (node: VariableDeclarator) => void
   ArrayExpression?: (node: ArrayExpression) => void
+  ObjectExpression?: (node: ObjectExpression) => void
 }
 
 /**
@@ -243,6 +244,9 @@ export function walkWithFunctions(
     },
     ArrayExpression(node) {
       handlers.ArrayExpression?.(node)
+    },
+    ObjectExpression(node) {
+      handlers.ObjectExpression?.(node)
     },
   }
   new Visitor(visitor).visit(program)

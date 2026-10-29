@@ -1217,3 +1217,96 @@ function sessionMeta(sessionId: string): LoadedSession['meta'] {
     scripts: [],
   }
 }
+
+describe('buildFlows: time-based one-time codes', () => {
+  const tokenRequest = (sessionId: string, totp: string): Exchange => exchange({
+    sessionId,
+    url: `https://open.music.test/api/token?reason=init&totp=${totp}&totpServer=${totp}`,
+    startedAt: 1,
+    responseBody: jsonBody({ isAnonymous: true }),
+  })
+  const flowsFor = (oneTimeCodes: BuildFlowsInput['oneTimeCodes']): FlowsDocument => {
+    const stores = (sessionId: string, pincode: string): Exchange => exchange({ sessionId, url: `https://open.music.test/api/stores?pincode=${pincode}`, startedAt: 2 })
+    const exchanges = [
+      tokenRequest('a', '180073'),
+      stores('a', '560001'),
+      tokenRequest('b', '594010'),
+      stores('b', '411014'),
+    ]
+    const sessions: LoadedSession[] = [
+      {
+        dir: '/tmp/a',
+        events: [],
+        meta: sessionMeta('a'),
+      },
+      {
+        dir: '/tmp/b',
+        events: [],
+        meta: sessionMeta('b'),
+      },
+    ]
+    const operations = [
+      op('getApiToken', exchanges.filter(entry => entry.request.path === '/api/token')),
+      op('getApiStores', exchanges.filter(entry => entry.request.path === '/api/stores')),
+    ]
+    const traces = traceValues({
+      exchanges,
+      sessions,
+      htmlLocator: fakeHtmlLocator,
+      staticStrings: new Set(),
+      minValueLength: 4,
+    })
+    return buildFlows({
+      exchanges,
+      operations,
+      sessions,
+      traces,
+      sourceResolver: fakeSourceResolver,
+      botProtection: [],
+      redactor: redactorFor(exchanges),
+      toolVersion: 'test',
+      oneTimeCodes,
+    })
+  }
+
+  it('records an untraced code under a field the site\'s code fills with a TOTP as a computed value', () => {
+    const ref = {
+      file: '/cdn/web-player.js',
+      line: 30,
+      column: 120,
+      functionName: 'eV',
+      original: false,
+      excerpt: null,
+    }
+    const doc = flowsFor(new Map([
+      [
+        'totp',
+        {
+          field: 'totp',
+          ref,
+          config: { digits: 6, period: 30, algorithm: 'SHA1' },
+        },
+      ],
+    ]))
+    const inputs = doc.flows[0]?.steps[0]?.inputs ?? {}
+    expect(inputs['query.totp']).toEqual({ kind: 'computed', computedId: 'getapitoken-query-totp' })
+    expect(doc.computedValues).toEqual([
+      expect.objectContaining({
+        operationId: 'getApiToken',
+        input: 'query.totp',
+        producedBy: ref,
+        api: 'TOTP (time-based one-time code)',
+        details: { digits: '6', period: '30s', algorithm: 'SHA1' },
+        evidence: 'source-trace',
+      }),
+    ])
+    // Without code evidence, a code sent to a token endpoint is still called what it most likely is.
+    expect(inputs['query.totpServer']).toEqual({ kind: 'unknown', shape: '6-digit number; likely a time-based code computed in the browser' })
+  })
+
+  it('says a code is likely time-based when the code is not found, but not for a postcode', () => {
+    const steps = flowsFor(new Map()).flows[0]?.steps ?? []
+    expect(steps[0]?.inputs['query.totp']).toEqual({ kind: 'unknown', shape: '6-digit number; likely a time-based code computed in the browser' })
+    expect(steps[1]?.inputs['query.pincode']).toEqual({ kind: 'unknown', shape: '6-digit number' })
+  })
+})
