@@ -7,9 +7,10 @@
  */
 import type { OperationEntry } from './catalog'
 import type { Handoff, HandoffHost } from './handoff'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { createJiti } from 'jiti'
-import { join } from 'pathe'
+import { dirname, join } from 'pathe'
 import { z } from 'zod'
 import { sdkFunctionName } from '../emit/naming'
 import { SiteToApiError } from '../errors'
@@ -136,7 +137,8 @@ function limitText(value: unknown): { value: unknown, truncated: boolean } {
 function runtimeAliases(): Record<string, string> {
   return {
     '@site-to-api/runtime': fileURLToPath(import.meta.resolve('@site-to-api/runtime')),
-    'zod': fileURLToPath(import.meta.resolve('zod')),
+    // The package folder, not its entry file, so subpaths such as `zod/mini` resolve too.
+    'zod': dirname(createRequire(import.meta.url).resolve('zod/package.json')),
   }
 }
 

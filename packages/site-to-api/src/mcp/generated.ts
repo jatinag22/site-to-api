@@ -6,9 +6,10 @@
  * client/mcp/server.ts`) skips that check.
  */
 import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { createJiti } from 'jiti'
-import { join } from 'pathe'
+import { dirname, join } from 'pathe'
 import { SiteToApiError } from '../errors'
 import { untrustedReason } from '../trust'
 
@@ -27,7 +28,8 @@ function aliases(): Record<string, string> {
     '@modelcontextprotocol/server/stdio': resolved('@modelcontextprotocol/server/stdio'),
     '@modelcontextprotocol/server': resolved('@modelcontextprotocol/server'),
     '@site-to-api/runtime': resolved('@site-to-api/runtime'),
-    'zod': resolved('zod'),
+    // The package folder, not its entry file, so subpaths such as `zod/mini` resolve too.
+    'zod': dirname(createRequire(import.meta.url).resolve('zod/package.json')),
   }
 }
 

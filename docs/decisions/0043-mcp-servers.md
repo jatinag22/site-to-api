@@ -104,14 +104,19 @@ one) wants to call the site's operations as tools, which needs a server that kno
   everything from the handoff folder and from live responses comes from the site and is data,
   never instructions.
 
-- **Hostile `pattern`s (a known hey-api issue).** hey-api 0.99 writes a schema's `pattern`
-  into `zod.gen.ts` as a regular expression literal without escaping it: `*x` opens a block
-  comment, `a\\/b` ends the literal early, and validation silently disappears from a client the
-  trust gate then trusts. Before hey-api runs, a `pattern` is kept only when `new RegExp` compiles
-  it and it has no `/`, no line terminator and does not start with `*`; otherwise it is dropped
-  (a looser schema, never broken code) with a warning. After generation every `.ts` file must
-  parse, and every regex literal in `zod.gen.ts` must be one of the kept patterns, or `gen`
-  fails. Not reported upstream yet; that is for the maintainer to decide.
+- **hey-api never sees site text it would write into code (a known hey-api issue).** hey-api
+  0.99 writes a schema's `pattern` into `zod.gen.ts` as a regular expression literal without
+  escaping it, and decodes `\x2f`, `\u002f` and `\u{2f}` into `/` while doing so: a pattern
+  such as `a\x2f, globalThis.x=1, \x2fb` became `.regex(/a/, globalThis.x=1, /b/)` and ran when
+  the client was loaded. Filtering patterns is a race against encodings, so hey-api gets a copy of
+  each spec without `pattern`, `description`, `title`, `summary`, `example(s)`, `externalDocs` and
+  `x-` extensions (response descriptions become empty); `specs/` keep all of them. The generated
+  client therefore checks no patterns and carries no documentation comments. Values hey-api
+  writes as escaped string literals stay: `enum`, `const`, `default`, property and parameter
+  names, paths; `format` only selects a Zod method. After generation every `.ts` file under
+  `client/` (hey-api's and site-to-api's own) must parse, and no regex literal may appear except
+  the six in hey-api's own `core/` templates; otherwise `gen` fails before the client is trusted.
+  Not reported upstream yet; that is for the maintainer to decide.
 - **The plugin asks before running the CLI.** Its commands pre-approve no `Bash` call: `build`,
   `probe`, `check` and `capture` load the project's config file, which can be code, so Claude
   Code asks the person first.
