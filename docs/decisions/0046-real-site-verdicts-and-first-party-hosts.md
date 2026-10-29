@@ -14,6 +14,10 @@ not say:
   `browser`, although Akamai's `ak_bmsc` and `bm_sv` ride along with every request of the
   domain, including the tested ones that worked without them. One cart `PUT` that sends
   Kasada's `x-kpsdk-*` headers then decided the verdict of fifteen calls.
+- Stack Overflow: a capture that opened one question listed
+  `GET /questions/{questionId}/define-generic-for-array-…`, an operation named after that
+  question. The id was a parameter on sight, but the slug after it needed the sibling evidence
+  of 0035 (links, five values, two sessions).
 
 ## Decision
 ### Probe verdicts
@@ -32,6 +36,13 @@ not say:
   in their Needs. A host that needs a browser anyway keeps the earlier line naming them.
 - The `AGENT.md` host line names the plain headers probe found necessary ("plain HTTP; requests
   need headers `nike-api-caller-id`, `origin`"), up to three, instead of "no session".
+
+### A slug after an id
+- A hyphenated slug that ends a path right after an id parameter is `{slug}` when the page's
+  `<title>` spells it (lower-cased, entities and apostrophes dropped, other punctuation as `-`;
+  three words or more, so `about-us` never matches by chance), or when paths of that shape show
+  two or more slugs, each paired with one id and each id with one slug. One id seen with two
+  slugs (`/users/7/edit-profile`, `/users/7/change-password`) keeps them as endpoints.
 
 ## Consequences
 - `flows.json` keeps its four verdicts: a host with a browser-only call is `none` and the call

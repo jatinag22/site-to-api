@@ -530,6 +530,55 @@ describe('buildOperations: slugs', () => {
   })
 })
 
+describe('buildOperations: a slug after an id (decision 0046)', () => {
+  const page = (title: string): Parameters<typeof get>[1] => ({
+    kind: 'page',
+    responseBody: {
+      ...textBody(`<html><head><title>${title}</title></head><body><h1>q</h1></body></html>`),
+      mimeType: 'text/html',
+    },
+  })
+
+  it('templates a slug that spells the page title, from one page (Stack Overflow)', () => {
+    const operations = build([
+      get('/questions/79123456/define-generic-for-array-consisting-of-only-elements', page('typescript - Define generic for array consisting of only elements - Stack Overflow')),
+    ])
+    expect(paths(operations)).toEqual(['GET /questions/{questionId}/{slug}'])
+    expect(operations[0]?.pathParams.map(param => param.name)).toEqual(['questionId', 'slug'])
+  })
+
+  it('reads entities and apostrophes in the title as the site spells its slugs', () => {
+    const operations = build([
+      get('/questions/79123457/why-doesnt-my-map-return-a-value', page('Why doesn&#39;t my &quot;map&quot; return a value? - Stack Overflow')),
+    ])
+    expect(paths(operations)).toEqual(['GET /questions/{questionId}/{slug}'])
+  })
+
+  it('templates slugs that differ across samples, each with its own id', () => {
+    const operations = build([
+      get('/questions/79123456/first-question-here'),
+      get('/questions/79123999/second-one'),
+    ])
+    expect(paths(operations)).toEqual(['GET /questions/{questionId}/{slug}'])
+  })
+
+  it('keeps endpoint names after an id literal', () => {
+    // One slug, no title that spells it.
+    expect(paths(build([
+      get('/users/12345/edit-profile', page('Your account')),
+    ]))).toEqual(['GET /users/{userId}/edit-profile'])
+    // Two names after the same id are two endpoints of that user.
+    expect(paths(build([
+      get('/users/12345/edit-profile'),
+      get('/users/12345/change-password'),
+    ])).sort()).toEqual(['GET /users/{userId}/change-password', 'GET /users/{userId}/edit-profile'])
+    // A short slug never matches a title by itself.
+    expect(paths(build([
+      get('/users/12345/about-us', page('About us')),
+    ]))).toEqual(['GET /users/{userId}/about-us'])
+  })
+})
+
 describe('buildOperations: sibling paths (decision 0035)', () => {
   const article = (title: string): Parameters<typeof get>[1] => ({
     kind: 'page',

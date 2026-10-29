@@ -182,3 +182,44 @@ export function linkedSlugs(members: Exchange[], all: Exchange[]): Set<string> {
   }
   return accepted
 }
+
+/** Words a trailing slug needs before a page title can vouch for it (`define-generic-for`). */
+const MIN_TITLE_SLUG_WORDS = 3
+/** Only the start of a page is read for its title. */
+const MAX_TITLE_SCAN = 100_000
+const TITLE = /<title[^>]*>([^<]{0,500})<\/title>/i
+
+/** A page title spelled as a slug: entities and apostrophes dropped, other runs of non-alphanumerics as `-`. */
+function titleSlug(html: string): string | null {
+  const title = TITLE.exec(html.slice(0, MAX_TITLE_SCAN))?.[1]
+  if (title === undefined)
+    return null
+  const spelled = title
+    .toLowerCase()
+    .replace(/&(?:#0*39|#x0*27|apos|rsquo);|['’]/g, '')
+    .replace(/&#?\w+;/g, ' ')
+    .replace(/[^a-z0-9]+/g, '-')
+  return `-${spelled}-`
+}
+
+/**
+ * Paths whose last segment is a slug of the page's own title (Stack Overflow's
+ * `/questions/79123456/define-generic-for-array-…` on the page titled "Define generic for array
+ * …"): the slug is generated from the page's content, so it is data even when the capture opened
+ * one such page. Short slugs (`about-us`) never count; they match too many titles by chance.
+ */
+export function titledSlugPaths(members: Exchange[]): Set<string> {
+  const accepted = new Set<string>()
+  for (const exchange of members) {
+    const body = exchange.response.body
+    if (body === null || body.text === null || !body.mimeType.includes('html'))
+      continue
+    const last = segmentsOf(exchange.request.path).at(-1) ?? ''
+    if (!isSlug(last) || last.split('-').length < MIN_TITLE_SLUG_WORDS)
+      continue
+    const title = titleSlug(body.text)
+    if (title !== null && title.includes(`-${last}-`))
+      accepted.add(exchange.request.path)
+  }
+  return accepted
+}
