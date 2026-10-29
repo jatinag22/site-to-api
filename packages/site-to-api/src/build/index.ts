@@ -5,7 +5,7 @@
 import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import type { ClientState } from '../emit/handoff'
-import type { Analysis, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver } from '../model'
+import type { Analysis, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver, ValueTrace } from '../model'
 import type { ProbeReport } from '../model/probe'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
@@ -19,7 +19,7 @@ import { createHtmlLocator, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
 import { createRedactor, probeReportWithRedactedNames, withRedactedNames } from '../analyze/redact'
 import { inferOperationSchemas } from '../analyze/schema'
-import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findSourceEndpoints, isOpaqueFrame, screenSourceRoutes } from '../analyze/source'
+import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findOneTimeCodes, findSourceEndpoints, isOpaqueFrame, screenSourceRoutes } from '../analyze/source'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
 import { writeFlows } from '../emit/flows'
 import { clientGap, handoffStems, writeHandoffDocs } from '../emit/handoff'
@@ -193,6 +193,21 @@ function hostsOf(operations: Operation[]): string[] {
   ].sort()
 }
 
+/** Names of fields that sent an untraced 6 to 8 digit value: candidates for a one-time code. */
+function oneTimeCodeFields(traces: readonly ValueTrace[]): Set<string> {
+  const names = new Set<string>()
+  for (const trace of traces) {
+    const { location } = trace
+    if (trace.origin.kind !== 'unknown' || !/^\d{6,8}$/.test(trace.value))
+      continue
+    if (location.in === 'query' || location.in === 'form' || location.in === 'header')
+      names.add(location.name)
+    else if (location.in === 'body')
+      names.add(location.pointer.slice(location.pointer.lastIndexOf('/') + 1).replace(/~1/g, '/').replace(/~0/g, '~'))
+  }
+  return names
+}
+
 interface Analyzed {
   analysis: Analysis
   probe: ProbeReport | null
@@ -270,6 +285,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   if (locatorErrors.length > 0)
     warnings.push(`Value tracing could not read ${locatorErrors.length} HTML page(s) and skipped them (first error: ${locatorErrors[0]}).`)
   const traces = allTraces.filter(trace => !sockets.standIns.has(trace.exchangeId))
+  const oneTimeCodes = await findOneTimeCodes(loaded.sessions, oneTimeCodeFields(traces))
   const flows = buildFlows({
     exchanges,
     operations,
@@ -279,6 +295,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     botProtection: classified.botProtection,
     redactor,
     toolVersion: VERSION,
+    oneTimeCodes,
   })
 
   const channels = buildChannels({

@@ -5,6 +5,7 @@ import type {
   FlowsDocument,
   FlowStep,
   LoadedSession,
+  OneTimeCodeSite,
   Operation,
   RedactContext,
   Redactor,
@@ -40,6 +41,32 @@ export interface BuildFlowsInput {
    */
   redactor: Redactor
   toolVersion: string
+  /**
+   * Request fields the site's code fills with a time-based one-time code, by field name
+   * (`analyze/source`'s `findOneTimeCodes`). Untraced values of these fields become computed values.
+   */
+  oneTimeCodes?: ReadonlyMap<string, OneTimeCodeSite>
+}
+
+/** A one-time code: 6 to 8 digits (RFC 4226 and 6238). */
+const ONE_TIME_CODE = /^\d{6,8}$/
+/** Field names that say a value is a one-time code (not `pincode` or `zipcode`, which are places). */
+const CODE_FIELD = /otp|passcode|mfa|2fa|verification_?code|auth_?code/i
+/** Endpoints that hand out tokens or check credentials, where a one-time code is sent. */
+const AUTH_PATH = /token|auth|login|signin|sign-in|otp|verify/i
+
+/** The name a request value is sent under: query, form or header name, or the last JSON key. */
+function sentName(location: ValueLocation): string | null {
+  switch (location.in) {
+    case 'query':
+    case 'form':
+    case 'header':
+      return location.name
+    case 'body':
+      return lastPointerToken(location.pointer)
+    default:
+      return null
+  }
 }
 
 /** Transform inputs shorter than this match too many unrelated response values. */
@@ -461,6 +488,58 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
     return { kind: 'computed', computedId: id }
   }
 
+  /**
+   * An untraced 6 to 8 digit value under a field the site's code fills with a TOTP code: a value
+   * computed in the browser, found through the source (no hooked call produced it).
+   */
+  const oneTimeCodeOrigin = (trace: ValueTrace, exchange: Exchange, operation: Operation, inputKey: string): ValueOrigin | null => {
+    const name = sentName(trace.location)
+    const site = name === null
+      ? undefined
+      : input.oneTimeCodes?.get(name)
+    if (site === undefined || !ONE_TIME_CODE.test(trace.value) || trace.value.length !== site.config.digits)
+      return null
+    const key = `${operation.operationId}\u0000${inputKey}`
+    const existing = computed.get(key)
+    if (existing)
+      return { kind: 'computed', computedId: existing.id }
+    const id = uniqueName(slugify(`${operation.operationId}-${inputKey}`, 'computed'), computedIds)
+    const details: Record<string, string> = {
+      digits: String(site.config.digits),
+    }
+    if (site.config.period !== null)
+      details.period = `${site.config.period}s`
+    if (site.config.algorithm !== null)
+      details.algorithm = site.config.algorithm
+    computed.set(key, {
+      id,
+      operationId: operation.operationId,
+      input: inputKey,
+      producedBy: site.ref,
+      calledFrom: exchange.initiator
+        ? input.sourceResolver.callSite(exchange.initiator.stack, exchange.sessionId)
+        : null,
+      api: 'TOTP (time-based one-time code)',
+      details,
+      uses: [],
+      evidence: 'source-trace',
+    })
+    return { kind: 'computed', computedId: id }
+  }
+
+  /**
+   * The shape of an untraced value. A 6 to 8 digit code sent to a token or login endpoint, or
+   * under a code-like name, changes every session (or it would be a constant) and no response
+   * holds it: almost certainly a time-based code the page computes, even when the code is not found.
+   */
+  const unknownShape = (trace: ValueTrace, operation: Operation): string => {
+    const shape = describeShape(trace.value)
+    const name = sentName(trace.location) ?? ''
+    return ONE_TIME_CODE.test(trace.value) && (CODE_FIELD.test(name) || AUTH_PATH.test(operation.path))
+      ? `${shape}; likely a time-based code computed in the browser`
+      : shape
+  }
+
   const originOf = (trace: ValueTrace, exchange: Exchange, operation: Operation, flowId: string): ValueOrigin => {
     const origin = trace.origin
     // A vendor token or a value read from a challenge page is the bot-protection script's to
@@ -490,10 +569,11 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       case 'browser':
         return { kind: 'browser', note: origin.note }
       case 'unknown':
-        return {
-          kind: 'unknown',
-          shape: describeShape(trace.value),
-        }
+        return oneTimeCodeOrigin(trace, exchange, operation, inputKeyOf(trace.location))
+          ?? {
+            kind: 'unknown',
+            shape: unknownShape(trace, operation),
+          }
     }
   }
 
