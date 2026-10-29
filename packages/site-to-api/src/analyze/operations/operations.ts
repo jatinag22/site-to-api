@@ -103,7 +103,19 @@ interface NameInput {
   ordinal: number
 }
 
-function nameFor({ sourceName, borrowed, previous, values, wordValues, ordinal }: NameInput): string {
+/** Segments that say where the API lives, not what the value is (`/api/v1/{v1}`). */
+const NOT_A_NAME = /^(?:v\d+(?:\.\d+)*|api|apis|rest)$/i
+
+function nameFor(input: NameInput): string {
+  return nameFromPrevious({
+    ...input,
+    previous: input.previous !== undefined && NOT_A_NAME.test(input.previous)
+      ? undefined
+      : input.previous,
+  })
+}
+
+function nameFromPrevious({ sourceName, borrowed, previous, values, wordValues, ordinal }: NameInput): string {
   if (sourceName)
     return camelCase(sourceName) || sourceName
   if (borrowed)

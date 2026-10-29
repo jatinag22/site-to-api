@@ -67,8 +67,10 @@ export interface SiblingFacts {
   sessions: Map<string, Set<string>>
   /** Structure of each path's first successful response with a readable body. */
   structures: Map<string, Structure>
-  /** Paths on this host that another response links to (HTML attributes, JSON strings). */
-  linked: string[][]
+  /** Paths on this host that another response links to, by segment count. */
+  linked: Map<number, string[][]>
+  /** `GET`, `POST`…: only safe reads can be templated on count or session evidence. */
+  method: string
   /** Per path, the decoded segments that a response of the same session showed before it was requested. */
   seenBefore: Map<string, Set<string>>
 }
@@ -76,6 +78,8 @@ export interface SiblingFacts {
 interface Structure {
   kind: 'json' | 'html'
   shape: Set<string>
+  /** The body itself, to tell one app shell served for every route from pages of one template. */
+  text: string
 }
 
 type SiblingEvidence = 'links' | 'earlier-value' | 'count' | 'sessions'
@@ -124,21 +128,40 @@ function jsonStrings(value: unknown, out: Set<string>): void {
   }
 }
 
-/** A response's structure: nested JSON key paths, or HTML element names with their classes. */
+/**
+ * Key paths below the top-level envelope: inside array items when there are any, else below the
+ * first level. `{ items: [], total: 0 }` has none, so an empty collection says nothing about which
+ * endpoint answered, and `{ data: [users] }` differs from `{ data: [orders] }`.
+ */
+function innerShape(shape: Set<string>): Set<string> {
+  const inItems = [...shape].filter(path => path.includes('[]/'))
+  if (inItems.length > 0)
+    return new Set(inItems)
+  return new Set([...shape].filter(path => path.slice(1).includes('/')))
+}
+
+/**
+ * A response's structure: nested JSON key paths below the envelope, or HTML element names with
+ * their classes. Only 2xx responses with content count; errors, 204s, empty bodies, plain text
+ * and JSON without inner structure are unknown, never evidence that two paths are alike.
+ */
 function structureOf(exchange: Exchange): Structure | null {
-  const body = exchange.response.body
-  if (body === null)
+  const { status, body } = exchange.response
+  if (status < 200 || status >= 300 || status === 204 || body === null)
     return null
   if (body.json !== undefined && body.json !== null && typeof body.json === 'object') {
     const shape = new Set<string>()
     jsonShape(body.json, '', 0, shape)
-    return { kind: 'json', shape }
+    const inner = innerShape(shape)
+    return inner.size === 0
+      ? null
+      : { kind: 'json', shape: inner, text: body.text ?? '' }
   }
   if (body.mimeType.includes('html') && body.text) {
-    return {
-      kind: 'html',
-      shape: htmlShape(body.text),
-    }
+    const shape = htmlShape(body.text)
+    return shape.size === 0
+      ? null
+      : { kind: 'html', shape, text: body.text }
   }
   return null
 }
@@ -148,8 +171,8 @@ function alike(a: Structure, b: Structure): boolean {
 }
 
 function similarity(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 && b.size === 0)
-    return 1
+  if (a.size === 0 || b.size === 0)
+    return 0
   const shared = [...a].filter(part => b.has(part)).length
   return shared / (a.size + b.size - shared)
 }
@@ -160,7 +183,7 @@ function pathFacts(members: Exchange[]): Pick<SiblingFacts, 'sessions' | 'struct
   for (const exchange of members) {
     const path = exchange.request.path
     sessions.set(path, (sessions.get(path) ?? new Set()).add(exchange.sessionId))
-    if (structures.has(path) || exchange.response.status >= 400)
+    if (structures.has(path))
       continue
     const shape = structureOf(exchange)
     if (shape)
@@ -169,7 +192,7 @@ function pathFacts(members: Exchange[]): Pick<SiblingFacts, 'sessions' | 'struct
   return { sessions, structures }
 }
 
-function linkedOn(host: string | undefined, all: Exchange[]): string[][] {
+function linkedOn(host: string | undefined, all: Exchange[]): Map<number, string[][]> {
   const linked = new Set<string>()
   for (const exchange of all) {
     if (exchange.request.host !== host)
@@ -179,9 +202,14 @@ function linkedOn(host: string | undefined, all: Exchange[]): string[][] {
         linked.add(path)
     }
   }
-  return [
-    ...linked,
-  ].sort().map(path => path.split('/').slice(1))
+  const byLength = new Map<number, string[][]>()
+  for (const path of [...linked].sort()) {
+    const segments = path.split('/').slice(1)
+    const list = byLength.get(segments.length) ?? []
+    list.push(segments)
+    byLength.set(segments.length, list)
+  }
+  return byLength
 }
 
 /** First time each JSON string value was seen, per session. */
@@ -230,6 +258,7 @@ export function siblingFacts(members: Exchange[], all: Exchange[]): SiblingFacts
   return {
     ...pathFacts(members),
     linked: linkedOn(members[0]?.request.host, all),
+    method: members[0]?.request.method ?? 'GET',
     seenBefore: seenBeforeOf(members, firstSeenStrings(all)),
   }
 }
@@ -271,9 +300,7 @@ function groupKey(item: Free, start: number, size: number): string | null {
 function linkedValues(group: Group, facts: SiblingFacts): Set<string> {
   const template = group.items[0]!
   const values = new Set<string>()
-  for (const target of facts.linked) {
-    if (target.length !== template.segments.length)
-      continue
+  for (const target of facts.linked.get(template.segments.length) ?? []) {
     const fits = target.every((segment, index) => {
       if (index >= group.start && index < group.start + group.size)
         return segment !== ''
@@ -342,6 +369,22 @@ function disjointSessions(group: Group, facts: SiblingFacts): boolean {
   return true
 }
 
+const SAFE_READS = new Set(['GET', 'HEAD'])
+
+/**
+ * Whether the responses can carry `count` and `sessions` evidence: two or more paths answered
+ * with readable 2xx content from one template, and not one identical document for every path
+ * (an app shell served for every route says nothing about the route).
+ */
+function readableTemplate(group: Group, facts: SiblingFacts): boolean {
+  const readable = [
+    ...new Set(group.items.map(item => item.path)),
+  ].flatMap(path => facts.structures.get(path) ?? [])
+  if (readable.length < 2)
+    return false
+  return new Set(readable.map(structure => structure.text)).size > 1
+}
+
 function evidenceFor(group: Group, facts: SiblingFacts, repeated: boolean): SiblingEvidence[] {
   const tuples = new Set(group.items.map(item => tupleOf(item, group.start, group.size)))
   if (tuples.size < 2)
@@ -359,6 +402,14 @@ function evidenceFor(group: Group, facts: SiblingFacts, repeated: boolean): Sibl
     .every(segment => facts.seenBefore.get(item.path)?.has(decode(segment)) === true))
   if (!mixed && new Set(earlier.map(item => tupleOf(item, group.start, group.size))).size >= 2)
     evidence.push('earlier-value')
+  // Values seen elsewhere are evidence on their own. Many values, or each session its own, are
+  // only evidence for safe reads whose readable responses show one template: writes, 204s and
+  // errors look alike whatever the endpoint. A two-position window always needs the former.
+  const traced = evidence.length > 0
+  if (group.size === 2 && !traced)
+    return []
+  if (!SAFE_READS.has(facts.method) || !readableTemplate(group, facts))
+    return evidence
   if (tuples.size >= MIN_COUNT)
     evidence.push('count')
   // Two adjacent positions changing together between sessions are an `owner/repo` pair only
@@ -387,8 +438,59 @@ function collectGroups(free: Free[], size: number): Group[] {
   ].sort((a, b) => b.start - a.start || a.key.localeCompare(b.key))
 }
 
+const prefixCache = new WeakMap<Free, string[]>()
+
+/** The literal segments before `start`, joined; cached because every group asks for them. */
 function prefixOf(item: Free, start: number): string {
-  return item.segments.slice(0, start).join('/')
+  let prefixes = prefixCache.get(item)
+  if (!prefixes) {
+    prefixes = item.segments.map((_, index) => item.segments.slice(0, index).join('/'))
+    prefixes.push(item.segments.join('/'))
+    prefixCache.set(item, prefixes)
+  }
+  return prefixes[start] ?? ''
+}
+
+/** Lookups shared by every group of one pass, so a pass stays near linear in the paths. */
+interface PassIndex {
+  /** Free paths by `<start> <prefix>`. */
+  byPrefix: Map<string, Free[]>
+  /** Groups by `<start> <size> <prefix>`. */
+  groupsByPrefix: Map<string, Group[]>
+  tuples: Map<Group, Set<string>>
+}
+
+function tuplesOf(group: Group, index: PassIndex): Set<string> {
+  let tuples = index.tuples.get(group)
+  if (!tuples) {
+    tuples = new Set(group.items.map(item => tupleOf(item, group.start, group.size)))
+    index.tuples.set(group, tuples)
+  }
+  return tuples
+}
+
+function buildIndex(free: Free[], groups: Group[]): PassIndex {
+  const byPrefix = new Map<string, Free[]>()
+  for (const item of free) {
+    for (let start = 0; start <= item.segments.length; start++) {
+      const key = `${start}\u0000${prefixOf(item, start)}`
+      const list = byPrefix.get(key) ?? []
+      list.push(item)
+      byPrefix.set(key, list)
+    }
+  }
+  const groupsByPrefix = new Map<string, Group[]>()
+  for (const group of groups) {
+    const key = `${group.start}\u0000${group.size}\u0000${prefixOf(group.items[0]!, group.start)}`
+    const list = groupsByPrefix.get(key) ?? []
+    list.push(group)
+    groupsByPrefix.set(key, list)
+  }
+  return {
+    byPrefix,
+    groupsByPrefix,
+    tuples: new Map(),
+  }
 }
 
 /**
@@ -396,11 +498,11 @@ function prefixOf(item: Free, start: number): string {
  * share one (`getting-started/css` and `api-reference/cli`). Data values that have sub-paths have
  * the same ones (`expressjs/express/issues` and `koajs/koa/issues`).
  */
-function areSections(group: Group, free: Free[]): boolean {
+function areSections(group: Group, index: PassIndex): boolean {
   const prefix = prefixOf(group.items[0]!, group.start)
   const tuples = new Set(group.items.map(item => tupleOf(item, group.start, group.size)))
   const children = new Map<string, Set<string>>()
-  for (const item of free) {
+  for (const item of index.byPrefix.get(`${group.start}\u0000${prefix}`) ?? []) {
     const end = group.start + group.size
     const rest = item.segments.slice(end)
     if (rest.length === 0 || (rest.length === 1 && rest[0] === ''))
@@ -423,14 +525,19 @@ function areSections(group: Group, free: Free[]): boolean {
 }
 
 /** True when another group with the same prefix repeats two or more of this group's values. */
-function isRepeated(group: Group, groups: Group[]): boolean {
+function isRepeated(group: Group, index: PassIndex): boolean {
   const prefix = prefixOf(group.items[0]!, group.start)
   const tuples = new Set(group.items.map(item => tupleOf(item, group.start, group.size)))
-  return groups.some((other) => {
-    if (other.key === group.key || other.start !== group.start || other.size !== group.size || prefixOf(other.items[0]!, other.start) !== prefix)
+  const siblings = index.groupsByPrefix.get(`${group.start}\u0000${group.size}\u0000${prefix}`) ?? []
+  return siblings.some((other) => {
+    if (other.key === group.key)
       return false
-    const shared = new Set(other.items.map(item => tupleOf(item, other.start, other.size)).filter(tuple => tuples.has(tuple)))
-    return shared.size >= 2
+    let shared = 0
+    for (const tuple of tuplesOf(other, index)) {
+      if (tuples.has(tuple) && ++shared >= 2)
+        return true
+    }
+    return false
   })
 }
 
@@ -462,14 +569,17 @@ function isOpen(item: Free, start: number, size: number): boolean {
 }
 
 /** Marks a group when the evidence holds; returns the accepted values, or null. */
-function accept(group: Group, groups: Group[], free: Free[], facts: SiblingFacts): Accepted | null {
+function accept(group: Group, index: PassIndex, facts: SiblingFacts): Accepted | null {
+  // Cheap checks first: most groups hold one value and can never become a template.
+  if (tuplesOf(group, index).size < 2)
+    return null
   // An earlier group of this pass may have claimed an overlapping position.
   if (!group.items.every(item => isOpen(item, group.start, group.size)))
     return null
   const members = sameTemplate(group, facts)
-  if (areSections(members, free))
+  if (new Set(members.items.map(item => tupleOf(item, group.start, group.size))).size < 2 || areSections(members, index))
     return null
-  const evidence = evidenceFor(members, facts, isRepeated(members, groups))
+  const evidence = evidenceFor(members, facts, isRepeated(members, index))
   if (evidence.length === 0)
     return null
   for (const item of members.items)
@@ -484,10 +594,9 @@ function accept(group: Group, groups: Group[], free: Free[], facts: SiblingFacts
 }
 
 /** The same values after the same prefix are parameters in every other path too. */
-function extend(rule: Accepted, free: Free[]): void {
-  for (const item of free) {
+function extend(rule: Accepted, index: PassIndex): void {
+  for (const item of index.byPrefix.get(`${rule.start}\u0000${rule.prefix}`) ?? []) {
     if (item.segments.length >= rule.start + rule.size
-      && prefixOf(item, rule.start) === rule.prefix
       && rule.tuples.has(tupleOf(item, rule.start, rule.size))
       && isOpen(item, rule.start, rule.size)) {
       mark(item, rule.start, rule.size, rule.evidence)
@@ -511,8 +620,9 @@ function extend(rule: Accepted, free: Free[]): void {
 export function markSiblingPositions(free: Free[], facts: SiblingFacts): void {
   for (const size of [1, 2]) {
     const groups = collectGroups(free, size)
-    const accepted = groups.map(group => accept(group, groups, free, facts)).filter(rule => rule !== null)
+    const index = buildIndex(free, groups)
+    const accepted = groups.map(group => accept(group, index, facts)).filter(rule => rule !== null)
     for (const rule of accepted)
-      extend(rule, free)
+      extend(rule, index)
   }
 }
