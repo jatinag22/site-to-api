@@ -129,6 +129,10 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
   answered at least two different requests (path, query or body after redaction, cache-busters
   such as `_=<epoch>` left out; decision 0034). Responses captured from one request, however
   often repeated, have no required fields.
+- An object keyed by secret or personal values (session ids, tokens, emails, user ids) is a map:
+  `additionalProperties` describes the values and the keys are not listed; examples show each
+  such key as its shape (`<redacted: 32 hex chars>`). Ordinary keys stay properties (decision
+  0042).
 - GraphQL variables follow the captured document: declared non-null without a default
   (`$id: Int!`) is required; declared nullable or with a default (`$first: Int! = 20`) is
   optional. Persisted queries without a document use the request body rule.

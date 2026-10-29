@@ -37,6 +37,12 @@ export interface InferOptions {
    * it: IKEA returns `displayLocations` only when `expand` asks for them.
    */
   required?: 'present' | 'varies' | 'distinct-requests'
+  /**
+   * Called for each object key; returning true makes the key data rather than a field name (a
+   * session token, an email). Such keys are never listed: their values merge into one
+   * `additionalProperties` schema, so the object reads as a map (decision 0042).
+   */
+  isMapKey?: (key: string) => boolean
 }
 
 /** Nesting deeper than this becomes an untyped schema. */
@@ -164,6 +170,8 @@ interface Node {
   objectCount: number
   properties: Map<string, Node>
   keyCounts: Map<string, number>
+  /** Values under keys that are data (`InferOptions.isMapKey`), merged. */
+  mapValues: Node | null
   items: Node | null
   tooDeep: boolean
   /** Up to two distinct JSON encodings of the values seen here, kept only for `required: 'varies'`. */
@@ -186,6 +194,7 @@ function newNode(): Node {
     objectCount: 0,
     properties: new Map(),
     keyCounts: new Map(),
+    mapValues: null,
     items: null,
     tooDeep: false,
     distinct: new Set(),
@@ -240,6 +249,11 @@ function addObject(node: Node, value: object, sample: Visit, depth: number): voi
   for (const [key, item] of Object.entries(value)) {
     if (item === undefined)
       continue
+    if (sample.isMapKey(key)) {
+      node.mapValues ??= newNode()
+      add(node.mapValues, item, sample, depth + 1)
+      continue
+    }
     node.keyCounts.set(key, (node.keyCounts.get(key) ?? 0) + 1)
     let child = node.properties.get(key)
     if (!child) {
@@ -256,6 +270,7 @@ interface Visit {
   request: string
   /** Record distinct values (`required: 'varies'`). */
   track: boolean
+  isMapKey: (key: string) => boolean
 }
 
 function add(node: Node, value: unknown, sample: Visit, depth: number): void {
@@ -390,9 +405,15 @@ function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, opti
           .filter(([key, count]) => count === node.objectCount
             && (options.required !== 'varies' || (node.properties.get(key)?.distinct.size ?? 0) > 1))
           .map(([key]) => key)
-    return required.length > 0
-      ? { properties, required }
-      : { properties }
+    const schema: JsonSchema = {}
+    // A pure map lists no properties; an empty object still says it has none.
+    if (node.properties.size > 0 || node.mapValues === null)
+      schema.properties = properties
+    if (required.length > 0)
+      schema.required = required
+    if (node.mapValues !== null)
+      schema.additionalProperties = finalize(node.mapValues, name, options, totalSessions)
+    return schema
   }
   return {}
 }
@@ -402,12 +423,20 @@ function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, opti
  * arrays, `required` for keys present in every object, formats shared by all strings, enums for
  * code-like values only (see `isEnumWorthy`: ≤ 32 characters, no whitespace, 2-10 distinct values
  * each seen twice on average, under a code-like name or all program tokens) and
- * `x-constant` for scalars identical in every sample across two or more sessions.
+ * `x-constant` for scalars identical in every sample across two or more sessions. Objects keyed
+ * by data (see `InferOptions.isMapKey`) get `additionalProperties` instead of those keys.
  */
 export function inferSchema(samples: Sample[], options: InferOptions = {}): JsonSchema {
+  const isMapKey = options.isMapKey ?? (() => false)
   const root = newNode()
-  for (const sample of samples)
-    add(root, sample.value, { sessionId: sample.sessionId, request: sample.request ?? '', track: options.required === 'varies' }, 0)
+  for (const sample of samples) {
+    add(root, sample.value, {
+      sessionId: sample.sessionId,
+      request: sample.request ?? '',
+      track: options.required === 'varies',
+      isMapKey,
+    }, 0)
+  }
   const totalSessions = new Set(samples.map(sample => sample.sessionId)).size
   return finalize(root, options.name ?? null, options, totalSessions)
 }

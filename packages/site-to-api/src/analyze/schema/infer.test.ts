@@ -243,6 +243,68 @@ describe('inferSchema', () => {
     expect(schema.properties?.a).toEqual({ description: 'Not inferred: nested too deep' })
   })
 
+  it('describes objects keyed by data as maps, keeping ordinary keys as properties', () => {
+    const isMapKey = (key: string): boolean => key.startsWith('tok_')
+    const schema = inferSchema(s1(
+      {
+        sessions: {
+          tok_a: { device: 'web' },
+          tok_b: { device: 'ios', current: true },
+        },
+        count: 2,
+      },
+      {
+        sessions: {
+          tok_c: { device: 'web' },
+        },
+        count: 1,
+      },
+      { sessions: {}, count: 0 },
+    ), { isMapKey })
+    expect(schema).toEqual({
+      type: 'object',
+      properties: {
+        sessions: {
+          type: 'object',
+          additionalProperties: {
+            type: 'object',
+            properties: {
+              device: { type: 'string' },
+              current: { type: 'boolean' },
+            },
+            required: ['device'],
+          },
+        },
+        count: { type: 'integer' },
+      },
+      required: ['sessions', 'count'],
+    })
+    expect(JSON.stringify(schema)).not.toContain('tok_')
+  })
+
+  it('lists ordinary keys beside the map values of a mixed object, and requires only them', () => {
+    const schema = inferSchema(s1(
+      { total: 1, tok_a: 5 },
+      { total: 2, tok_b: 6.5 },
+    ), {
+      isMapKey: key => key.startsWith('tok_'),
+    })
+    expect(schema).toEqual({
+      type: 'object',
+      properties: {
+        total: { type: 'integer' },
+      },
+      required: ['total'],
+      additionalProperties: { type: 'number' },
+    })
+  })
+
+  it('treats every key as a property without isMapKey', () => {
+    expect(inferSchema(s1({ tok_a: 1 })).properties).toEqual({
+      tok_a: { type: 'integer' },
+    })
+  })
+
   it('keeps keys named like Object.prototype members as plain properties', () => {
     const value = JSON.parse('{"__proto__":{"x":1},"constructor":"c","toString":2}') as unknown
     const schema = inferSchema(s1(value))

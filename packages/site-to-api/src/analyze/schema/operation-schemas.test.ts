@@ -431,6 +431,39 @@ describe('inferOperationSchemas', () => {
     })
   })
 
+  it('describes responses keyed by a session cookie value as maps and masks the keys in examples', () => {
+    const sid = 'c0ffee00deadbeef0123456789abcdef'
+    const result = infer([
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { sid },
+        responseBody: jsonBody({
+          sessions: {
+            [sid]: { device: 'web' },
+          },
+        }),
+      }),
+    ])
+    const response = result.responses[0]
+    expect(response?.schema?.properties?.sessions).toEqual({
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          device: { type: 'string' },
+        },
+      },
+    })
+    expect(response?.examples).toEqual([
+      {
+        sessions: {
+          '<redacted: 32 hex chars>': { device: 'web' },
+        },
+      },
+    ])
+    expect(JSON.stringify(result.responses)).not.toContain(sid)
+  })
+
   it('keeps a form field named __proto__ as a property', () => {
     const fields = (value: string): Record<string, string> => Object.fromEntries([
       ['__proto__', value],

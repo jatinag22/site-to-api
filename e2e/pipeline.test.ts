@@ -398,6 +398,30 @@ describe('fitted to the site, not to the captured samples', () => {
     }
   })
 
+  it('describes the sessions keyed by session id as a map and never writes the ids (decision 0042)', () => {
+    const me = analysis.operations.find(op => op.method === 'GET' && op.path === '/api/me')
+    expect(me?.responses[0]?.schema?.properties?.sessions).toMatchObject({
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          current: { type: 'boolean' },
+        },
+      },
+    })
+    expect(me?.responses[0]?.schema?.properties?.sessions?.properties).toBeUndefined()
+    const ids = (me?.exchanges ?? []).flatMap(exchange => exchange.request.cookies
+      .filter(cookie => cookie.name === 'pm_session')
+      .map(cookie => cookie.value))
+    expect(ids.length).toBeGreaterThan(0)
+    for (const [name, content] of files) {
+      for (const id of new Set(ids))
+        expect(content.includes(id), `${name} contains a session id`).toBe(false)
+    }
+    const spec = [...files].find(([name]) => name.startsWith('specs/') && !name.endsWith('.asyncapi.yaml'))?.[1] ?? ''
+    expect(spec).toContain('<redacted: 32 hex chars>')
+  })
+
   it('points flows.json only at Markdown excerpts that were written', () => {
     const flows = files.get('flows.json') ?? ''
     const referenced = [
