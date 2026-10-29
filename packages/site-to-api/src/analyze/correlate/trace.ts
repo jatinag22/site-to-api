@@ -307,17 +307,33 @@ function typedPrefixChains(exchanges: readonly Exchange[], sentValues: ReadonlyM
   return typing
 }
 
+/** Why a sent value may be the site's constant rather than copied from a response. */
+interface ConstantEvidence {
+  /** Sent the same in every session (two or more). Deploy-bound ids (a build id) are too. */
+  everySession: boolean
+  /** Written as a string literal in the site's own code. */
+  literal: boolean
+}
+
 /**
- * A producer that a constant explains better. A value sent the same in every session, or written
- * as a literal in the site's code, is the site's own constant when the producer is a page
- * (`Indices` in a navigation link), a part of a longer value, or a plain word a response
- * happens to hold (`NIFTY` in a market summary).
+ * A producer that a constant explains better (the site's own value, found elsewhere by chance).
+ * Exact producers of ids, tokens and build ids always win: two captures of one deploy agree on
+ * them, yet a wrapper must read them from the response. Only these lose to a constant: a part of
+ * a longer value, a plain word in a page (`Indices` in a navigation link), and a plain word a
+ * response holds that the site's code also writes as a literal (`NIFTY`). A plain word only equal
+ * across sessions (`/api/me` → `jatin` → `/users/jatin`) keeps its producer.
  */
-function isCoincidence(producer: Candidate, value: string, constant: boolean): boolean {
-  // A Set-Cookie of the same name is where a cookie comes from, however constant its value.
-  if (!constant || (producer.sameName && producer.location.in === 'set-cookie'))
+function isCoincidence(producer: Candidate, value: string, evidence: ConstantEvidence): boolean {
+  if (!evidence.everySession && !evidence.literal)
     return false
-  return producer.location.in === 'html' || producer.transform === 'substring' || PLAIN_WORD.test(value)
+  // A Set-Cookie of the same name is where a cookie comes from, however constant its value.
+  if (producer.sameName && producer.location.in === 'set-cookie')
+    return false
+  if (producer.transform === 'substring')
+    return true
+  if (!PLAIN_WORD.test(value))
+    return false
+  return producer.location.in === 'html' || evidence.literal
 }
 
 /**
@@ -381,10 +397,14 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
               stillTyping: typing.has(sent),
             })
         const sessions = seenIn.get(constantKey(exchange, sent.location, sent.value))?.size ?? 0
-        const constant = staticStrings.has(sent.value) || (sessionIds.size >= 2 && sessions === sessionIds.size)
+        const evidence: ConstantEvidence = {
+          everySession: sessionIds.size >= 2 && sessions === sessionIds.size,
+          literal: staticStrings.has(sent.value),
+        }
+        const constant = evidence.everySession || evidence.literal
         // Typing `ciphe` after `ciph`: the longer value contains the earlier one, which the
         // response echoed. A typed field explains it better than that substring.
-        if (producer && !(producer.transform === 'substring' && field !== null) && !isCoincidence(producer, sent.value, constant)) {
+        if (producer && !(producer.transform === 'substring' && field !== null) && !isCoincidence(producer, sent.value, evidence)) {
           return {
             kind: 'response',
             exchangeId: producer.exchange.id,

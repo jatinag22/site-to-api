@@ -374,19 +374,23 @@ describe('traceValues: response producers', () => {
       ...sessionData('a'),
       ...sessionData('b'),
     ]
-    const traces = traceValues({
+    const traced = (staticStrings: string[]): ValueTrace[] => traceValues({
       exchanges,
       sessions: [
         session('a'),
         session('b'),
       ],
       htmlLocator: createHtmlLocator(),
-      staticStrings: new Set(),
+      staticStrings: new Set(staticStrings),
       minValueLength: 4,
     })
     const chain = exchanges[2]!
+    // The site's code holds `NIFTY` as a literal, as NSE's option-chain bundle does.
+    const traces = traced(['NIFTY'])
     expect(originAt(traces, chain, '{"in":"query","name":"type"}')).toEqual({ kind: 'constant' })
     expect(originAt(traces, chain, '{"in":"query","name":"symbol"}')).toEqual({ kind: 'constant' })
+    // Only equal across sessions, a plain word in a JSON response keeps that response.
+    expect(originAt(traced([]), chain, '{"in":"query","name":"symbol"}')).toMatchObject({ kind: 'response' })
     // In one session only, with no literal in the code, the response is still the best answer.
     const one = sessionData('a')
     const single = trace(one, {
@@ -405,6 +409,62 @@ describe('traceValues: response producers', () => {
       staticStrings: ['Indices'],
     })
     expect(originAt(literal, one[2]!, '{"in":"query","name":"type"}')).toEqual({ kind: 'constant' })
+  })
+
+  it('keeps exact producers of deploy-bound ids and same values across sessions', () => {
+    // Two captures of one deploy agree on the build id and on who is signed in.
+    const sessionData = (sessionId: string): Exchange[] => [
+      exchange({
+        sessionId,
+        url: 'https://shop.test/',
+        startedAt: 1,
+        kind: 'page',
+        responseBody: textBody('<html><body><script id="__NEXT_DATA__" type="application/json">{"buildId":"b7Xk2pQ9vL4mN8rT1sW6z","page":"/"}</script></body></html>'),
+      }),
+      exchange({
+        sessionId,
+        url: 'https://shop.test/_next/data/b7Xk2pQ9vL4mN8rT1sW6z/products.json',
+        startedAt: 2,
+        responseBody: jsonBody({ items: [] }),
+      }),
+      exchange({
+        sessionId,
+        url: 'https://shop.test/api/me',
+        startedAt: 3,
+        responseBody: jsonBody({ username: 'jatin' }),
+      }),
+      // A lower-case word in a path is a route literal and never traced; in a query it is a value.
+      exchange({
+        sessionId,
+        url: 'https://shop.test/api/repos?owner=jatin',
+        startedAt: 4,
+        responseBody: jsonBody([]),
+      }),
+    ]
+    const a = sessionData('a')
+    const traces = traceValues({
+      exchanges: [
+        ...a,
+        ...sessionData('b'),
+      ],
+      sessions: [
+        session('a'),
+        session('b'),
+      ],
+      htmlLocator: createHtmlLocator(),
+      staticStrings: new Set(),
+      minValueLength: 4,
+    })
+    expect(originAt(traces, a[1]!, '{"in":"path","index":2}')).toMatchObject({
+      kind: 'response',
+      exchangeId: a[0]!.id,
+      location: { in: 'html' },
+    })
+    expect(originAt(traces, a[3]!, '{"in":"query","name":"owner"}')).toMatchObject({
+      kind: 'response',
+      exchangeId: a[2]!.id,
+      location: { in: 'body', pointer: '/username' },
+    })
   })
 
   it('does not trace a short number to a page that contains it by chance', () => {
