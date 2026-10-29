@@ -713,9 +713,10 @@ export async function run(baseUrl: string) {
   const header = await sdk.header({ variables: {} })
   return {
     artist: artist.data?.data.artistUnion.name ?? null,
-    hours: hours.data?.data.storeHours.opens ?? null,
-    added: added.data?.data.addToWishlist.count ?? null,
-    header: header.data?.data.header.title ?? null,
+    // One sample each: their response fields are not promised (decision 0034).
+    hours: hours.data?.data?.storeHours?.opens ?? null,
+    added: added.data?.data?.addToWishlist?.count ?? null,
+    header: header.data?.data?.header?.title ?? null,
   }
 }
 `

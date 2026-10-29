@@ -334,6 +334,32 @@ function inferRequestBody(exchanges: Exchange[], redactor: Redactor): Operation[
   }
 }
 
+/**
+ * What one exchange asked for, after redaction: path, query and body. Two exchanges with the same
+ * identity are the same request repeated, which says nothing about what the response depends on.
+ */
+function requestIdentity(exchange: Exchange, redactor: Redactor): string {
+  const { path, query, body } = exchange.request
+  const sent = body === null
+    ? null
+    : body.json !== undefined
+      ? redactor.json(body.json, { in: 'body' })
+      : body.form === null
+        ? redactor.value(body.text ?? body.base64 ?? '', { in: 'body' })
+        : body.form.map(field => [
+            field.name,
+            redactor.value(field.value, { in: 'form', name: field.name }),
+          ])
+  return JSON.stringify([
+    redactor.value(path, { in: 'path' }),
+    query.map(param => [
+      param.name,
+      redactor.value(param.value, { in: 'query', name: param.name }),
+    ]),
+    sent,
+  ])
+}
+
 function inferResponses(exchanges: Exchange[], redactor: Redactor): ResponseInfo[] {
   const groups = new Map<string, { status: number, mimeType: string, exchanges: Exchange[] }>()
   for (const exchange of exchanges) {
@@ -366,7 +392,15 @@ function inferResponses(exchanges: Exchange[], redactor: Redactor): ResponseInfo
       return {
         status,
         mimeType,
-        schema: inferSchema(members.map(exchange => ({ value: exchange.response.body?.json, sessionId: exchange.sessionId })), enumGuard(redactor, context)),
+        // A field is promised only when answers to two different requests all had it (decision 0034).
+        schema: inferSchema(members.map(exchange => ({
+          value: exchange.response.body?.json,
+          sessionId: exchange.sessionId,
+          request: requestIdentity(exchange, redactor),
+        })), {
+          ...enumGuard(redactor, context),
+          required: 'distinct-requests',
+        }),
         extract: null,
         examples: redactor.examples(bodies.map(body => body?.json), context),
       }

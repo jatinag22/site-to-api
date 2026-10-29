@@ -8,6 +8,11 @@ import { z } from 'zod'
 export interface Sample {
   value: unknown
   sessionId: string
+  /**
+   * Identity of the request this value answers (its redacted path, query and body), for
+   * `required: 'distinct-requests'`. Samples without one count as one request.
+   */
+  request?: string
 }
 
 export interface InferOptions {
@@ -27,8 +32,11 @@ export interface InferOptions {
    * response promises. `varies`: it must also take more than one value across the samples, which
    * is the evidence that a request needs the caller to supply it. Algolia sends
    * `analyticsTags: ['web']` in every search, yet a search without it works.
+   * `distinct-requests`: present in every object at that level, and those objects answered at
+   * least two different requests. A field seen only in answers to the same request may depend on
+   * it: IKEA returns `displayLocations` only when `expand` asks for them.
    */
-  required?: 'present' | 'varies'
+  required?: 'present' | 'varies' | 'distinct-requests'
 }
 
 /** Nesting deeper than this becomes an untyped schema. */
@@ -160,6 +168,8 @@ interface Node {
   tooDeep: boolean
   /** Up to two distinct JSON encodings of the values seen here, kept only for `required: 'varies'`. */
   distinct: Set<string>
+  /** Up to two distinct requests whose answers had an object here (`required: 'distinct-requests'`). */
+  requests: Set<string>
 }
 
 function newNode(): Node {
@@ -179,6 +189,7 @@ function newNode(): Node {
     items: null,
     tooDeep: false,
     distinct: new Set(),
+    requests: new Set(),
   }
 }
 
@@ -220,8 +231,10 @@ function addScalar(node: Node, value: string | number | boolean | null): void {
   }
 }
 
-function addObject(node: Node, value: object, sessionId: string, depth: number, track: boolean): void {
+function addObject(node: Node, value: object, sample: Visit, depth: number): void {
   node.types.add('object')
+  if (node.requests.size < 2)
+    node.requests.add(sample.request)
   node.hasContainer = true
   node.objectCount++
   for (const [key, item] of Object.entries(value)) {
@@ -233,17 +246,25 @@ function addObject(node: Node, value: object, sessionId: string, depth: number, 
       child = newNode()
       node.properties.set(key, child)
     }
-    add(child, item, sessionId, depth + 1, track)
+    add(child, item, sample, depth + 1)
   }
 }
 
-function add(node: Node, value: unknown, sessionId: string, depth: number, track: boolean): void {
+/** What every node visited for one sample needs to know about it. */
+interface Visit {
+  sessionId: string
+  request: string
+  /** Record distinct values (`required: 'varies'`). */
+  track: boolean
+}
+
+function add(node: Node, value: unknown, sample: Visit, depth: number): void {
   if (value === undefined)
     return
   node.count++
-  if (track && node.distinct.size < 2)
+  if (sample.track && node.distinct.size < 2)
     node.distinct.add(JSON.stringify(value))
-  node.sessions.add(sessionId)
+  node.sessions.add(sample.sessionId)
   if (depth > MAX_SCHEMA_DEPTH) {
     node.tooDeep = true
   }
@@ -255,10 +276,10 @@ function add(node: Node, value: unknown, sessionId: string, depth: number, track
     node.hasContainer = true
     node.items ??= newNode()
     for (const item of value)
-      add(node.items, item, sessionId, depth + 1, track)
+      add(node.items, item, sample, depth + 1)
   }
   else if (typeof value === 'object') {
-    addObject(node, value, sessionId, depth, track)
+    addObject(node, value, sample, depth)
   }
 }
 
@@ -357,10 +378,12 @@ function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, opti
     const properties: Record<string, JsonSchema> = {}
     for (const [key, child] of node.properties)
       properties[key] = finalize(child, key, options, totalSessions)
-    const required = [...node.keyCounts]
-      .filter(([key, count]) => count === node.objectCount
-        && (options.required !== 'varies' || (node.properties.get(key)?.distinct.size ?? 0) > 1))
-      .map(([key]) => key)
+    const required = node.requests.size < 2 && options.required === 'distinct-requests'
+      ? []
+      : [...node.keyCounts]
+          .filter(([key, count]) => count === node.objectCount
+            && (options.required !== 'varies' || (node.properties.get(key)?.distinct.size ?? 0) > 1))
+          .map(([key]) => key)
     return required.length > 0
       ? { properties, required }
       : { properties }
@@ -378,7 +401,7 @@ function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, opti
 export function inferSchema(samples: Sample[], options: InferOptions = {}): JsonSchema {
   const root = newNode()
   for (const sample of samples)
-    add(root, sample.value, sample.sessionId, 0, options.required === 'varies')
+    add(root, sample.value, { sessionId: sample.sessionId, request: sample.request ?? '', track: options.required === 'varies' }, 0)
   const totalSessions = new Set(samples.map(sample => sample.sessionId)).size
   return finalize(root, options.name ?? null, options, totalSessions)
 }

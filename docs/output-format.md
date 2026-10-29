@@ -104,6 +104,11 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
   `string`.
 - A request body field is `required` only when every sample has it and it took more than one
   value; a field sent with the same value every time is optional.
+- A response field is `required` only when every object at its level had it and those objects
+  answered at least two different requests (path, query or body after redaction; decision
+  0034). Responses captured from one request, however often repeated, have no required fields.
+- GraphQL variables follow the captured document: declared non-null (`$id: Int!`) is required,
+  declared nullable is optional. Persisted queries without a document use the request body rule.
 - String `format`s (`date-time`, `date`, `uuid`, `email`, `uri`) are written only when every
   captured sample passes the Zod check the generated client runs for that format;
   `date-time` accepts offsets (`-05:00`) and values without a zone.

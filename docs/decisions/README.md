@@ -37,3 +37,4 @@ or `Proposed`.
 | [0027](0027-graphql-operations.md) | One operation per GraphQL operation: `<endpoint>#<name>` paths and `x-site-to-api-graphql` | Accepted |
 | [0028](0028-graphql-detection-refinements.md) | Stricter GraphQL detection and type evidence (refines 0027) | Accepted |
 | [0032](0032-excerpts-as-markdown.md) | Source excerpts are Markdown files | Accepted |
+| [0034](0034-required-from-evidence.md) | `required` in responses needs two distinct requests; GraphQL variables follow the document | Accepted |

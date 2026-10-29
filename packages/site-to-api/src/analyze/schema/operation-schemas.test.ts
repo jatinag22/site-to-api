@@ -469,6 +469,64 @@ describe('inferOperationSchemas', () => {
     expect(vendor).not.toHaveProperty('sentContentType')
   })
 
+  it('requires a response field only when answers to two different requests all had it', () => {
+    const answer = (url: string, body: unknown, sessionId = 's1') => exchange({
+      url,
+      responseBody: jsonBody(body),
+      sessionId,
+    })
+    const same = infer([
+      answer('https://shop.test/api/stock?expand=all', {
+        items: [
+          { id: 1, where: [] },
+        ],
+        at: 'now',
+      }),
+      answer('https://shop.test/api/stock?expand=all', {
+        items: [
+          { id: 1, where: [] },
+        ],
+        at: 'now',
+      }, 's2'),
+    ]).responses[0]?.schema
+    expect(same?.required).toBeUndefined()
+    expect(same?.properties?.items?.items?.required).toBeUndefined()
+
+    const different = infer([
+      answer('https://shop.test/api/stock?expand=all', {
+        items: [
+          { id: 1, where: [] },
+        ],
+        at: 'now',
+      }),
+      answer('https://shop.test/api/stock?expand=none', {
+        items: [
+          { id: 2 },
+        ],
+        at: 'later',
+      }),
+    ]).responses[0]?.schema
+    expect(different?.required).toEqual(['items', 'at'])
+    // Per level: `where` was missing from one item, `id` was in all of them.
+    expect(different?.properties?.items?.items?.required).toEqual(['id'])
+
+    const sameBody = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/stock',
+        requestBody: jsonBody({ q: 'a' }),
+        responseBody: jsonBody({ n: 1 }),
+      }),
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/stock',
+        requestBody: jsonBody({ q: 'b' }),
+        responseBody: jsonBody({ n: 2 }),
+      }),
+    ]).responses[0]?.schema
+    expect(sameBody?.required).toEqual(['n'])
+  })
+
   it('groups responses by status and media type; HTML gets no schema', () => {
     const result = infer([
       exchange({
@@ -481,7 +539,7 @@ describe('inferOperationSchemas', () => {
         responseBody: textBody('<h1>no</h1>'),
       }),
       exchange({
-        url: 'https://shop.test/api/x',
+        url: 'https://shop.test/api/x?page=2',
         responseBody: jsonBody({ ok: false }),
       }),
       exchange({ url: 'https://shop.test/api/x', status: 204 }),

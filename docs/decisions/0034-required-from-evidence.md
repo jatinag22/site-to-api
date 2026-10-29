@@ -1,0 +1,37 @@
+# 0034 `required` in responses and GraphQL variables needs evidence
+
+Status: Accepted (2026-10-29).
+
+## Context
+A generated client validates responses with the spec's schemas, so a field marked `required`
+that the site leaves out makes a correct live response fail. Responses used to require every key
+present in every captured sample. On IKEA's availability API every capture asked with the same
+`expand` value, so `displayLocations` and `salesLocations` were in every sample and became
+required; a call with `expand: 'StoresList'` returned 200 without them and the client rejected
+it (`Invalid input: expected array, received undefined`). Repeating one request many times shows
+what that request returns, not what the operation always returns.
+
+GraphQL variables had the opposite problem. Request fields are required only when every sample
+has them with more than one value (to stop pinning page settings such as Algolia's
+`analyticsTags`), so a mutation captured once (`$id: Int!`) got an optional `id`, although
+the captured document itself says the server rejects a call without it.
+
+## Decision
+- **Responses:** at each object level, a key is `required` only when it was present in every
+  object at that level and those objects answered at least two distinct requests. A request's
+  identity is its redacted path, query and body; samples of the same request count once. The
+  rule applies per level, so items of an array are judged by the requests whose answers held
+  them. It is deterministic: it depends only on the set of samples, not their order.
+- **GraphQL variables:** when the query document was captured, its variable definitions decide:
+  a variable declared non-null at the top level (`Int!`, `[ID]!`) is required whatever the
+  sample count; one declared nullable (`Int`, `[ID!]`) is optional. Variables the document does
+  not declare, and every variable of a persisted query sent without a document, keep the request
+  rule above.
+
+## Consequences
+Clients accept live responses that leave out fields the capture happened to always see, at the
+cost of typing more response fields as optional: operations captured with a single request
+(or the same request repeated) have no required response fields, so callers use optional
+access (`data?.items`). Capturing two different requests (another page, product or filter)
+restores `required` for the fields both answers had. GraphQL mutations captured once are typed
+by their document, which is the server's own contract.
