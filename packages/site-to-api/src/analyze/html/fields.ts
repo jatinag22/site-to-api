@@ -3,13 +3,15 @@
  * labels around numbers and dates with a one-group pattern, as `coerce` does not.
  */
 import type { FieldType } from '@site-to-api/runtime'
-import { capture, looseLiteral } from './pattern'
+import { capture, escapeRegex, looseLiteral } from './pattern'
 import { coerce, inferType } from './values'
 
 /** A field's type and the pattern that isolates the value, if one is needed. */
 export interface TypedField {
   type: FieldType
   pattern: string | null
+  /** The word counted next to the number (`points` in `12 points`), a hint for the field's name. */
+  unit?: string
 }
 
 const CORE: Record<FieldType, string> = {
@@ -60,7 +62,8 @@ function byAffixes(values: string[]): TypedField | null {
   const prefix = head.replace(/[+.,-]+$/, '')
   const rest = values.map(value => value.slice(prefix.length))
   const suffix = commonSuffix(rest).replace(/^[\d.,]+/, '')
-  if (prefix.trim() === '' && suffix.trim() === '')
+  // `3 hours ago` is a relative time: the next sample says `5 minutes ago`.
+  if ((prefix.trim() === '' && suffix.trim() === '') || /\bago\b/i.test(suffix))
     return null
   const cores = rest.map(value => value.slice(0, value.length - suffix.length).trim())
   const type = inferType(cores)
@@ -73,9 +76,51 @@ function byAffixes(values: string[]): TypedField | null {
     ? ''
     : `\\s*${looseLiteral(suffix)}`
   const pattern = `${before}${CORE[type]}${after}`
-  return verifies(pattern, values, type)
+  if (!verifies(pattern, values, type))
+    return null
+  // `4.1 out of 5 stars` is a rating; `12 votes` counts votes.
+  const unit = /^\s*out\s+of\s+\d/i.test(suffix)
+    ? 'rating'
+    : /^\s*([a-z]{3,})\s*$/i.exec(suffix)?.[1]
+  return unit === undefined
     ? { type, pattern }
-    : null
+    : {
+        type,
+        pattern,
+        unit: unit.toLowerCase(),
+      }
+}
+
+/** `12 points`, `1 point`, and words without a number (`discuss`) for zero. */
+const COUNT = /^\s*[+-]?\d[\d,]*\s*([a-z]{3,})\s*$/i
+
+function stem(word: string): string {
+  return word.toLowerCase().replace(/s$/, '')
+}
+
+/**
+ * A count with the same noun after it in every value that has a number, singular or plural
+ * (`1 point`, `12 points`). At most half the values may be words without any digit, such as
+ * `discuss` where a count of zero would be; they read as `null`.
+ */
+function byCount(values: string[]): TypedField | null {
+  const counted = values.filter(value => /\d/.test(value))
+  if (counted.length === 0 || counted.length * 2 < values.length)
+    return null
+  const words = counted.map(value => COUNT.exec(value)?.[1] ?? null)
+  const [first] = words
+  if (first === undefined || first === null || words.some(word => word === null || stem(word) !== stem(first)))
+    return null
+  const noun = stem(first)
+  const pattern = `([+-]?\\d[\\d,]*)\\s*${escapeRegex(noun)}s?`
+  if (!verifies(pattern, counted, 'integer'))
+    return null
+  const plural = words.find(word => word !== null && word.toLowerCase() !== noun)
+  return {
+    type: 'integer',
+    pattern,
+    unit: (plural ?? `${noun}s`).toLowerCase(),
+  }
 }
 
 /** One number per value with only currency or unit words around it (`Rs. 50`, `₹ 75 each`). */
@@ -106,7 +151,8 @@ function byLabel(values: string[]): TypedField | null {
   if (colon < 1 || colon > 40)
     return null
   const label = prefix.slice(0, colon + 1)
-  if (values.some(value => value.slice(label.length).trim() === ''))
+  // `https://…`: a URL scheme, not a label.
+  if (values.some(value => value.slice(label.length).trim() === '' || value.charAt(label.length) === '/'))
     return null
   return { type: 'string', pattern: `^\\s*${looseLiteral(label)}\\s*${CORE.string}\\s*$` }
 }
@@ -120,7 +166,7 @@ export function typeField(values: string[]): TypedField {
   const type = inferType(present)
   if (present.length === 0 || type !== 'string')
     return { type, pattern: null }
-  return byAffixes(present) ?? byLoneNumber(present) ?? byLabel(present) ?? { type: 'string', pattern: null }
+  return byAffixes(present) ?? byCount(present) ?? byLoneNumber(present) ?? byLabel(present) ?? { type: 'string', pattern: null }
 }
 
 /** Pattern that captures what follows a `Label:` and then applies `inner` (or keeps the rest). */
