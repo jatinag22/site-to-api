@@ -365,7 +365,19 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
 
 /** Analysis without writing anything, used by `probe` to get operations and exchanges. */
 export async function analyzeCaptures(options: BuildOptions): Promise<Analysis> {
+  return (await analyzeForProbe(options)).analysis
+}
+
+/**
+ * The analysis plus the name redaction the handoff folder uses, so `probe` writes `probe.json`
+ * with redacted names itself, even when the rebuild after it fails.
+ */
+export async function analyzeForProbe(options: BuildOptions): Promise<{ analysis: Analysis, redactProbeReport: (report: ProbeReport) => ProbeReport }> {
   const rawDir = resolve(options.cwd, options.config.rawDir)
   const outDir = resolve(options.cwd, options.config.outDir)
-  return (await analyze(options.config, rawDir, outDir, options.log ?? (() => {}))).analysis
+  const { analysis, redactor } = await analyze(options.config, rawDir, outDir, options.log ?? (() => {}))
+  return {
+    analysis,
+    redactProbeReport: report => probeReportWithRedactedNames(report, redactor.text),
+  }
 }
