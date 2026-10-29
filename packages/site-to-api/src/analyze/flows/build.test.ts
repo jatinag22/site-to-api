@@ -905,6 +905,54 @@ describe('buildFlows: values taken from one of several items', () => {
     expect(text).not.toContain(token)
   })
 
+  it('unescapes pointer segments before judging them, so a secret key with / or ~ becomes {key}', () => {
+    // A cookie value is always secret; as a key it is escaped in the pointer (`~1`, `~0`), a form
+    // the text scan alone would not recognise.
+    const sid = 'ab/cd~ef12345'
+    const pointer = '/owners/ab~1cd~0ef12345'
+    const list = exchange({
+      url: 'https://shop.example.test/api/owners',
+      startedAt: 1,
+      cookies: { sid },
+      responseBody: jsonBody({
+        owners: { [sid]: 'own-ref-123' },
+      }),
+    })
+    const save = exchange({
+      method: 'POST',
+      url: 'https://shop.example.test/api/save',
+      startedAt: 2,
+      requestBody: jsonBody({
+        owners: { [sid]: 'own-ref-123' },
+      }),
+    })
+    const traces: ValueTrace[] = [
+      {
+        exchangeId: save.id,
+        location: { in: 'body', pointer },
+        value: 'own-ref-123',
+        origin: {
+          kind: 'response',
+          exchangeId: list.id,
+          location: { in: 'body', pointer },
+          transform: 'none',
+        },
+      },
+    ]
+    const doc = build([list, save], [
+      op('getApiOwners', [list]),
+      op('postApiSave', [save]),
+    ], [
+      loaded('s1', [], 'https://shop.example.test/'),
+    ], traces)
+    const input = doc.flows.flatMap(entry => entry.steps).find(step => step.operationId === 'postApiSave')?.inputs
+    expect(Object.keys(input ?? {})).toEqual(['body./owners/{key}'])
+    expect(input?.['body./owners/{key}']).toMatchObject({ kind: 'step', output: 'body./owners/{key}' })
+    const text = JSON.stringify(doc)
+    expect(text).not.toContain('ab~1cd~0ef12345')
+    expect(text).not.toContain(sid)
+  })
+
   it('generalises HTML selectors that differ only by position across samples to the repeated element', () => {
     const html = '<ul id="store-list"><li><a href="/stores/pine-hill">Pine</a></li><li><a href="/stores/cedar-park">Cedar</a></li></ul>'
     const stores = ['s1', 's2'].map(sessionId => exchange({

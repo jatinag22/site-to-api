@@ -2,6 +2,7 @@ import type { Operation } from '../../model'
 import { describe, expect, it } from 'vitest'
 import { fakeHash, graphqlPost } from '../../../test/graphql'
 import { buildOperations } from '../operations'
+import { createRedactor } from '../redact'
 import { annotateGraphql } from './annotate'
 import { applyGraphqlTypes, graphqlTypesInText, graphqlTypeTargets } from './evidence'
 
@@ -83,9 +84,19 @@ describe('graphqlTypesInText', () => {
 
 describe('applyGraphqlTypes', () => {
   function unknownOperation(): Operation[] {
-    return buildOperations(annotateGraphql([
+    const exchanges = annotateGraphql([
       graphqlPost({ operationName: 'getAlbum', variables: {}, hash: OWN }),
-    ]), { sourceRoutes: [] })
+    ])
+    const redactor = createRedactor({
+      exchanges,
+      config: {
+        examples: 'masked',
+        maxExamples: 3,
+        patterns: [],
+        fields: [],
+      },
+    })
+    return buildOperations(exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey })
   }
 
   it('sets the type the code agrees on and says where it came from', () => {

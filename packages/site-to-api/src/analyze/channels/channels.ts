@@ -316,7 +316,7 @@ export function buildChannels(input: BuildChannelsInput): WebSocketChannel[] {
   if (urlExchanges.length === 0)
     return []
 
-  const templated = inferOperationSchemas(buildOperations(urlExchanges, { sourceRoutes: input.sourceRoutes }).filter(operation => !operation.sourceOnly), redactor)
+  const templated = inferOperationSchemas(buildOperations(urlExchanges, { sourceRoutes: input.sourceRoutes, isSecretKey: redactor.isSecretKey }).filter(operation => !operation.sourceOnly), redactor)
   const operationByExchange = new Map(input.operations.flatMap(operation => operation.exchanges.map(exchange => [exchange.id, operation] as const)))
   const linkContext: LinkContext = { redactor, operationByExchange }
   const tracesByConnection = new Map<string, ValueTrace[]>()

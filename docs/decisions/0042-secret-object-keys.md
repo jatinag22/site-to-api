@@ -39,6 +39,10 @@ session cookie itself.
   pass each segment through the same check; a secret segment becomes `{key}`. A traced form
   field whose name is a secret becomes `form.{key}`, and form body schemas put such fields in
   `additionalProperties` like JSON maps.
+- Operation summaries (`Returns a, b, c.`, repeated in the spec, `API_MAP.md`, `AGENT.md` and
+  flows), dispatcher function summaries and GraphQL `data` field lists write such a key as
+  `{key}`. The redactor is created before operations are built, so `buildOperations` takes its
+  `isSecretKey`.
 - Independent of keys: schema property maps are built with `Object.fromEntries`, so a key named
   `__proto__` (an own property after `JSON.parse`) is a property like any other instead of
   setting the prototype and leaving a `required` entry with no property.

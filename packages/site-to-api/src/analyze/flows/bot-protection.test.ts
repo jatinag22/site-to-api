@@ -29,7 +29,7 @@ function inputsOfCart(exchanges: Exchange[], sessions: LoadedSession[]): Record<
       fields: [],
     },
   })
-  const operations = inferOperationSchemas(buildOperations(classified.exchanges, { sourceRoutes: [] }), redactor)
+  const operations = inferOperationSchemas(buildOperations(classified.exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey }), redactor)
   const traces = traceValues({
     exchanges: classified.exchanges,
     sessions,

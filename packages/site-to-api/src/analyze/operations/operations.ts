@@ -19,7 +19,15 @@ import { markParameters, parseTemplate, segmentsOf, templateMatches } from './te
 interface BuildOperationsOptions {
   /** Endpoints found in the site's code (from `analyze/source`); may be empty. */
   sourceRoutes: SourceRoute[]
+  /**
+   * The redactor's verdict on object keys (decision 0042). Summaries list response fields, and a
+   * key that is a token or personal value is written as `{key}` there instead.
+   */
+  isSecretKey: (key: string) => boolean
 }
+
+/** Written in summaries instead of a response key that is a secret or personal value. */
+const KEY_PLACEHOLDER = '{key}'
 
 const OPERATION_KINDS = new Set(['api', 'page', 'bot-protection'])
 const EVIDENCE_ORDER: Evidence[] = [
@@ -173,7 +181,14 @@ function nameParameters(members: Classified[], sourceNames: SourceNames): Map<nu
   return names
 }
 
-function responseFields(exchanges: Exchange[]): { list: boolean, fields: string[] } | null {
+/** A response key as a summary lists it: `{key}` when it is a secret or personal value. */
+function summaryField(key: string, isSecretKey: (key: string) => boolean): string {
+  return isSecretKey(key)
+    ? KEY_PLACEHOLDER
+    : key
+}
+
+function responseFields(exchanges: Exchange[], isSecretKey: (key: string) => boolean): { list: boolean, fields: string[] } | null {
   const fields = new Set<string>()
   let list = false
   for (const exchange of exchanges) {
@@ -185,10 +200,8 @@ function responseFields(exchanges: Exchange[]): { list: boolean, fields: string[
       list = true
       value = value.find(item => item !== null && typeof item === 'object' && !Array.isArray(item))
     }
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      for (const key of Object.keys(value))
-        fields.add(key)
-    }
+    if (value !== null && typeof value === 'object' && !Array.isArray(value))
+      Object.keys(value).forEach(key => fields.add(summaryField(key, isSecretKey)))
   }
   return fields.size === 0
     ? null
@@ -198,8 +211,8 @@ function responseFields(exchanges: Exchange[]): { list: boolean, fields: string[
       }
 }
 
-function withResponseFields(base: string, exchanges: Exchange[]): string {
-  const response = responseFields(exchanges)
+function withResponseFields(base: string, exchanges: Exchange[], isSecretKey: (key: string) => boolean): string {
+  const response = responseFields(exchanges, isSecretKey)
   if (!response)
     return base
   const shown = response.fields.slice(0, MAX_SUMMARY_FIELDS)
@@ -209,7 +222,7 @@ function withResponseFields(base: string, exchanges: Exchange[]): string {
   return `${base} Returns ${response.list ? 'a list of ' : ''}${shown.join(', ')}${more}.`
 }
 
-function summarize(kind: OperationKind, method: string, path: string, exchanges: Exchange[]): string {
+function summarize(kind: OperationKind, method: string, path: string, exchanges: Exchange[], isSecretKey: (key: string) => boolean): string {
   const phrase = pathPhrase(path)
   if (kind === 'page') {
     return `Page ${phrase === ''
@@ -223,7 +236,7 @@ function summarize(kind: OperationKind, method: string, path: string, exchanges:
   const verb = method.charAt(0) + method.slice(1).toLowerCase()
   return withResponseFields(`${verb} ${phrase === ''
     ? 'root'
-    : phrase}.`, exchanges)
+    : phrase}.`, exchanges, isSecretKey)
 }
 
 function pathParamsFor(members: Classified[], names: Map<number, string>): PathParam[] {
@@ -286,7 +299,7 @@ function emptyOperation(init: Pick<Operation, 'host' | 'method' | 'path' | 'kind
  * One operation per GraphQL operation (decision 0027): requests that share an endpoint are told
  * apart by operation name, persisted hash or document, never merged into one path template.
  */
-function graphqlOperations(exchanges: Exchange[]): Operation[] {
+function graphqlOperations(exchanges: Exchange[], isSecretKey: (key: string) => boolean): Operation[] {
   const groups = new Map<string, GraphqlExchange[]>()
   for (const exchange of exchanges) {
     if (!isGraphqlExchange(exchange))
@@ -312,7 +325,7 @@ function graphqlOperations(exchanges: Exchange[]): Operation[] {
         path: graphqlSpecPath(graphql, first.graphql.key, pathNamesOperation),
         kind: 'api',
         pathParams: [],
-        summary: graphqlSummary(graphql, first.request.method, group),
+        summary: graphqlSummary(graphql, first.request.method, group, isSecretKey),
         exchanges: group,
         sourceOnly: false,
         graphql,
@@ -349,7 +362,7 @@ function vendorStepMarks(exchange: Exchange, segments: readonly string[], marks:
  * The operation of one host + method + template, or one per function when a parameter picks the
  * function (decision 0039).
  */
-function templateOperations(method: string, group: Classified[], names: Map<number, string>, dispatch = true): Operation[] {
+function templateOperations(method: string, group: Classified[], names: Map<number, string>, isSecretKey: (key: string) => boolean, dispatch = true): Operation[] {
   const path = templateFor(group[0]!.segments, names)
   const kind = kindOf(group)
   const dispatcher = dispatch && kind === 'api'
@@ -360,9 +373,9 @@ function templateOperations(method: string, group: Classified[], names: Map<numb
     const stray = new Set(dispatcher.rest)
     const rest = group.filter(member => stray.has(member.exchange))
     return [
-      ...dispatchOperations(dispatcher, group, names, path),
+      ...dispatchOperations(dispatcher, group, names, path, isSecretKey),
       ...(rest.length > 0
-        ? templateOperations(method, rest, names, false)
+        ? templateOperations(method, rest, names, isSecretKey, false)
         : []),
     ]
   }
@@ -374,14 +387,14 @@ function templateOperations(method: string, group: Classified[], names: Map<numb
       path,
       kind,
       pathParams: pathParamsFor(group, names),
-      summary: summarize(kind, method, path, groupExchanges),
+      summary: summarize(kind, method, path, groupExchanges, isSecretKey),
       exchanges: groupExchanges,
       sourceOnly: false,
     }),
   ]
 }
 
-function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Operation[] {
+function observedOperations(exchanges: Exchange[], routes: SourceRoute[], isSecretKey: (key: string) => boolean): Operation[] {
   // GraphQL requests get their own operations; templating their paths would merge them.
   const relevant = exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind) && !isGraphqlExchange(exchange))
   // 1. Parameter positions per host + method.
@@ -432,7 +445,7 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Opera
       ])
     }
     for (const [method, group] of byMethod)
-      operations.push(...templateOperations(method, group, names))
+      operations.push(...templateOperations(method, group, names, isSecretKey))
   }
   return operations
 }
@@ -442,7 +455,7 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Opera
  * like GraphQL operations on a shared endpoint (0027): the fragment is never sent, and the
  * generated client fills the dispatcher parameter in.
  */
-function dispatchOperations(dispatcher: Dispatcher, members: Classified[], names: Map<number, string>, endpoint: string): Operation[] {
+function dispatchOperations(dispatcher: Dispatcher, members: Classified[], names: Map<number, string>, endpoint: string, isSecretKey: (key: string) => boolean): Operation[] {
   const byExchange = new Map(members.map(member => [member.exchange, member]))
   const values = dispatcher.groups.map(group => group.value)
   return dispatcher.groups.map(({ value, exchanges }) => {
@@ -467,7 +480,7 @@ function dispatchOperations(dispatcher: Dispatcher, members: Classified[], names
         path: `${endpoint}#${value}`,
         kind: 'api',
         pathParams: pathParamsFor(group, names),
-        summary: withResponseFields(`Function ${value} of ${method} ${endpoint} (${dispatcher.parameter}=${value}).`, exchanges),
+        summary: withResponseFields(`Function ${value} of ${method} ${endpoint} (${dispatcher.parameter}=${value}).`, exchanges, isSecretKey),
         exchanges,
         sourceOnly: false,
       }),
@@ -655,8 +668,8 @@ function assignOperationIds(operations: Operation[]): Operation[] {
  */
 export function buildOperations(exchanges: Exchange[], options: BuildOperationsOptions): Operation[] {
   const observed = [
-    ...observedOperations(exchanges, options.sourceRoutes),
-    ...graphqlOperations(exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind))),
+    ...observedOperations(exchanges, options.sourceRoutes, options.isSecretKey),
+    ...graphqlOperations(exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind)), options.isSecretKey),
   ]
   return assignOperationIds([
     ...observed,
