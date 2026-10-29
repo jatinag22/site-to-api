@@ -2,6 +2,7 @@ import type { CaptureEvent, Exchange, ExchangeKind, HtmlLocator, LoadedSession, 
 import type { LocatedValue } from './values'
 import type { MatchTransform, Variant } from './variants'
 import { registrableHost } from '../../hosts'
+import { isAuthScheme } from '../redact'
 import { browserCookieNote, findTransformEvent, findUserInputField } from './fallbacks'
 import { isTrivial } from './trivial'
 import { requestValues, responseText, responseValues } from './values'
@@ -46,6 +47,10 @@ interface Candidate {
   transform: MatchTransform
   /** The producer field has the same name as the request field, e.g. Set-Cookie for a cookie. */
   sameName: boolean
+  /** The names share a meaningful word: `expiry` and `expiryDates`, `symbol` and `symbolList`. */
+  relatedName: boolean
+  /** The request value is `<auth scheme> <producer value>`: `Bearer <accessToken>`. */
+  authToken: boolean
 }
 
 type Origin = ValueTrace['origin']
@@ -58,10 +63,16 @@ function isBefore(producer: Exchange, consumer: Exchange): boolean {
   return producer.startedAt < consumer.startedAt || (producer.startedAt === consumer.startedAt && producer.seq < consumer.seq)
 }
 
-/** Exact beats encoded, a same-named field beats any other, then the earliest producer wins. */
+/**
+ * Exact beats encoded, a token behind an auth scheme beats other parts of longer values, a
+ * same-named field beats a field whose name shares a word, which beats any other; then the
+ * earliest producer wins.
+ */
 function isBetter(a: Candidate, b: Candidate): boolean {
   const order = (TRANSFORM_RANK[a.transform] - TRANSFORM_RANK[b.transform])
+    || (Number(b.authToken) - Number(a.authToken))
     || (Number(b.sameName) - Number(a.sameName))
+    || (Number(b.relatedName) - Number(a.relatedName))
     || (a.exchange.startedAt - b.exchange.startedAt)
     || (a.exchange.seq - b.exchange.seq)
     || JSON.stringify(a.location).localeCompare(JSON.stringify(b.location))
@@ -97,6 +108,64 @@ function buildIndex(exchanges: readonly Exchange[], events: readonly CaptureEven
 /** Letters only, maybe joined by `-` or `_`: `combined`, `tick`, `SUBSCRIBE`, `price-update`. */
 const PLAIN_WORD = /^\p{L}+(?:[-_]\p{L}+)*$/u
 const INTEGER_TEXT = /^\d+$/
+/**
+ * A calendar date: `03-Nov-2026`, `2026-11-03`, `03/11/2026`. Many unrelated responses hold the
+ * same date (an IPO's end date, a holiday, an expiry), so like a plain word it is weak evidence.
+ */
+const DATE_TEXT = /^(?:\d{1,2}[-/. ](?:\d{1,2}|\p{L}{3,9})[-/. ]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})$/u
+
+/** A value a response holds by coincidence as easily as by being its source: a word or a date. */
+function isWeakValue(value: string): boolean {
+  return PLAIN_WORD.test(value) || DATE_TEXT.test(value)
+}
+
+/** Name words too generic to relate two fields: every record has an `id`, a `name`, a `type`. */
+const GENERIC_NAME_WORDS = new Set([
+  'id',
+  'ids',
+  'key',
+  'name',
+  'value',
+  'data',
+  'type',
+  'code',
+  'no',
+  'num',
+  'number',
+  'text',
+  'list',
+  'item',
+  'items',
+])
+
+/** Lower-case words of a field name: `expiryDates` → `expiry`, `dates`; `x-csrf-token` → `x`, `csrf`, `token`. */
+function nameWords(name: string): string[] {
+  return name
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z\d]+/)
+    .filter(word => word.length > 1)
+}
+
+/** Two names share a word that is not generic (`expiry` ~ `expiryDates`, but not `userId` ~ `productId`). */
+function namesRelated(a: string | null, b: string | null): boolean {
+  if (a === null || b === null)
+    return false
+  const words = new Set(nameWords(a).filter(word => !GENERIC_NAME_WORDS.has(word)))
+  return nameWords(b).some(word => words.has(word))
+}
+
+/** `Bearer <token>`: the parts of a value made of an auth scheme word and one token. */
+const SCHEME_VALUE = /^(\S+) +(\S+)$/
+
+/** The token of `<auth scheme> <token>`, or null when the value is not one. */
+function schemeToken(value: string): string | null {
+  const match = SCHEME_VALUE.exec(value)
+  return match?.[1] !== undefined && isAuthScheme(match[1])
+    ? match[2] ?? null
+    : null
+}
 
 /** Attributes that carry data or links, so a word inside them (`/stores/pine-hill`) is a value. */
 const DATA_ATTRIBUTE = /^(?:href|src|action|value|content|data-.+)$/
@@ -158,6 +227,8 @@ function htmlCandidate(page: { exchange: Exchange, text: string }, consumer: Exc
     },
     transform,
     sameName: false,
+    relatedName: false,
+    authToken: false,
   }
 }
 
@@ -167,6 +238,8 @@ function producerCandidate(producer: Producer, sent: LocatedValue, transform: Ma
     location: producer.location,
     transform,
     sameName: producer.name !== null && producer.name === sent.name,
+    relatedName: namesRelated(producer.name, sent.name),
+    authToken: transform === 'substring' && schemeToken(sent.value) === producer.value,
   }
 }
 
@@ -246,12 +319,12 @@ function containsAsPart(whole: string, part: string): boolean {
 
 function* substringCandidates(consumer: Exchange, sent: LocatedValue, index: SessionIndex): Generator<Candidate> {
   const value = sent.value
-  // A plain word inside a longer text (a description, a sentence) is a coincidence, not a copy.
-  if (PLAIN_WORD.test(value))
+  // A plain word or a date inside a longer text (a description, a sentence) is a coincidence, not a copy.
+  if (isWeakValue(value))
     return
   for (const producer of index.producers) {
     const other = producer.value
-    const related = other.length >= SUBSTRING_MIN_LENGTH && other !== value && !PLAIN_WORD.test(other)
+    const related = other.length >= SUBSTRING_MIN_LENGTH && other !== value && !isWeakValue(other)
       && ((value.includes(other) && containsAsPart(value, other)) || (other.includes(value) && containsAsPart(other, value)))
     if (related && isBefore(producer.exchange, consumer))
       yield producerCandidate(producer, sent, 'substring')
@@ -332,8 +405,9 @@ interface ConstantEvidence {
  * A producer that a constant explains better (the site's own value, found elsewhere by chance).
  * Exact producers of ids, tokens and build ids always win: two captures of one deploy agree on
  * them, yet a wrapper must read them from the response. Only these lose to a constant: a part of
- * a longer value, a plain word in a page (`Indices` in a navigation link), and a plain word a
- * response holds that the site's code also writes as a literal (`NIFTY`). A plain word only equal
+ * a longer value (except a token behind an auth scheme), a plain word or date in a page (`Indices`
+ * in a navigation link), and a plain word or date a response holds that the site's code also
+ * writes as a literal (`NIFTY` in the option list of NSE's index picker). A plain word only equal
  * across sessions (`/api/me` → `jatin` → `/users/jatin`) keeps its producer.
  */
 function isCoincidence(producer: Candidate, value: string, evidence: ConstantEvidence): boolean {
@@ -342,9 +416,13 @@ function isCoincidence(producer: Candidate, value: string, evidence: ConstantEvi
   // A Set-Cookie of the same name is where a cookie comes from, however constant its value.
   if (producer.sameName && producer.location.in === 'set-cookie')
     return false
+  // `Bearer <accessToken>`: an anonymous token endpoint can hand every session the same token,
+  // yet the wrapper must still fetch it from that endpoint.
+  if (producer.authToken)
+    return false
   if (producer.transform === 'substring')
     return true
-  if (!PLAIN_WORD.test(value))
+  if (!isWeakValue(value))
     return false
   return producer.location.in === 'html' || evidence.literal
 }

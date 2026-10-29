@@ -437,6 +437,78 @@ describe('traceValues: response producers', () => {
     expect(originAt(literal, one[2]!, '{"in":"query","name":"type"}')).toEqual({ kind: 'constant' })
   })
 
+  it('traces a bearer token to the token endpoint even when every session got the same token', () => {
+    // Spotify's anonymous `/api/token` handed both captures the same token: identical in every
+    // session must not make `Bearer <token>` a constant the redactor then hides as unknown.
+    const accessToken = 'BQC9xVRtTAbcZYBiWQMKB1GnysAOpeVsJOd4NjElEabK90X-qOgvWix'
+    const sessionData = (sessionId: string): Exchange[] => [
+      exchange({
+        sessionId,
+        url: 'https://open.music.test/api/token?reason=init',
+        startedAt: 1,
+        responseBody: jsonBody({ accessToken, isAnonymous: true }),
+      }),
+      exchange({
+        sessionId,
+        method: 'POST',
+        url: 'https://api-partner.music.test/pathfinder/v2/query',
+        startedAt: 2,
+        requestHeaders: { authorization: `Bearer ${accessToken}` },
+      }),
+    ]
+    const a = sessionData('a')
+    const traces = traceValues({
+      exchanges: [
+        ...a,
+        ...sessionData('b'),
+      ],
+      sessions: [
+        session('a'),
+        session('b'),
+      ],
+      htmlLocator: noLocator,
+      staticStrings: new Set(),
+      minValueLength: 4,
+    })
+    expect(originAt(traces, a[1]!, '{"in":"header","name":"authorization"}')).toEqual({
+      kind: 'response',
+      exchangeId: a[0]!.id,
+      location: { in: 'body', pointer: '/accessToken' },
+      transform: 'substring',
+    })
+  })
+
+  it('prefers a producer whose field name matches the request field, and treats dates as weak', () => {
+    const ipo = exchange({
+      url: 'https://www.market.test/api/ipo-current-issue',
+      startedAt: 1,
+      responseBody: jsonBody([
+        { symbol: 'ACME', issueEndDate: '03-Nov-2026' },
+      ]),
+    })
+    const contract = exchange({
+      url: 'https://www.market.test/api/option-chain-contract-info?symbol=NIFTY',
+      startedAt: 2,
+      responseBody: jsonBody({
+        expiryDates: ['03-Nov-2026', '09-Nov-2026'],
+      }),
+    })
+    const notice = exchange({
+      url: 'https://www.market.test/api/notice',
+      startedAt: 3,
+      responseBody: jsonBody({ text: 'Holiday on 17-Nov-2026 for all segments' }),
+    })
+    const chain = exchange({ url: 'https://www.market.test/api/option-chain-v3?expiry=03-Nov-2026&from=17-Nov-2026', startedAt: 4 })
+    const traces = trace([ipo, contract, notice, chain])
+    expect(originAt(traces, chain, '{"in":"query","name":"expiry"}')).toMatchObject({
+      kind: 'response',
+      exchangeId: contract.id,
+      location: { in: 'body', pointer: '/expiryDates/0' },
+    })
+    // A date inside a sentence is not where the value came from.
+    expect(originAt(traces, chain, '{"in":"query","name":"from"}')).toEqual({ kind: 'unknown' })
+  })
+
   it('keeps exact producers of deploy-bound ids and same values across sessions', () => {
     // Two captures of one deploy agree on the build id and on who is signed in.
     const sessionData = (sessionId: string): Exchange[] => [
