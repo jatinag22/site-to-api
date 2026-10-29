@@ -255,7 +255,7 @@ describe('handoff folder', () => {
     // scripts/demo/demo.tape runs against the shop on localhost:4173; here the port is random.
     const tape = await readFile(join(here, '..', 'scripts', 'demo', 'demo.tape'), 'utf8')
     const ranges = [
-      ...tape.matchAll(/sed -n '\/([^/]+)\/,\/[^/]+\/p' api-handoff\/(\S+)/g),
+      ...tape.matchAll(/sed -n '\/([^/]+)\/,\/[^/]+\/p' api-handoff\/([^\s"]+)/g),
     ]
     expect(ranges.length).toBeGreaterThan(0)
     for (const [, start, file] of ranges) {
