@@ -7,8 +7,36 @@ import { probeOperations, resemblesCapture } from './probe'
 
 let origin: string
 let requests = 0
+const userAgents: string[] = []
+const clientHints: string[] = []
+function challenge(res: import('node:http').ServerResponse): void {
+  res.writeHead(403, { 'content-type': 'text/html', 'cf-mitigated': 'challenge', 'server': 'cloudflare' }).end('<title>Just a moment...</title>')
+}
 const server = createServer((req, res) => {
   requests++
+  if (req.url === '/api/tags') {
+    // As Cloudflare did on Stack Overflow: the `HeadlessChrome` token alone gets a challenge.
+    userAgents.push(req.headers['user-agent'] ?? '')
+    clientHints.push(String(req.headers['sec-ch-ua'] ?? ''))
+    if ((req.headers['user-agent'] ?? '').includes('HeadlessChrome')) {
+      challenge(res)
+      return
+    }
+    res.writeHead(200, { 'content-type': 'application/json' }).end('{"items":[]}')
+    return
+  }
+  if (req.url === '/api/walled') {
+    challenge(res)
+    return
+  }
+  if (req.url === '/api/teapot') {
+    res.writeHead(419, { 'content-type': 'application/json' }).end('{"error":"page expired"}')
+    return
+  }
+  if (req.url === '/api/login-only') {
+    res.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"login"}')
+    return
+  }
   const cookie = req.headers.cookie ?? ''
   if (req.url === '/api/open') {
     res.writeHead(200, { 'content-type': 'application/json' }).end('{"items":[1]}')
@@ -113,8 +141,67 @@ describe('probeOperations', () => {
         }),
       ],
     })
-    expect(report.operations[0]).toMatchObject({ replay: 'rejected', requires: null })
-    expect(report.operations[0]?.note).toContain('not accepted')
+    expect(report.operations[0]).toMatchObject({ replay: 'rejected', requires: null, rejection: 'other' })
+    // Both answers were 200: what differed is the body, not the session.
+    expect(report.operations[0]?.note).toContain('text/html where the capture had application/json')
+    expect(report.operations[0]?.note).not.toContain('not accepted')
+  })
+
+  it('names itself instead of replaying the capture browser\'s user agent and client hints', async () => {
+    const report = await probeOperations({
+      toolVersion: '1.2.3',
+      config,
+      operations: [
+        op('getTags', 'GET', '/api/tags', {
+          url: `${origin}/api/tags`,
+          requestHeaders: {
+            'user-agent': 'Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36',
+            'sec-ch-ua': '"Chromium";v="156", "HeadlessChrome";v="156"',
+          },
+          responseBody: jsonBody({ items: [] }),
+        }),
+      ],
+    })
+    expect(report.operations[0]).toMatchObject({ replay: 'ok', bare: 'ok', requires: [] })
+    expect(userAgents.length).toBeGreaterThan(0)
+    expect(userAgents.every(agent => agent === 'site-to-api/1.2.3 (probe; automated)')).toBe(true)
+    expect(clientHints.every(hint => hint === '')).toBe(true)
+  })
+
+  it('tells bot protection, a refused session and other statuses apart', async () => {
+    const sample = (path: string): Parameters<typeof op>[3] => ({
+      url: `${origin}${path}`,
+      cookies: { sid: 'old' },
+      responseBody: jsonBody({ items: [] }),
+    })
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getWalled', 'GET', '/api/walled', sample('/api/walled')),
+        op('getTeapot', 'GET', '/api/teapot', sample('/api/teapot')),
+        op('getLoginOnly', 'GET', '/api/login-only', sample('/api/login-only')),
+      ],
+    })
+    const byId = new Map(report.operations.map(entry => [entry.operationId, entry]))
+    expect(byId.get('getWalled')).toMatchObject({
+      replay: 'rejected',
+      rejection: 'bot-protection',
+      statuses: [403, 403],
+    })
+    expect(byId.get('getWalled')?.note).toContain('Blocked by bot protection (Cloudflare: header cf-mitigated, status 403)')
+    expect(byId.get('getWalled')?.note).not.toContain('not accepted')
+    expect(byId.get('getTeapot')).toMatchObject({
+      rejection: 'other',
+      statuses: [419, 419],
+    })
+    expect(byId.get('getTeapot')?.note).toContain('status 419, captured 200')
+    expect(byId.get('getTeapot')?.note).not.toContain('not accepted')
+    expect(byId.get('getLoginOnly')).toMatchObject({
+      rejection: 'session',
+      statuses: [401, 401],
+    })
+    expect(byId.get('getLoginOnly')?.note).toContain('not accepted any more (status 401, 401')
   })
 
   it('skips unsafe methods and bot-protection steps by default, without sending anything', async () => {

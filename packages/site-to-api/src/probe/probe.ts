@@ -7,6 +7,7 @@ import type { ResolvedConfig } from '../config/schema'
 import type { Exchange, Operation } from '../model'
 import type { OperationProbe, ProbeOutcome, ProbeReport } from '../model/probe'
 import { PROBE_FORMAT_VERSION } from '../model/probe'
+import { detectBlock } from './blocked'
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
@@ -55,11 +56,32 @@ function representative(operation: Operation): Exchange | null {
   return successful.at(-1) ?? null
 }
 
-function captured(exchange: Exchange): Variant {
+/**
+ * The user agent probe sends (decision 0032): the tool's own name. Probe is a plain HTTP client,
+ * so it never replays the capture browser's user agent or client hints: claiming to be Chrome
+ * would hide automation, and `HeadlessChrome` is blocked outright by some bot protection. It is
+ * also what a generated client sends, since clients never default a browser user agent (0026).
+ */
+export function probeUserAgent(toolVersion: string): string {
+  return `site-to-api/${toolVersion} (probe; automated)`
+}
+
+/** Headers that describe the capture browser rather than the request. */
+function describesBrowser(name: string): boolean {
+  return name === 'user-agent' || name.startsWith('sec-ch-ua')
+}
+
+function captured(exchange: Exchange, toolVersion: string): Variant {
   return {
-    headers: exchange.request.headers
-      .filter(header => !NOT_REPLAYED.has(header.name))
-      .map(header => [header.name, header.value]),
+    headers: [
+      ...exchange.request.headers
+        .filter(header => !NOT_REPLAYED.has(header.name) && !describesBrowser(header.name))
+        .map((header): [string, string] => [header.name, header.value]),
+      [
+        'user-agent',
+        probeUserAgent(toolVersion),
+      ],
+    ],
     cookies: exchange.request.cookies.map(cookie => [cookie.name, cookie.value]),
   }
 }
@@ -81,37 +103,56 @@ function topLevelKeys(value: unknown): string[] | null {
     : null
 }
 
+function kilobytes(length: number): string {
+  return `${Math.max(1, Math.round(length / 1024))} KB`
+}
+
+function jsonDifference(exchange: Exchange, body: string): string | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  }
+  catch {
+    return 'a body that is not JSON'
+  }
+  const expectedKeys = topLevelKeys(exchange.response.body?.json)
+  if (expectedKeys === null || expectedKeys.length === 0) {
+    return Array.isArray(parsed) === Array.isArray(exchange.response.body?.json)
+      ? null
+      : 'a JSON value of another type'
+  }
+  const actualKeys = new Set(topLevelKeys(parsed) ?? [])
+  const shared = expectedKeys.filter(key => actualKeys.has(key)).length
+  return shared / expectedKeys.length >= 0.5
+    ? null
+    : `JSON with ${shared} of the ${expectedKeys.length} captured top-level keys`
+}
+
 /**
- * Whether a live response looks like the captured one. Guards against challenge and login pages,
- * which often answer 200 with HTML where the capture had JSON.
+ * How a live response differs from the captured one, or null when it looks the same. Guards
+ * against challenge and login pages, which often answer 200 with HTML where the capture had JSON.
  */
-export function resemblesCapture(exchange: Exchange, status: number, contentType: string | null, body: string): boolean {
+export function differenceFromCapture(exchange: Exchange, status: number, contentType: string | null, body: string): string | null {
   if (status < 200 || status >= 300)
-    return false
+    return `status ${status}, captured ${exchange.response.status}`
   const expected = exchange.response.body?.mimeType ?? ''
   const actual = mediaType(contentType)
   if (expected && actual && expected !== actual)
-    return false
-  if (expected.includes('json')) {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(body)
-    }
-    catch {
-      return false
-    }
-    const expectedKeys = topLevelKeys(exchange.response.body?.json)
-    if (expectedKeys === null || expectedKeys.length === 0)
-      return Array.isArray(parsed) === Array.isArray(exchange.response.body?.json)
-    const actualKeys = new Set(topLevelKeys(parsed) ?? [])
-    const shared = expectedKeys.filter(key => actualKeys.has(key)).length
-    return shared / expectedKeys.length >= 0.5
-  }
+    return `${actual} where the capture had ${expected}`
+  if (expected.includes('json'))
+    return jsonDifference(exchange, body)
   const expectedLength = exchange.response.body?.text?.length ?? 0
   if (expectedLength === 0)
-    return true
+    return null
   const ratio = body.length / expectedLength
   return ratio > 0.3 && ratio < 3
+    ? null
+    : `a ${kilobytes(body.length)} body where the capture had ${kilobytes(expectedLength)}`
+}
+
+/** Whether a live response looks like the captured one (see {@link differenceFromCapture}). */
+export function resemblesCapture(exchange: Exchange, status: number, contentType: string | null, body: string): boolean {
+  return differenceFromCapture(exchange, status, contentType, body) === null
 }
 
 class RateLimiter {
@@ -137,6 +178,10 @@ interface SendResult {
   status: number | null
   /** Why the request could not be sent (DNS, TLS, timeout, connection refused). */
   error: string | null
+  /** Bot protection answered instead of the site: vendor and evidence. */
+  blocked: string | null
+  /** How a rejected response differed from the captured one. */
+  difference: string | null
 }
 
 /** A short, actionable reason for a network failure, e.g. `ECONNREFUSED` or `timed out`. */
@@ -179,11 +224,17 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
           signal: AbortSignal.timeout(options.config.timeoutMs),
         })
         const text = await response.text()
-        const ok = resemblesCapture(exchange, response.status, response.headers.get('content-type'), text)
+        const difference = differenceFromCapture(exchange, response.status, response.headers.get('content-type'), text)
         return {
-          outcome: ok ? 'ok' : 'rejected',
+          outcome: difference === null
+            ? 'ok'
+            : 'rejected',
           status: response.status,
           error: null,
+          blocked: difference === null
+            ? null
+            : detectBlock(response.status, response.headers, text),
+          difference,
         }
       }
       catch (error) {
@@ -191,6 +242,8 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
           outcome: 'failed',
           status: null,
           error: failureReason(error),
+          blocked: null,
+          difference: null,
         }
       }
     },
@@ -242,22 +295,40 @@ function skipReason(operation: Operation, config: ResolvedConfig['probe']): stri
 
 interface ProbeContext {
   runner: Runner
+  toolVersion: string
   maxVariants: number
   /** Returns true when this host may still use the expensive minimization. */
   takeMinimizeSlot: (host: string) => boolean
   minimizePerHost: number
 }
 
+/** Statuses that say the request was not authenticated, unlike rate limits or server errors. */
+const AUTH_STATUSES = new Set([401, 403])
+
+/**
+ * Why neither the captured session nor a bare request was accepted. Bot protection answering is
+ * not an expired session, and neither is a status other than 401 or 403 (a 419, 429 or 500).
+ */
+function rejectionOf(replay: SendResult, plain: SendResult): { kind: NonNullable<OperationProbe['rejection']>, note: string } {
+  const blocked = replay.blocked ?? plain.blocked
+  if (blocked !== null)
+    return { kind: 'bot-protection', note: `Blocked by bot protection (${blocked}), with and without the captured session. This says nothing about the session: this request needs a real browser (\`browserSession\` in \`@site-to-api/runtime\`).` }
+  const statuses = [replay.status, plain.status].filter(status => status !== null)
+  if (statuses.length > 0 && statuses.every(status => AUTH_STATUSES.has(status)))
+    return { kind: 'session', note: `The captured session was not accepted any more (status ${statuses.join(', ')}; expired cookies or token?). Capture again shortly before probing.` }
+  return { kind: 'other', note: `The live site answered with ${replay.difference ?? 'a different response'}, with and without the captured session. That is not an authentication failure, so probe does not conclude the session expired; rate limiting or a request only the page can make are common causes.` }
+}
+
 async function probeOne(operation: Operation, exchange: Exchange, context: ProbeContext): Promise<OperationProbe> {
   const statuses: number[] = []
-  const full = captured(exchange)
+  const full = captured(exchange, context.toolVersion)
   const record = (result: SendResult): SendResult => {
     if (result.status !== null)
       statuses.push(result.status)
     return result
   }
   const replay = record(await context.runner.send(exchange, full))
-  const result = (bareOutcome: ProbeOutcome, requires: string[] | null, note: string | null): OperationProbe => ({
+  const result = (bareOutcome: ProbeOutcome, requires: string[] | null, note: string | null, rejection?: OperationProbe['rejection']): OperationProbe => ({
     operationId: operation.operationId,
     host: operation.host,
     method: operation.method,
@@ -267,6 +338,9 @@ async function probeOne(operation: Operation, exchange: Exchange, context: Probe
     requires,
     statuses,
     note,
+    ...(rejection
+      ? { rejection }
+      : {}),
   })
 
   if (replay.outcome === 'failed')
@@ -278,8 +352,10 @@ async function probeOne(operation: Operation, exchange: Exchange, context: Probe
   const plain = record(await context.runner.send(exchange, bare(full)))
   if (plain.outcome === 'ok')
     return result(plain.outcome, [], null)
-  if (replay.outcome !== 'ok')
-    return result(plain.outcome, null, 'The captured session was not accepted any more (expired cookies or token?). Capture again shortly before probing.')
+  if (replay.outcome !== 'ok') {
+    const rejected = rejectionOf(replay, plain)
+    return result(plain.outcome, null, rejected.note, rejected.kind)
+  }
   if (!context.takeMinimizeSlot(operation.host))
     return result(plain.outcome, null, `Not minimized: limit of ${context.minimizePerHost} operations per host reached (probe.minimizePerHost, --minimize-per-host).`)
   return result(plain.outcome, await minimize(context.runner, exchange, full, context.maxVariants, statuses), null)
@@ -297,6 +373,7 @@ export async function probeOperations(options: ProbeOptions): Promise<ProbeRepor
       sleep: options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms))),
     }),
     maxVariants: options.maxVariants ?? 16,
+    toolVersion: options.toolVersion,
     minimizePerHost,
     takeMinimizeSlot: (host) => {
       const count = used.get(host) ?? 0

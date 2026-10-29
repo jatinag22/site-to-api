@@ -12,10 +12,19 @@ const LEGACY_MINIMIZE_PER_HOST = 5
  * What happened to one replayed operation: `bare` worked with no cookies or auth (`requires` is
  * `[]`), `minimized` had its needs worked out one by one, `limit` worked as captured but its host
  * had used up `minimizePerHost`, `once` is a data-changing method sent once and not repeated,
- * `rejected` means the captured session was not accepted any more, `unreachable` that the host
- * could not be reached.
+ * `rejected` means the captured session was not accepted any more (401/403), `blocked` that bot
+ * protection answered instead of the site, `differs` that the site answered with another status
+ * or a different response, `unreachable` that the host could not be reached.
  */
-export type ProbeResultKind = 'bare' | 'minimized' | 'limit' | 'once' | 'rejected' | 'unreachable'
+export type ProbeResultKind = 'bare' | 'minimized' | 'limit' | 'once' | 'rejected' | 'blocked' | 'differs' | 'unreachable'
+
+/** Kinds where probe could not confirm what the request needs. */
+const PROBE_FAILURES: ReadonlySet<ProbeResultKind> = new Set([
+  'rejected',
+  'blocked',
+  'differs',
+  'unreachable',
+])
 
 /** Classifies one entry of `probe.json`. */
 export function probeResultKind(probe: OperationProbe): ProbeResultKind {
@@ -28,9 +37,35 @@ export function probeResultKind(probe: OperationProbe): ProbeResultKind {
   }
   if (probe.bare === 'skipped')
     return 'once'
-  if (probe.replay !== 'ok')
-    return 'rejected'
+  if (probe.replay !== 'ok') {
+    if (probe.rejection === 'bot-protection')
+      return 'blocked'
+    if (probe.rejection === 'session')
+      return 'rejected'
+    // `other`, or a report written before `rejection` existed: only 401 and 403 mean the session
+    // was refused, so a 419 or a 200 with a different body is not read as an expired session.
+    return probe.rejection === undefined && probe.statuses.every(status => status === 401 || status === 403)
+      ? 'rejected'
+      : 'differs'
+  }
   return 'limit'
+}
+
+/** A short reason for a failure kind, for summaries and AGENT.md gaps. */
+function failureText(probe: OperationProbe): string {
+  const statuses = probe.statuses.length > 0
+    ? ` (status ${probe.statuses.join(', ')})`
+    : ''
+  switch (probeResultKind(probe)) {
+    case 'blocked':
+      return `blocked by bot protection${statuses}`
+    case 'rejected':
+      return `captured session refused${statuses}`
+    case 'unreachable':
+      return 'host unreachable'
+    default:
+      return `answered differently from the capture${statuses}`
+  }
 }
 
 /** The per-host minimization limit the report was written with. */
@@ -53,6 +88,25 @@ export function notMinimized(
     .filter(probe => probeResultKind(probe) === 'limit')
     .filter(probe => !keep || keep.has(`${probe.host} ${probe.operationId}`))
     .map(probe => ({ host: probe.host, operationId: probe.operationId }))
+}
+
+/**
+ * Operations probe replayed but could not confirm (refused, blocked, answered differently,
+ * unreachable), with a short reason. With `current`, only those still in the build.
+ */
+export function probeFailures(
+  report: ProbeReport,
+  current?: ReadonlyArray<{ host: string, operationId: string }>,
+): Array<{ host: string, operationId: string, reason: string }> {
+  const keep = current && new Set(current.map(operation => `${operation.host} ${operation.operationId}`))
+  return report.operations
+    .filter(probe => PROBE_FAILURES.has(probeResultKind(probe)))
+    .filter(probe => !keep || keep.has(`${probe.host} ${probe.operationId}`))
+    .map(probe => ({
+      host: probe.host,
+      operationId: probe.operationId,
+      reason: failureText(probe),
+    }))
 }
 
 function list(ids: string[]): string {
@@ -90,7 +144,11 @@ export function summarizeProbe(report: ProbeReport): string[] {
   if (ids('once').length > 0)
     lines.push(`- Not minimized, data-changing method replayed once only: ${ids('once').length} (${list(ids('once'))}).`)
   if (ids('rejected').length > 0)
-    lines.push(`- Not minimized, the captured session was not accepted any more: ${ids('rejected').length} (${list(ids('rejected'))}). Capture again shortly before probing.`)
+    lines.push(`- Not minimized, the captured session was not accepted any more (401/403): ${ids('rejected').length} (${list(ids('rejected'))}). Capture again shortly before probing.`)
+  if (ids('blocked').length > 0)
+    lines.push(`- Not minimized, blocked by bot protection (not a session problem; these need a real browser): ${ids('blocked').length} (${list(ids('blocked'))}).`)
+  if (ids('differs').length > 0)
+    lines.push(`- Not minimized, the site answered with another status or a different response, with and without the session: ${ids('differs').length} (${list(ids('differs'))}). See the notes in probe.json.`)
   if (ids('unreachable').length > 0)
     lines.push(`- Not minimized, host unreachable: ${ids('unreachable').length} (${list(ids('unreachable'))}).`)
 
