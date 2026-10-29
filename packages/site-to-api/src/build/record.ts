@@ -17,6 +17,7 @@ const BUILD_RECORD_FILE = 'build.json'
 /** Options `probe` reuses, as dotted config paths (`gen` only updates `gen.client`). */
 const STICKY_PATHS = [
   'gen.client',
+  'gen.mcp',
   'hosts.exclude',
   'hosts.include',
   'redact.examples',
@@ -31,6 +32,8 @@ const BuildRecordSchema = z.strictObject({
     exclude: z.array(z.string()),
   }),
   client: z.boolean(),
+  /** `gen.mcp`; absent in records written before `client/mcp/` existed, which means `off`. */
+  mcp: z.enum(['off', 'read', 'write']).optional(),
   /**
    * The options above that came from CLI flags or `SITE_TO_API_*` variables. `probe` and `gen`
    * reuse exactly these; the others come from the config file, which they read again anyway.
@@ -50,6 +53,7 @@ export function buildRecordFor(config: ResolvedConfig, sources: Record<string, C
       exclude: [...config.hosts.exclude],
     },
     client: config.gen.client,
+    mcp: config.gen.mcp,
     sticky: STICKY_PATHS.filter(path => sources[path] === 'flag' || sources[path] === 'env'),
   }
 }
@@ -83,7 +87,7 @@ export async function readBuildRecord(outDir: string): Promise<BuildRecord | nul
 export interface StickyOptions {
   hosts: { include?: string[], exclude?: string[] }
   redact: { examples?: BuildRecord['examples'] }
-  gen: { client?: boolean }
+  gen: { client?: boolean, mcp?: NonNullable<BuildRecord['mcp']> }
   /** The same options as flags, for the log line (`--examples none`). */
   described: string[]
 }
@@ -119,20 +123,31 @@ export function stickyOptions(record: BuildRecord | null, current: Record<string
     result.gen.client = record.client
     result.described.push(record.client ? 'client on' : '--no-client')
   }
+  if (sticky.has('gen.mcp')) {
+    result.gen.mcp = record.mcp ?? 'off'
+    result.described.push(`--mcp ${result.gen.mcp}`)
+  }
   return result
 }
 
 /**
  * After `gen`: the folder now has a current client, so a sticky `--no-client` no longer
- * describes it, and a later `probe` should keep the client up to date.
+ * describes it, and a later `probe` should keep the client up to date. `mcp` is what gen wrote
+ * into `client/mcp/`; it is sticky when a flag or variable chose it, so probe's rebuild keeps it.
  */
-export async function recordClientGenerated(outDir: string): Promise<void> {
+export async function recordClientGenerated(outDir: string, mcp?: { mode: NonNullable<BuildRecord['mcp']>, sticky: boolean }): Promise<void> {
   const record = await readBuildRecord(outDir)
   if (!record)
     return
+  const sticky = record.sticky.filter(path => path !== 'gen.client' && (mcp === undefined || path !== 'gen.mcp'))
   await writeBuildRecord(outDir, {
     ...record,
     client: true,
-    sticky: record.sticky.filter(path => path !== 'gen.client'),
+    ...(mcp === undefined
+      ? {}
+      : { mcp: mcp.mode }),
+    sticky: mcp?.sticky === true
+      ? [...sticky, 'gen.mcp' as const].sort()
+      : sticky,
   })
 }

@@ -1,6 +1,8 @@
+import type { OperationEntry } from '../mcp/catalog'
 import type { FlowsDocument } from '../model'
+import type { McpMode, ZodExport } from './mcp'
 import type { ChannelSummary, HostSpec, OpenApiDocument } from './spec'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -8,9 +10,11 @@ import { createClient } from '@hey-api/openapi-ts'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
+import { catalogOperations } from '../mcp/catalog'
 import { dispatchFunctions, renderDispatchModule } from './dispatch'
 import { graphqlFunctions, renderGraphqlModule } from './graphql'
 import { nameHtmlValues } from './html-values'
+import { mcpTools, renderMcpReadme, renderMcpServer, zodExports } from './mcp'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
 import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema, withoutBrowserOnlySteps } from './spec'
 
@@ -19,6 +23,11 @@ export interface GenerateClientInput {
   /** The handoff folder `build` wrote; specs are read from `specs/`, the client goes to `client/`. */
   handoffDir: string
   flows: FlowsDocument
+  /**
+   * `read` or `write` also writes `client/mcp/`, an MCP server with a tool per operation that
+   * reads data (`read`) or per operation (`write`); `off` (the default) does not (decision 0043).
+   */
+  mcp?: McpMode
 }
 
 /** What {@link generateClient} wrote. */
@@ -73,6 +82,8 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
   await writeFile(path.join(clientDir, 'extract.ts'), renderExtractModule(extracts, htmlValues))
   await writeFile(path.join(clientDir, 'index.ts'), renderIndexModule(hosts, extracts, htmlValues))
   await writeFile(path.join(clientDir, 'README.md'), renderReadme(hosts, extracts, input.flows.session, htmlValues, channels))
+  if (input.mcp !== undefined && input.mcp !== 'off')
+    await writeMcpServer(clientDir, loaded, input.flows, input.mcp, warnings)
 
   const files = (await listFiles(clientDir)).map(file => path.posix.join('client', file))
   return { files, warnings }
@@ -81,6 +92,26 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
 interface LoadedSpec {
   host: HostSpec
   document: OpenApiDocument
+}
+
+/** `client/mcp/` (decision 0043), from the specs and the Zod schemas hey-api just wrote. */
+async function writeMcpServer(clientDir: string, loaded: readonly LoadedSpec[], flows: FlowsDocument, mode: Exclude<McpMode, 'off'>, warnings: string[]): Promise<void> {
+  const operations: OperationEntry[] = []
+  const exportsByHost = new Map<string, Map<string, ZodExport>>()
+  for (const { host, document } of loaded) {
+    operations.push(...catalogOperations(host, document, host.securedOperationIds, flows, warnings))
+    // hey-api writes no zod.gen.ts for a host whose operations have no schemas at all.
+    const zodFile = path.join(clientDir, host.identifier, 'zod.gen.ts')
+    const zodSource = existsSync(zodFile)
+      ? await readFile(zodFile, 'utf8')
+      : ''
+    exportsByHost.set(host.host, new Map(zodExports(zodSource).map(entry => [entry.name, entry])))
+  }
+  const hosts = loaded.map(({ host }) => host)
+  const tools = mcpTools(operations, exportsByHost, mode, warnings)
+  await mkdir(path.join(clientDir, 'mcp'), { recursive: true })
+  await writeFile(path.join(clientDir, 'mcp', 'server.ts'), renderMcpServer(hosts, tools, mode))
+  await writeFile(path.join(clientDir, 'mcp', 'README.md'), renderMcpReadme(hosts, tools, mode))
 }
 
 function isAsyncApi(raw: unknown): boolean {

@@ -8,7 +8,7 @@ import type { CommandRegistrar } from './program'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import process from 'node:process'
-import { InvalidArgumentError } from 'commander'
+import { InvalidArgumentError, Option } from 'commander'
 import { consola } from 'consola'
 import { dirname, join, resolve } from 'pathe'
 import { analyzeForProbe, buildHandoff, readBuildRecord, recordClientGenerated, stickyOptions } from '../build'
@@ -111,6 +111,14 @@ interface OutputFlags {
   exclude?: string[]
   examples?: string
   client?: boolean
+  mcp?: string
+}
+
+const MCP_HELP = 'also write client/mcp/, an MCP server with a tool per operation: read (the default: operations that only read) | write (all) | off'
+
+/** `--mcp [mode]`; `--mcp` alone means `read`. */
+function mcpOption(note: string): Option {
+  return new Option('--mcp [mode]', `${MCP_HELP}${note}`).preset('read').argParser(mcpMode)
 }
 
 function addOutputOptions(command: Command, note: string): Command {
@@ -119,6 +127,13 @@ function addOutputOptions(command: Command, note: string): Command {
     .option('--exclude <host>', `skip this host (glob, repeatable)${note}`, collect)
     .option('--examples <mode>', `masked | raw | none${note}`)
     .option('--no-client', `do not generate the TypeScript client${note}`)
+    .addOption(mcpOption(note))
+}
+
+function mcpMode(value: string): string {
+  if (!['off', 'read', 'write'].includes(value))
+    throw new InvalidArgumentError(`"${value}" is not an MCP mode: use read, write or off.`)
+  return value
 }
 
 function warnIfRaw(examples: string): void {
@@ -141,6 +156,7 @@ const buildCommand: CommandRegistrar = (program) => {
           client: flags.client === false
             ? false
             : undefined,
+          mcp: flags.mcp,
         },
       })
       warnIfRaw(config.redact.examples)
@@ -187,6 +203,7 @@ const probeCommand: CommandRegistrar = (program) => {
           client: flags.client === false
             ? false
             : sticky.gen.client,
+          mcp: flags.mcp ?? sticky.gen.mcp,
         },
         probe: { maxRps: flags.maxRps, unsafeMethods: flags.unsafeMethods, minimizePerHost: flags.minimizePerHost },
       })
@@ -233,19 +250,22 @@ const genCommand: CommandRegistrar = (program) => {
   program
     .command('gen')
     .description('regenerate only the TypeScript client from the specs in the handoff folder (updates the client lines of AGENT.md and API_MAP.md)')
-    .action(async (_flags: unknown, command: Command) => {
-      const { config, cwd } = await resolveConfig(command)
+    .addOption(mcpOption(''))
+    .action(async (flags: { mcp?: string }, command: Command) => {
+      const { config, cwd, sources } = await resolveConfig(command, {
+        gen: { mcp: flags.mcp },
+      })
       // Works from the committed handoff folder alone: raw captures are not needed (or present) in a fresh clone.
       const handoffDir = resolve(cwd, config.outDir)
       // Fails on an unreadable build.json before anything in the folder is rewritten.
       await readBuildRecord(handoffDir)
-      const result = await generateClient({ handoffDir, flows: await readFlowsDocument(handoffDir) })
+      const result = await generateClient({ handoffDir, flows: await readFlowsDocument(handoffDir), mcp: config.gen.mcp })
       // AGENT.md and API_MAP.md were written when the client was missing or stale; say it exists now.
       printWarnings([
         ...result.warnings,
         ...await updateClientState(handoffDir, 'current'),
       ])
-      await recordClientGenerated(handoffDir)
+      await recordClientGenerated(handoffDir, { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' })
       consola.success(`Generated ${result.files.length} client files`)
     })
 }
