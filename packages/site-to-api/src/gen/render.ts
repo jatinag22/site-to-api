@@ -72,7 +72,7 @@ export function nameExtracts(hosts: HostSpec[], warnings: string[]): NamedExtrac
       if ((hostsByBase.get(base)?.size ?? 0) > 1) {
         // Host identifiers can start with `_1`; nameBase keeps the result an identifier.
         const prefixed = nameBase(`${host.identifier}_${base}`)
-        warnings.push(`operation ${operation.operationId} exists on several hosts; its parser for ${host.host} is extract${prefixed}`)
+        warnings.push(`the parser name extract${base} would be the same on several hosts; for ${operation.operationId} on ${host.host} it is extract${prefixed}`)
         base = prefixed
       }
       let unique = base
