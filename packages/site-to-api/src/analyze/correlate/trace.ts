@@ -308,6 +308,19 @@ function typedPrefixChains(exchanges: readonly Exchange[], sentValues: ReadonlyM
 }
 
 /**
+ * A producer that a constant explains better. A value sent the same in every session, or written
+ * as a literal in the site's code, is the site's own constant when the producer is a page
+ * (`Indices` in a navigation link), a part of a longer value, or a plain word a response
+ * happens to hold (`NIFTY` in a market summary).
+ */
+function isCoincidence(producer: Candidate, value: string, constant: boolean): boolean {
+  // A Set-Cookie of the same name is where a cookie comes from, however constant its value.
+  if (!constant || (producer.sameName && producer.location.in === 'set-cookie'))
+    return false
+  return producer.location.in === 'html' || producer.transform === 'substring' || PLAIN_WORD.test(value)
+}
+
+/**
  * Finds the origin of every value the captured requests send: an earlier response (directly or
  * encoded), a computation in the page, the person's typing, a constant, a script-set cookie, or
  * unknown. Output follows capture order (session, time, sequence), then each request's value
@@ -367,9 +380,11 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
           : findUserInputField(index.events, fieldName, exchange.startedAt, {
               stillTyping: typing.has(sent),
             })
+        const sessions = seenIn.get(constantKey(exchange, sent.location, sent.value))?.size ?? 0
+        const constant = staticStrings.has(sent.value) || (sessionIds.size >= 2 && sessions === sessionIds.size)
         // Typing `ciphe` after `ciph`: the longer value contains the earlier one, which the
         // response echoed. A typed field explains it better than that substring.
-        if (producer && !(producer.transform === 'substring' && field !== null)) {
+        if (producer && !(producer.transform === 'substring' && field !== null) && !isCoincidence(producer, sent.value, constant)) {
           return {
             kind: 'response',
             exchangeId: producer.exchange.id,
@@ -382,8 +397,7 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
           return { kind: 'transform', eventIndex, sessionId: exchange.sessionId }
         if (field !== null)
           return { kind: 'user-input', field }
-        const sessions = seenIn.get(constantKey(exchange, sent.location, sent.value))?.size ?? 0
-        if (staticStrings.has(sent.value) || (sessionIds.size >= 2 && sessions === sessionIds.size))
+        if (constant)
           return { kind: 'constant' }
         if (sent.location.in === 'cookie') {
           return {

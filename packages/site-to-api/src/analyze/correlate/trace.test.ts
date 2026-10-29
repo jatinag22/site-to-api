@@ -350,6 +350,63 @@ describe('traceValues: response producers', () => {
     expect(traced('https://www.news.test/', 'resource=basket')).toMatchObject({ kind: 'unknown' })
   })
 
+  it('prefers a constant to a page or a plain word a response happens to hold', () => {
+    const sessionData = (sessionId: string): Exchange[] => [
+      exchange({
+        sessionId,
+        url: 'https://www.market.test/',
+        startedAt: 1,
+        kind: 'page',
+        responseBody: textBody('<html><body><nav><a href="/indices">Indices</a></nav></body></html>'),
+      }),
+      exchange({
+        sessionId,
+        url: 'https://www.market.test/api/summary',
+        startedAt: 2,
+        responseBody: jsonBody({
+          gift: { symbol: 'NIFTY' },
+          token: `tk-${sessionId}-77a1b2c3`,
+        }),
+      }),
+      exchange({ sessionId, url: 'https://www.market.test/api/chain?type=Indices&symbol=NIFTY', startedAt: 3 }),
+    ]
+    const exchanges = [
+      ...sessionData('a'),
+      ...sessionData('b'),
+    ]
+    const traces = traceValues({
+      exchanges,
+      sessions: [
+        session('a'),
+        session('b'),
+      ],
+      htmlLocator: createHtmlLocator(),
+      staticStrings: new Set(),
+      minValueLength: 4,
+    })
+    const chain = exchanges[2]!
+    expect(originAt(traces, chain, '{"in":"query","name":"type"}')).toEqual({ kind: 'constant' })
+    expect(originAt(traces, chain, '{"in":"query","name":"symbol"}')).toEqual({ kind: 'constant' })
+    // In one session only, with no literal in the code, the response is still the best answer.
+    const one = sessionData('a')
+    const single = trace(one, {
+      sessions: [
+        session('a'),
+      ],
+      htmlLocator: createHtmlLocator(),
+    })
+    expect(originAt(single, one[2]!, '{"in":"query","name":"symbol"}')).toMatchObject({ kind: 'response' })
+    // A literal in the site's code is a constant even in one session.
+    const literal = trace(one, {
+      sessions: [
+        session('a'),
+      ],
+      htmlLocator: createHtmlLocator(),
+      staticStrings: ['Indices'],
+    })
+    expect(originAt(literal, one[2]!, '{"in":"query","name":"type"}')).toEqual({ kind: 'constant' })
+  })
+
   it('does not trace a short number to a page that contains it by chance', () => {
     const page = exchange({
       url: 'https://www.example.test/',
