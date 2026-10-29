@@ -167,6 +167,30 @@ describe('inferExtraction: tables', () => {
   })
 })
 
+describe('inferExtraction: a list beside values that vary', () => {
+  // A product page: cards of related items, and five values about the product itself.
+  const page = (seed: number, cards: number): string => `<html><body><main><h1 class="name">Item ${seed}</h1>
+<span class="price">${seed * 10}</span><span class="stock">${seed + 3} left</span><span class="seller">Shop ${seed}</span>
+<span class="ship">${seed} days</span><span class="code">C-${seed}9</span></main>
+<ul id="related">${Array.from({ length: cards }, (_, i) => `<li class="card"><b class="title">Related ${seed}${i}</b><i class="cost">${seed + i}</i></li>`).join('')}</ul></body></html>`
+
+  it('prefers the values when the list has only two records a page', () => {
+    const spec = htmlSpec(inferExtraction([
+      html(page(1, 2)),
+      html(page(2, 2)),
+    ], { minSamples: 2 })?.spec)
+    expect(spec).toMatchObject({ records: ':root', many: false })
+  })
+
+  it('prefers a list of three or more records a page over values without labels', () => {
+    const spec = htmlSpec(inferExtraction([
+      html(page(1, 3)),
+      html(page(2, 3)),
+    ], { minSamples: 2 })?.spec)
+    expect(spec).toMatchObject({ records: '#related > li.card', many: true })
+  })
+})
+
 describe('inferExtraction: detail pages', () => {
   it('reads definition lists, two-column tables and "Label: value" text from one sample', () => {
     const result = inferExtraction([
@@ -229,7 +253,7 @@ describe('inferExtraction: repeated structures', () => {
       'id',
       'image',
       'title',
-      'titleUrl',
+      'url',
       'price',
       'badge',
     ])
@@ -239,7 +263,7 @@ describe('inferExtraction: repeated structures', () => {
         id: 21,
         image: '/img/21.jpg',
         title: 'Iron Pan',
-        titleUrl: '/p/21',
+        url: '/p/21',
         price: 30,
         badge: null,
       },
@@ -247,7 +271,7 @@ describe('inferExtraction: repeated structures', () => {
         id: 22,
         image: '/img/22.jpg',
         title: 'Steel Pan',
-        titleUrl: '/p/22',
+        url: '/p/22',
         price: 18.75,
         badge: 'New',
       },
@@ -274,7 +298,8 @@ describe('inferExtraction: busy pages', () => {
     const result = inferExtraction([1, 2, 3].map(seed => html(busyPage(seed))), { minSamples: 2 })
     const spec = htmlSpec(result?.spec)
     expect(spec.records).toBe('div.grid > div.card')
-    expect(Object.keys(spec.fields)).toEqual(['t', 'p', 'seller'])
+    // The heading is the title; the minified `p` class still beats a positional name.
+    expect(Object.keys(spec.fields)).toEqual(['title', 'p', 'seller'])
     expect(spec.fields.p).toMatchObject({ type: 'integer', pattern: '₹\\s*([+-]?\\d[\\d,]*)' })
   })
 })

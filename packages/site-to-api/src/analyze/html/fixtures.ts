@@ -130,3 +130,121 @@ export function nextDataPage(apiKey: string, userId: string): string {
     <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"config":{"apiKey":"${apiKey}","region":"in"}}},"page":"/account","buildId":"b1"}</script>
     <script>window.__INITIAL_STATE__ = {"user":{"id":"${userId}","plan":"free"}};</script>`)
 }
+
+/** One story of {@link storyTable}; `score: null` is a job ad (no score, user or comments). */
+export interface Story {
+  id: number
+  title: string
+  url: string
+  site: string
+  score: number | null
+  user: string
+  hoursAgo: number
+  comments: number
+}
+
+/**
+ * A news front page laid out like Hacker News: a layout table around a table where each story
+ * spans three sibling rows (title row, subtext row, spacer), with vote and hide links built from
+ * the story id and a tooltip holding the exact time.
+ */
+export function storyTable(stories: Story[], page = 1): string {
+  const rows = stories.map((story, index) => {
+    const rank = (page - 1) * stories.length + index + 1
+    const subline = story.score === null
+      ? `<span class="age" title="2030-01-0${(index % 9) + 1}T0${story.hoursAgo % 10}:00:00"><a href="item?id=${story.id}">${story.hoursAgo} hours ago</a></span> | <a href="hide?id=${story.id}&amp;goto=news">hide</a>`
+      : `<span class="subline"><span class="score" id="score_${story.id}">${story.score} point${story.score === 1
+        ? ''
+        : 's'}</span> by <a href="user?id=${story.user}" class="hnuser">${story.user}</a> <span class="age" title="2030-01-0${(index % 9) + 1}T0${story.hoursAgo % 10}:00:00"><a href="item?id=${story.id}">${story.hoursAgo} hours ago</a></span> | <a href="hide?id=${story.id}&amp;goto=news">hide</a> | <a href="item?id=${story.id}">${story.comments === 0
+        ? 'discuss'
+        : `${story.comments}&nbsp;comment${story.comments === 1
+          ? ''
+          : 's'}`}</a></span>`
+    return `<tr class="athing submission" id="${story.id}"><td class="title"><span class="rank">${rank}.</span></td><td class="votelinks"><center><a id="up_${story.id}" href="vote?id=${story.id}&amp;how=up&amp;goto=news"><div class="votearrow" title="upvote"></div></a></center></td><td class="title"><span class="titleline"><a href="${story.url}">${story.title}</a><span class="sitebit comhead"> (<a href="from?site=${story.site}"><span class="sitestr">${story.site}</span></a>)</span></span></td></tr>
+<tr><td colspan="2"></td><td class="subtext">${subline}</td></tr>
+<tr class="spacer" style="height:5px"></tr>`
+  }).join('\n')
+  return `<html><head><title>Demo News</title></head><body><center><table id="main">
+<tr><td><table><tr><td><b class="name"><a href="news">Demo News</a></b> <a href="newest">new</a> | <a href="ask">ask</a></td></tr></table></td></tr>
+<tr id="box"><td><table>
+${rows}
+<tr class="morespace"></tr><tr><td colspan="2"></td><td class="title"><a href="?p=${page + 1}" class="morelink">More</a></td></tr>
+</table></td></tr>
+<tr><td><span class="links"><a href="faq">FAQ</a> | <a href="lists">Lists</a></span></td></tr>
+</table></center></body></html>`
+}
+
+/** A profile laid out like Hacker News: label rows, the date links to a day's archive, then links. */
+export function profileTable(user: { name: string, created: string, day: string, karma: number, about: string }): string {
+  return `<html><body><center><table id="main">
+<tr><td><table><tr><td><a href="news">Demo News</a></td></tr></table></td></tr>
+<tr id="box"><td><table>
+<tr class="athing"><td valign="top">user:</td><td><a href="user?id=${user.name}" class="hnuser">${user.name}</a></td></tr>
+<tr><td valign="top">created:</td><td><span class="age"><a href="front?day=${user.day}&amp;birth=${user.name}">${user.created}</a></span></td></tr>
+<tr><td valign="top">karma:</td><td>${user.karma}</td></tr>
+<tr><td valign="top">about:</td><td>${user.about}</td></tr>
+<tr><td></td><td><a href="submitted?id=${user.name}"><u>submissions</u></a></td></tr>
+<tr><td></td><td><a href="threads?id=${user.name}"><u>comments</u></a></td></tr>
+</table></td></tr></table></center></body></html>`
+}
+
+/** One result of {@link questionList}. */
+export interface Question {
+  id: number
+  title: string
+  votes: number
+  answers: number
+  tag: string
+  author: string
+}
+
+/**
+ * A Q&A list laid out like Stack Overflow: schema.org list items around question cards with
+ * utility classes, a stats column, tags and an author card, next to a sidebar of collectives.
+ */
+export function questionList(questions: Question[], sidebar: string[]): string {
+  const cards = questions.map(question => `<div class="bb bc-black-200" itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">
+  <div id="question-summary-${question.id}" class="s-post-summary js-post-summary" data-post-id="${question.id}" itemprop="item" itemscope itemtype="https://schema.org/Question">
+    <div class="s-post-summary--stats">
+      <div class="s-post-summary--stats-item"><span class="s-post-summary--stats-item-number" itemprop="upvoteCount">${question.votes}</span> <span class="s-post-summary--stats-item-unit">votes</span></div>
+      <div class="s-post-summary--stats-item"><span class="s-post-summary--stats-item-number" itemprop="answerCount">${question.answers}</span> <span class="s-post-summary--stats-item-unit">answers</span></div>
+    </div>
+    <div class="s-post-summary--content">
+      <h3 class="s-post-summary--content-title"><a href="/questions/${question.id}/q" class="s-link">${question.title}</a></h3>
+      <ul class="tags"><li><a href="/questions/tagged/${question.tag}" class="s-tag post-tag">${question.tag}</a></li></ul>
+      <div class="s-user-card"><a href="/users/${question.id + 7}/u" class="author">${question.author}</a></div>
+    </div>
+  </div>
+</div>`).join('\n')
+  const side = sidebar.map(name => `<div class="widget-item"><a href="/collectives/${name.toLowerCase()}">${name}</a> <span>A collective</span></div>`).join('')
+  return `<html><body><div id="content"><div id="mainbar"><div itemprop="mainEntity" itemscope itemtype="https://schema.org/ItemList">
+${cards}
+</div></div><div id="sidebar">${side}</div></div></body></html>`
+}
+
+/** One card of {@link searchResults}. */
+export interface Product {
+  code: string
+  title: string
+  price: string
+  rating: string
+  sponsored: boolean
+}
+
+/**
+ * A shop search page laid out like a big marketplace: result cards keyed by `data-code`, with
+ * layout classes that differ between sponsored and other cards, next to a filter sidebar with
+ * many short links.
+ */
+export function searchResults(query: string, products: Product[], filters: string[]): string {
+  const cards = products.map((product, index) => `<div role="listitem" data-code="${product.code}" data-component-type="search-result" class="col-${product.sponsored ? '4-of-12' : '12-of-12'} result-item">
+  <div class="card-wrap"><a class="link-normal" href="/item/${product.code}"><img class="item-image" src="/img/${product.code}.jpg" alt=""></a>
+  <h2 class="size-medium"><a class="link-normal" href="/item/${product.code}?q=${query}"><span>${product.title}</span></a></h2>
+  <div class="reviews"><span class="icon-alt">${product.rating} out of 5 stars</span></div>
+  <span class="item-price"><span class="offscreen">₹${product.price}</span></span>
+  <span class="slot" data-pos="${index + 1}"></span></div>
+</div>`).join('\n')
+  const side = filters.map(name => `<div class="section spacing-none" role="group"><ul><li><a class="nav-link" href="/s?q=${query}&amp;f=${name}"><span class="size-base">${name}</span></a></li></ul></div>`).join('\n')
+  return `<html><body><div id="search"><div class="left-nav spacing-double">${side}</div>
+<div class="main-slot result-list">${cards}</div></div></body></html>`
+}

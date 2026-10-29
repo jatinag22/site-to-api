@@ -9,7 +9,7 @@ import type { ExtractedValue } from './values'
 import { applyExtractSpec } from './apply'
 import { inferDetail } from './detail'
 import { allElements, looksLikeHtml, parseHtml, select } from './dom'
-import { inferRecords } from './records'
+import { inferRecords, recordElements } from './records'
 import { inferText } from './text'
 
 /** What `inferExtraction` returns: the spec, how many samples it was inferred from, and how sure it is. */
@@ -50,7 +50,7 @@ function chooseHtml(texts: string[]): Draft | null {
   // Positions inside the records vary too; they belong to the records, not to a detail layout.
   const [first] = documents
   const inRecords = new Set(records && first
-    ? select(records.spec.records, first).flatMap(record => [
+    ? recordElements(records, first).flatMap(record => [
         record,
         ...allElements(record),
       ])
@@ -60,9 +60,19 @@ function chooseHtml(texts: string[]): Draft | null {
   const usableDetail = detail && (several || fieldCount(detail) >= 2)
     ? detail
     : null
-  if (records && (!usableDetail || fieldCount(records) * 2 >= fieldCount(usableDetail)))
-    return records
-  return usableDetail
+  if (!records || !usableDetail)
+    return records ?? usableDetail
+  // A real list (three or more records a page) outweighs positions that merely differ between
+  // pages; only labelled values (`Price: …`) still make the page a detail page.
+  const perSample = first
+    ? select(records.spec.records, first).length
+    : 0
+  const rival = perSample >= 3
+    ? fieldCount(inferDetail(documents, false, inRecords))
+    : fieldCount(usableDetail)
+  return fieldCount(records) * 2 >= rival
+    ? records
+    : usableDetail
 }
 
 /**

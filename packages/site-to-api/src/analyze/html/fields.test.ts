@@ -19,4 +19,15 @@ describe('typeField', () => {
     expect(typeField(['plain', 'words'])).toEqual({ type: 'string', pattern: null })
     expect(typeField(['12', '13'])).toEqual({ type: 'integer', pattern: null })
   })
+
+  it('reads counts with a singular or plural noun, words without a number as null', () => {
+    expect(typeField(['12 points', '1 point'])).toEqual({ type: 'integer', pattern: '([+-]?\\d[\\d,]*)\\s*points?', unit: 'points' })
+    expect(typeField(['5\u00A0comments', 'discuss', '1 comment'])).toMatchObject({ type: 'integer', unit: 'comments' })
+    expect(typeField(['4.1 out of 5 stars', '3.8 out of 5 stars'])).toMatchObject({ type: 'number', unit: 'rating' })
+  })
+
+  it('keeps relative times and URLs as strings', () => {
+    expect(typeField(['3 hours ago', '5 hours ago'])).toEqual({ type: 'string', pattern: null })
+    expect(typeField(['https://a.example/x', 'https://b.example/y'])).toEqual({ type: 'string', pattern: null })
+  })
 })

@@ -7,7 +7,11 @@
 export type FieldType = 'string' | 'number' | 'integer' | 'boolean' | 'date'
 
 export interface ExtractField {
-  /** CSS selector relative to the record root. Empty string means the root itself. */
+  /**
+   * CSS selector relative to the record root. Empty string means the root itself. A record that
+   * spans several sibling elements reaches the later ones with `:scope + …`
+   * (`:scope + tr span.score`).
+   */
   selector: string
   /** Attribute to read; `null` reads the element's trimmed text content. */
   attr: string | null
@@ -26,6 +30,11 @@ export interface HtmlExtractSpec {
    */
   records: string
   many: boolean
+  /**
+   * What the records are, plural (`submissions`, `questions`), from the page's markup. Generated
+   * clients name their parser after it; `extract()` ignores it.
+   */
+  recordsName?: string
   fields: Record<string, ExtractField>
 }
 
