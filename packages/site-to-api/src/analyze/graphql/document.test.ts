@@ -83,14 +83,24 @@ describe('normalizeDocument', () => {
 })
 
 describe('readVariables', () => {
-  it('says which variables are declared non-null at the top level', () => {
+  it('says which variables are declared non-null at the top level, without a default', () => {
     const variables = readVariables('query Q($id: Int!, $note: String, $ids: [ID!], $tags: [String]! = [], $at: Date @deprecated) { a }', null)
     expect(Object.fromEntries(variables ?? [])).toEqual({
       id: true,
       note: false,
       ids: false,
-      tags: true,
+      tags: false,
       at: false,
+    })
+  })
+
+  it('does not require a non-null variable with a default', () => {
+    const variables = readVariables('query Q($first: Int! = 20, $after: String = "x", $id: ID!, $ids: [ID!]! = []) { a }', null)
+    expect(Object.fromEntries(variables ?? [])).toEqual({
+      first: false,
+      after: false,
+      id: true,
+      ids: false,
     })
   })
 

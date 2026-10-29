@@ -232,8 +232,9 @@ function startsVariable(tokens: Token[], i: number): boolean {
 }
 
 /**
- * Whether each variable the operation declares is non-null at the top level: `$id: Int!` and
- * `$ids: [ID]!` are, `$id: Int` and `$ids: [ID!]` are not. Reads the variable definitions in
+ * Whether each variable the operation declares must be sent: non-null at the top level and
+ * without a default. `$id: Int!` and `$ids: [ID]!` must; `$id: Int`, `$ids: [ID!]` and
+ * `$first: Int! = 20` need not. Reads the variable definitions in
  * `tokens[start..end)`, the span of one operation definition.
  */
 function variableDefinitions(tokens: Token[], start: number, end: number): Map<string, boolean> {
@@ -246,7 +247,12 @@ function variableDefinitions(tokens: Token[], start: number, end: number): Map<s
     if (!startsVariable(tokens, i))
       continue
     const last = typeEnd(tokens, i + 3, end)
-    variables.set(tokens[i + 1]!.text, tokens[last + 1]?.text === '!')
+    const nonNull = tokens[last + 1]?.text === '!'
+    const defaulted = tokens[nonNull
+      ? last + 2
+      : last + 1]?.text === '='
+    // A variable with a default may be left out, even when its type is non-null.
+    variables.set(tokens[i + 1]!.text, nonNull && !defaulted)
     i = last
   }
   return variables
@@ -254,7 +260,7 @@ function variableDefinitions(tokens: Token[], start: number, end: number): Map<s
 
 /**
  * The variables of the operation a request runs (chosen as {@link selectOperation} does), each
- * with whether it is declared non-null. Null when the text is not a GraphQL document or does not
+ * with whether it must be sent (non-null, no default). Null when the text is not a GraphQL document or does not
  * say which operation runs.
  */
 export function readVariables(text: string, operationName: string | null): Map<string, boolean> | null {

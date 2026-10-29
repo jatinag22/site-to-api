@@ -157,6 +157,16 @@ describe('graphQL request schemas', () => {
       expect(operation?.requestBody?.schema.properties?.variables?.required).toEqual(['id'])
     })
 
+    it('leaves a non-null variable with a default optional', () => {
+      const [operation] = analyse([
+        graphqlPost({
+          query: 'query Feed($first: Int! = 20, $tag: String!) { feed(first: $first, tag: $tag) { id } }',
+          variables: { first: 10, tag: 'a' },
+        }),
+      ])
+      expect(operation?.requestBody?.schema.properties?.variables?.required).toEqual(['tag'])
+    })
+
     it('leaves a variable declared nullable optional even when it varies', () => {
       const [operation] = analyse([
         graphqlPost({
