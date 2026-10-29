@@ -6,6 +6,8 @@ const HTML_EXTRACT = {
   kind: 'html',
   records: 'li',
   many: true,
+  // What the records are; read through so gen can name the parser after it.
+  recordsName: 'items',
   fields: {
     name: {
       selector: '',

@@ -58,7 +58,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    parses original sources or bundles with oxc to find request call sites and endpoints that were
    never called, and selects excerpts for computed values and call sites.
 9. **html** (`src/analyze/html`): infers extraction specs for HTML and text responses by comparing
-   samples (template vs data), detecting repeated records, labels and types.
+   samples (template vs data), detecting repeated records (including records spread over sibling
+   rows), labels and types, and naming fields and records from the page's markup (0029).
 10. **redact** (`src/analyze/redact`): decides, per value, whether it is a cross-session constant
     (kept), a secret or personal value (replaced by a shape description or a masked example that
     keeps the format), or ordinary data.

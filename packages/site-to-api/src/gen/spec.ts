@@ -20,6 +20,7 @@ const ExtractSpecSchema: z.ZodType<ExtractSpec> = z.discriminatedUnion('kind', [
     kind: z.literal('html'),
     records: z.string(),
     many: z.boolean(),
+    recordsName: z.string().optional(),
     fields: z.record(z.string(), z.object({
       selector: z.string(),
       attr: z.string().nullable(),

@@ -47,7 +47,7 @@ function extractHtml(html: string, spec: HtmlExtractSpec): ExtractedRecord[] | E
   const records = (spec.many
     ? roots
     : roots.slice(0, 1)).map((root) => {
-    const record: ExtractedRecord = {}
+    const record = newRecord()
     for (const [name, field] of Object.entries(spec.fields)) {
       const raw = readField(root, field, fieldPatterns.get(name) ?? null, name)
       assign(record, name, raw, field.type, field.optional)
@@ -91,7 +91,7 @@ function extractText(text: string, spec: TextExtractSpec): ExtractedRecord[] {
     return (spec.header
       ? rows.slice(1)
       : rows).map((row) => {
-      const record: ExtractedRecord = {}
+      const record = newRecord()
       for (const [name, field] of fields) {
         const cell = field.column === null
           ? undefined
@@ -109,7 +109,7 @@ function extractText(text: string, spec: TextExtractSpec): ExtractedRecord[] {
   const regex = compileRegex(spec.pattern, 'gm', 'records')
   const records: ExtractedRecord[] = []
   for (const match of text.matchAll(regex)) {
-    const record: ExtractedRecord = {}
+    const record = newRecord()
     for (const [name, field] of fields) {
       const value = field.group === null
         ? undefined
@@ -123,6 +123,16 @@ function extractText(text: string, spec: TextExtractSpec): ExtractedRecord[] {
   return records
 }
 
+/**
+ * An empty record without a prototype. Field names come from page text, so a record must not
+ * inherit `constructor` or `toString` (a missing optional field would read as a function and
+ * fail the generated client's schema), and `__proto__` must be stored like any other name.
+ */
+function newRecord(): ExtractedRecord {
+  const record: ExtractedRecord = Object.create(null)
+  return record
+}
+
 function assign(record: ExtractedRecord, name: string, raw: string | null, type: FieldType, optional: boolean): void {
   if (raw === null) {
     if (!optional)
@@ -133,7 +143,7 @@ function assign(record: ExtractedRecord, name: string, raw: string | null, type:
 }
 
 function emptyRecord(fields: Record<string, ExtractField>): ExtractedRecord {
-  const record: ExtractedRecord = {}
+  const record = newRecord()
   for (const [name, field] of Object.entries(fields)) {
     if (!field.optional)
       record[name] = null
