@@ -11,7 +11,7 @@ import { graphqlGroupKey, graphqlOperationId, graphqlOperationOf, graphqlSpecPat
 import { inferStringSchema } from '../schema'
 import { detectDispatcher } from './dispatch'
 import { isSlug } from './identifiers'
-import { linkedSlugs } from './links'
+import { linkedSlugs, titledSlugPaths } from './links'
 import { camelCase, nounFor, operationIdFor, pathPhrase, singular, words } from './naming'
 import { siblingFacts } from './siblings'
 import { markParameters, parseTemplate, segmentsOf, templateMatches } from './templates'
@@ -411,7 +411,7 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[], isSecr
     const { host, method } = members[0]!.request
     const marks = markParameters([
       ...new Set(members.map(exchange => exchange.request.path)),
-    ], routesFor(routes, host, method), linkedSlugs(members, relevant), siblingFacts(members, relevant))
+    ], routesFor(routes, host, method), linkedSlugs(members, relevant), siblingFacts(members, relevant), titledSlugPaths(members))
     for (const exchange of members) {
       const segments = segmentsOf(exchange.request.path)
       classified.push({

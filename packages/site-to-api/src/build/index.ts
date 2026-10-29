@@ -26,7 +26,7 @@ import { clientGap, handoffStems, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
 import { failedNavigationsWarning, loadSessions } from '../load'
-import { applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation, writeProbeReport } from '../probe'
+import { alignProbeReport, applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
@@ -210,7 +210,10 @@ function oneTimeCodeFields(traces: readonly ValueTrace[]): Set<string> {
 
 interface Analyzed {
   analysis: Analysis
+  /** `probe.json` with its entries matched to this build's operations (`alignProbeReport`). */
   probe: ProbeReport | null
+  /** `probe.json` as read, for rewriting it with redacted names only. */
+  stored: ProbeReport | null
   redactor: Redactor
 }
 
@@ -309,7 +312,9 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     inScope: createChannelScope(exchanges, config.hosts),
   })
 
-  const probe = await readProbeReport(outDir)
+  // probe.json may predate this build's operation ids: match its entries by replayed exchange.
+  const stored = await readProbeReport(outDir)
+  const probe = stored && alignProbeReport(stored, operations)
   if (probe) {
     flows.session = applyProbeReport(flows.session, probe, operations, redactor.text)
     const requires = requirementsByOperation(probe)
@@ -333,7 +338,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   }
   if (config.build.excerpts)
     await addExcerpts(analysis, loaded.sessions, redactor)
-  return { analysis, probe, redactor }
+  return { analysis, probe, stored, redactor }
 }
 
 /**
@@ -348,8 +353,9 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
   // Matching is done on raw names; everything written from here on gets the redacted spelling.
   const analysis = withRedactedNames(analyzed.analysis, analyzed.redactor.text)
   const probe = analyzed.probe && probeReportWithRedactedNames(analyzed.probe, analyzed.redactor.text)
-  if (analyzed.probe && probe && JSON.stringify(probe) !== JSON.stringify(analyzed.probe))
-    await writeProbeReport(outDir, probe)
+  const stored = analyzed.stored && probeReportWithRedactedNames(analyzed.stored, analyzed.redactor.text)
+  if (analyzed.stored && stored && JSON.stringify(stored) !== JSON.stringify(analyzed.stored))
+    await writeProbeReport(outDir, stored)
 
   // Remove generated files from a previous build so deleted operations do not linger.
   for (const stale of [

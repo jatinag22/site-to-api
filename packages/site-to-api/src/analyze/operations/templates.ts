@@ -3,7 +3,7 @@
  */
 import type { PathParam, SourceRoute } from '../../model'
 import type { SiblingFacts } from './siblings'
-import { isIdentifierLike, isStrongIdentifier } from './identifiers'
+import { isIdentifierLike, isSlug, isStrongIdentifier } from './identifiers'
 import { markSiblingPositions } from './siblings'
 
 export type Evidence = PathParam['evidence'][number]
@@ -70,10 +70,13 @@ function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCand
  *    response links to) are grouped; in a group an
  *    identifier position is a parameter once two distinct values are seen there (or one, when a
  *    strong identifier already made it a parameter).
- * 4. With `siblings`, words that differ in one position of otherwise equal paths are a parameter
+ * 4. A hyphenated slug that ends the path right after an id parameter (`/questions/{id}/<slug>`)
+ *    is a parameter when it differs between paths of that shape or when `titled` holds the path
+ *    (the slug spells the page's title, see `titledSlugPaths`).
+ * 5. With `siblings`, words that differ in one position of otherwise equal paths are a parameter
  *    when the capture shows they are data (decision 0035, `markSiblingPositions`).
  */
-export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set(), siblings: SiblingFacts | null = null): Map<string, Marks> {
+export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set(), siblings: SiblingFacts | null = null, titled: ReadonlySet<string> = new Set()): Map<string, Marks> {
   // A hyphenated slug (`pine-hill`) only counts when another response links to it: plain-word
   // endpoint names (`/api/all-upcoming-issues`) appear in bundles, never as links in data.
   const isCandidate = (segment: string): boolean => isIdentifierLike(segment) || linkedSlugs.has(segment)
@@ -110,6 +113,7 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
   }
 
   markVaryingPositions(free, isCandidate)
+  markTrailingSlugs(free, titled)
   if (siblings)
     markSiblingPositions(free, siblings)
   return result
@@ -150,4 +154,56 @@ function markVaryingPositions(free: Array<{ segments: string[], marks: Marks }>,
       }
     }
   }
+}
+
+/**
+ * Marks the slug that follows an id parameter at the end of a path (decision 0046). Sites put a
+ * readable copy of the title there (`/questions/{questionId}/define-generic-…`); with one value
+ * it would stay a literal and name the operation after one question. It becomes `{slug}` when
+ * the page's title spells it, or when paths of that shape show two or more slugs, each with its
+ * own id: one id seen with two slugs (`/users/7/edit-profile`, `/users/7/change-password`) means
+ * the slugs name endpoints, not the thing the id identifies.
+ */
+function markTrailingSlugs(free: Array<{ path: string, segments: string[], marks: Marks }>, titled: ReadonlySet<string>): void {
+  const groups = new Map<string, typeof free>()
+  for (const item of free) {
+    const last = item.segments.length - 1
+    if (last < 1 || item.marks.has(last) || !item.marks.has(last - 1) || !isSlug(item.segments[last] ?? ''))
+      continue
+    const key = `${item.segments.length}|${item.segments.slice(0, last - 1).join('/')}`
+    groups.set(key, [
+      ...(groups.get(key) ?? []),
+      item,
+    ])
+  }
+  for (const group of groups.values()) {
+    const varies = oneSlugPerId(group.map(item => [item.segments.at(-2) ?? '', item.segments.at(-1) ?? '']))
+    for (const item of group) {
+      if (!varies && !titled.has(item.path))
+        continue
+      item.marks.set(item.segments.length - 1, {
+        evidence: varies
+          ? ['varies']
+          : ['value-trace'],
+        sourceName: null,
+      })
+    }
+  }
+}
+
+/** True when two or more distinct slugs were seen and each id and each slug pairs with only one of the other. */
+function oneSlugPerId(pairs: Array<[id: string, slug: string]>): boolean {
+  const slugsById = new Map<string, Set<string>>()
+  const idsBySlug = new Map<string, Set<string>>()
+  for (const [id, slug] of pairs) {
+    slugsById.set(id, (slugsById.get(id) ?? new Set()).add(slug))
+    idsBySlug.set(slug, (idsBySlug.get(slug) ?? new Set()).add(id))
+  }
+  return idsBySlug.size > 1
+    && [
+      ...slugsById.values(),
+    ].every(slugs => slugs.size === 1)
+    && [
+      ...idsBySlug.values(),
+    ].every(ids => ids.size === 1)
 }

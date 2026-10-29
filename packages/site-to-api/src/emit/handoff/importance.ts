@@ -3,7 +3,7 @@
  * before third parties, and flows that log in or set up a session before the rest. Deterministic:
  * every order ends in a comparison of names or of the original position.
  */
-import type { Analysis, ComputedValue, Flow, SessionRequirement } from '../../model'
+import type { Analysis, ComputedValue, Exchange, Flow, Operation, SessionRequirement } from '../../model'
 import type { StepResolver } from '../steps'
 import { registrableHost } from '../../hosts'
 
@@ -24,6 +24,33 @@ function siteOf(host: string): string {
   return registrableHost(host.replace(/:\d+$/, ''))
 }
 
+/** `sec-fetch-dest` of a request, when the capture recorded it. */
+function fetchDest(exchange: Pick<Exchange, 'request'>): string | undefined {
+  return exchange.request.headers.find(header => header.name === 'sec-fetch-dest')?.value
+}
+
+/**
+ * The hosts whose pages were only ever loaded into frames: ad and identity-sync networks render
+ * their own pages inside iframes (Stack Overflow's `prebid.a-mo.net`, livecoinwatch's
+ * `cdn.coinzilla.io`, Nike's `photos.pixlee.co` widget), and those are not the site. The browser
+ * says which with `sec-fetch-dest`; a host with no page request carrying it (a capture without
+ * the header) counts as browsed, and one browsed page outweighs any frames.
+ */
+function framedHosts(operations: readonly Operation[]): Set<string> {
+  const dests = new Map<string, Set<string | undefined>>()
+  for (const operation of operations) {
+    if (operation.kind !== 'page' || operation.sourceOnly)
+      continue
+    const seen = dests.get(operation.host) ?? new Set()
+    for (const exchange of operation.exchanges)
+      seen.add(fetchDest(exchange))
+    dests.set(operation.host, seen)
+  }
+  return new Set([...dests]
+    .filter(([, seen]) => (seen.has('iframe') || seen.has('frame')) && !seen.has('document'))
+    .map(([host]) => host))
+}
+
 /**
  * Every host the folder has a file for: those with a session verdict, page-only hosts, and hosts
  * that only have operations or channels. Sorted first-party API hosts → page hosts → third-party
@@ -42,13 +69,24 @@ export function rankHosts(analysis: Analysis, pageHosts: readonly SessionRequire
     ...analysis.operations.map(operation => operation.host),
     ...(analysis.channels ?? []).map(channel => channel.host),
   ])
-  // The site is whatever served the pages the person browsed; with no pages (an API-only
-  // capture), every host counts as the site's own.
-  const site = new Set(analysis.operations.filter(operation => operation.kind === 'page' && !operation.sourceOnly).map(operation => siteOf(operation.host)))
+  // The site is whatever served the pages the person browsed, never pages loaded into frames;
+  // with no pages (an API-only capture), every host counts as the site's own (decision 0046).
+  const framed = framedHosts(analysis.operations)
+  const site = new Set(analysis.operations
+    .filter(operation => operation.kind === 'page' && !operation.sourceOnly && !framed.has(operation.host))
+    .map(operation => siteOf(operation.host)))
+  const ownHost = (host: string): boolean => site.size === 0 || site.has(siteOf(host))
   const roleOf = (host: string): HostRole => {
-    if (pageOnly.has(host))
-      return 'pages'
-    return site.size === 0 || site.has(siteOf(host))
+    // A host that served only pages is one of the site's page hosts when it is on the site's
+    // domain or served a page the person browsed; a host whose pages were all framed (an ad
+    // network's sync page) or that only answered a captcha widget is a third party.
+    if (pageOnly.has(host)) {
+      const served = analysis.operations.some(operation => operation.host === host && !operation.sourceOnly)
+      return !served || ownHost(host)
+        ? 'pages'
+        : 'third-party'
+    }
+    return ownHost(host)
       ? 'first-party'
       : 'third-party'
   }

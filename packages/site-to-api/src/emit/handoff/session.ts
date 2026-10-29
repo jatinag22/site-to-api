@@ -8,6 +8,7 @@ import type { HostStems } from '../host-files'
 import type { StepResolver } from '../steps'
 import type { AgentGuideContext, ProbeGaps } from './context'
 import { isBotProtectionHeader, isChallengeAnswer, sendsBotProtectionHeaders } from '../../analyze/classify'
+import { browserOnlyCalls } from '../../probe'
 import { cookieLines } from '../cookies'
 import { code, text } from '../escape'
 import { specFileName } from '../openapi/write'
@@ -172,11 +173,16 @@ export function sessionLines(entry: SessionRequirement, analysis: Analysis, cont
   }
   if (servedOnlyChallenges(entry.host, analysis))
     lines.push('- No real content: every response this host gave the capture was a bot challenge or block page, so its specs describe the interstitial, not the site. Capture again with a browser session the site lets through; probe results cannot show that plain HTTP works here.')
-  const guarded = entry.botProtection.length === 0
+  const guarded = entry.botProtection.length === 0 || entry.requires !== 'browser'
     ? []
     : analysis.operations.filter(operation => operation.host === entry.host && operation.kind === 'api' && sendsBotProtectionHeaders(operation))
   if (guarded.length > 0)
-    lines.push(`- Calls that send the bot-protection script's headers, so only a real browser can make them: ${guarded.map(operation => code(operation.operationId)).join(', ')}${entry.probed ? '. Whatever probe found for other calls, these keep the host on a real browser' : ''}.`)
+    lines.push(`- Calls that send the bot-protection script's headers, so only a real browser can make them: ${guarded.map(operation => code(operation.operationId)).join(', ')}.`)
+  // The host's verdict follows its tested calls; a call the script adds headers to is the
+  // exception, named here rather than turning the whole host into "needs a browser" (0046).
+  const browserOnly = browserOnlyCalls(entry, analysis.operations)
+  if (browserOnly.length > 0)
+    lines.push(`- Only a real browser can make ${plural(browserOnly.length, 'this call', 'these calls')}, although the host's other calls work with plain HTTP: ${browserOnly.map(code).join(', ')}. ${plural(browserOnly.length, 'It sends', 'They send')} headers a bot-protection script computes in the page; make ${plural(browserOnly.length, 'it', 'them')} through a real browser session (\`browserSession\` in \`@site-to-api/runtime\`), never by reproducing the headers.`)
   lines.push(...cookieLines(entry, tested))
   lines.push(`- Spec: ${code(`specs/${specFileName(entry.host, stems)}`)}.`)
   return lines
@@ -184,6 +190,9 @@ export function sessionLines(entry: SessionRequirement, analysis: Analysis, cont
 
 /** Evidence items shown per bot-protection vendor in `AGENT.md`; the host file has them all. */
 const MAX_EVIDENCE = 3
+
+/** Header and call names shown in a host's line in `AGENT.md`; the host file has them all. */
+const MAX_NAMES = 3
 
 /**
  * `Kasada (cookie KP_UIDz; request header x-kpsdk-ct; ... and 9 more)`. The evidence is the
@@ -202,7 +211,19 @@ function shortFinding(finding: SessionRequirement['botProtection'][number]): str
 export function shortVerdict(entry: SessionRequirement | null, analysis: Analysis, context: AgentGuideContext): string {
   if (entry === null)
     return 'no session requirements recorded'
-  const parts = [`${tokenText(entry, analysis, false) ?? SHORT_REQUIREMENT[entry.requires]} (${shortSource(entry, context.probe)})`]
+  const headers = neededHeaders(probedRequires(entry, analysis))
+  const verdict = entry.requires === 'none' && headers.length > 0
+    ? `plain HTTP; requests need ${plural(headers.length, 'header', 'headers')} ${headers.slice(0, MAX_NAMES).map(code).join(', ')}${headers.length > MAX_NAMES
+      ? ` and ${headers.length - MAX_NAMES} more`
+      : ''}`
+    : tokenText(entry, analysis, false) ?? SHORT_REQUIREMENT[entry.requires]
+  const parts = [`${verdict} (${shortSource(entry, context.probe)})`]
+  const browserOnly = browserOnlyCalls(entry, analysis.operations)
+  if (browserOnly.length > 0) {
+    parts.push(`except ${browserOnly.slice(0, MAX_NAMES).map(code).join(', ')}${browserOnly.length > MAX_NAMES
+      ? ` and ${browserOnly.length - MAX_NAMES} more`
+      : ''}, which only a real browser can make (bot-protection headers)`)
+  }
   if (entry.botProtection.length > 0)
     parts.push(`bot protection: ${entry.botProtection.map(shortFinding).join(', ')}`)
   if (servedOnlyChallenges(entry.host, analysis))

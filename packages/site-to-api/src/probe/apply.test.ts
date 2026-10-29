@@ -1,7 +1,7 @@
 import type { HeaderInfo, ParamInfo, SessionRequirement } from '../model'
 import type { OperationProbe, ProbeReport } from '../model/probe'
 import { describe, expect, it } from 'vitest'
-import { applyProbeReport, pageHostRequirements, requirementsByOperation } from './apply'
+import { alignProbeReport, applyProbeReport, browserOnlyCalls, pageHostRequirements, requirementsByOperation } from './apply'
 
 function report(operations: Array<Partial<OperationProbe>>): ProbeReport {
   return {
@@ -174,7 +174,7 @@ describe('applyProbeReport: bot protection', () => {
 })
 
 describe('applyProbeReport: calls probe could not test', () => {
-  it('keeps browser while an untested call sends bot-protection headers', () => {
+  it('follows the tested calls and names an untested call that sends bot-protection headers (Nike)', () => {
     const guarded: SessionRequirement = {
       ...base,
       botProtection: [
@@ -187,25 +187,30 @@ describe('applyProbeReport: calls probe could not test', () => {
       constant: false,
       schema: { type: 'string' },
     }
-    const ops = [
-      ...OPS,
-      {
-        host: 'shop.example',
-        operationId: 'putCart',
-        kind: 'api' as const,
-        headers: [kpsdk],
-        cookies: [],
-      },
-    ]
-    expect(applyProbeReport([guarded], report([
+    const putCart = {
+      host: 'shop.example',
+      operationId: 'putCart',
+      kind: 'api' as const,
+      headers: [kpsdk],
+      cookies: [],
+    }
+    const ops = [...OPS, putCart]
+    const [entry] = applyProbeReport([guarded], report([
       { bare: 'ok' },
-    ]), ops)[0]?.requires).toBe('browser')
+    ]), ops)
+    expect(entry).toMatchObject({ requires: 'none', probed: true })
+    if (!entry)
+      throw new Error('no entry')
+    expect(browserOnlyCalls(entry, ops)).toEqual(['putCart'])
+    // Probe showed the call works without the vendor headers: nothing to name.
+    expect(browserOnlyCalls(entry, [
+      { ...putCart, requires: [] },
+    ])).toEqual([])
+    // A host that needs a browser anyway says so in its verdict.
+    expect(browserOnlyCalls({ ...entry, requires: 'browser' }, ops)).toEqual([])
     expect(applyProbeReport([guarded], report([
       { bare: 'ok' },
       { operationId: 'putCart', bare: 'ok' },
-    ]), ops)[0]?.requires).toBe('none')
-    expect(applyProbeReport([base], report([
-      { bare: 'ok' },
     ]), ops)[0]?.requires).toBe('none')
   })
 })
@@ -237,6 +242,42 @@ describe('applyProbeReport: vendor cookies and redacted names', () => {
     ]
     expect(applyProbeReport([akamai], report([
       { bare: 'ok' },
+    ]), ops)[0]?.requires).toBe('browser')
+  })
+
+  it('ignores a vendor cookie on untested calls once a tested call carried it and worked bare', () => {
+    // Akamai's `ak_bmsc` rides along with every request of the domain (Nike); a tested call
+    // that was captured with it and answered without it shows it is not needed.
+    const akBmsc: ParamInfo = {
+      name: 'ak_bmsc',
+      required: true,
+      schema: { type: 'string' },
+    }
+    const ops = [
+      {
+        host: 'shop.example',
+        operationId: 'op0',
+        kind: 'api' as const,
+        headers: [],
+        cookies: [akBmsc],
+      },
+      {
+        host: 'shop.example',
+        operationId: 'getFaq',
+        kind: 'api' as const,
+        headers: [],
+        cookies: [akBmsc],
+      },
+    ]
+    expect(applyProbeReport([akamai], report([
+      { bare: 'ok' },
+    ]), ops)[0]).toMatchObject({ requires: 'none', probed: true })
+    // Worked only with the captured session: the cookie is not shown unneeded.
+    expect(applyProbeReport([akamai], report([
+      {
+        bare: 'rejected',
+        requires: ['header:x-client-id'],
+      },
     ]), ops)[0]?.requires).toBe('browser')
   })
 
@@ -399,5 +440,51 @@ describe('pageHostRequirements', () => {
     expect(pageHostRequirements([
       page('news.example', 1),
     ], [], null)[0]).toMatchObject({ requires: 'cookies', probed: false })
+  })
+})
+
+describe('alignProbeReport', () => {
+  it('matches entries to the operation that now holds their exchange (paths merged since probing)', () => {
+    const probe = report([
+      { operationId: 'getFragmentsAsyncChat', exchangeId: 's:1', bare: 'ok' },
+      {
+        operationId: 'getFragmentsErrorModal',
+        exchangeId: 's:2',
+        bare: 'rejected',
+        requires: ['header:origin'],
+      },
+      { operationId: 'getGone', exchangeId: 's:9', bare: 'ok' },
+    ])
+    const operations = [
+      {
+        host: 'shop.example',
+        operationId: 'getFragmentsBySlug',
+        exchanges: [
+          { id: 's:1' },
+          { id: 's:2' },
+        ],
+      },
+    ]
+    const aligned = alignProbeReport(probe, operations)
+    expect(aligned.operations.map(entry => entry.operationId)).toEqual(['getFragmentsBySlug', 'getFragmentsBySlug', 'getGone'])
+    expect(probe.operations[0]?.operationId).toBe('getFragmentsAsyncChat')
+    // The merged operation needs what any of its probed paths needed.
+    expect(requirementsByOperation(aligned).get('shop.example getFragmentsBySlug')).toEqual(['header:origin'])
+  })
+
+  it('never moves an entry to an operation of another host', () => {
+    const probe = report([
+      { operationId: 'op0', exchangeId: 's:1' },
+    ])
+    const aligned = alignProbeReport(probe, [
+      {
+        host: 'other.example',
+        operationId: 'getOther',
+        exchanges: [
+          { id: 's:1' },
+        ],
+      },
+    ])
+    expect(aligned.operations[0]?.operationId).toBe('op0')
   })
 })

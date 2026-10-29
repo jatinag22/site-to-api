@@ -35,6 +35,62 @@ function kinds(list: Exchange[], include: string[] = [], exclude: string[] = [])
   return classify(list, include, exclude).exchanges.map(item => item.kind)
 }
 
+describe('classifyExchanges: front-end build files and ad networks (decision 0046)', () => {
+  it('labels prefetched build chunks assets, whatever their resource type', () => {
+    expect(kinds([
+      page(),
+      // Next.js prefetch: `sec-purpose: prefetch`, recorded without a body.
+      on({
+        url: 'https://shop.test/_next/static/chunks/4283-560d7691b8e141c0.js',
+        resourceType: 'other',
+        requestHeaders: { 'sec-purpose': 'prefetch' },
+      }),
+      on({ url: 'https://shop.test/static/js/main.3f9a2c1e.chunk.js', resourceType: 'fetch' }),
+      on({ url: 'https://shop.test/assets/index-4f2a9c81.css', resourceType: 'fetch' }),
+      // Not build files: an API path and a plain file name without a hash.
+      on({
+        url: 'https://shop.test/api/static/items',
+        resourceType: 'fetch',
+        responseBody: jsonBody([]),
+      }),
+      on({
+        url: 'https://shop.test/api/widget.js',
+        resourceType: 'fetch',
+        responseBody: jsonBody({}),
+      }),
+    ])).toEqual([
+      'page',
+      'asset',
+      'asset',
+      'asset',
+      'api',
+      'api',
+    ])
+  })
+
+  it('labels identity-sync and ad-network hosts noise', () => {
+    const result = classify([
+      page(),
+      on({
+        url: 'https://sync.a-mo.net/usersync',
+        resourceType: 'fetch',
+        responseBody: jsonBody({}),
+      }),
+      on({
+        url: 'https://request-global.czilladx.com/serve/view.php',
+        resourceType: 'document',
+        responseBody: textBody('<html></html>'),
+      }),
+      on({
+        url: 'https://t.adx.opera.com/pub/sync',
+        resourceType: 'fetch',
+        responseBody: jsonBody({}),
+      }),
+    ])
+    expect(result.exchanges.slice(1).map(item => item.kind)).toEqual(['noise', 'noise', 'noise'])
+  })
+})
+
 describe('classifyExchanges: resource and media types', () => {
   it('labels documents, assets and data calls', () => {
     expect(kinds([

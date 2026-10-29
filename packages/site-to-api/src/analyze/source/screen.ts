@@ -11,7 +11,7 @@
  * name is still that site.
  */
 import type { SourceRoute } from '../../model'
-import { findNoise, isBotProtectionEndpoint } from '../classify'
+import { findNoise, isBotProtectionEndpoint, isBuildAsset } from '../classify'
 
 /** Top-level names that never resolve on the public internet (RFC 2606, 6761, 6762, common LAN). */
 const NON_PUBLIC_TLDS: ReadonlySet<string> = new Set([
@@ -101,6 +101,8 @@ function pathProblem(path: string): string | null {
   const segments = path.split('/').slice(1)
   if (segments.some(segment => FILE_SYSTEM_SEGMENTS.has(segment)) || FILE_SYSTEM_ROOTS.has(segments[0] ?? '') || SOURCE_FILE.test(path))
     return 'a file-system path'
+  if (isBuildAsset(path))
+    return 'a front-end build file'
   if (TEXT_PLACEHOLDER.test(path) || CONSTANT_PLACEHOLDER.test(path))
     return 'a template placeholder'
   if (segments.some(segment => segment.includes('{') && !PLACEHOLDER_SEGMENT.test(segment)))
