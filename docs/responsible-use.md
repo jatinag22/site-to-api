@@ -21,7 +21,8 @@ with a service you use. It is not a tool for getting around a site's rules.
 
 ## Keep it polite
 
-- `probe` defaults to one request per second. Keep it low.
+- `probe` and `check` default to one request per second. Keep it low. `check` never sends
+  requests that can change data; schedule it weekly or less, not every minute.
 - In your wrapper: reuse one session, cache responses, and avoid tight polling loops. A wrapper
   that hammers a site is a problem even through a perfectly real browser.
 
