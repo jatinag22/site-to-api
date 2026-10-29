@@ -24,7 +24,15 @@ over several lines or missing.
   `centrifuge-json`) accepts a protocol when half the text frames decode (or there are none);
   without one, a strong message and 80% of the text frames are needed. Hinted protocols win,
   then the one that understood the most frames, then a fixed order. SockJS framing is unwrapped
-  first. Frames a protocol does not understand keep the 0030 treatment.
+  first. Frames a protocol does not understand keep the 0030 treatment. A Phoenix-shaped
+  five-element array is not enough without a hint (trade feeds send `[ts, seq, "BTC-USD",
+  "trade", {…}]`): the strong message must be a Phoenix-only one, `phx_join`, `phx_reply` or a
+  `heartbeat` on the `phoenix` topic. Only `phx_join`, `phx_leave`, `phx_reply`, `phx_error`,
+  `phx_close` and that heartbeat are Phoenix frame types; every other event is a `push`.
+- **Site input is bounded.** A Socket.IO packet may announce at most 64 binary attachments
+  (more is rejected, and pending attachments are kept as a count, never one entry each); the
+  evidence names the URL path by a fixed phrase (`URL path ends in /socket.io/`), never the
+  site's path, and evidence and versions go through the redactor.
 - **Names.** A decoded message is grouped by its protocol frame type and protocol-level name:
   the Socket.IO event (with its namespace), the SignalR target, the STOMP destination, the
   GraphQL operation (named exactly as `analyze/graphql` names it: `operationName`, the name in
