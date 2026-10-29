@@ -24,7 +24,8 @@ The entry point for a coding agent: a short index, at most about 25 KB on any si
    tested nothing here), the bot protection with its first three evidence items, "no real
    content" when it served only challenges, the counts of API operations (and how many were
    seen in code only), pages, bot-protection steps, channels and gaps, and a link to its file.
-   At most 30 hosts get a line; the rest are linked in one line.
+   At most 30 hosts get a line; one more line links the next five, says how many more there
+   are, and points at `API_MAP.md`, which has a table for every host.
 4. **Key flows**: one line per flow (trigger label → steps), linking to `flows.md#<flow-id>`, at
    most 12. Order: a flow with an API call whose path says login (`auth`, `login`, `session`,
    `password`, ...); then one whose name or trigger says so; then one with an API call that hands
@@ -48,15 +49,24 @@ The entry point for a coding agent: a short index, at most about 25 KB on any si
    (how many with the method unknown); operations `probe` did not minimize because of
    `probe.minimizePerHost`; WebSocket messages that could not be grouped by type or whose schema
    came from the first 1000 frames. A group of one keeps its full sentence ("On `host`: ...").
-   A grouped line names three items, then "and N more in `hosts/<host>.md`". Listed in full:
-   whether `probe` ran or replayed nothing, gaps whose operation is gone, host patterns that
-   matched nothing and other build warnings, and the state of `client/` (always last). Each gap
-   says what would resolve it (usually "capture again and do X").
+   A grouped line names three items, then "and N more in `hosts/<host>.md`"; the groups beyond
+   15 are one line that links the first five of their hosts. Then whether `probe` ran or
+   replayed nothing; then the first five of the gaps whose operation is gone and the build
+   warnings (host patterns that matched nothing and the like), each warning cut to 400
+   characters, and "N more build warnings and gaps in `GAPS.md`"; and the state of `client/`
+   (always last). Each gap says what would resolve it (usually "capture again and do X").
+   The opening paragraph names the first five sessions the same way.
+
+## `GAPS.md`
+
+Every gap that belongs to no host, in full: whether `probe` ran or replayed nothing, gaps of
+flow steps whose operation is gone, and every build warning (decision 0041). Always written;
+"None found." when there are none.
 
 ## `hosts/<host>.md`
 
-One file per host the folder documents (decision 0041), named like the spec (`localhost:4173` →
-`hosts/localhost_4173.md`). Code-span paths in it are relative to the handoff folder. Sections,
+One file per host the folder documents (decision 0041), with the same file stem as the spec
+(`localhost:4173` → `hosts/localhost_4173.md`; see `specs/<host>.yaml` for clashes). Code-span paths in it are relative to the handoff folder. Sections,
 in order, each only when it has something:
 
 1. **Session**: "Serves pages only" for a page host; the Needs verdict and where it comes from:
@@ -148,7 +158,11 @@ computed values.
 
 OpenAPI 3.1, one file per host (servers cannot mix hosts). The file name is the host with
 characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localhost:4173` →
-`localhost_4173.yaml`). Conventions:
+`localhost_4173.yaml`). When two hosts of the build would get the same name, ignoring case
+(`a.com:1` and `a.com_1`, `[::1]:80` and `_::1_:80`), the one already spelled like the name keeps
+it (or the first in sort order) and each other gets `-` and the first eight hex characters of the
+SHA-256 of its host name (`a.com:1` → `a.com_1-b2c6cea8.yaml`); `hosts/` and `.asyncapi.yaml` files use the
+same stem. Conventions:
 
 - `operationId` matches `flows.json` and the generated SDK function.
 - Required cookies are `in: cookie` parameters, names only.

@@ -4,6 +4,7 @@
  * so each goes through `text()` or `code()` (decision 0019).
  */
 import type { Analysis, SessionRequirement } from '../../model'
+import type { HostStems } from '../host-files'
 import type { StepResolver } from '../steps'
 import type { AgentGuideContext, ProbeGaps } from './context'
 import { isBotProtectionHeader, isChallengeAnswer, sendsBotProtectionHeaders } from '../../analyze/classify'
@@ -129,7 +130,7 @@ export function onlyVendorSteps(host: string, analysis: Analysis): boolean {
  * The session lines of `hosts/<host>.md`: the Needs verdict, every bot-protection finding with
  * its full evidence, the cookies and the spec. `pageOnly` marks a host that served only pages.
  */
-export function sessionLines(entry: SessionRequirement, analysis: Analysis, context: AgentGuideContext, pageOnly: boolean): string[] {
+export function sessionLines(entry: SessionRequirement, analysis: Analysis, context: AgentGuideContext, pageOnly: boolean, stems: HostStems): string[] {
   const tested = probedRequires(entry, analysis)
   const headers = neededHeaders(tested)
   const lines: string[] = []
@@ -152,7 +153,7 @@ export function sessionLines(entry: SessionRequirement, analysis: Analysis, cont
   if (guarded.length > 0)
     lines.push(`- Calls that send the bot-protection script's headers, so only a real browser can make them: ${guarded.map(operation => code(operation.operationId)).join(', ')}${entry.probed ? '. Whatever probe found for other calls, these keep the host on a real browser' : ''}.`)
   lines.push(...cookieLines(entry, tested))
-  lines.push(`- Spec: ${code(`specs/${specFileName(entry.host)}`)}.`)
+  lines.push(`- Spec: ${code(`specs/${specFileName(entry.host, stems)}`)}.`)
   return lines
 }
 

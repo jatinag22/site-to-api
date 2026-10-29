@@ -359,7 +359,7 @@ describe('site input that must not crash, stall or leak', () => {
     expect(JSON.stringify(channel)).not.toContain(token)
     expect(channelsSection(channel === undefined
       ? []
-      : [channel]).join('\n')).not.toContain(token)
+      : [channel], new Map()).join('\n')).not.toContain(token)
   })
 
   it('takes no Markdown from a Phoenix event name and no secret from a STOMP header name in the wire form', () => {
@@ -393,7 +393,7 @@ describe('site input that must not crash, stall or leak', () => {
     expect(evil?.protocol?.frame).toBe('push')
     const section = channelsSection(phoenix === undefined
       ? []
-      : [phoenix]).join('\n')
+      : [phoenix], new Map()).join('\n')
     expect(section).not.toContain('(phx_` evil')
     // Every copy of the name is escaped: as text (`\](`) or inside a double-backtick code span.
     expect(section).toContain('evil\\](http\\://x.test)')

@@ -4,10 +4,10 @@
  * through `text()`, `code()` or `cellCode()` (decision 0019).
  */
 import type { Analysis, DispatchOperation, Operation } from '../../model'
+import type { HostLinker } from './host-path'
 import { cellCode, code, text } from '../escape'
 import { sdkFunctionName } from '../naming'
 import { counted } from './context'
-import { hostLink } from './host-path'
 import { MAX_SUMMARY_LINES, moreLine } from './summary'
 
 type DispatchEntry = Operation & { dispatch: DispatchOperation }
@@ -136,13 +136,13 @@ export function dispatchSection(analysis: Analysis, host: string): string[] {
  * The "Dispatcher endpoints" section of `AGENT.md`: one line per endpoint with its dispatcher
  * parameter, how many functions it has and the host file that lists them.
  */
-export function dispatchSummary(analysis: Analysis): string[] {
+export function dispatchSummary(analysis: Analysis, link: HostLinker): string[] {
   const groups = byEndpoint(analysis)
   if (groups.length === 0)
     return []
   const lines = groups.slice(0, MAX_SUMMARY_LINES).map(([endpoint, operations]) => {
     const first = operations[0]!
-    return `- ${code(endpoint)}: ${where(first.dispatch)} ${code(first.dispatch.parameter)} picks one of ${counted(operations.length, 'function')}; each with its parameters and client call in ${hostLink(first.host, 'dispatcher-endpoints')}.`
+    return `- ${code(endpoint)}: ${where(first.dispatch)} ${code(first.dispatch.parameter)} picks one of ${counted(operations.length, 'function')}; each with its parameters and client call in ${link(first.host, 'dispatcher-endpoints')}.`
   })
   return [
     '## Dispatcher endpoints',

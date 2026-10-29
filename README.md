@@ -111,6 +111,7 @@ browse by hand. Sites with bot protection usually block headless browsers: for t
 api-handoff/
   AGENT.md            start here: a short index of the hosts, key flows, computed values, top gaps
   hosts/<host>.md     everything about one host: session needs, cookies, operations, channels, gaps
+  GAPS.md             gaps of the whole build: probe state, build warnings (in full)
   API_MAP.md          one row per operation: inputs and their origins, response, client symbols
   flows.json          source of truth for flows (schema: flows.schema.json)
   flows.md            the same, readable

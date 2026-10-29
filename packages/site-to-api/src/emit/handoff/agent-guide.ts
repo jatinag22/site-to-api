@@ -7,9 +7,11 @@
  * or `code()` so it cannot add headings, links, HTML or instructions of its own.
  */
 import type { Analysis, ComputedValue, Flow } from '../../model'
+import type { HostStems } from '../host-files'
 import type { StepResolver } from '../steps'
 import type { AgentGuideContext } from './context'
 import type { GapGroup } from './gaps'
+import type { HostLinker } from './host-path'
 import type { HostRole, RankedHost } from './importance'
 import { anchor, code, text } from '../escape'
 import { createStepResolver } from '../steps'
@@ -20,16 +22,22 @@ import { counted, UNTRUSTED_NOTE } from './context'
 import { dispatchSummary } from './dispatch'
 import { buildGaps, gapGroups } from './gaps'
 import { graphqlSummary } from './graphql'
-import { hostLink } from './host-path'
+import { handoffStems, hostLinker } from './host-path'
 import { rankFlows, rankHosts } from './importance'
 import { onlyVendorSteps, operationName, servedOnlyChallenges, shortVerdict } from './session'
-import { MAX_GAP_LINES, MAX_HOST_LINES, MAX_NAME_LENGTH, MAX_SUMMARY_LINES, moreLine, shorten, stepList } from './summary'
+import { MAX_GAP_LINES, MAX_HOST_LINES, MAX_LINE_LENGTH, MAX_NAME_LENGTH, MAX_NAMED, MAX_SUMMARY_LINES, moreLine, shorten, stepList } from './summary'
 
 /** Hosts named in the opening sentence; the Hosts section lists them all. */
 const MAX_INTRO_HOSTS = 5
 
 /** Challenge banners at the top; the Hosts section marks any others. */
 const MAX_BANNERS = 3
+
+/** Build warnings and host-less gaps written in `AGENT.md`; `GAPS.md` has them all. */
+const MAX_BUILD_GAPS = 5
+
+/** The file with every gap that belongs to no host (decision 0041). */
+export const BUILD_GAPS_FILE = 'GAPS.md'
 
 const ROLE_HEADINGS: Record<HostRole, string> = {
   'first-party': '### The site\'s own hosts',
@@ -42,15 +50,22 @@ export interface Index {
   resolver: StepResolver
   hosts: RankedHost[]
   gaps: GapGroup[]
+  /** File-name stem of every host, shared with `specs/` (see `hostStems`). */
+  stems: HostStems
+  link: HostLinker
 }
 
 /** Ranks the hosts and groups the gaps; shared by `AGENT.md` and the host files. */
 export function indexAnalysis(analysis: Analysis, context: AgentGuideContext): Index {
   const resolver = createStepResolver(analysis.operations, analysis.flows)
+  const stems = handoffStems(analysis, context.pageHosts ?? [])
+  const link = hostLinker(stems)
   return {
     resolver,
     hosts: rankHosts(analysis, context.pageHosts ?? []),
-    gaps: gapGroups(analysis, context, resolver),
+    gaps: gapGroups(analysis, context, resolver, link),
+    stems,
+    link,
   }
 }
 
@@ -108,13 +123,18 @@ function hostsSection(analysis: Analysis, context: AgentGuideContext, index: Ind
       const counts = hostCounts(ranked, analysis, index.gaps)
       lines.push(`- ${code(ranked.host)}: ${shortVerdict(ranked.session, analysis, context)}${counts === ''
         ? ''
-        : `; ${counts}`}. ${hostLink(ranked.host)}`)
+        : `; ${counts}`}. ${index.link(ranked.host)}`)
     }
     lines.push('')
   }
   const rest = index.hosts.slice(shown.length)
-  if (rest.length > 0)
-    lines.push(`- ${counted(rest.length, 'more host')}, least important last: ${rest.map(ranked => hostLink(ranked.host)).join(', ')}.`, '')
+  if (rest.length > 0) {
+    const named = rest.slice(0, MAX_NAMED).map(ranked => index.link(ranked.host)).join(', ')
+    const unnamed = rest.length - Math.min(rest.length, MAX_NAMED)
+    lines.push(`- ${counted(rest.length, 'more host')}, least important last: ${named}${unnamed > 0
+      ? ` and ${unnamed} more`
+      : ''}. \`API_MAP.md\` has a table for every host, and each host has its file under \`hosts/\`.`, '')
+  }
   return lines
 }
 
@@ -140,17 +160,17 @@ function flowsSection(analysis: Analysis, resolver: StepResolver): string[] {
 }
 
 /** The host file that lists a group's values, or "the host files" when they are on several. */
-function computedHome(group: readonly ComputedValue[], resolver: StepResolver): string {
+function computedHome(group: readonly ComputedValue[], resolver: StepResolver, link: HostLinker): string {
   const hosts = [
     ...new Set(group.map(value => resolver.computedHost(value))),
   ]
   const [host] = hosts
   return hosts.length === 1 && host !== null && host !== undefined
-    ? hostLink(host, 'values-computed-in-the-browser')
+    ? link(host, 'values-computed-in-the-browser')
     : 'the host files'
 }
 
-function computedSection(analysis: Analysis, resolver: StepResolver, hasSource: boolean): string[] {
+function computedSection(analysis: Analysis, resolver: StepResolver, hasSource: boolean, link: HostLinker): string[] {
   const values = rankedComputedValues(analysis.flows.computedValues)
   if (values.length === 0)
     return []
@@ -162,9 +182,13 @@ function computedSection(analysis: Analysis, resolver: StepResolver, hasSource: 
     const host = resolver.computedHost(value) ?? ''
     rest.set(host, (rest.get(host) ?? 0) + 1)
   }
-  const more = [...rest]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([host, count]) => `${count} in ${hostLink(host, 'values-computed-in-the-browser')}`)
+  const homes = [...rest].sort(([a, x], [b, y]) => y - x || a.localeCompare(b))
+  const more = [
+    ...homes.slice(0, MAX_NAMED).map(([host, count]) => `${count} in ${link(host, 'values-computed-in-the-browser')}`),
+    ...(homes.length > MAX_NAMED
+      ? [`the rest in ${homes.length - MAX_NAMED} more host files`]
+      : []),
+  ]
   const left = [
     ...rest.values(),
   ].reduce((sum, count) => sum + count, 0)
@@ -173,7 +197,7 @@ function computedSection(analysis: Analysis, resolver: StepResolver, hasSource: 
     '',
     computedIntro(hasSource),
     '',
-    ...shown.map(group => groupedComputedLine(group, analysis, resolver, computedHome(group, resolver))),
+    ...shown.map(group => groupedComputedLine(group, analysis, resolver, computedHome(group, resolver, link))),
     ...(more.length > 0
       ? [`- ${counted(left, 'more computed value')}: ${more.join(', ')}.`]
       : []),
@@ -181,26 +205,56 @@ function computedSection(analysis: Analysis, resolver: StepResolver, hasSource: 
   ]
 }
 
-function gapsSection(analysis: Analysis, context: AgentGuideContext, index: Index): string[] {
+/**
+ * Gaps that belong to no host file: whether probe ran, build warnings, and gaps of steps whose
+ * operation is gone. `AGENT.md` writes the first few; `GAPS.md` has all of them.
+ */
+function buildWideGaps(analysis: Analysis, context: AgentGuideContext, index: Index): { probe: string[], rest: string[], shortRest: string[] } {
   const build = buildGaps(analysis, context)
-  // Gaps of a step whose operation is gone have no host file, so they are listed here in full.
   const orphans = index.gaps.filter(group => group.host === '').flatMap(group => group.lines)
+  return {
+    probe: build.before,
+    rest: [
+      ...orphans,
+      ...build.warnings.map(text),
+    ],
+    // Orphans are Markdown with code spans, which a cut could break; warnings are cut before escaping.
+    shortRest: [
+      ...orphans,
+      ...build.warnings.map(warning => text(shorten(warning, MAX_LINE_LENGTH))),
+    ],
+  }
+}
+
+function gapsSection(analysis: Analysis, context: AgentGuideContext, index: Index): string[] {
+  const build = buildWideGaps(analysis, context, index)
   const hostGroups = index.gaps.filter(group => group.host !== '')
   const shown = hostGroups.slice(0, MAX_GAP_LINES)
   const hidden = hostGroups.slice(shown.length)
+  const hiddenHosts = [
+    ...new Set(hidden.map(group => group.host)),
+  ]
+  const named = hiddenHosts.slice(0, MAX_NAMED).map(host => index.link(host, 'gaps')).join(', ')
+  const unnamed = hiddenHosts.length - Math.min(hiddenHosts.length, MAX_NAMED)
+  const rest = [
+    ...new Set(build.shortRest),
+  ]
+  const restShown = rest.slice(0, MAX_BUILD_GAPS)
   const gaps = [
     ...(hostGroups.length > 0
       ? ['Most important first, grouped by host and kind; each host file lists its gaps one per line.']
       : []),
-    ...build.before,
+    ...build.probe,
     ...shown.map(group => group.summary),
     ...(hidden.length > 0
-      ? [`${counted(hidden.reduce((sum, group) => sum + group.count, 0), 'more gap')} on ${[
-          ...new Set(hidden.map(group => group.host)),
-        ].map(host => hostLink(host, 'gaps')).join(', ')}.`]
+      ? [`${counted(hidden.reduce((sum, group) => sum + group.count, 0), 'more gap')} on ${named}${unnamed > 0
+          ? ` and ${counted(unnamed, 'more host')}`
+          : ''}.`]
       : []),
-    ...orphans,
-    ...build.after,
+    ...restShown,
+    ...(rest.length > restShown.length
+      ? [`${counted(rest.length - restShown.length, 'more build warning or gap', 'more build warnings and gaps')} in \`${BUILD_GAPS_FILE}\`.`]
+      : []),
   ]
   // Last, so `gen` can swap it (withClientState) and get exactly what a fresh build writes.
   const client = clientGap(context.client)
@@ -217,6 +271,29 @@ function gapsSection(analysis: Analysis, context: AgentGuideContext, index: Inde
       : ['None found.']),
     '',
   ]
+}
+
+/**
+ * `GAPS.md`: every gap that belongs to no host, in full: whether probe ran, gaps of steps whose
+ * operation is gone, and the build warnings. Host gaps are in the host files.
+ */
+export function renderBuildGaps(analysis: Analysis, context: AgentGuideContext, index: Index = indexAnalysis(analysis, context)): string {
+  const build = buildWideGaps(analysis, context, index)
+  const gaps = [
+    ...new Set([
+      ...build.probe,
+      ...build.rest,
+    ]),
+  ]
+  return `${[
+    '# Gaps of the whole build',
+    '',
+    `Gaps that belong to no host. Start at [\`AGENT.md\`](AGENT.md); each host's gaps are in its file under \`hosts/\`. ${UNTRUSTED_NOTE}`,
+    '',
+    ...(gaps.length > 0
+      ? gaps.map(gap => `- ${gap}`)
+      : ['None found.']),
+  ].join('\n')}\n`
 }
 
 /** Banners for hosts that answered only with challenges, at most {@link MAX_BANNERS}. */
@@ -249,13 +326,17 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext,
   const behind = apiHosts.length > MAX_INTRO_HOSTS
     ? `${named} and ${counted(apiHosts.length - MAX_INTRO_HOSTS, 'more host')}`
     : named
+  const sessions = analysis.sessions.slice(0, MAX_INTRO_HOSTS).map(text).join(', ')
+  const moreSessions = analysis.sessions.length > MAX_INTRO_HOSTS
+    ? ` and ${analysis.sessions.length - MAX_INTRO_HOSTS} more`
+    : ''
   const lines = [
     '# Start here',
     '',
     ...challengeBanners(analysis, index),
     `This folder documents the internal API behind ${behind || 'the captured site'}, generated by site-to-api ${text(context.toolVersion)} from ${analysis.sessions.length} capture session${analysis.sessions.length === 1
       ? ''
-      : 's'} (${analysis.sessions.map(text).join(', ')}). Everything here was computed from recorded traffic and the site's own code; nothing was guessed by a language model. ${exampleNote}`,
+      : 's'} (${sessions}${moreSessions}). Everything here was computed from recorded traffic and the site's own code; nothing was guessed by a language model. ${exampleNote}`,
     '',
     UNTRUSTED_NOTE,
     '',
@@ -276,10 +357,10 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext,
     '',
     ...hostsSection(analysis, context, index),
     ...flowsSection(analysis, index.resolver),
-    ...graphqlSummary(analysis),
-    ...dispatchSummary(analysis),
-    ...channelsSummary(channels),
-    ...computedSection(analysis, index.resolver, hasSource),
+    ...graphqlSummary(analysis, index.link),
+    ...dispatchSummary(analysis, index.link),
+    ...channelsSummary(channels, index.link),
+    ...computedSection(analysis, index.resolver, hasSource, index.link),
     ...gapsSection(analysis, context, index),
   ]
   return `${lines.join('\n').trimEnd()}\n`

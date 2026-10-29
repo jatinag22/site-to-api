@@ -29,7 +29,20 @@ steps, and bot-protection evidence quoting every challenge URL.
   operation, the flows that touch it, its GraphQL and dispatcher endpoints and WebSocket channels
   in full, its computed values and every gap. Untraced inputs are nested under their flow there.
 - Nothing is dropped, only moved: each fact of the old `AGENT.md` is in `AGENT.md`, a host file,
-  `flows.md` (every flow and step) or `flows.json` (every computed value).
+  `GAPS.md`, `flows.md` (every flow and step) or `flows.json` (every computed value).
+- `GAPS.md` holds every gap that belongs to no host in full: whether probe ran, gaps of steps whose
+  operation is gone, and the build warnings. `AGENT.md` writes the first five of these (warnings
+  cut to 400 characters). Every other list that can grow with the site is capped too: the line
+  for hosts beyond 30 links five and points at `API_MAP.md`; the line for gap groups beyond 15
+  links the hosts of five; sessions in the opening paragraph and host files of computed values
+  are named five at a time. With 300 hosts and 50 long warnings, `AGENT.md` stays under 25 KB.
+- One map from host to file-name stem serves `specs/<stem>.yaml`, `specs/<stem>.asyncapi.yaml`
+  and `hosts/<stem>.md`. A plain stem is the host with characters other than letters, digits,
+  `_`, `.` and `-` replaced by `_`, which makes `a.com:1` and `a.com_1` (or `[::1]:80` and
+  `_::1_:80`, or names differing only in case on macOS and Windows) the same file, so the later
+  one overwrote the earlier. On a clash, the host already spelled like the stem keeps it (else the
+  first in sort order), and each other gets `-<8 hex>` of its host name's SHA-256, lengthened if
+  that is taken too. Hosts without a clash keep the plain stem, so ordinary output is unchanged.
 - Hosts are ordered by importance: the site's own hosts with API calls (registrable domain of a
   captured page; all hosts when no page was captured), then hosts that served only pages, then
   third parties; within a group by observed API operations, then name.
@@ -53,7 +66,7 @@ steps, and bot-protection evidence quoting every challenge URL.
   searches the gaps.
 - An agent that grepped `AGENT.md` for cookie lines, channel details or GraphQL operations now
   reads the host file instead; the reading order puts `hosts/<host>.md` first.
-- `build` removes `hosts/` with the other generated files before writing, so hosts that disappear
-  do not leave stale files.
+- `build` removes `hosts/` and `GAPS.md` with the other generated files before writing, so hosts
+  that disappear do not leave stale files.
 - `API_MAP.md` and `flows.md` are unchanged and can still be large on big sites; splitting them is
   left for a later decision.

@@ -7,10 +7,10 @@
 import type { Analysis, Operation } from '../../model'
 import type { StepResolver } from '../steps'
 import type { AgentGuideContext, ProbeGaps } from './context'
+import type { HostLinker } from './host-path'
 import { code, text } from '../escape'
 import { channelGaps } from './channels'
 import { counted } from './context'
-import { hostLink } from './host-path'
 import { operationName } from './session'
 
 /**
@@ -49,10 +49,10 @@ export interface GapGroup {
 const MAX_NAMES = 3
 
 /** `` `a`, `b`, `c` and 4 more in `hosts/x.md` `` */
-function names(items: readonly string[], host: string): string {
+function names(items: readonly string[], host: string, link: HostLinker): string {
   const shown = items.slice(0, MAX_NAMES).join(', ')
   return items.length > MAX_NAMES
-    ? `${shown} and ${items.length - MAX_NAMES} more in ${hostLink(host, 'gaps')}`
+    ? `${shown} and ${items.length - MAX_NAMES} more in ${link(host, 'gaps')}`
     : shown
 }
 
@@ -89,7 +89,7 @@ function topShapes(shapes: readonly string[]): string {
     .join(', ')
 }
 
-function operationGaps(analysis: Analysis, resolver: StepResolver, groups: Map<string, GapGroup>): void {
+function operationGaps(analysis: Analysis, resolver: StepResolver, groups: Map<string, GapGroup>, link: HostLinker): void {
   const name = (operation: Operation): string => operationName(operation.operationId, operation.host, resolver)
   const lowConfidence = new Map<string, string[]>()
   const sourceOnly = new Map<string, { names: string[], unknownMethod: number }>()
@@ -102,7 +102,7 @@ function operationGaps(analysis: Analysis, resolver: StepResolver, groups: Map<s
       lowConfidence.set(operation.host, list)
       push(groups, operation.host, 'low-confidence', `${name(operation)} returns ${text(response.mimeType)} whose record layout was inferred from one sample. Capture again and open a second page of the same kind to confirm it.`, group => group.count === 1
         ? single(group)
-        : `${group.count} responses on ${code(group.host)} have a record layout inferred from one sample: ${names(list, group.host)}. Capture again and open a second page of each kind to confirm them.`)
+        : `${group.count} responses on ${code(group.host)} have a record layout inferred from one sample: ${names(list, group.host, link)}. Capture again and open a second page of each kind to confirm them.`)
     }
     if (!operation.sourceOnly)
       continue
@@ -118,11 +118,11 @@ function operationGaps(analysis: Analysis, resolver: StepResolver, groups: Map<s
       ? single(group)
       : `${group.count} operations on ${code(group.host)} appear only in the site's code and were never called during capture${entry.unknownMethod > 0
         ? ` (${entry.unknownMethod} with method unknown)`
-        : ''}: ${names(entry.names, group.host)}. Use the features that call them during a capture.`)
+        : ''}: ${names(entry.names, group.host, link)}. Use the features that call them during a capture.`)
   }
 }
 
-function unknownOriginGaps(analysis: Analysis, resolver: StepResolver, groups: Map<string, GapGroup>): void {
+function unknownOriginGaps(analysis: Analysis, resolver: StepResolver, groups: Map<string, GapGroup>, link: HostLinker): void {
   const shapes = new Map<string, string[]>()
   // Host → flow id → `input of operation (shape)`, for one nested list per flow in the host file.
   const nested = new Map<string, Map<string, string[]>>()
@@ -148,7 +148,7 @@ function unknownOriginGaps(analysis: Analysis, resolver: StepResolver, groups: M
         nested.set(owner, flows)
         push(groups, owner, 'unknown-origin', `In flow ${code(flow.id)}, ${code(input)} of ${operationName(step.operationId, host, resolver)} has no known origin (${text(origin.shape)}). A second capture often shows whether it is constant.`, group => group.count === 1
           ? single(group)
-          : `${group.count} request inputs on ${code(group.host)} have no known origin (most often ${topShapes(list)}); each is listed in ${hostLink(group.host, 'gaps')}. A second capture often shows whether they are constant.`)
+          : `${group.count} request inputs on ${code(group.host)} have no known origin (most often ${topShapes(list)}); each is listed in ${link(group.host, 'gaps')}. A second capture often shows whether they are constant.`)
       }
     }
   }
@@ -171,7 +171,7 @@ function unknownOriginGaps(analysis: Analysis, resolver: StepResolver, groups: M
 }
 
 /** One gap per host where `probe` stopped minimizing at `probe.minimizePerHost`. */
-function probeGaps(probe: ProbeGaps, groups: Map<string, GapGroup>): void {
+function probeGaps(probe: ProbeGaps, groups: Map<string, GapGroup>, link: HostLinker): void {
   const byHost = new Map<string, string[]>()
   for (const entry of probe.notMinimized) {
     byHost.set(entry.host, [
@@ -190,13 +190,13 @@ function probeGaps(probe: ProbeGaps, groups: Map<string, GapGroup>): void {
         sentence(sorted.join(', ')),
       ],
       markdown: null,
-      summary: sentence(names(sorted, host)),
+      summary: sentence(names(sorted, host, link)),
     })
   }
 }
 
 /** One gap per host with operations probe replayed but could not confirm. */
-function probeFailureGaps(probe: ProbeGaps, groups: Map<string, GapGroup>): void {
+function probeFailureGaps(probe: ProbeGaps, groups: Map<string, GapGroup>, link: HostLinker): void {
   const byHost = new Map<string, string[]>()
   for (const entry of probe.failures) {
     byHost.set(entry.host, [
@@ -215,30 +215,30 @@ function probeFailureGaps(probe: ProbeGaps, groups: Map<string, GapGroup>): void
         sentence(sorted.join(', ')),
       ],
       markdown: null,
-      summary: sentence(names(sorted, host)),
+      summary: sentence(names(sorted, host, link)),
     })
   }
 }
 
-function webSocketGaps(analysis: Analysis, groups: Map<string, GapGroup>): void {
+function webSocketGaps(analysis: Analysis, groups: Map<string, GapGroup>, link: HostLinker): void {
   for (const channel of analysis.channels ?? []) {
     for (const line of channelGaps([channel])) {
       push(groups, channel.host, 'channel', line, group => group.count === 1
         ? single(group)
-        : `${group.count} WebSocket messages or directions on ${code(group.host)} could not be grouped by type or have a schema from a sample of their frames; each is listed in ${hostLink(group.host, 'gaps')}.`)
+        : `${group.count} WebSocket messages or directions on ${code(group.host)} could not be grouped by type or have a schema from a sample of their frames; each is listed in ${link(group.host, 'gaps')}.`)
     }
   }
 }
 
 /** Every host gap, grouped by host and kind, most important first (then most items, then host). */
-export function gapGroups(analysis: Analysis, context: AgentGuideContext, resolver: StepResolver): GapGroup[] {
+export function gapGroups(analysis: Analysis, context: AgentGuideContext, resolver: StepResolver, link: HostLinker): GapGroup[] {
   const groups = new Map<string, GapGroup>()
-  operationGaps(analysis, resolver, groups)
-  unknownOriginGaps(analysis, resolver, groups)
-  webSocketGaps(analysis, groups)
+  operationGaps(analysis, resolver, groups, link)
+  unknownOriginGaps(analysis, resolver, groups, link)
+  webSocketGaps(analysis, groups, link)
   if (context.probe) {
-    probeGaps(context.probe, groups)
-    probeFailureGaps(context.probe, groups)
+    probeGaps(context.probe, groups, link)
+    probeFailureGaps(context.probe, groups, link)
   }
   return [
     ...groups.values(),
@@ -246,16 +246,18 @@ export function gapGroups(analysis: Analysis, context: AgentGuideContext, resolv
     PRIORITY[a.kind] - PRIORITY[b.kind] || b.count - a.count || a.host.localeCompare(b.host))
 }
 
-/** Gaps of the whole build rather than of one host: whether probe ran, and the build warnings. */
-export function buildGaps(analysis: Analysis, context: AgentGuideContext): { before: string[], after: string[] } {
+/**
+ * Gaps of the whole build rather than of one host: whether probe ran (Markdown) and the build
+ * warnings (raw text, which quotes file names and URLs from the capture, for the caller to escape).
+ */
+export function buildGaps(analysis: Analysis, context: AgentGuideContext): { before: string[], warnings: string[] } {
   const before: string[] = []
   if (!context.probe)
     before.push('`site-to-api probe` has not been run, so session requirements are inferred, not tested.')
   else if (context.probe.replayed === 0)
     before.push(`\`site-to-api probe\` ran but replayed no operation (${context.probe.skipped} skipped; the reasons are in \`probe.json\`), so session requirements are inferred, not tested.`)
-  // Warnings quote file names and URLs from the capture.
   return {
     before,
-    after: analysis.warnings.map(text),
+    warnings: [...analysis.warnings],
   }
 }

@@ -21,7 +21,7 @@ function allDocs(analysis: Analysis, context: Context): string {
 
 /** The file of one host. */
 function hostDoc(analysis: Analysis, context: Context, host: string): string {
-  const found = renderHandoffDocs(analysis, context).find(([path]) => path === hostDocPath(host))
+  const found = renderHandoffDocs(analysis, context).find(([path]) => path === hostDocPath(host, new Map()))
   if (!found)
     throw new Error(`no file for ${host}`)
   return found[1]

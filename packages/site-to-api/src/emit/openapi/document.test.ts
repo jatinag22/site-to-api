@@ -546,13 +546,13 @@ describe('writeOpenApiDocuments', () => {
           { openapi: '3.1.0' },
         ],
       ])
-      const written = await writeOpenApiDocuments(dir, documents)
+      const written = await writeOpenApiDocuments(dir, documents, new Map())
       expect(written).toEqual([
         join(dir, 'specs', 'a.test.yaml'),
         join(dir, 'specs', 'localhost_3000.yaml'),
       ])
       expect(await readFile(written[1]!, 'utf8')).toBe('openapi: 3.1.0\n')
-      expect(specFileName('x.test:8080')).toBe('x.test_8080.yaml')
+      expect(specFileName('x.test:8080', new Map())).toBe('x.test_8080.yaml')
     }
     finally {
       await rm(dir, { recursive: true, force: true })

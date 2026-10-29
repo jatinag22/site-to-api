@@ -15,6 +15,12 @@ export const MAX_GAP_LINES = 15
 /** Steps written per flow in `AGENT.md`; `flows.md` has all of them. */
 const MAX_FLOW_STEPS = 6
 
+/** Names (hosts, files) listed in one capped line of `AGENT.md` before "and N more". */
+export const MAX_NAMED = 5
+
+/** Characters of a build warning kept in `AGENT.md`; `GAPS.md` has it whole. */
+export const MAX_LINE_LENGTH = 400
+
 /** Characters of a flow name (a page title or button label) kept in `AGENT.md`. */
 export const MAX_NAME_LENGTH = 80
 

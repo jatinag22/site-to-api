@@ -4,6 +4,7 @@
  * site controls, so each one goes through `text()` or `cellCode()` (both escape `|`).
  */
 import type { Analysis, Flow, Operation, ResponseInfo, SessionRequirement, ValueOrigin } from '../../model'
+import type { HostStems } from '../host-files'
 import type { StepResolver } from '../steps'
 import type { ClientState } from './client'
 import { cookieNeedsBrowser } from '../../model'
@@ -14,6 +15,7 @@ import { channelsTable } from './channels'
 import { apiMapClientLine } from './client'
 import { dispatchClientCall, dispatchKind, dispatchTables } from './dispatch'
 import { graphqlClientCall, graphqlKind, graphqlTables } from './graphql'
+import { handoffStems } from './host-path'
 import { describeSource, NO_SOURCE } from './source-ref'
 
 /** Renders a step reference from an origin (`s2` or `<flowId>.<stepId>`) for a table cell. */
@@ -203,7 +205,7 @@ function needs(operation: Operation, analysis: Analysis): string {
 }
 
 /** Renders `API_MAP.md`. Deterministic for the same analysis and client state. */
-export function renderApiMap(analysis: Analysis, client: ClientState): string {
+export function renderApiMap(analysis: Analysis, client: ClientState, stems: HostStems = handoffStems(analysis)): string {
   const resolver = createStepResolver(analysis.operations, analysis.flows)
   const lines: string[] = [
     '# API map',
@@ -226,7 +228,7 @@ export function renderApiMap(analysis: Analysis, client: ClientState): string {
   }
   lines.push(...graphqlTables(analysis))
   lines.push(...dispatchTables(analysis))
-  lines.push(...channelsTable(analysis.channels ?? []))
+  lines.push(...channelsTable(analysis.channels ?? [], stems))
   return `${lines.join('\n').trimEnd()}\n`
 }
 

@@ -5,11 +5,13 @@
  * per line. Host names, paths and labels come from the captured site and are escaped.
  */
 import type { Analysis, Operation } from '../../model'
+import type { HostStems } from '../host-files'
 import type { StepResolver } from '../steps'
 import type { AgentGuideContext } from './context'
 import type { GapGroup } from './gaps'
 import type { HostRole, RankedHost } from './importance'
 import { anchor, code, text } from '../escape'
+import { specFileName } from '../openapi/write'
 import { channelsSection } from './channels'
 import { computedIntro, computedLine, rankedComputedValues } from './computed'
 import { counted, UNTRUSTED_NOTE } from './context'
@@ -98,11 +100,17 @@ function gapsSection(groups: readonly GapGroup[]): string[] {
 }
 
 /** Renders `hosts/<host>.md`. `groups` are this host's gaps. Deterministic. */
-export function renderHostDoc(ranked: RankedHost, analysis: Analysis, context: AgentGuideContext, resolver: StepResolver, groups: readonly GapGroup[]): string {
+export function renderHostDoc(ranked: RankedHost, analysis: Analysis, context: AgentGuideContext, resolver: StepResolver, groups: readonly GapGroup[], stems: HostStems): string {
   const { host, session, role } = ranked
+  const hasOperations = analysis.operations.some(operation => operation.host === host)
   const needs = session === null
-    ? ['- No session requirements were recorded for this host: it has no captured API call.']
-    : sessionLines(session, analysis, context, role === 'pages')
+    ? [
+        '- No session requirements were recorded for this host.',
+        ...(hasOperations
+          ? [`- Spec: ${code(`specs/${specFileName(host, stems)}`)}.`]
+          : []),
+      ]
+    : sessionLines(session, analysis, context, role === 'pages', stems)
   const lines = [
     `# ${text(host)}`,
     '',
@@ -116,7 +124,7 @@ export function renderHostDoc(ranked: RankedHost, analysis: Analysis, context: A
     ...flowsSection(host, analysis, resolver),
     ...graphqlSection(analysis, host),
     ...dispatchSection(analysis, host),
-    ...channelsSection((analysis.channels ?? []).filter(channel => channel.host === host)),
+    ...channelsSection((analysis.channels ?? []).filter(channel => channel.host === host), stems),
     ...computedSection(host, analysis, resolver),
     ...gapsSection(groups),
   ]

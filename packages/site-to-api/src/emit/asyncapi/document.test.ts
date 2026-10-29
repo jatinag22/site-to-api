@@ -323,7 +323,7 @@ describe('writeAsyncApiDocuments', () => {
   it('writes specs/<host>.asyncapi.yaml with the OpenAPI file-name rules', async () => {
     const result = await writeAsyncApiDocuments(dir, buildAsyncApiDocuments([
       tickerChannel(),
-    ], 1), ['shop.test:8080'])
+    ], 1), ['shop.test:8080'], new Map())
     expect(result.warnings).toEqual([])
     expect(await readdir(join(dir, 'specs'))).toEqual(['shop.test_8080.asyncapi.yaml'])
     expect(await readFile(join(dir, 'specs', 'shop.test_8080.asyncapi.yaml'), 'utf8')).toMatch(/^asyncapi: 3\.0\.0\n/)
@@ -332,7 +332,7 @@ describe('writeAsyncApiDocuments', () => {
   it('never overwrites the OpenAPI spec of a host whose name ends in .asyncapi', async () => {
     const result = await writeAsyncApiDocuments(dir, buildAsyncApiDocuments([
       tickerChannel({ host: 'x' }),
-    ], 1), ['x.asyncapi'])
+    ], 1), ['x.asyncapi'], new Map())
     expect(result.files).toEqual([])
     expect(result.warnings).toEqual(['The WebSocket channels of x were not written: specs/x.asyncapi.yaml is the OpenAPI spec of another host.'])
   })

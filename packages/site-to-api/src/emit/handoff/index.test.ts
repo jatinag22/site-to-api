@@ -154,7 +154,7 @@ const context: AgentGuideContext = {
 describe('a large site (decision 0041)', () => {
   const files = new Map(renderHandoffDocs(bigSite(), context))
   const guide = files.get('AGENT.md') ?? ''
-  const hostFile = (host: string): string => files.get(hostDocPath(host)) ?? ''
+  const hostFile = (host: string): string => files.get(hostDocPath(host, new Map())) ?? ''
 
   it('keeps AGENT.md a short index with short lines', () => {
     expect(guide.length).toBeLessThan(25_000)
@@ -164,7 +164,7 @@ describe('a large site (decision 0041)', () => {
   it('writes one file per host and links each from AGENT.md, the site\'s API first', () => {
     const hosts = bigSite().hosts
     for (const host of hosts)
-      expect(files.has(hostDocPath(host)), host).toBe(true)
+      expect(files.has(hostDocPath(host, new Map())), host).toBe(true)
     const hostsSection = guide.slice(guide.indexOf('## Hosts\n'), guide.indexOf('## Key flows'))
     const order = [
       ...hostsSection.matchAll(/^- `([^`]+)`/gm),
@@ -218,5 +218,56 @@ describe('a large site (decision 0041)', () => {
 
   it('is deterministic', () => {
     expect(renderHandoffDocs(bigSite(), context)).toEqual([...files])
+  })
+})
+
+describe('a capture with hundreds of hosts and warnings (decision 0041)', () => {
+  /** The reviewer's case: 300 third-party hosts, each with a code-only endpoint, and 50 warnings. */
+  function manyHosts(): Analysis {
+    const hosts = Array.from({ length: 300 }, (_, index) => `cdn${index}.some-vendor-${index}.example.com`)
+    return {
+      sessions: Array.from({ length: 40 }, (_, index) => `session-${index}`),
+      hosts,
+      botProtection: [],
+      excerpts: new Map(),
+      warnings: Array.from({ length: 50 }, (_, index) => `warning ${index}: ${'sourcemap of a very long bundle path '.repeat(30)}${index}.js returned 404`),
+      operations: hosts.map((host, index) => operation(host, `op${index}`, { sourceOnly: true, methodUnknown: true })),
+      flows: {
+        formatVersion: 1,
+        generatedBy: 'site-to-api test',
+        sessions: ['s'],
+        session: [],
+        flows: [],
+        computedValues: [],
+      },
+    }
+  }
+  const files = new Map(renderHandoffDocs(manyHosts(), { ...context, pageHosts: [] }))
+  const guide = files.get('AGENT.md') ?? ''
+
+  it('keeps AGENT.md within 25 KB with no long line', () => {
+    expect(guide.length).toBeLessThanOrEqual(25_000)
+    expect(Math.max(...guide.split('\n').map(line => line.length))).toBeLessThan(1_000)
+  })
+
+  it('names the first few of the hosts and gaps it leaves out, and points at the files with the rest', () => {
+    expect(guide).toMatch(/^- 270 more hosts, least important last: (?:\[`hosts\/[^`]+`\]\([^)]+\), ){4}\[`hosts\/[^`]+`\]\([^)]+\) and 265 more\. `API_MAP\.md` has a table for every host, and each host has its file under `hosts\/`\.$/m)
+    expect(guide).toMatch(/^- 285 more gaps on (?:\[`hosts\/[^`]+`\]\([^)]+\), ){4}\[`hosts\/[^`]+`\]\([^)]+\) and 280 more hosts\.$/m)
+    expect(guide).toContain('(session-0, session-1, session-2, session-3, session-4 and 35 more)')
+  })
+
+  it('writes five build warnings, cut short, and every warning whole in GAPS.md', () => {
+    expect(guide).toContain('- 45 more build warnings and gaps in `GAPS.md`.')
+    expect(guide.match(/^- warning \d+:/gm)).toHaveLength(5)
+    const gaps = files.get('GAPS.md') ?? ''
+    for (const warning of manyHosts().warnings)
+      expect(gaps).toContain(`- ${warning}`)
+    // The client gap stays last, for gen.
+    expect(guide.trimEnd().split('\n').at(-1)).toBe('- No client generated: run `site-to-api gen`.')
+  })
+
+  it('still has a file for every host', () => {
+    for (const host of manyHosts().hosts)
+      expect(files.has(hostDocPath(host, new Map())), host).toBe(true)
   })
 })

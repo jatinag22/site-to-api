@@ -4,10 +4,11 @@
  * goes through `text()`, `code()` or `cellCode()` (decision 0019).
  */
 import type { ChannelConnectionFacts, ChannelMessage, ChannelProtocolId, ChannelValueLink, ChannelValueOrigin, HandshakeRole, WebSocketChannel } from '../../model'
+import type { HostStems } from '../host-files'
+import type { HostLinker } from './host-path'
 import { CHANNEL_PROTOCOL_LABELS } from '../../model'
 import { cellCode, code, text } from '../escape'
 import { asyncApiFileName } from '../openapi'
-import { hostLink } from './host-path'
 import { describeSource } from './source-ref'
 import { MAX_SUMMARY_LINES, moreLine } from './summary'
 
@@ -195,8 +196,8 @@ function messageList(channel: WebSocketChannel, direction: ChannelMessage['direc
   }).join(', ')
 }
 
-function channelLines(channel: WebSocketChannel): string[] {
-  const spec = `specs/${asyncApiFileName(channel.host)}`
+function channelLines(channel: WebSocketChannel, stems: HostStems): string[] {
+  const spec = `specs/${asyncApiFileName(channel.host, stems)}`
   const lines = [
     `### ${code(channelUrl(channel))}`,
     '',
@@ -281,7 +282,7 @@ export function channelGaps(channels: readonly WebSocketChannel[]): string[] {
  * The "Real-time channels" section of `AGENT.md`: one line per channel with its protocol and what
  * to send after connecting, pointing at the host file for the rest.
  */
-export function channelsSummary(channels: readonly WebSocketChannel[]): string[] {
+export function channelsSummary(channels: readonly WebSocketChannel[], link: HostLinker): string[] {
   if (channels.length === 0)
     return []
   const lines = channels.slice(0, MAX_SUMMARY_LINES).map((channel) => {
@@ -297,7 +298,7 @@ export function channelsSummary(channels: readonly WebSocketChannel[]): string[]
     const send = handshake.length > 0
       ? `send ${handshake.join(' → ')} after connecting`
       : 'no setup message recognised'
-    return `- ${code(channelUrl(channel))}: ${protocol}; ${send}; details in ${hostLink(channel.host, 'real-time-channels')}.`
+    return `- ${code(channelUrl(channel))}: ${protocol}; ${send}; details in ${link(channel.host, 'real-time-channels')}.`
   })
   return [
     '## Real-time channels',
@@ -311,7 +312,7 @@ export function channelsSummary(channels: readonly WebSocketChannel[]): string[]
 }
 
 /** The "Real-time channels" section of `hosts/<host>.md`; empty when the host has no WebSocket. */
-export function channelsSection(channels: readonly WebSocketChannel[]): string[] {
+export function channelsSection(channels: readonly WebSocketChannel[], stems: HostStems): string[] {
   if (channels.length === 0)
     return []
   return [
@@ -319,7 +320,7 @@ export function channelsSection(channels: readonly WebSocketChannel[]): string[]
     '',
     'WebSocket connections the pages opened. Messages are grouped by direction and by their protocol-level name when a framing protocol (Socket.IO, SignalR, STOMP, GraphQL over WebSocket, Phoenix, Centrifugo) was detected, otherwise by the field that names their type; the AsyncAPI file has the schema and redacted examples of each. The upgrade lines are facts from the capture: names only for cookies and URL tokens.',
     '',
-    ...channels.flatMap(channelLines),
+    ...channels.flatMap(channel => channelLines(channel, stems)),
   ]
 }
 
@@ -365,7 +366,7 @@ function cookiesCell(channel: WebSocketChannel): string {
 }
 
 /** The channels table of `API_MAP.md`; empty when the capture had no WebSocket. */
-export function channelsTable(channels: readonly WebSocketChannel[]): string[] {
+export function channelsTable(channels: readonly WebSocketChannel[], stems: HostStems): string[] {
   if (channels.length === 0)
     return []
   return [
@@ -386,7 +387,7 @@ export function channelsTable(channels: readonly WebSocketChannel[]): string[] {
       messagesCell(channel, 'receive'),
       linksCell(channel),
       cookiesCell(channel),
-      cellCode(`specs/${asyncApiFileName(channel.host)}`),
+      cellCode(`specs/${asyncApiFileName(channel.host, stems)}`),
     ].join(' | ')} |`),
     '',
   ]

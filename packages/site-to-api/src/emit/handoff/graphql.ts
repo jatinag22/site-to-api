@@ -4,10 +4,10 @@
  * each goes through `text()`, `code()` or `cellCode()` (decision 0019).
  */
 import type { Analysis, GraphqlOperation, JsonSchema, Operation } from '../../model'
+import type { HostLinker } from './host-path'
 import { cellCode, code, text } from '../escape'
 import { sdkFunctionName } from '../naming'
 import { counted } from './context'
-import { hostLink } from './host-path'
 import { MAX_SUMMARY_LINES, moreLine } from './summary'
 
 type GraphqlEntry = Operation & { graphql: GraphqlOperation }
@@ -170,12 +170,12 @@ function typeCounts(operations: readonly GraphqlEntry[]): string {
  * The "GraphQL operations" section of `AGENT.md`: one line per endpoint with its operation counts
  * and the host file that lists them; empty when the capture has none.
  */
-export function graphqlSummary(analysis: Analysis): string[] {
+export function graphqlSummary(analysis: Analysis, link: HostLinker): string[] {
   const groups = byEndpoint(analysis)
   if (groups.length === 0)
     return []
   const lines = groups.slice(0, MAX_SUMMARY_LINES).map(([endpoint, operations]) =>
-    `- ${code(endpoint)}: ${counted(operations.length, 'operation')} (${typeCounts(operations)}); each with its hash, variables and client call in ${hostLink(operations[0]?.host ?? '', 'graphql-operations')}.`)
+    `- ${code(endpoint)}: ${counted(operations.length, 'operation')} (${typeCounts(operations)}); each with its hash, variables and client call in ${link(operations[0]?.host ?? '', 'graphql-operations')}.`)
   return [
     '## GraphQL operations',
     '',
