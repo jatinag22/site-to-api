@@ -18,6 +18,12 @@ not say:
   `GET /questions/{questionId}/define-generic-for-array-…`, an operation named after that
   question. The id was a parameter on sight, but the slug after it needed the sibling evidence
   of 0035 (links, five values, two sessions).
+- Stack Overflow listed `sync.a-mo.net` among the site's own hosts and about eighteen ad and
+  identity-sync hosts as "hosts that served only pages"; livecoinwatch listed the ad network
+  `cdn.coinzilla.io` as its own. Their pages were documents loaded into iframes, and any page
+  made its registrable domain "the site". Livecoinwatch also listed Next.js
+  `/_next/static/chunks/*.js` files as API operations: the framework prefetches them, the
+  capture records the prefetch without a body, and a body-less `other` request was an API call.
 
 ## Decision
 ### Probe verdicts
@@ -44,7 +50,28 @@ not say:
   two or more slugs, each paired with one id and each id with one slug. One id seen with two
   slugs (`/users/7/edit-profile`, `/users/7/change-password`) keeps them as endpoints.
 
+### The site's own hosts and build files
+- The site is the registrable domains of the pages the person browsed. A host whose page
+  requests all carried `sec-fetch-dest: iframe` (or `frame`) and none `document` served only
+  framed pages and does not define the site. A page-only host off the site's domains is a third
+  party, as is one that only answered a captcha widget. A capture without the header keeps the
+  old rule.
+- The ad, identity-sync and DSP networks seen on these captures join the noise domains (AdaptMX,
+  Tribal Fusion, Adform, StackAdapt, Coinzilla, AdEx and others), so their traffic is never
+  analysed.
+- Front-end build files are assets whatever their resource type: paths under `/_next/static/`,
+  `/static/js/`, `/static/css/`, `/static/chunks/`, `/static/media/`, and file names with a
+  content hash before `.js`, `.mjs` or `.css`. Code-only routes to such paths are dropped like
+  file-system paths.
+
 ## Consequences
 - `flows.json` keeps its four verdicts: a host with a browser-only call is `none` and the call
   is named in the Markdown. The client README still describes the host's verdict only.
 - A vendor cookie seen only on untested calls still keeps the host on `browser`, as before.
+- Matching `probe.json` by exchange can show more failures than before: a page probe replayed
+  under an id that templating changed since now counts against the current operation.
+- A host on another domain that only the site's own code calls (`api.site-cdn.net`) is still
+  listed as a third party. Deciding it from the calling script's host was tried and also pulled
+  in `cloudflare.com/cdn-cgi/trace`, a CDN telemetry host and an ad-tech proxy on Nike.
+- The noise list is a heuristic that needs entries as new ad networks show up; the frame rule
+  covers those that render pages, but not a sync pixel called from the site's own page.
