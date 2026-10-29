@@ -783,16 +783,27 @@ describe('host sections follow the probe results', () => {
     expect(guide).toContain('- Needs: a real browser is needed: `x-kpsdk-h`, `x-kpsdk-v` are computed by a bot-protection script in the page; requests need headers `x-kpsdk-h`, `x-kpsdk-v` (confirmed by probe).')
   })
 
-  it('says which operations bot protection blocked, next to a plain-HTTP verdict', () => {
+  it('names the kinds of failure instead of claiming confirmation when some calls failed', () => {
     const guide = render(probeRun({
       failures: [
-        { host: 'shop.example', operationId: 'getDeals', reason: 'blocked by bot protection (status 403, 403)' },
+        {
+          host: 'shop.example',
+          operationId: 'getDeals',
+          kind: 'blocked',
+          reason: 'blocked by bot protection (status 403, 403)',
+        },
+        {
+          host: 'shop.example',
+          operationId: 'getApiOrders',
+          kind: 'differs',
+          reason: 'answered differently from the capture (status 500, 500)',
+        },
       ],
     }), (analysis) => {
-      analysis.flows.session[0]!.requires = 'none'
-      analysis.flows.session[0]!.probed = true
+      analysis.operations[1]!.requires = []
     })
-    expect(guide).toContain('(confirmed by probe); but bot protection blocked probe on 1 operation (see Gaps), which needs a real browser.')
+    expect(guide).toContain('(inferred from the capture; probe could not confirm it: 1 blocked by bot protection, 1 answered differently; see Gaps).')
+    expect(guide).not.toContain('confirmed by probe)')
     expect(guide).toContain('- Bot protection: Akamai')
     expect(guide).not.toContain('answered without it')
   })
@@ -800,13 +811,23 @@ describe('host sections follow the probe results', () => {
   it('reflects a probe run that confirmed nothing, and lists its failures as gaps', () => {
     const guide = render(probeRun({
       failures: [
-        { host: 'shop.example', operationId: 'getApiOrders', reason: 'blocked by bot protection (status 403, 403)' },
-        { host: 'shop.example', operationId: 'getDeals', reason: 'answered differently from the capture (status 419, 419)' },
+        {
+          host: 'shop.example',
+          operationId: 'getApiOrders',
+          kind: 'blocked',
+          reason: 'blocked by bot protection (status 403, 403)',
+        },
+        {
+          host: 'shop.example',
+          operationId: 'getDeals',
+          kind: 'differs',
+          reason: 'answered differently from the capture (status 419, 419)',
+        },
       ],
     }))
     expect(guide).not.toContain('not yet probed')
     expect(guide).not.toContain('has not been run')
-    expect(guide).toContain('(inferred from the capture; probe could not confirm it, see Gaps)')
+    expect(guide).toContain('(inferred from the capture; probe could not confirm it: 1 blocked by bot protection, 1 answered differently; see Gaps)')
     expect(guide).toContain('- `probe` could not confirm what 2 operations on `shop.example` need: `getApiOrders` (blocked by bot protection (status 403, 403)), `getDeals` (answered differently from the capture (status 419, 419)).')
   })
 

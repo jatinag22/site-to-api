@@ -182,6 +182,8 @@ interface SendResult {
   blocked: string | null
   /** How a rejected response differed from the captured one. */
   difference: string | null
+  /** Positive sign that the request was not logged in (login redirect, WWW-Authenticate…). */
+  auth: string | null
 }
 
 /** A short, actionable reason for a network failure, e.g. `ECONNREFUSED` or `timed out`. */
@@ -235,6 +237,9 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
             ? null
             : detectBlock(response.status, response.headers, text),
           difference,
+          auth: difference === null
+            ? null
+            : authEvidence(exchange, response.status, response.headers, text),
         }
       }
       catch (error) {
@@ -244,6 +249,7 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
           error: failureReason(error),
           blocked: null,
           difference: null,
+          auth: null,
         }
       }
     },
@@ -332,21 +338,42 @@ interface ProbeContext {
   minimizePerHost: number
 }
 
-/** Statuses that say the request was not authenticated, unlike rate limits or server errors. */
-const AUTH_STATUSES = new Set([401, 403])
+const LOGIN_PATH = /\/(?:log-?in|sign-?in|auth|sso|session|account\/login)\b/i
+const PASSWORD_FIELD = /<input[^>]+type=["']?password/i
+
+/**
+ * Positive evidence that a response refused the request for want of a login: a WWW-Authenticate
+ * header, a redirect to a login path, a 401/403 with a JSON error body, Laravel's 419 (session
+ * or CSRF token expired), or a login form where the capture had JSON. Without one, a refusal is
+ * not called an expired session (a firewall rule answers 403 too).
+ */
+function authEvidence(exchange: Exchange, status: number, headers: Headers, body: string): string | null {
+  if (headers.has('www-authenticate'))
+    return 'a WWW-Authenticate header'
+  const location = headers.get('location')
+  if (status >= 300 && status < 400 && location !== null && LOGIN_PATH.test(location))
+    return `a redirect to ${location.split('?')[0]}`
+  if (status === 419)
+    return 'status 419 (session or CSRF token expired)'
+  if ((status === 401 || status === 403) && mediaType(headers.get('content-type')).includes('json'))
+    return `status ${status} with a JSON error`
+  if (status >= 200 && status < 300 && (exchange.response.body?.mimeType ?? '').includes('json') && PASSWORD_FIELD.test(body))
+    return 'a login form where the capture had JSON'
+  return null
+}
 
 /**
  * Why neither the captured session nor a bare request was accepted. Bot protection answering is
- * not an expired session, and neither is a status other than 401 or 403 (a 419, 429 or 500).
+ * not an expired session; only positive login evidence is (decision 0036).
  */
 function rejectionOf(replay: SendResult, plain: SendResult): { kind: NonNullable<OperationProbe['rejection']>, note: string } {
   const blocked = replay.blocked ?? plain.blocked
   if (blocked !== null)
     return { kind: 'bot-protection', note: `Blocked by bot protection (${blocked}), with and without the captured session. This says nothing about the session: this request needs a real browser (\`browserSession\` in \`@site-to-api/runtime\`).` }
-  const statuses = [replay.status, plain.status].filter(status => status !== null)
-  if (statuses.length > 0 && statuses.every(status => AUTH_STATUSES.has(status)))
-    return { kind: 'session', note: `The captured session was not accepted any more (status ${statuses.join(', ')}; expired cookies or token?). Capture again shortly before probing.` }
-  return { kind: 'other', note: `The live site answered with ${replay.difference ?? 'a different response'}, with and without the captured session. That is not an authentication failure, so probe does not conclude the session expired; rate limiting or a request only the page can make are common causes.` }
+  const auth = replay.auth ?? plain.auth
+  if (auth !== null)
+    return { kind: 'session', note: `The captured session was not accepted any more: the site answered with ${auth}. Capture again shortly before probing, or log in in the wrapper first.` }
+  return { kind: 'other', note: `The live site answered with ${replay.difference ?? 'a different response'}, with and without the captured session, and showed no sign of a login (no WWW-Authenticate, login redirect or JSON error), so probe does not say the session expired. A firewall rule, rate limiting or a request only the page can make are common causes.` }
 }
 
 async function probeOne(operation: Operation, exchange: Exchange, context: ProbeContext): Promise<OperationProbe> {

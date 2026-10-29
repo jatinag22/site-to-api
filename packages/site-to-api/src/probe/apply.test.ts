@@ -138,6 +138,29 @@ describe('host verdicts follow probe', () => {
     ]))[0]?.requires).toBe('browser')
   })
 
+  it('does not confirm a host, or call it plain HTTP, while some of its calls failed', () => {
+    const entry = applyProbeReport([
+      { ...base, requires: 'cookies' },
+    ], report([
+      { bare: 'ok' },
+      {
+        replay: 'rejected',
+        bare: 'rejected',
+        requires: null,
+        statuses: [401, 401],
+        rejection: 'session',
+      },
+      {
+        replay: 'rejected',
+        bare: 'rejected',
+        requires: null,
+        statuses: [401, 401],
+        rejection: 'session',
+      },
+    ]))[0]
+    expect(entry).toMatchObject({ requires: 'cookies', probed: false })
+  })
+
   it('keeps the inferred verdict while tested requests were not all minimized', () => {
     expect(applyProbeReport([guarded], report([
       {

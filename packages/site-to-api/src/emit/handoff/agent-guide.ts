@@ -22,8 +22,8 @@ interface ProbeGaps {
   minimizePerHost: number
   /** Operations replayed fine but not minimized because their host reached the limit. */
   notMinimized: Array<{ host: string, operationId: string }>
-  /** Operations probe replayed but could not confirm, with a short reason. */
-  failures: Array<{ host: string, operationId: string, reason: string }>
+  /** Operations probe replayed but could not confirm, with their kind and a short reason. */
+  failures: Array<{ host: string, operationId: string, kind: string, reason: string }>
   /** Hosts probe sent at least one request to. */
   triedHosts: string[]
   /** Operations replayed, and operations skipped (never sent). */
@@ -74,11 +74,29 @@ function probedRequires(entry: SessionRequirement, analysis: Analysis): string[]
 }
 
 /** Where the Needs verdict comes from; never "confirmed" unless a replay of this host worked. */
+const FAILURE_LABEL: Record<string, string> = {
+  blocked: 'blocked by bot protection',
+  rejected: 'session refused',
+  differs: 'answered differently',
+  unreachable: 'unreachable',
+}
+
+/** `2 blocked by bot protection, 1 session refused` for the host's failed probes. */
+function failureSummary(host: string, probe: ProbeGaps): string {
+  const counts = new Map<string, number>()
+  for (const failure of probe.failures.filter(entry => entry.host === host))
+    counts.set(failure.kind, (counts.get(failure.kind) ?? 0) + 1)
+  return [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([kind, count]) => `${count} ${FAILURE_LABEL[kind] ?? kind}`).join(', ')
+}
+
 function verdictSource(entry: SessionRequirement, probe: ProbeGaps | null): string {
   if (entry.probed)
     return 'confirmed by probe'
   if (!probe)
     return 'inferred from the capture, not yet probed'
+  const failures = failureSummary(entry.host, probe)
+  if (failures !== '')
+    return `inferred from the capture; probe could not confirm it: ${failures}; see Gaps`
   return probe.triedHosts.includes(entry.host)
     ? 'inferred from the capture; probe could not confirm it, see Gaps'
     : 'inferred from the capture; probe tested no operation on this host'
@@ -101,12 +119,9 @@ function plural(count: number, one: string, many: string): string {
 }
 
 /** The Needs line: the verdict, headers probe found necessary, and where the verdict comes from. */
-function needsLine(entry: SessionRequirement, headers: string[], context: AgentGuideContext, blocked: number): string {
+function needsLine(entry: SessionRequirement, headers: string[], context: AgentGuideContext): string {
   const withHeaders = headers.length > 0
     ? `; requests need ${plural(headers.length, 'header', 'headers')} ${headers.map(code).join(', ')}`
-    : ''
-  const blockedText = blocked > 0
-    ? `; but bot protection blocked probe on ${blocked} ${plural(blocked, 'operation', 'operations')} (see Gaps), which ${plural(blocked, 'needs', 'need')} a real browser`
     : ''
   // Probe can find a browser needed for a header a bot-protection script computes, with no cookie
   // involved; say that instead of the cookie advice.
@@ -114,21 +129,19 @@ function needsLine(entry: SessionRequirement, headers: string[], context: AgentG
   const needs = entry.requires === 'browser' && browserHeaders.length > 0
     ? `a real browser is needed: ${browserHeaders.map(code).join(', ')} ${plural(browserHeaders.length, 'is', 'are')} computed by a bot-protection script in the page`
     : REQUIREMENT_TEXT[entry.requires]
-  return `- Needs: ${needs}${withHeaders} (${verdictSource(entry, context.probe)})${blockedText}.`
+  return `- Needs: ${needs}${withHeaders} (${verdictSource(entry, context.probe)}).`
 }
 
 function hostLines(entry: SessionRequirement, analysis: Analysis, context: AgentGuideContext, pageOnly: boolean): string[] {
   const tested = probedRequires(entry, analysis)
-  const headers = entry.probed
-    ? neededHeaders(tested)
-    : []
-  const blocked = (context.probe?.failures ?? []).filter(failure => failure.host === entry.host && failure.reason.startsWith('blocked')).length
+  const headers = neededHeaders(tested)
   const lines = [`### ${text(entry.host)}`, '']
   if (pageOnly)
     lines.push('- Serves pages only: no API calls to this host were captured.')
-  lines.push(needsLine(entry, headers, context, blocked))
+  lines.push(needsLine(entry, headers, context))
   // Probe measured that plain requests work: say so instead of contradicting the verdict.
-  const answered = entry.probed && entry.requires !== 'browser' && blocked === 0
+  // `probed` is false whenever a probed call on the host failed, so this never claims too much.
+  const answered = entry.probed && entry.requires !== 'browser'
   for (const finding of entry.botProtection) {
     lines.push(answered
       ? `- Bot protection seen: ${text(finding.vendor)} (${text(finding.evidence)}). Probe's plain requests were answered without it; if they start being challenged, use a real browser session (\`browserSession\` in \`@site-to-api/runtime\`) rather than reproducing it.`

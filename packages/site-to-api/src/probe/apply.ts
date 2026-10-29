@@ -4,6 +4,7 @@
  */
 import type { Operation, SessionRequirement } from '../model'
 import type { OperationProbe, ProbeReport } from '../model/probe'
+import { ANALYTICS_COOKIE } from '../analyze/flows'
 import { cookieNeedsBrowser } from '../model'
 
 /** Request headers that bot-protection scripts compute in the page; a wrapper cannot make them. */
@@ -51,11 +52,16 @@ function requirementFor(entry: SessionRequirement, probes: ProbeReport['operatio
 export function applyProbeReport(session: SessionRequirement[], report: ProbeReport): SessionRequirement[] {
   return session.map((entry) => {
     const probes = report.operations.filter(probe => probe.host === entry.host)
-    const probed = probes.some(probe => probe.replay === 'ok')
+    // One call that worked bare does not confirm a host where other calls were refused, blocked
+    // or unreachable: the verdict stays inferred, and never becomes "no session needed".
+    const failed = probes.some(probe => probe.replay !== 'ok')
+    const measured = requirementFor(entry, probes)
     return {
       ...entry,
-      requires: requirementFor(entry, probes),
-      probed,
+      requires: failed && measured === 'none'
+        ? entry.requires
+        : measured,
+      probed: !failed && probes.some(probe => probe.replay === 'ok'),
     }
   })
 }
@@ -73,7 +79,8 @@ export function pageHostRequirements(operations: readonly Operation[], session: 
   ].sort()
   const entries = hosts.map((host): SessionRequirement => ({
     host,
-    requires: operations.some(operation => operation.host === host && operation.cookies.length > 0)
+    // Analytics cookies travel with every page request; no page depends on them.
+    requires: operations.some(operation => operation.host === host && operation.cookies.some(cookie => !ANALYTICS_COOKIE.test(cookie.name)))
       ? 'cookies'
       : 'none',
     cookies: [],

@@ -42,11 +42,9 @@ export function probeResultKind(probe: OperationProbe): ProbeResultKind {
       return 'blocked'
     if (probe.rejection === 'session')
       return 'rejected'
-    // `other`, or a report written before `rejection` existed: only 401 and 403 mean the session
-    // was refused, so a 419 or a 200 with a different body is not read as an expired session.
-    return probe.rejection === undefined && probe.statuses.every(status => status === 401 || status === 403)
-      ? 'rejected'
-      : 'differs'
+    // `other`, or a report written before `rejection` existed: without login evidence a refusal
+    // is never read as an expired session.
+    return 'differs'
   }
   return 'limit'
 }
@@ -97,7 +95,7 @@ export function notMinimized(
 export function probeFailures(
   report: ProbeReport,
   current?: ReadonlyArray<{ host: string, operationId: string }>,
-): Array<{ host: string, operationId: string, reason: string }> {
+): Array<{ host: string, operationId: string, kind: ProbeResultKind, reason: string }> {
   const keep = current && new Set(current.map(operation => `${operation.host} ${operation.operationId}`))
   return report.operations
     .filter(probe => PROBE_FAILURES.has(probeResultKind(probe)))
@@ -105,6 +103,7 @@ export function probeFailures(
     .map(probe => ({
       host: probe.host,
       operationId: probe.operationId,
+      kind: probeResultKind(probe),
       reason: failureText(probe),
     }))
 }

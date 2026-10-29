@@ -19,14 +19,19 @@ same note, without saying what differed.
   up as refused, which is the truth for a plain HTTP wrapper.
 - When neither the captured session nor a bare request is accepted, `probe.json` records why in
   `rejection`:
-  - `bot-protection`: a response carried a vendor challenge (Cloudflare `cf-mitigated` or
-    challenge page, DataDome, PerimeterX, Imperva, Kasada, Akamai denial, Amazon robot check).
-    That is not a session problem; the request needs a real browser.
-  - `session`: every status was 401 or 403 with no challenge: the session was refused.
-  - `other`: any other status (419, 429, 5xx) or a 2xx that looks different from the capture.
-    The note says what differed (status, media type, JSON keys, body size); probe does not call
-    it an expired session.
-  Reports written before this field infer `session` only from all-401/403 statuses.
+  - `bot-protection`: a 403, 429 or 503 carrying a challenge marker (Cloudflare `cf-mitigated`
+    or challenge page, DataDome's captcha-delivery, PerimeterX's px-captcha, Incapsula's
+    "Request unsuccessful", Kasada, Akamai's denial page, Amazon's captcha form). Vendor headers
+    and script includes alone appear on ordinary responses and never count. That is not a
+    session problem; the request needs a real browser.
+  - `session`: positive login evidence: a WWW-Authenticate header, a redirect to a login path,
+    a 401/403 with a JSON error, Laravel's 419, or a login form where the capture had JSON.
+  - `other`: anything else, including a bare 403 such as Cloudflare's firewall rule
+    (`error code: 1020`). The note says what differed (status, media type, JSON keys, body size).
+  Reports written before this field are read as `other`.
+- A host is "confirmed by probe" only when every probed operation on it was accepted; when any
+  was refused, blocked, answered differently or unreachable, the verdict stays inferred (never
+  "no session needed") and the Needs line counts the failures by kind.
 - A host's verdict follows the probe results of its real operations: a host is "a real browser
   is needed" after probing only when a request needed a browser-made cookie or a header that a
   bot-protection script computes (`x-kpsdk-*`, `x-px-*`), not merely because bot protection was

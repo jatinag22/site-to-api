@@ -6,13 +6,17 @@
 
 interface BlockSignature {
   vendor: string
-  /** Matches when any header test or any body test holds (and the status test, when given). */
-  status?: (status: number) => boolean
+  /** A challenge-specific header, or markers that only a challenge or block page contains. */
   headers?: Array<{ name: string, value?: RegExp }>
   body?: RegExp[]
 }
 
-const DENIED = (status: number): boolean => status === 403 || status === 429 || status === 503
+/**
+ * Only a denial counts: vendors add their headers and script includes to ordinary responses too
+ * (`x-datadome: protected`, PerimeterX and Incapsula scripts on every page), so a signature is
+ * read only on a 403, 429 or 503, and only with a marker of the challenge itself.
+ */
+const DENIED = new Set([403, 429, 503])
 
 const SIGNATURES: readonly BlockSignature[] = [
   {
@@ -23,49 +27,41 @@ const SIGNATURES: readonly BlockSignature[] = [
   },
   {
     vendor: 'Cloudflare',
-    status: DENIED,
-    body: [/\/cdn-cgi\/challenge-platform\//, /<title>Just a moment\.\.\.<\/title>/i, /Attention Required! \| Cloudflare/i],
+    body: [/<title>Just a moment\.\.\.<\/title>/i, /Attention Required! \| Cloudflare/i, /cf-chl-/],
   },
   {
     vendor: 'DataDome',
-    headers: [
-      { name: 'x-datadome' },
-    ],
     body: [/captcha-delivery\.com/],
   },
   {
     vendor: 'PerimeterX',
-    body: [/px-captcha/, /perimeterx\.net/],
+    body: [/px-captcha/],
   },
   {
     vendor: 'Imperva',
-    body: [/_Incapsula_Resource/, /Request unsuccessful\. Incapsula/i],
+    body: [/Request unsuccessful\. Incapsula incident/i],
   },
   {
     vendor: 'Kasada',
-    status: DENIED,
     headers: [
       { name: 'x-kpsdk-ct' },
     ],
   },
   {
     vendor: 'Akamai',
-    status: DENIED,
-    headers: [
-      { name: 'server', value: /AkamaiGHost/i },
-    ],
+    body: [/<TITLE>Access Denied<\/TITLE>[\s\S]*errors\.edgesuite\.net/i],
   },
   {
     vendor: 'Amazon robot check',
-    body: [/\/errors\/validateCaptcha/, /api-services-support@amazon\.com/],
+    body: [/\/errors\/validateCaptcha/],
   },
 ]
 
 /** The vendor and the evidence when a response is a bot-protection block or challenge, else null. */
 export function detectBlock(status: number, headers: Headers, body: string): string | null {
+  if (!DENIED.has(status))
+    return null
   for (const signature of SIGNATURES) {
-    if (signature.status && !signature.status(status))
-      continue
     const header = signature.headers?.find((test) => {
       const value = headers.get(test.name)
       return value !== null && (test.value === undefined || test.value.test(value))
