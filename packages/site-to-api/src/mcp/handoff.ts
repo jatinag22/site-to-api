@@ -8,7 +8,8 @@ import type { AuthScheme, ChannelSummary, OpenApiDocument } from '../gen/spec'
 import type { FlowsDocument } from '../model'
 import type { OperationEntry } from './catalog'
 import { existsSync } from 'node:fs'
-import { readdir, readFile } from 'node:fs/promises'
+import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises'
+import nodePath from 'node:path'
 import { join, relative } from 'pathe'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
@@ -68,15 +69,54 @@ async function readFlows(dir: string): Promise<FlowsDocument> {
   return parsed.data
 }
 
-async function listExcerpts(dir: string): Promise<string[]> {
+/** Most excerpts listed; `build` writes far fewer, so more means the folder is not what it seems. */
+const MAX_EXCERPTS = 5000
+
+/** Whether `path` (already resolved) is `root` or inside it. */
+function inside(root: string, path: string): boolean {
+  const rest = nodePath.relative(root, path)
+  return rest === '' || (rest.split(nodePath.sep)[0] !== '..' && !nodePath.isAbsolute(rest))
+}
+
+/**
+ * The excerpt files under `source/`: `.md` regular files whose real path is inside the real
+ * `source/` folder. A `source/` that is itself a symbolic link, or a link inside it pointing
+ * elsewhere, would let a cloned folder show any Markdown file on the machine.
+ */
+async function listExcerpts(dir: string, warnings: string[]): Promise<string[]> {
   const sourceDir = join(dir, 'source')
   if (!existsSync(sourceDir))
     return []
+  if ((await lstat(sourceDir)).isSymbolicLink()) {
+    warnings.push(`${sourceDir} is a symbolic link; the MCP server serves no excerpts from it.`)
+    return []
+  }
+  const root = await realpath(sourceDir)
   const entries = await readdir(sourceDir, { recursive: true, withFileTypes: true })
-  return entries
-    .filter(entry => entry.isFile() && entry.name.endsWith('.md'))
-    .map(entry => relative(dir, join(entry.parentPath, entry.name)))
-    .sort()
+  const excerpts: string[] = []
+  for (const entry of entries) {
+    if (!entry.name.endsWith('.md') || entry.isDirectory())
+      continue
+    const path = join(entry.parentPath, entry.name)
+    if (!await isExcerptFile(root, path))
+      continue
+    excerpts.push(relative(dir, path))
+  }
+  if (excerpts.length > MAX_EXCERPTS)
+    warnings.push(`${sourceDir} has ${excerpts.length} excerpts; the MCP server lists the first ${MAX_EXCERPTS}.`)
+  return excerpts.sort().slice(0, MAX_EXCERPTS)
+}
+
+/** A regular file whose real path is inside `root` (the real `source/`). */
+async function isExcerptFile(root: string, path: string): Promise<boolean> {
+  try {
+    const real = await realpath(path)
+    return inside(root, real) && (await stat(real)).isFile()
+  }
+  catch {
+    // A dangling link or a file removed meanwhile is simply not an excerpt.
+    return false
+  }
 }
 
 interface ParsedSpecs {
@@ -151,7 +191,7 @@ export async function loadHandoff(dir: string): Promise<Handoff> {
     channels: specs.asyncApi.flatMap(entry => entry.channels),
     flows,
     build: await readBuildRecord(dir),
-    excerpts: await listExcerpts(dir),
+    excerpts: await listExcerpts(dir, warnings),
     clientGenerated: existsSync(join(dir, 'client', 'index.ts')),
     warnings,
   }
@@ -160,6 +200,10 @@ export async function loadHandoff(dir: string): Promise<Handoff> {
 /** The text of one excerpt; `path` must be one of {@link Handoff.excerpts}, so nothing else is readable. */
 export async function readExcerpt(handoff: Handoff, path: string): Promise<string | null> {
   if (!handoff.excerpts.includes(path))
+    return null
+  // Checked again when read: the folder may have changed since it was listed.
+  const sourceDir = join(handoff.dir, 'source')
+  if ((await lstat(sourceDir)).isSymbolicLink() || !await isExcerptFile(await realpath(sourceDir), join(handoff.dir, path)))
     return null
   return readFile(join(handoff.dir, path), 'utf8')
 }
