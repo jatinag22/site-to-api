@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import { compactHar } from './har'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { compactHar, finishHar, harOmissionNote } from './har'
 
 function entry(resourceType: string, mimeType: string, text: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -60,5 +63,67 @@ describe('compactHar', () => {
       },
     }
     expect(compactHar(har)).toEqual({ entries: 3, bodiesOmitted: 0, framesOmitted: 0 })
+  })
+})
+
+describe('finishHar', () => {
+  let dir: string
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'site-to-api-har-'))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const capturedHar = (): string => JSON.stringify({
+    log: {
+      version: '1.2',
+      entries: [
+        {
+          ...entry('image', 'image/png', 'AAAA'),
+          _initiator: { type: 'parser' },
+        },
+        entry('fetch', 'application/json', '{"a":1}'),
+      ],
+    },
+  })
+
+  it('rewrites the HAR compacted, keeping fields the schema does not list, and leaves no temporary file', async () => {
+    const file = path.join(dir, 'traffic.har')
+    await writeFile(file, capturedHar())
+    expect(await finishHar(file)).toEqual({ entries: 2, bodiesOmitted: 1, framesOmitted: 0 })
+    const written = JSON.parse(await readFile(file, 'utf8')) as { log: { version: string, entries: Array<Record<string, unknown>> } }
+    expect(written.log.version).toBe('1.2')
+    expect(written.log.entries[0]).toMatchObject({
+      _resourceType: 'image',
+      _initiator: { type: 'parser' },
+    })
+    expect(written.log.entries[0]).toHaveProperty('response.content.comment')
+    expect(written.log.entries[1]).toHaveProperty('response.content.text', '{"a":1}')
+    expect(await readdir(dir)).toEqual(['traffic.har'])
+  })
+
+  it('leaves the original HAR whole when writing the compacted one fails', async () => {
+    const file = path.join(dir, 'traffic.har')
+    const original = capturedHar()
+    await writeFile(file, original)
+    const failing = {
+      readFile: async (target: string): Promise<string> => await readFile(target, 'utf8'),
+      // Writes half the file, then the disk is full.
+      writeFile: async (target: string, data: string): Promise<void> => {
+        await writeFile(target, data.slice(0, 20))
+        throw new Error('ENOSPC: no space left on device')
+      },
+    }
+    await expect(finishHar(file, failing)).rejects.toThrow(/original HAR is unchanged.*ENOSPC/)
+    expect(await readFile(file, 'utf8')).toBe(original)
+    expect(await readdir(dir)).toEqual(['traffic.har'])
+  })
+
+  it('says what it left out, and where frames and scripts are only when they were kept', () => {
+    const compaction = { entries: 3, bodiesOmitted: 2, framesOmitted: 5 }
+    expect(harOmissionNote(compaction, { websockets: true, saveScripts: true, eventsFile: 'events.jsonl' })).toBe('Left 2 asset bodies and 5 WebSocket frames out of the HAR (the frames are in events.jsonl; the scripts under scripts/).')
+    expect(harOmissionNote(compaction, { websockets: false, saveScripts: false, eventsFile: 'events.jsonl' })).toBe('Left 2 asset bodies and 5 WebSocket frames out of the HAR (frames are not kept: capture.websockets is off; scripts are not kept: capture.saveScripts is off).')
+    expect(harOmissionNote({ entries: 3, bodiesOmitted: 0, framesOmitted: 0 }, { websockets: true, saveScripts: true, eventsFile: 'events.jsonl' })).toBeNull()
   })
 })

@@ -8,20 +8,18 @@ import type { BrowserContext, Page, WebSocket } from 'playwright'
 import type { ResolvedConfig } from '../config/schema'
 import type { CaptureEvent, SessionMeta } from '../model'
 import type { EventLimits } from './events'
-import type { HarCompaction } from './har'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import { createJiti } from 'jiti'
 import { chromium } from 'playwright'
-import { z } from 'zod'
 import pkg from '../../package.json' with { type: 'json' }
 import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { EventWriter } from './events'
-import { compactHar } from './har'
+import { finishHar, harOmissionNote } from './har'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
 import { ScriptCollector } from './scripts'
@@ -64,12 +62,6 @@ const HAR_FILE = 'traffic.har'
 const EVENTS_FILE = 'events.jsonl'
 const META_FILE = 'meta.json'
 
-const HarSchema = z.object({
-  log: z.object({
-    entries: z.array(z.unknown()),
-  }),
-})
-
 function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
@@ -111,31 +103,6 @@ function onStop(signal: AbortSignal | undefined, stop: () => void): () => void {
     signal?.removeEventListener('abort', handler)
     process.removeListener('SIGINT', handler)
   }
-}
-
-/** Checks the HAR the browser wrote, then compacts it in place (decision 0031). */
-async function finishHar(file: string): Promise<HarCompaction> {
-  let size = 0
-  try {
-    size = (await stat(file)).size
-  }
-  catch {
-    throw new SiteToApiError(`The browser closed without writing ${file}. Capture again and end the session by closing the browser window or pressing Ctrl+C, not by killing the process.`)
-  }
-  if (size === 0)
-    throw new SiteToApiError(`${file} is empty. Capture again and end the session by closing the browser window or pressing Ctrl+C.`)
-  const har: unknown = JSON.parse(await readFile(file, 'utf8'))
-  // The document itself, not Zod's copy: that one drops every field the schema does not list.
-  if (!isHarDocument(har))
-    throw new SiteToApiError(`${file} is not a valid HAR file. Capture again.`)
-  const compaction = compactHar(har)
-  if (compaction.bodiesOmitted > 0 || compaction.framesOmitted > 0)
-    await writeFile(file, JSON.stringify(har))
-  return compaction
-}
-
-function isHarDocument(value: unknown): value is { log: { entries: unknown[] } } {
-  return HarSchema.safeParse(value).success
 }
 
 type BrowserConfig = ResolvedConfig['capture']['browser']
@@ -305,8 +272,9 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
 
     const har = await finishHar(harPath)
     const { entries } = har
-    if (har.bodiesOmitted > 0 || har.framesOmitted > 0)
-      log(`Left ${har.bodiesOmitted} asset bodies and ${har.framesOmitted} WebSocket frames out of the HAR (the frames are in ${EVENTS_FILE}, the scripts under scripts/).`)
+    const omitted = harOmissionNote(har, { websockets: capture.websockets, saveScripts: capture.saveScripts, eventsFile: EVENTS_FILE })
+    if (omitted !== null)
+      log(omitted)
     if (entries === 0)
       warnings.push('The HAR has no requests. Did the page load?')
     warnings.push(...collector.warnings, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
