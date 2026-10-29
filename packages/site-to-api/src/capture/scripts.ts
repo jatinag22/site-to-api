@@ -10,8 +10,9 @@ import { Buffer } from 'node:buffer'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import { nonPublicReason, sourceMapRefusal } from './network'
+import { cachedLookup, nonPublicReason, sourceMapRefusal } from './network'
 import { hostDir, safeJoin, scriptFilePath, sourceFilePath, sourceMapFilePath } from './paths'
+import { WarningLog } from './warnings'
 
 type ScriptRecord = SessionMeta['scripts'][number]
 
@@ -190,13 +191,29 @@ export class ScriptCollector {
   private readonly seen = new Set<string>()
   private readonly pending = new Set<Promise<void>>()
   readonly scripts: ScriptRecord[] = []
-  readonly warnings: string[] = []
+  private readonly log = new WarningLog()
+  private readonly lookup: Lookup
 
   constructor(
     private readonly sessionDir: string,
     private readonly request: APIRequestContext,
     private readonly options: { saveScripts: boolean, sourcemaps: boolean, /** Replaces DNS in tests. */ lookup?: Lookup },
-  ) {}
+  ) {
+    this.lookup = cachedLookup(options.lookup)
+  }
+
+  /** Warnings so far: one-off problems, then one line per kind of repeated sourcemap problem. */
+  get warnings(): string[] {
+    return this.log.list()
+  }
+
+  private warn(message: string): void {
+    this.log.add(message)
+  }
+
+  private warnGrouped(key: string, url: string, single: string, summary: (count: number, first: string) => string): void {
+    this.log.addGrouped(key, url, single, summary)
+  }
 
   /** Starts processing a response if it is a script worth keeping. */
   onResponse(response: Response): void {
@@ -214,7 +231,7 @@ export class ScriptCollector {
       return
     this.seen.add(url)
     const task = this.process(response, parsed).catch((error: unknown) => {
-      this.warnings.push(`Could not save script ${url}: ${error instanceof Error
+      this.warn(`Could not save script ${url}: ${error instanceof Error
         ? error.message
         : String(error)}`)
     })
@@ -265,7 +282,7 @@ export class ScriptCollector {
     }
     if (!/^https?:$/.test(parsed.protocol))
       return null
-    return await nonPublicReason(parsed.hostname, this.options.lookup) === null
+    return await nonPublicReason(parsed.hostname, this.lookup) === null
       ? null
       : parsed
   }
@@ -277,7 +294,7 @@ export class ScriptCollector {
         const map = parseSourceMap(candidate.text)
         if (map)
           return { url: INLINE_SOURCEMAP_URL, text: candidate.text, map }
-        this.warnings.push(`Inline sourcemap in ${scriptUrl} is not a valid sourcemap.`)
+        this.warn(`Inline sourcemap in ${scriptUrl} is not a valid sourcemap.`)
         continue
       }
       const text = await this.fetchText(candidate.url, script, !candidate.guess)
@@ -286,8 +303,10 @@ export class ScriptCollector {
       const map = parseSourceMap(text)
       if (map)
         return { url: candidate.url, text, map }
-      if (!candidate.guess)
-        this.warnings.push(`Sourcemap ${candidate.url} for ${scriptUrl} is not valid sourcemap JSON.`)
+      if (!candidate.guess) {
+        this.warnGrouped('invalid-json', candidate.url, `Sourcemap ${candidate.url} for ${scriptUrl} is not valid sourcemap JSON.`, (count, first) =>
+          `${count} sourcemaps are not valid sourcemap JSON (first: ${first}); stack frames in those scripts point at the bundles.`)
+      }
     }
     return null
   }
@@ -301,9 +320,10 @@ export class ScriptCollector {
     let current = url
     try {
       for (let hop = 0; hop <= SOURCEMAP_MAX_REDIRECTS; hop++) {
-        const refusal = await sourceMapRefusal(new URL(current), script.url, script.localPage, this.options.lookup)
+        const refusal = await sourceMapRefusal(new URL(current), script.url, script.localPage, this.lookup)
         if (refusal !== null) {
-          this.warnings.push(`Did not fetch sourcemap ${current} for ${script.url.href}: ${refusal}.`)
+          // One line per URL: a refusal is a security decision worth reading in full.
+          this.warn(`Did not fetch sourcemap ${current} for ${script.url.href}: ${refusal}.`)
           return null
         }
         const response = await this.request.get(current, { timeout: SOURCEMAP_TIMEOUT_MS, failOnStatusCode: false, maxRedirects: 0 })
@@ -315,8 +335,10 @@ export class ScriptCollector {
           continue
         }
         if (!response.ok()) {
-          if (warnOnFailure)
-            this.warnings.push(`Sourcemap ${current} returned HTTP ${status}.`)
+          if (warnOnFailure) {
+            this.warnGrouped(`http:${status}`, current, `Sourcemap ${current} returned HTTP ${status}.`, (count, first) =>
+              `${count} sourcemaps returned HTTP ${status} (first: ${first}).`)
+          }
           await response.dispose()
           return null
         }
@@ -325,12 +347,12 @@ export class ScriptCollector {
         return text
       }
       if (warnOnFailure)
-        this.warnings.push(`Sourcemap ${url} redirected more than ${SOURCEMAP_MAX_REDIRECTS} times.`)
+        this.warn(`Sourcemap ${url} redirected more than ${SOURCEMAP_MAX_REDIRECTS} times.`)
       return null
     }
     catch (error) {
       if (warnOnFailure)
-        this.warnings.push(`Could not fetch sourcemap ${current}: ${errorText(error)}`)
+        this.warn(`Could not fetch sourcemap ${current}: ${errorText(error)}`)
       return null
     }
   }
@@ -352,7 +374,7 @@ export class ScriptCollector {
           sources.push(file)
       }
       catch (error) {
-        this.warnings.push(`Could not unpack ${source} from ${found.url}: ${error instanceof Error
+        this.warn(`Could not unpack ${source} from ${found.url}: ${error instanceof Error
           ? error.message
           : String(error)}`)
       }

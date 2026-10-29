@@ -1,6 +1,6 @@
 import type { Lookup } from './network'
 import { describe, expect, it } from 'vitest'
-import { isPublicAddress, nonPublicReason, sourceMapRefusal } from './network'
+import { cachedLookup, isPublicAddress, nonPublicReason, sourceMapRefusal } from './network'
 
 /** A fake resolver: no test touches real DNS. */
 function fakeLookup(table: Record<string, string[]>): Lookup {
@@ -181,6 +181,12 @@ describe('sourceMapRefusal', () => {
     expect(await sourceMapRefusal(new URL('http://10.0.0.8/app.js.map'), internalScript, null, lookup)).toMatch(/page is on a public host/)
   })
 
+  it('says a host Node could not resolve is unresolved, not that it is private', async () => {
+    const refusal = await sourceMapRefusal(new URL('https://missing.example.com/app.js.map'), new URL('https://missing.example.com/app.js'), null, lookup)
+    expect(refusal).toMatch(/could not be resolved from Node/)
+    expect(refusal).not.toMatch(/public host|own origin/)
+  })
+
   it('allows an intranet page to load maps from another private host of its own site', async () => {
     const intranetScript = new URL('http://app.corp/static/app.js')
     const intranetPage = new URL('http://app.corp/home')
@@ -210,5 +216,36 @@ describe('sourceMapRefusal', () => {
 
   it('refuses non-HTTP URLs', async () => {
     expect(await sourceMapRefusal(new URL('file:///etc/passwd'), publicScript, localPage, lookup)).toMatch(/never fetched/)
+  })
+})
+
+describe('cachedLookup', () => {
+  it('asks once per host and retries a failure once', async () => {
+    const calls: string[] = []
+    let failures = 1
+    const flaky: Lookup = async (hostname) => {
+      calls.push(hostname)
+      if (hostname === 'cdn.example.com' && failures-- > 0)
+        throw new Error('EAI_AGAIN')
+      return ['93.184.216.34']
+    }
+    const cached = cachedLookup(flaky)
+    expect(await Promise.all([
+      cached('cdn.example.com'),
+      cached('CDN.example.com'),
+      cached('cdn.example.com'),
+    ])).toEqual([
+      ['93.184.216.34'],
+      ['93.184.216.34'],
+      ['93.184.216.34'],
+    ])
+    expect(calls).toEqual(['cdn.example.com', 'cdn.example.com'])
+  })
+
+  it('gives up after the retry', async () => {
+    const down: Lookup = async () => {
+      throw new Error('ENOTFOUND')
+    }
+    await expect(cachedLookup(down)('gone.example.com')).rejects.toThrow('ENOTFOUND')
   })
 })
