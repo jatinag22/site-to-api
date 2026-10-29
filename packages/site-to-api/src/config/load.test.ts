@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
@@ -96,6 +97,27 @@ describe('loadConfig', () => {
     // Legitimately heavy: jiti transpiles the TypeScript config and resolves the running copy of
     // site-to-api. ~360 ms alone, 5 s+ when the machine is saturated, so it gets an explicit budget.
   }, 30_000)
+
+  it('with code: false, never runs a .ts or .js config and reads only the JSON one', async () => {
+    const marker = join(dir, 'ran.txt')
+    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\nexport default { outDir: 'from-code' }\n`)
+    const plain = await loadConfig({ cwd: dir, code: false })
+    expect(plain).toMatchObject({
+      file: null,
+      ignored: join(dir, 'site-to-api.config.ts'),
+      config: { outDir: 'api-handoff' },
+    })
+    await writeFile(join(dir, 'site-to-api.config.json'), JSON.stringify({ outDir: 'from-json' }))
+    expect(await loadConfig({ cwd: dir, code: false })).toMatchObject({
+      file: join(dir, 'site-to-api.config.json'),
+      config: { outDir: 'from-json' },
+    })
+    expect(await loadConfig({ cwd: dir, code: false, configFile: 'site-to-api.config.ts' })).toMatchObject({
+      file: null,
+      config: { outDir: 'api-handoff' },
+    })
+    expect(existsSync(marker)).toBe(false)
+  })
 
   it('fails clearly for a missing explicit config file', async () => {
     await expect(loadConfig({ cwd: dir, configFile: 'nope.config.ts' })).rejects.toThrow(/Config file not found/)

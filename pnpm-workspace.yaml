@@ -15,6 +15,7 @@ catalogs:
     '@antfu/eslint-config': ^10.0.0
     '@asyncapi/parser': ^3.6.6
     '@jridgewell/gen-mapping': 0.3.13
+    '@modelcontextprotocol/client': 2.4.0
     '@scalar/openapi-parser': 0.29.16
     '@types/node': ^26.6.5
     '@types/ws': ^8.18.2
@@ -38,6 +39,7 @@ catalogs:
     '@hey-api/openapi-ts': 0.99.0
     '@hey-api/shared': 0.5.0
     '@jridgewell/trace-mapping': 0.3.31
+    '@modelcontextprotocol/server': 2.4.0
     commander: ^15.0.0
     consola: ^3.4.2
     css-select: ^7.0.0

@@ -1,0 +1,15 @@
+{
+  "name": "site-to-api",
+  "description": "The site-to-api plugin for Claude Code, from this repository.",
+  "owner": {
+    "name": "Jatin",
+    "url": "https://github.com/jatinag22"
+  },
+  "plugins": [
+    {
+      "name": "site-to-api",
+      "source": "./plugins/claude-code",
+      "description": "Capture a website, build its API handoff folder and explore it over MCP."
+    }
+  ]
+}

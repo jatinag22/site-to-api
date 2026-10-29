@@ -1,0 +1,14 @@
+{
+  "name": "site-to-api",
+  "displayName": "site-to-api",
+  "version": "0.0.0",
+  "description": "Capture a website in a real browser, build OpenAPI specs, flows and a typed client, and explore them through an MCP server.",
+  "author": {
+    "name": "Jatin",
+    "url": "https://github.com/jatinag22"
+  },
+  "homepage": "https://github.com/jatinag22/site-to-api#readme",
+  "repository": "https://github.com/jatinag22/site-to-api",
+  "license": "MIT",
+  "keywords": ["api", "openapi", "reverse-engineering", "mcp", "playwright"]
+}

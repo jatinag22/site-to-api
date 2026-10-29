@@ -38,8 +38,30 @@ describe('build.json', () => {
         exclude: [],
       },
       client: false,
+      mcp: 'off',
       sticky: ['gen.client', 'redact.examples'],
     })
+  })
+
+  it('keeps a --mcp choice for probe, and reads records written before gen.mcp existed', async () => {
+    const record = buildRecordFor(ConfigSchema.parse({
+      gen: { mcp: 'write' },
+    }), { 'gen.mcp': 'flag' }, 'test')
+    expect(stickyOptions(record)).toMatchObject({
+      gen: { mcp: 'write' },
+      described: ['--mcp write'],
+    })
+    const { mcp: _mcp, ...older } = record
+    await writeFile(join(dir, 'build.json'), JSON.stringify({ ...older, sticky: [] }))
+    expect((await readBuildRecord(dir))?.mcp).toBeUndefined()
+    // gen --mcp read records what it wrote, sticky because a flag chose it.
+    await recordClientGenerated(dir, { mode: 'read', sticky: true })
+    expect(await readBuildRecord(dir)).toMatchObject({
+      mcp: 'read',
+      sticky: ['gen.mcp'],
+    })
+    await recordClientGenerated(dir, { mode: 'off', sticky: false })
+    expect(await readBuildRecord(dir)).toMatchObject({ mcp: 'off', sticky: [] })
   })
 
   it('turns sticky options into config flags and a readable list', () => {

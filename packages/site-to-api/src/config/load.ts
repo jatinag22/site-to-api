@@ -27,6 +27,8 @@ export interface LoadedConfig {
   config: ResolvedConfig
   /** Config file used, or `null` when none was found. */
   file: string | null
+  /** A code config file that was not run because `code` was `false`. */
+  ignored?: string
   /** Where each leaf value came from, keyed by dotted path (`redact.examples`). */
   sources: Record<string, ConfigSource>
 }
@@ -38,6 +40,11 @@ export interface LoadConfigOptions {
   env?: Record<string, string | undefined>
   /** Values from CLI flags, already nested (`{ redact: { examples: 'raw' } }`). */
   flags?: Record<string, unknown>
+  /**
+   * `false`: never run a `.ts`/`.js` config file, read only `site-to-api.config.json`. For
+   * commands that start without the person asking in that project, such as `mcp` from a plugin.
+   */
+  code?: boolean
 }
 
 type PlainObject = Record<string, unknown>
@@ -154,9 +161,26 @@ async function readConfigFile(path: string): Promise<PlainObject> {
   return loaded
 }
 
+/**
+ * The config file to read, and a code file skipped because `code` is `false`: then only a JSON
+ * file is read, the one found or `site-to-api.config.json` next to a skipped code file.
+ */
+function chooseConfigFile(options: LoadConfigOptions): { file: string | null, ignored?: string } {
+  const found = findConfigFile(options.cwd, options.configFile)
+  if (options.code !== false || found === null || found.endsWith('.json'))
+    return { file: found }
+  const json = resolve(options.cwd, 'site-to-api.config.json')
+  return {
+    file: !options.configFile && existsSync(json)
+      ? json
+      : null,
+    ignored: found,
+  }
+}
+
 /** Resolves the configuration for one command run. */
 export async function loadConfig(options: LoadConfigOptions): Promise<LoadedConfig> {
-  const file = findConfigFile(options.cwd, options.configFile)
+  const { file, ignored } = chooseConfigFile(options)
   const fromFile = file
     ? await readConfigFile(file)
     : {}
@@ -181,5 +205,12 @@ export async function loadConfig(options: LoadConfigOptions): Promise<LoadedConf
       sources[path] = layer
   }
 
-  return { config: parsed.data, file, sources }
+  return {
+    config: parsed.data,
+    file,
+    sources,
+    ...(ignored === undefined
+      ? {}
+      : { ignored }),
+  }
 }

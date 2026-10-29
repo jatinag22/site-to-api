@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 
@@ -7,6 +9,11 @@ const runtimeSource = fileURLToPath(new URL('./packages/runtime/src/index.ts', i
 
 export default defineConfig({
   test: {
+    // Generated clients are recorded as trusted in the config directory (decision 0043); tests
+    // keep that store out of the person's own ~/.config.
+    env: {
+      XDG_CONFIG_HOME: join(tmpdir(), 'site-to-api-test-config'),
+    },
     projects: [
       {
         extends: true,
