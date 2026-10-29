@@ -186,6 +186,7 @@ export function renderStore(assets: PageAssets, store: Store): string {
 <p><span class="label">Pharmacy</span> <span class="value">${yesNo(store.pharmacy)}</span></p>
 </div>
 <p id="store-hours-live" aria-live="polite"></p>
+<p id="store-info-live" aria-live="polite"></p>
 <h2>In stock at this store</h2>
 <ul id="store-stock"></ul>
 <p><a href="/stores">All stores</a></p>`,

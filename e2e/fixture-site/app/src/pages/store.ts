@@ -1,3 +1,4 @@
+import { z } from 'zod'
 /**
  * Store page: remembers the chosen store in a cookie set from JavaScript, which
  * `/api/stock.txt` requires, then shows that store's stock.
@@ -45,6 +46,25 @@ async function showStoreStock(): Promise<void> {
     : 'sold out'}`)))
 }
 
+/** Both calls go to one dispatcher endpoint, `/api/store-api`; `functionName` picks the function. */
+async function showStoreInfo(slug: string): Promise<void> {
+  const [info, services] = await Promise.all([
+    apiFetch(`/api/store-api?${new URLSearchParams({ functionName: 'getStoreInfo', slug }).toString()}`, {
+      headers: { accept: 'application/json' },
+    }).then(async response => z.object({
+      manager: z.string(),
+    }).parse(await response.json())),
+    apiFetch(`/api/store-api?${new URLSearchParams({ functionName: 'getStoreServices' }).toString()}`, {
+      headers: { accept: 'application/json' },
+    }).then(async response => z.object({
+      services: z.array(z.object({
+        label: z.string(),
+      })),
+    }).parse(await response.json())),
+  ])
+  requireElement('#store-info-live', HTMLParagraphElement).textContent = `Manager: ${info.manager}. Services: ${services.services.map(service => service.label).join(', ')}`
+}
+
 async function showStoreHours(slug: string): Promise<void> {
   const { hours, open } = await fetchStoreHours(slug)
   requireElement('#store-hours-live', HTMLParagraphElement).textContent = `${open ? 'Open now' : 'Closed'}: ${hours}`
@@ -55,5 +75,6 @@ export async function renderStorePage(slug: string): Promise<void> {
   await Promise.all([
     showStoreHours(slug),
     showStoreStock(),
+    showStoreInfo(slug),
   ])
 }
