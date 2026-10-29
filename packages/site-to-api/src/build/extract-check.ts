@@ -16,8 +16,13 @@ function asRecords(value: ReturnType<typeof extract>): Records {
     : [value]
 }
 
+/**
+ * Inference reads an empty element as `null` and the runtime reads it as `""`. Both mean the
+ * element shows nothing, which a nullable string field allows either way, so they count as the
+ * same: otherwise a field one sample leaves empty (a profile with no `about`) is dropped.
+ */
 function normalise(value: unknown): unknown {
-  return value === undefined
+  return value === undefined || value === ''
     ? null
     : value
 }
@@ -49,7 +54,11 @@ function fieldsThatDisagree(spec: ExtractSpec, samples: string[]): Disagreement 
     if (actual.length !== expected.length)
       return { fields: all, error: null }
     for (const name of Object.keys(spec.fields)) {
-      if (expected.some((record, index) => normalise(record[name]) !== normalise(actual[index]?.[name])))
+      // Own keys only: a field named `constructor` must not read the inherited function.
+      const read = (record: Record<string, unknown> | undefined): unknown => record !== undefined && Object.hasOwn(record, name)
+        ? record[name]
+        : undefined
+      if (expected.some((record, index) => normalise(read(record)) !== normalise(read(actual[index]))))
         disagree.add(name)
     }
   }

@@ -118,6 +118,28 @@ describe('nameExtracts', () => {
     ])
   })
 
+  it('names a parser after its records when the spec says what they are', () => {
+    const stories: ExtractOperation = {
+      ...listExtract,
+      operationId: 'getRoot',
+      spec: {
+        ...listExtract.spec,
+        kind: 'html',
+        records: 'tr.athing',
+        many: true,
+        recordsName: 'submissions',
+        fields: {},
+      },
+    }
+    expect(nameExtracts([
+      host({
+        extracts: [stories],
+      }),
+    ], []).map(entry => [entry.functionName, entry.typeName])).toEqual([
+      ['extractSubmissionsFromGetRoot', 'SubmissionsFromGetRootRecord'],
+    ])
+  })
+
   it('prefixes the host when two hosts share an operation id', () => {
     const warnings: string[] = []
     const named = nameExtracts([
