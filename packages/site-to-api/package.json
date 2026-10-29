@@ -50,6 +50,7 @@
     "@hey-api/openapi-ts": "catalog:prod",
     "@hey-api/shared": "catalog:prod",
     "@jridgewell/trace-mapping": "catalog:prod",
+    "@modelcontextprotocol/server": "catalog:prod",
     "@site-to-api/runtime": "workspace:*",
     "commander": "catalog:prod",
     "consola": "catalog:prod",
@@ -68,6 +69,7 @@
   "devDependencies": {
     "@asyncapi/parser": "catalog:dev",
     "@jridgewell/gen-mapping": "catalog:dev",
+    "@modelcontextprotocol/client": "catalog:dev",
     "@scalar/openapi-parser": "catalog:dev",
     "micromark": "catalog:dev",
     "micromark-extension-gfm": "catalog:dev"

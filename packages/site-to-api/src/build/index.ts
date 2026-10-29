@@ -383,7 +383,7 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
   const warnings = [...analysis.warnings]
   let client: ClientState = 'none'
   if (options.config.gen.client && analysis.operations.length > 0) {
-    const generated = await generateClient({ handoffDir: outDir, flows: analysis.flows })
+    const generated = await generateClient({ handoffDir: outDir, flows: analysis.flows, mcp: options.config.gen.mcp })
     files.push(...generated.files.map(file => join(outDir, file)))
     warnings.push(...generated.warnings)
     client = 'current'

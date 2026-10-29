@@ -87,6 +87,11 @@ export const ConfigSchema = z.strictObject({
   gen: z.strictObject({
     /** Generate the TypeScript client into `<outDir>/client`. */
     client: z.boolean().default(true),
+    /**
+     * Also write `client/mcp/`, an MCP server with one tool per operation: `read` exposes the
+     * operations that only read data, `write` all of them, `off` writes none (decision 0043).
+     */
+    mcp: z.enum(['off', 'read', 'write']).default('off'),
   }).prefault({}),
 })
 

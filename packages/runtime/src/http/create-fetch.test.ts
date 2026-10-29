@@ -384,6 +384,71 @@ describe('createFetch', () => {
       expect(requests[1]?.headers.get('authorization')).toBeNull()
     })
 
+    it('drops apiKey headers, cookies and the session\'s credentials across origins, and keeps them on the same origin', async () => {
+      const { fetch, requests } = fakeFetch((request) => {
+        const url = new URL(request.url)
+        if (url.pathname === '/start') {
+          return new Response(null, {
+            status: 302,
+            headers: { location: '/same' },
+          })
+        }
+        if (url.pathname === '/same') {
+          return new Response(null, {
+            status: 302,
+            headers: { location: 'https://evil.example/steal' },
+          })
+        }
+        return new Response('done')
+      })
+      const jar = new CookieJar()
+      jar.setCookieString('https://example.com/', 'sid=1')
+      await createFetch({
+        fetch,
+        jar,
+        session: tokenSession({
+          jar,
+          getToken: () => 'session-token',
+          header: 'x-session-token',
+          scheme: null,
+        }),
+        credentialHeaders: ['X-Api-Key'],
+      })('https://example.com/start', {
+        headers: {
+          'x-api-key': 'key-1',
+          'authorization': 'Bearer t',
+          'proxy-authorization': 'Basic p',
+          'cookie': 'own=1',
+          'x-trace': 'kept',
+        },
+      })
+      const [first, same, other] = requests
+      expect(same?.headers.get('x-api-key')).toBe('key-1')
+      expect(same?.headers.get('x-session-token')).toBe('session-token')
+      expect(first?.headers.get('cookie')).toContain('sid=1')
+      expect(other?.url).toBe('https://evil.example/steal')
+      for (const name of [
+        'x-api-key',
+        'authorization',
+        'proxy-authorization',
+        'cookie',
+        'x-session-token',
+      ])
+        expect(other?.headers.get(name), name).toBeNull()
+      expect(other?.headers.get('x-trace')).toBe('kept')
+    })
+
+    it('leaves the query out of the redirect-loop error, where tokens often are', async () => {
+      const { fetch } = fakeFetch(request => new Response(null, {
+        status: 302,
+        headers: { location: new URL(request.url).search },
+      }))
+      const error = await createFetch({ fetch })('https://example.com/api?api_key=SECRET').catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(TypeError)
+      expect(String(error)).toContain('https://example.com/api')
+      expect(String(error)).not.toContain('SECRET')
+    })
+
     it('stops after 20 redirects', async () => {
       const { fetch } = fakeFetch(() => new Response(null, {
         status: 302,

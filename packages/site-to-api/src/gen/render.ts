@@ -227,6 +227,17 @@ function zodForType(type: FieldType): string {
  * The `sdk` of one host: hey-api's functions, with the GraphQL (decision 0027) and dispatcher
  * (decision 0039) wrappers in place of the raw functions of the same name.
  */
+/** Header names of the host's apiKey schemes, lower case and sorted: credentials the runtime keeps on the site's origin. */
+function credentialHeaders(host: HostSpec): string[] {
+  return [
+    ...new Set(host.auth.flatMap(scheme => scheme.type === 'apiKey' && scheme.in === 'header' && scheme.parameter !== null
+      ? [
+          scheme.parameter.toLowerCase(),
+        ]
+      : [])),
+  ].sort()
+}
+
 function sdkEntry(host: HostSpec): string {
   const wrappers = [
     ...(host.graphql.length > 0
@@ -265,6 +276,7 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     `  ${literal(host.host)}: {`,
     `    baseUrl: ${literal(host.baseUrl)},`,
     `    headers: ${renderStringRecord(host.defaultHeaders, '    ')},`,
+    `    credentialHeaders: ${literal(credentialHeaders(host))},`,
     `  },`,
   ].join('\n'))
   const contentTypes = renderContentTypes(hosts)
@@ -297,7 +309,8 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     `/** Hosts this client was generated for. */`,
     `export type SiteHost = keyof typeof sdks`,
     '',
-    `const hostDefaults: Record<SiteHost, { baseUrl: string, headers: Record<string, string> }> = {\n${defaults.join('\n')}\n}`,
+    `/** Per host: the base URL, the constant headers, and the headers that carry credentials (dropped on a redirect to another origin). */`,
+    `const hostDefaults: Record<SiteHost, { baseUrl: string, headers: Record<string, string>, credentialHeaders: string[] }> = {\n${defaults.join('\n')}\n}`,
     '',
     ...contentTypes.declarations,
     `/** A security scheme of the spec, as the client passes it to {@link SiteClientOptions.auth}. */`,
@@ -360,6 +373,7 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     `    fetch: options.fetch,`,
     `    retry: options.retry,`,
     `    defaultHeaders: { ...defaults.headers, ...options.headers },`,
+    `    credentialHeaders: defaults.credentialHeaders,`,
     `  })`,
     `  const { client, sdk } = sdks[options.host]`,
     `  // \`auth\` is always set so a second call without it clears the first call's credentials.`,

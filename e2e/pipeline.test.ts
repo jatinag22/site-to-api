@@ -1,3 +1,4 @@
+import type { CallToolResult } from '@modelcontextprotocol/server'
 /**
  * The whole pipeline against the Pinewood Market fixture: capture three scripted sessions in a
  * real (headless) Chromium, build the handoff folder, probe the live site, then type-check and
@@ -11,6 +12,8 @@ import { cp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { Client } from '@modelcontextprotocol/client'
+import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { join, relative } from 'pathe'
 import { chromium } from 'playwright'
 import ts from 'typescript'
@@ -21,6 +24,7 @@ import { buildHandoff } from '../packages/site-to-api/src/build'
 import { runCapture } from '../packages/site-to-api/src/capture'
 import { pipelineCommands } from '../packages/site-to-api/src/cli/commands'
 import { run as runCli } from '../packages/site-to-api/src/cli/program'
+import { generateClient } from '../packages/site-to-api/src/gen'
 import { probeOperations, writeProbeReport } from '../packages/site-to-api/src/probe'
 import { startFixtureSite } from './fixture-site/server'
 
@@ -972,6 +976,144 @@ describe('gen', () => {
       'gen',
     ], pipelineCommands)
     expect(existsSync(join(clone, 'api-handoff', 'client', 'index.ts'))).toBe(true)
+  }, 120_000)
+})
+
+/** The text of a tool result, failing the test when the tool reported an error. */
+function toolText(result: Pick<CallToolResult, 'content' | 'isError'>): string {
+  const first = result.content[0]
+  const text = first?.type === 'text'
+    ? first.text
+    : ''
+  if (result.isError === true)
+    throw new Error(`tool error: ${text}`)
+  return text
+}
+
+describe('mCP servers (decision 0043)', () => {
+  const cli = join(here, '..', 'packages', 'site-to-api', 'bin', 'site-to-api.mjs')
+
+  async function connect(command: string, args: string[], env: Record<string, string> = {}): Promise<Client> {
+    const client = new Client({ name: 'e2e', version: '0.0.0' })
+    await client.connect(new StdioClientTransport({
+      command,
+      args,
+      env: {
+        ...getDefaultEnvironment(),
+        // The trust store the test's own gen wrote to (vitest.config.ts), so the CLI trusts that client.
+        XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME ?? '',
+        ...env,
+      },
+      stderr: 'ignore',
+    }))
+    return client
+  }
+
+  it('serves the handoff folder to an agent and calls a read operation on the live site', async () => {
+    const client = await connect(process.execPath, [
+      cli,
+      'mcp',
+      outDir,
+      '--allow-calls',
+      '--max-rps',
+      '10',
+    ])
+    try {
+      const tools = (await client.listTools()).tools.map(tool => tool.name).sort()
+      expect(tools).toEqual([
+        'call_operation',
+        'get_examples',
+        'get_flow',
+        'get_operation',
+        'get_source',
+        'list_hosts',
+        'search_operations',
+      ])
+      const search = z.object({
+        items: z.array(z.object({
+          operationId: z.string(),
+        })),
+      })
+        .parse(JSON.parse(toolText(await client.callTool({
+          name: 'search_operations',
+          arguments: { query: 'products' },
+        }))))
+      expect(search.items.map(item => item.operationId)).toContain('getApiProductsByProductId')
+      const login = toolText(await client.callTool({
+        name: 'get_operation',
+        arguments: { operationId: 'postApiAuthLogin' },
+      }))
+      expect(login).toContain('"location": "header.x-csrf-token"')
+      expect(login).toContain('meta[name=\\"csrf-token\\"]')
+      expect(login).not.toContain('<redacted')
+      const refused = await client.callTool({
+        name: 'call_operation',
+        arguments: {
+          operationId: 'postApiAuthLogin',
+          body: { username: 'demo', password: 'x' },
+        },
+      })
+      expect(refused.isError).toBe(true)
+      expect(toolText({ ...refused, isError: false })).toContain('--unsafe-methods')
+      const page = toolText(await client.callTool({
+        name: 'call_operation',
+        arguments: {
+          operationId: 'getProductsByProductId',
+          path: { productId: '1007' },
+        },
+      }))
+      expect(JSON.parse(page)).toMatchObject({ status: 200, ok: true })
+    }
+    finally {
+      await client.close()
+    }
+  }, 120_000)
+
+  it('generates a per-site server that calls the live site with cookies from the environment', async () => {
+    const dir = join(work, 'mcp-handoff')
+    await rm(dir, { recursive: true, force: true })
+    await cp(outDir, dir, { recursive: true })
+    await generateClient({ handoffDir: dir, flows: analysis.flows, mcp: 'read' })
+    const cookies = (await browserCookies()).map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
+    const client = await connect(process.execPath, [
+      cli,
+      'mcp',
+      dir,
+      '--generated',
+    ], { SITE_API_COOKIE: cookies, SITE_API_MAX_RPS: '10' })
+    try {
+      const tools = (await client.listTools()).tools.map(tool => tool.name)
+      expect(tools).toContain('getApiCategories')
+      expect(tools).toContain('productStock')
+      // Writes and browser-only steps get no tool in read mode.
+      expect(tools).not.toContain('postApiAuthLogin')
+      expect(tools).not.toContain('addToWishlist')
+      expect(tools).not.toContain('postShieldCollect')
+      const categories = toolText(await client.callTool({ name: 'getApiCategories', arguments: {} }))
+      expect(categories.split('\n')[0]).toBe('HTTP 200')
+      expect(categories).toContain('"slug"')
+    }
+    finally {
+      await client.close()
+    }
+    // A client changed after gen (as a cloned repository could ship it) is not run, by either server.
+    await writeFile(join(dir, 'client', 'index.ts'), `${await readFile(join(dir, 'client', 'index.ts'), 'utf8')}\nconsole.error('tampered')\n`)
+    await expect(connect(process.execPath, [cli, 'mcp', dir, '--generated'])).rejects.toThrow()
+    const explorer = await connect(process.execPath, [cli, 'mcp', dir, '--allow-calls'])
+    try {
+      const refused = await explorer.callTool({
+        name: 'call_operation',
+        arguments: {
+          operationId: 'getProductsByProductId',
+          path: { productId: '1007' },
+        },
+      })
+      expect(refused.isError).toBe(true)
+      expect(JSON.stringify(refused.content)).toContain('wasn\'t generated on this machine')
+    }
+    finally {
+      await explorer.close()
+    }
   }, 120_000)
 })
 

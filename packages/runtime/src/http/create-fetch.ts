@@ -25,6 +25,12 @@ export interface CreateFetchOptions {
    * to the platform's fetch; use it in browsers, where redirect responses are opaque.
    */
   redirects?: 'jar' | 'native'
+  /**
+   * Headers that carry credentials, such as an apiKey scheme's `x-api-key`. They are dropped when
+   * a redirect leaves the origin, like `authorization`, `proxy-authorization`, `cookie` and every
+   * header the session set. Generated clients pass their spec's apiKey header names.
+   */
+  credentialHeaders?: string[]
   /** Called with every request just before it is sent, after credentials were added. */
   onRequest?: (request: Request) => void | Promise<void>
   /** Called with every response, including redirects and responses that are retried. */
@@ -33,6 +39,9 @@ export interface CreateFetchOptions {
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 const MAX_REDIRECTS = 20
+
+/** Credential headers that never follow a redirect to another origin. */
+const ALWAYS_CREDENTIALS = ['authorization', 'proxy-authorization', 'cookie']
 
 /**
  * A `fetch` with a cookie jar, session credentials, default headers and retries. Pass it to a
@@ -58,6 +67,7 @@ export function createFetch(options: CreateFetchOptions = {}): typeof fetch {
   const baseFetch: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
   const followHere = jar !== null && options.redirects !== 'native'
   const defaultHeaders = Object.entries(options.defaultHeaders ?? {})
+  const credentialHeaders = (options.credentialHeaders ?? []).map(name => name.toLowerCase())
 
   async function sendOnce(request: Request): Promise<Response> {
     if (jar) {
@@ -72,9 +82,14 @@ export function createFetch(options: CreateFetchOptions = {}): typeof fetch {
     return response
   }
 
-  async function send(request: Request): Promise<Response> {
+  async function send(request: Request, sessionHeaders: readonly string[]): Promise<Response> {
     if (!followHere || request.redirect !== 'follow')
       return sendOnce(request)
+    const credentials = [
+      ...ALWAYS_CREDENTIALS,
+      ...credentialHeaders,
+      ...sessionHeaders,
+    ]
     const explicitCookie = request.headers.get('cookie')
     let current = request
     for (let hop = 0; ; hop++) {
@@ -87,19 +102,24 @@ export function createFetch(options: CreateFetchOptions = {}): typeof fetch {
       if (!REDIRECT_STATUSES.has(response.status) || location === null)
         return response
       if (hop >= MAX_REDIRECTS)
-        throw new TypeError(`createFetch: more than ${MAX_REDIRECTS} redirects starting at ${request.url}`)
+        throw new TypeError(`createFetch: more than ${MAX_REDIRECTS} redirects starting at ${withoutQuery(request.url)}`)
       await discard(response)
-      current = await redirectRequest(spare ?? current, response.status, new URL(location, current.url), request, explicitCookie)
+      current = await redirectRequest(spare ?? current, response.status, new URL(location, current.url), request, explicitCookie, credentials)
     }
   }
 
-  async function prepareAttempt(original: Request): Promise<Request> {
+  /** The request with default headers and the session's credentials, and the headers the session set. */
+  async function prepareAttempt(original: Request): Promise<{ request: Request, sessionHeaders: string[] }> {
     const request = original.clone()
     for (const [name, value] of defaultHeaders) {
       if (!request.headers.has(name))
         request.headers.set(name, value)
     }
-    return session.prepare(request)
+    const before = new Map(request.headers)
+    const prepared = await session.prepare(request)
+    // Whatever the session added or changed is a credential (a token header, a signed value).
+    const sessionHeaders = [...prepared.headers].filter(([name, value]) => before.get(name) !== value).map(([name]) => name)
+    return { request: prepared, sessionHeaders }
   }
 
   /** How long to wait before retrying `response`, or null to hand it to the caller. */
@@ -118,9 +138,9 @@ export function createFetch(options: CreateFetchOptions = {}): typeof fetch {
     let attempt = 1
     let refreshed = false
     for (;;) {
-      const prepared = await prepareAttempt(original)
+      const { request: prepared, sessionHeaders } = await prepareAttempt(original)
       const canRetry = retryable && attempt < retry.attempts
-      const outcome = await send(prepared).then(
+      const outcome = await send(prepared, sessionHeaders).then(
         response => ({ ok: true as const, response }),
         (error: unknown) => ({ ok: false as const, error }),
       )
@@ -161,13 +181,27 @@ function mergeCookies(explicit: string | null, fromJar: string): string {
   return [explicit, ...extra].join('; ')
 }
 
-/** The request a browser would send after a redirect (Fetch standard, "HTTP-redirect fetch"). */
+/** The URL without its query and fragment, which often carry tokens, for error messages. */
+function withoutQuery(url: string): string {
+  const parsed = URL.parse(url)
+  return parsed === null
+    ? '(unparsable URL)'
+    : `${parsed.origin}${parsed.pathname}`
+}
+
+/**
+ * The request a browser would send after a redirect (Fetch standard, "HTTP-redirect fetch"),
+ * except that every credential header is dropped when the redirect leaves the origin: a
+ * browser never sends an apiKey header it did not set itself, but a client sends what it was
+ * given on every hop.
+ */
 async function redirectRequest(
   previous: Request,
   status: number,
   location: URL,
   original: Request,
   explicitCookie: string | null,
+  credentials: readonly string[],
 ): Promise<Request> {
   const method = previous.method.toUpperCase()
   const toGet = ((status === 301 || status === 302) && method === 'POST')
@@ -177,8 +211,10 @@ async function redirectRequest(
   const sameOrigin = location.origin === new URL(original.url).origin
   if (sameOrigin && explicitCookie)
     headers.set('cookie', explicitCookie)
-  if (!sameOrigin)
-    headers.delete('authorization')
+  if (!sameOrigin) {
+    for (const name of credentials)
+      headers.delete(name)
+  }
   if (toGet) {
     for (const name of [
       'content-type',

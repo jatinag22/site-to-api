@@ -30,7 +30,12 @@ you verified the result yourself. Reports without a reproducible proof of concep
 In scope: the published packages `site-to-api` and `@site-to-api/runtime`, used as documented.
 Of particular interest: secrets or personal data leaking into the handoff folder under default
 redaction settings, code execution from a malicious website during capture or build (for example
-through crafted sourcemaps, HAR content or bundle paths), and path traversal when writing files.
+through crafted sourcemaps, HAR content or bundle paths), path traversal when writing files, and
+the MCP servers (`site-to-api mcp`, `client/mcp/`): reading files outside the handoff folder,
+running a `client/` this machine did not generate without `--trust-client`, running project code
+at start, sending credentials to another origin, and data-changing requests without
+`--unsafe-methods` or a `write` server. A `client/` you trusted with `--trust-client`, or ran
+directly with `tsx`, runs as your code: that is documented behaviour, not a vulnerability.
 
 Out of scope: vulnerabilities in the websites you capture; examples, tests and internal tooling;
 issues in dependencies our code does not reach; unsupported versions; reports from automated tools
