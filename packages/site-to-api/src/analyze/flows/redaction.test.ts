@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { exchange, formBody, jsonBody, textBody } from '../../../test/helpers'
 import { fakeSourceResolver } from '../../../test/scenarios'
 import { writeFlows } from '../../emit/flows'
-import { writeHandoffDocs } from '../../emit/handoff'
+import { handoffStems, writeHandoffDocs } from '../../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../../emit/openapi'
 import { FlowsDocumentSchema } from '../../model'
 import { classifyExchanges } from '../classify'
@@ -231,7 +231,7 @@ afterEach(async () => {
 
 /** Writes every emitted file the way `build` does and returns their text. */
 async function emitAll(analysis: Analysis, examples: ResolvedConfig['redact']['examples']): Promise<string> {
-  await writeOpenApiDocuments(dir, buildOpenApiDocuments(analysis))
+  await writeOpenApiDocuments(dir, buildOpenApiDocuments(analysis), handoffStems(analysis))
   await writeFlows(dir, analysis.flows, { operations: analysis.operations })
   await writeHandoffDocs(dir, analysis, {
     toolVersion: 'test',

@@ -4,8 +4,11 @@
  * each goes through `text()`, `code()` or `cellCode()` (decision 0019).
  */
 import type { Analysis, GraphqlOperation, JsonSchema, Operation } from '../../model'
+import type { HostLinker } from './host-path'
 import { cellCode, code, text } from '../escape'
 import { sdkFunctionName } from '../naming'
+import { counted } from './context'
+import { MAX_SUMMARY_LINES, moreLine } from './summary'
 
 type GraphqlEntry = Operation & { graphql: GraphqlOperation }
 
@@ -22,10 +25,13 @@ function isGraphql(operation: Operation): operation is GraphqlEntry {
   return operation.graphql !== undefined
 }
 
-/** Endpoints (`POST host/path`) with their operations, sorted by endpoint then operation id. */
-function byEndpoint(analysis: Analysis): Array<[string, GraphqlEntry[]]> {
+/**
+ * Endpoints (`POST host/path`) with their operations, sorted by endpoint then operation id; only
+ * those of `host` when given.
+ */
+function byEndpoint(analysis: Analysis, host?: string): Array<[string, GraphqlEntry[]]> {
   const groups = new Map<string, GraphqlEntry[]>()
-  for (const operation of analysis.operations.filter(isGraphql)) {
+  for (const operation of analysis.operations.filter(isGraphql).filter(candidate => host === undefined || candidate.host === host)) {
     const key = `${operation.method} ${operation.host}${operation.graphql.endpoint}`
     groups.set(key, [
       ...(groups.get(key) ?? []),
@@ -115,9 +121,9 @@ function agentLine(operation: GraphqlEntry): string {
   return `- ${code(name)}: ${parts.join(', ')}. Client: ${code(clientCall(operation))}; spec path ${code(operation.path)}.`
 }
 
-/** The "GraphQL operations" section of `AGENT.md`; empty when the capture has none. */
-export function graphqlSection(analysis: Analysis): string[] {
-  const groups = byEndpoint(analysis)
+/** The "GraphQL operations" section of `hosts/<host>.md`; empty when the host has none. */
+export function graphqlSection(analysis: Analysis, host: string): string[] {
+  const groups = byEndpoint(analysis, host)
   if (groups.length === 0)
     return []
   const lines = [
@@ -133,6 +139,52 @@ export function graphqlSection(analysis: Analysis): string[] {
   for (const [endpoint, operations] of groups)
     lines.push(`### ${code(endpoint)}`, '', ...operations.map(agentLine), '')
   return lines
+}
+
+const TYPE_ORDER: GraphqlOperation['operationType'][] = [
+  'query',
+  'mutation',
+  'subscription',
+  'unknown',
+]
+
+/** `3 queries, 1 mutation` for an endpoint's operations. */
+function typeCounts(operations: readonly GraphqlEntry[]): string {
+  return TYPE_ORDER.flatMap((type) => {
+    const count = operations.filter(operation => operation.graphql.operationType === type).length
+    if (count === 0)
+      return []
+    return type === 'query'
+      ? [
+          counted(count, 'query', 'queries'),
+        ]
+      : type === 'unknown'
+        ? [`${count} of unknown type`]
+        : [
+            counted(count, type),
+          ]
+  }).join(', ')
+}
+
+/**
+ * The "GraphQL operations" section of `AGENT.md`: one line per endpoint with its operation counts
+ * and the host file that lists them; empty when the capture has none.
+ */
+export function graphqlSummary(analysis: Analysis, link: HostLinker): string[] {
+  const groups = byEndpoint(analysis)
+  if (groups.length === 0)
+    return []
+  const lines = groups.slice(0, MAX_SUMMARY_LINES).map(([endpoint, operations]) =>
+    `- ${code(endpoint)}: ${counted(operations.length, 'operation')} (${typeCounts(operations)}); each with its hash, variables and client call in ${link(operations[0]?.host ?? '', 'graphql-operations')}.`)
+  return [
+    '## GraphQL operations',
+    '',
+    'Each GraphQL operation is its own operation in the spec and its own client function: pass only `variables`.',
+    '',
+    ...lines,
+    ...moreLine(groups.length - lines.length, 'endpoint', 'the host files'),
+    '',
+  ]
 }
 
 /** The GraphQL tables of `API_MAP.md`, one per endpoint; empty when the capture has none. */

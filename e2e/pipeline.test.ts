@@ -155,7 +155,17 @@ async function browserCookies() {
   }
 }
 
-/** The per-cookie lines of AGENT.md or client/README.md, which must say the same thing. */
+/** `AGENT.md` and every `hosts/<host>.md` of a handoff folder: the docs an agent reads. */
+function docs(folder: Map<string, string>): string {
+  return [...folder].filter(([name]) => name === 'AGENT.md' || name.startsWith('hosts/')).map(([, content]) => content).join('\n')
+}
+
+/** The detail file of one host (`hosts/<host>.md`, decision 0041). */
+function hostDoc(folder: Map<string, string>, name: string): string {
+  return folder.get(`hosts/${name.replace(/[^\w.-]/g, '_')}.md`) ?? ''
+}
+
+/** The per-cookie lines of the host files or client/README.md, which must say the same thing. */
 function cookieLines(markdown: string): string[] {
   return markdown.split('\n').filter(line => line.startsWith('- Cookie `')).sort()
 }
@@ -214,6 +224,44 @@ describe('handoff folder', () => {
     expect([
       ...files.keys(),
     ].some(name => name.startsWith('specs/') && name.endsWith('.yaml'))).toBe(true)
+  })
+
+  it('keeps AGENT.md a short index that links one file per host (decision 0041)', () => {
+    const guide = files.get('AGENT.md') ?? ''
+    expect(guide.length).toBeLessThan(25_000)
+    const stem = host.replace(/[^\w.-]/g, '_')
+    expect(guide).toContain(`[\`hosts/${stem}.md\`](hosts/${stem}.md)`)
+    expect(guide.indexOf('## Hosts')).toBeLessThan(guide.indexOf('## Key flows'))
+    expect(guide.indexOf('## Key flows')).toBeLessThan(guide.indexOf('## Gaps'))
+    // The login comes first among the flows, whatever order they were captured in.
+    const firstFlow = guide.split('## Key flows')[1]?.split('\n').find(line => line.startsWith('- [')) ?? ''
+    expect(firstFlow).toContain('`postApiAuthLogin`')
+    const detail = hostDoc(files, host)
+    expect(detail.startsWith(`# ${host}\n`)).toBe(true)
+    for (const section of [
+      '## Session',
+      '## Operations',
+      '## Flows',
+      '## Real-time channels',
+      '## Gaps',
+    ])
+      expect(detail, section).toContain(`\n${section}\n`)
+    // Every operation of the host is named in its file.
+    for (const entry of analysis.operations.filter(op => op.host === host))
+      expect(detail, entry.operationId).toContain(`- \`${entry.operationId}\`: `)
+  })
+
+  it('has every section the demo script prints', async () => {
+    // scripts/demo/demo.tape runs against the shop on localhost:4173; here the port is random.
+    const tape = await readFile(join(here, '..', 'scripts', 'demo', 'demo.tape'), 'utf8')
+    const ranges = [
+      ...tape.matchAll(/sed -n '\/([^/]+)\/,\/[^/]+\/p' api-handoff\/([^\s"]+)/g),
+    ]
+    expect(ranges.length).toBeGreaterThan(0)
+    for (const [, start, file] of ranges) {
+      const name = (file ?? '').replace('localhost_4173', host.replace(/[^\w.-]/g, '_'))
+      expect(files.get(name), `${file} for ${start}`).toMatch(new RegExp(`^${start}`, 'm'))
+    }
   })
 
   it('covers the shop host and leaves the analytics host out', () => {
@@ -306,13 +354,13 @@ describe('flows and session needs', () => {
   })
 
   it('reports no gaps for route literals or bot-protection payloads', () => {
-    const guide = files.get('AGENT.md') ?? ''
+    const guide = docs(files)
     expect(guide).not.toMatch(/`body\.\/sensor_data` of/)
     expect(guide).not.toMatch(/`path\.\d+` of `getApiStockTxt`/)
   })
 
-  it('gives the same cookie facts in the client README as in AGENT.md before probe', () => {
-    const guide = cookieLines(files.get('AGENT.md') ?? '')
+  it('gives the same cookie facts in the client README as in the host files before probe', () => {
+    const guide = cookieLines(docs(files))
     expect(guide.length).toBeGreaterThan(0)
     expect(cookieLines(files.get('client/README.md') ?? '')).toEqual(guide)
     expect(files.get('client/README.md')).not.toContain('Cookies the API needs')
@@ -475,8 +523,9 @@ describe('real-time channels', () => {
     expect(producer?.path).toMatch(/^\/(?:api\/)?products/)
   })
 
-  it('documents the channel in AGENT.md, API_MAP.md, the AsyncAPI spec and the client README', () => {
-    const guide = files.get('AGENT.md') ?? ''
+  it('documents the channel in AGENT.md, its host file, API_MAP.md, the AsyncAPI spec and the client README', () => {
+    expect(files.get('AGENT.md')).toContain(`- \`ws://${host}/ws/ticker\`: JSON / text; send \`subscribe\` after connecting; details in [\`hosts/`)
+    const guide = hostDoc(files, host)
     const section = guide.split('## Real-time channels')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain(`### \`ws://${host}/ws/ticker\``)
     expect(section).toMatch(/1\. `subscribe` \(subscription\), e\.g\. `\{"type":"subscribe","productId":\d+\}`/)
@@ -538,7 +587,7 @@ describe('framed WebSocket protocols (decision 0038)', () => {
     })
     expect(channel.connection.upgrade.accepted).toBeGreaterThanOrEqual(2)
     expect(channel.connection.urlTokens).toEqual(['sid'])
-    const guide = files.get('AGENT.md') ?? ''
+    const guide = hostDoc(files, host)
     expect(guide).toContain('- Protocol: Socket.IO (Engine.IO 4), shown by URL path ends in /socket.io/, frames.')
     expect(guide).toContain('- First authentication message: `connect`; the server\'s next message was `connect`.')
     expect(guide).toMatch(/1\. `connect` \(authentication\), sent as `40<payload>`, e\.g\. `\{"token":"[^"]*redacted[^"]*"\}`/)
@@ -763,8 +812,9 @@ describe('graphQL (decision 0027)', () => {
     expect(stock.some(step => step.inputs['body./variables/productId']?.kind === 'step')).toBe(true)
   })
 
-  it('lists the operations per endpoint in AGENT.md and API_MAP.md', () => {
-    const guide = files.get('AGENT.md') ?? ''
+  it('lists the operations per endpoint in AGENT.md, the host file and API_MAP.md', () => {
+    expect(files.get('AGENT.md')).toMatch(new RegExp(`^- \`POST ${host.replace(/\./g, '\\.')}/api/graphql\`: \\d+ operations \\(`, 'm'))
+    const guide = hostDoc(files, host)
     const section = guide.split('## GraphQL operations')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain(`### \`POST ${host}/api/graphql\``)
     expect(section).toMatch(/- `AddToWishlist`: mutation \(from the query document\), sends the query document, variables `productId: integer`\. Client: `sdk\.addToWishlist\(\{ variables \}\)`/)
@@ -853,11 +903,12 @@ describe('dispatcher endpoints (decision 0039)', () => {
     expect(analysis.operations.some(op => op.host === host && op.path === '/api/store-api')).toBe(false)
   })
 
-  it('marks the functions in the spec and lists them in AGENT.md and API_MAP.md', () => {
+  it('marks the functions in the spec and lists them in AGENT.md, the host file and API_MAP.md', () => {
     const spec = files.get(`specs/${host.replace(/[^\w.-]/g, '_')}.yaml`) ?? ''
     expect(spec).toContain('/api/store-api#getStoreInfo:')
     expect(spec).toMatch(/x-site-to-api-dispatch:\n\s+endpoint: \/api\/store-api\n\s+parameter: functionName\n\s+in: query\n\s+value: getStoreServices/)
-    const guide = files.get('AGENT.md') ?? ''
+    expect(files.get('AGENT.md')).toContain(`- \`GET ${host}/api/store-api\`: query parameter \`functionName\` picks one of`)
+    const guide = hostDoc(files, host)
     const section = guide.split('## Dispatcher endpoints')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain(`### \`GET ${host}/api/store-api\``)
     expect(section).toContain('- `getStoreInfo`: parameters `slug`. Client: `sdk.getStoreInfo({ query: { slug } })`; spec path `/api/store-api#getStoreInfo`.')
@@ -944,8 +995,8 @@ describe('probe', () => {
     const rebuilt = await buildHandoff({ config, cwd: work })
     expect(rebuilt.analysis.flows.session.find(entry => entry.host === host)?.probed).toBe(true)
 
-    // The client README repeats AGENT.md's probe results, including cookies no request needed.
-    const guide = await readFile(join(outDir, 'AGENT.md'), 'utf8')
+    // The client README repeats the host files' probe results, including cookies no request needed.
+    const guide = docs(await readAll(outDir))
     const readme = await readFile(join(outDir, 'client', 'README.md'), 'utf8')
     expect(cookieLines(readme)).toEqual(cookieLines(guide))
     expect(readme).toMatch(/Cookie `bm_sz`: [^\n]*Seen in capture, but none of the \d+ requests probe tested needed it/)
@@ -995,8 +1046,9 @@ describe('first-time use through the CLI: build options stick and the docs agree
     const map = await read('API_MAP.md')
     const categories = operation('GET', '/api/categories').operationId
     expect(row(map, categories)).toContain('cookies: `_abck`; browser session (confirmed by probe)')
-    expect(guide).toMatch(/Cookie `_abck`: [^\n]*Needed by \d+ requests \(confirmed by probe\)/)
-    expect(guide).toMatch(/Cookie `bm_sz`: [^\n]*Seen in capture, but none of the \d+ requests probe tested needed it/)
+    const details = docs(await readAll(cliOut()))
+    expect(details).toMatch(/Cookie `_abck`: [^\n]*Needed by \d+ requests \(confirmed by probe\)/)
+    expect(details).toMatch(/Cookie `bm_sz`: [^\n]*Seen in capture, but none of the \d+ requests probe tested needed it/)
     expect(guide).toMatch(/`probe` did not work out which cookies and headers \d+ operations on `[^`]+` need .*`site-to-api probe --minimize-per-host \d+`/)
 
     // Bot-protection steps list no needs; references are qualified and path inputs named.
@@ -1011,7 +1063,7 @@ describe('first-time use through the CLI: build options stick and the docs agree
     await cli('gen')
     expect(existsSync(join(cliOut(), 'client', 'index.ts'))).toBe(true)
     const generated = await read('AGENT.md')
-    expect(generated).toContain('5. `client/`: typed client with Zod validation')
+    expect(generated).toContain('6. `client/`: typed client with Zod validation')
     expect(generated).not.toContain('No client generated')
     // gen rewrites only the client sentences: the channels section and table survive.
     expect(generated).toContain('## Real-time channels')
@@ -1028,7 +1080,7 @@ describe('first-time use through the CLI: build options stick and the docs agree
     expect(JSON.parse(await read('probe.json'))).toMatchObject({ minimizePerHost: 50 })
     expect(reprobed).not.toContain('did not work out')
     expect(reprobed).toContain('No example values were written')
-    expect(reprobed).toContain('5. `client/`: typed client with Zod validation')
+    expect(reprobed).toContain('6. `client/`: typed client with Zod validation')
     expect(row(await read('API_MAP.md'), operation('GET', '/api/products').operationId)).toContain('(confirmed by probe)')
 
     await cli('build', '--no-client')

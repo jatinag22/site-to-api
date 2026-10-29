@@ -84,7 +84,8 @@ See `docs/output-format.md` for the full specification.
 
 ```
 <outDir>/
-  AGENT.md          start here: session needs, flows, reading order
+  AGENT.md          start here: a short index of hosts, key flows, computed values, top gaps
+  hosts/<host>.md   per host: session needs, cookies, operations, channels, every gap
   API_MAP.md        one row per operation
   flows.json        source of truth for flows, computed values, session needs
   flows.md          readable rendering of flows.json
