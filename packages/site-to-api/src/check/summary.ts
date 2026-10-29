@@ -37,6 +37,8 @@ export function summarizeCheck(report: CheckReport): string[] {
     if (entry.cause === 'no-sample')
       lines.push(`NOT CHECKED ${entry.operationId}`, `  ${entry.reason}`)
   }
+  if (report.skippedHosts.length > 0)
+    lines.push(`Third-party hosts not checked (name one with --include to check it): ${report.skippedHosts.join(', ')}.`)
   if (report.operations.length === 0)
     lines.push('Nothing was replayed. Every operation was skipped (see check.json) or none matched.')
   return lines
