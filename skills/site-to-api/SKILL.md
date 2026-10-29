@@ -69,7 +69,8 @@ may change.
 - To try calls from an agent: `site-to-api mcp --allow-calls` (reads only; credentials from
   `SITE_API_COOKIE` / `SITE_API_AUTH`), or `site-to-api gen --mcp` for a per-site MCP server in
   `client/mcp/`.
-- `site-to-api check`, where available, verifies the folder against the live site.
+- `site-to-api check` replays safe requests and reports API drift against the specs (exit code
+  1 on drift); run it before trusting an old handoff folder.
 
 ## Rules
 

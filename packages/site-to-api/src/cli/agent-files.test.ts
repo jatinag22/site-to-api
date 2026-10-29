@@ -14,9 +14,6 @@ import { createProgram } from './program'
 const root = fileURLToPath(new URL('../../../../', import.meta.url))
 const plugin = join(root, 'plugins', 'claude-code')
 
-/** `check` is added on another branch; until it lands the commands may name it without a flag check. */
-const ELSEWHERE: ReadonlySet<string> = new Set(['check'])
-
 async function agentFiles(): Promise<Map<string, string>> {
   const files = new Map<string, string>()
   files.set('skills/site-to-api/SKILL.md', await readFile(join(root, 'skills', 'site-to-api', 'SKILL.md'), 'utf8'))
@@ -73,8 +70,6 @@ describe('agent skill and plugin commands', () => {
     for (const [file, text] of await agentFiles()) {
       for (const { command, flags } of invocations(text)) {
         const found = program.commands.find(candidate => candidate.name() === command)
-        if (found === undefined && ELSEWHERE.has(command))
-          continue
         expect(found, `${file}: site-to-api ${command}`).toBeDefined()
         for (const flag of flags) {
           expect([
@@ -90,6 +85,7 @@ describe('agent skill and plugin commands', () => {
       'capture --minimized',
       'mcp --allow-calls',
       'gen --mcp',
+      'check --json',
     ]))
   })
 })
