@@ -48,5 +48,6 @@ or `Proposed`.
 | [0038](0038-websocket-framing-protocols.md) | WebSocket framing protocols, MessagePack and protobuf frames, connection facts (refines 0023, 0030) | Accepted |
 | [0039](0039-dispatcher-operations.md) | One operation per dispatcher function: `<endpoint>#<value>` paths and `x-site-to-api-dispatch` | Accepted |
 | [0040](0040-page-locality-from-served-addresses.md) | Page locality from the addresses the browser used (refines 0019) | Accepted |
+| [0041](0041-compact-agent-md-and-host-files.md) | A short `AGENT.md` index and one `hosts/<host>.md` per host (refines 0011) | Accepted |
 | [0042](0042-secret-object-keys.md) | Secret and personal object keys: maps in schemas, shapes in examples (refines 0004, 0015) | Accepted |
 | [0043](0043-mcp-servers.md) | MCP servers: `site-to-api mcp` for the handoff folder, `client/mcp/` per site (opt-in) | Accepted |

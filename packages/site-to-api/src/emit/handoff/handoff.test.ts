@@ -9,6 +9,23 @@ import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { renderAgentGuide } from './agent-guide'
 import { describeOrigin, renderApiMap } from './api-map'
 import { withApiMapClientState, withClientState } from './client'
+import { hostDocPath } from './host-path'
+import { renderHandoffDocs } from './index'
+
+type Context = Parameters<typeof renderAgentGuide>[1]
+
+/** AGENT.md and every host file, for facts that may be in either. */
+function allDocs(analysis: Analysis, context: Context): string {
+  return renderHandoffDocs(analysis, context).filter(([path]) => path !== 'API_MAP.md').map(([, content]) => content).join('\n')
+}
+
+/** The file of one host. */
+function hostDoc(analysis: Analysis, context: Context, host: string): string {
+  const found = renderHandoffDocs(analysis, context).find(([path]) => path === hostDocPath(host, new Map()))
+  if (!found)
+    throw new Error(`no file for ${host}`)
+  return found[1]
+}
 
 function operation(init: Partial<Operation> & Pick<Operation, 'operationId' | 'method' | 'path'>): Operation {
   return {
@@ -230,12 +247,19 @@ describe('renderAgentGuide', () => {
   })
 
   it('explains session needs, bot protection and cookie origins', () => {
-    expect(guide).toContain('a real browser is needed to establish the session')
-    expect(guide).toContain('Bot protection: Akamai')
-    expect(guide).toContain('Cookie `_abck`: set by a script in the page; only a real browser produces its value (seen in capture).')
-    expect(guide).toContain('Cookie `pm_device`: present in the browser profile; origin unknown (no captured response or page script set it, so check with `probe` whether the API needs it) (seen in capture).')
-    expect(guide).toContain('Cookie `pm_session`: set by `postApiAuthLogin` (seen in capture).')
-    expect(guide).toContain('specs/shop.example.yaml')
+    const docs = hostDoc(fixture(), {
+      toolVersion: '0.1.0',
+      examples: 'masked',
+      probed: false,
+      client: 'none',
+      probe: null,
+    }, 'shop.example')
+    expect(docs).toContain('a real browser is needed to establish the session')
+    expect(docs).toContain('Bot protection: Akamai')
+    expect(docs).toContain('Cookie `_abck`: set by a script in the page; only a real browser produces its value (seen in capture).')
+    expect(docs).toContain('Cookie `pm_device`: present in the browser profile; origin unknown (no captured response or page script set it, so check with `probe` whether the API needs it) (seen in capture).')
+    expect(docs).toContain('Cookie `pm_session`: set by `postApiAuthLogin` (seen in capture).')
+    expect(docs).toContain('specs/shop.example.yaml')
   })
 
   it('links flows and names the function to port for computed values', () => {
@@ -374,7 +398,7 @@ describe('probe evidence, qualified references and unknown methods', () => {
   })
 
   it('splits cookies into needed and only seen, by probe evidence', () => {
-    const guide = renderAgentGuide(probed(), {
+    const guide = allDocs(probed(), {
       toolVersion: '0.1.0',
       examples: 'masked',
       probed: true,
@@ -418,9 +442,9 @@ describe('probe evidence, qualified references and unknown methods', () => {
       client: 'current' as const,
       probe: null,
     }
-    expect(renderAgentGuide(analysis, options)).toContain('- Calls that send the bot-protection script\'s headers, so only a real browser can make them: `putApiCart`.')
+    expect(allDocs(analysis, options)).toContain('- Calls that send the bot-protection script\'s headers, so only a real browser can make them: `putApiCart`.')
     const unguarded = fixture()
-    expect(renderAgentGuide(unguarded, options)).not.toContain('bot-protection script\'s headers')
+    expect(allDocs(unguarded, options)).not.toContain('bot-protection script\'s headers')
   })
 
   it('says a host that only answered with challenge pages has no real content', () => {
@@ -447,16 +471,17 @@ describe('probe evidence, qualified references and unknown methods', () => {
       ],
       probed: false,
     })
-    const guide = renderAgentGuide(analysis, {
+    const context: Context = {
       toolVersion: '0.1.0',
       examples: 'masked',
       probed: false,
       client: 'current',
       probe: null,
-    })
-    const section = guide.slice(guide.indexOf('### blocked.example'), guide.indexOf('### shop.example'))
-    expect(section).toContain('- No real content: every response this host gave the capture was a bot challenge or block page')
-    expect(guide.slice(guide.indexOf('### shop.example'))).not.toContain('No real content')
+    }
+    const guide = renderAgentGuide(analysis, context)
+    expect(hostDoc(analysis, context, 'blocked.example')).toContain('- No real content: every response this host gave the capture was a bot challenge or block page')
+    expect(hostDoc(analysis, context, 'shop.example')).not.toContain('No real content')
+    expect(guide).toContain('- `blocked.example`: a real browser sets up the session (not yet probed); bot protection: Challenge page (challenge page (title \"prove your humanity\")); no real content, only challenge pages;')
     expect(guide.split('\n')[2]).toBe('**The capture holds no real content for `blocked.example`**: every page and call it answered was a bot challenge or block page. Its specs describe the interstitial, not the site; capture again with a browser session the site lets through.')
   })
 
@@ -643,8 +668,21 @@ describe('hostile labels and names', () => {
     expect(html.match(/<h\d>[^<]*/g)).toEqual([
       '<h1>Start here',
       '<h2>Reading order',
-      '<h2>Session requirements',
-      '<h3>shop.example',
+      '<h2>Hosts',
+      '<h3>The site\'s own hosts',
+      '<h2>Key flows',
+      '<h2>Values computed in the browser',
+      '<h2>Gaps',
+    ])
+  })
+
+  it('cannot inject links, HTML, comments or headings into a host file', () => {
+    const html = renderMarkdown(hostDoc(hostileFixture(), context, 'shop.example'))
+    expect(injected(html)).toEqual([])
+    expect(html.match(/<h\d>[^<]*/g)).toEqual([
+      '<h1>shop.example',
+      '<h2>Session',
+      '<h2>Operations',
       '<h2>Flows',
       '<h2>Values computed in the browser',
       '<h2>Gaps',
@@ -653,8 +691,10 @@ describe('hostile labels and names', () => {
 
   it('keeps every quoted value inside its line', () => {
     // Every line is either ours or a list item: a label cannot start a line of its own.
-    for (const line of guide.split('\n'))
-      expect(line).toMatch(/^(?:$|#{1,3} |- |\d\. |[A-Z])/)
+    for (const [path, content] of renderHandoffDocs(hostileFixture(), context).filter(([name]) => name !== 'API_MAP.md')) {
+      for (const line of content.split('\n'))
+        expect(line, path).toMatch(/^(?:$|#{1,3} |- | {2}- |\d\. |[A-Z])/)
+    }
   })
 
   it('cannot inject into API_MAP.md or add table columns', () => {
@@ -708,6 +748,7 @@ describe('real-time channels', () => {
     ...fixture(),
     channels,
   })
+  const channelDoc = (analysis: Analysis): string => hostDoc(analysis, context, 'shop.test:8080')
 
   it('has no channel section without channels', () => {
     expect(renderAgentGuide(fixture(), context)).not.toContain('Real-time channels')
@@ -715,9 +756,9 @@ describe('real-time channels', () => {
   })
 
   it('tells the agent the URL, what to send after connecting, the message types and the spec', () => {
-    const guide = renderAgentGuide(withChannels([
+    const guide = channelDoc(withChannels([
       tickerChannel(),
-    ]), context)
+    ]))
     const section = guide.split('## Real-time channels')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain('### `ws://shop.test:8080/ws/ticker`')
     expect(section).toContain('- Spec: `specs/shop.test_8080.asyncapi.yaml`, channel `wsTicker`. Seen in 2 connections.')
@@ -727,13 +768,15 @@ describe('real-time channels', () => {
     expect(section).toContain('- `body./productId` of `subscribe` comes from `body./items/0/id` of `getApiProducts`.')
     expect(section).toContain('- The browser sent cookies when connecting: `sid`.')
     expect(section).toContain('- Opened by `src/widgets/ticker.ts:22 connectPriceTicker`.')
-    expect(guide).toContain('`specs/<host>.asyncapi.yaml`')
+    expect(renderAgentGuide(withChannels([
+      tickerChannel(),
+    ]), context)).toMatch(/^- `ws:\/\/shop\.test:8080\/ws\/ticker`: JSON \/ text; send `subscribe` after connecting; details in \[`hosts\/shop\.test_8080\.md`\]\(hosts\/shop\.test_8080\.md#real-time-channels\)\.$/m)
   })
 
   it('names the protocol, the upgrade facts and the first message, and the wire of each setup message', () => {
-    const guide = renderAgentGuide(withChannels([
+    const guide = channelDoc(withChannels([
       socketIoChannel(),
-    ]), context)
+    ]))
     const section = guide.split('## Real-time channels')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain('- Protocol: Socket.IO (Engine.IO 4), shown by URL path ends in /socket.io/, frames. Messages are named by their Socket.IO event name; control frames by their frame type.')
     expect(section).toContain('- Upgrade request: `Origin` `https://chat.test`; no subprotocol; tokens in the URL (names only): `token`; the server accepted 1 of 2 connections (status 101, 403), rejected 1; a long-polling connection counts as accepted when its handshake request succeeded.')
@@ -749,13 +792,13 @@ describe('real-time channels', () => {
 
   it('says when the server pushes without a subscription and when cookies are unknown', () => {
     const ticker = tickerChannel()
-    const guide = renderAgentGuide(withChannels([
+    const guide = channelDoc(withChannels([
       tickerChannel({
         handshake: [],
         messages: ticker.messages.filter(message => message.direction === 'receive'),
         cookies: { status: 'unknown', names: [] },
       }),
-    ]), context)
+    ]))
     expect(guide).toContain('- The client sent nothing after connecting: the server sent its messages on its own.')
     expect(guide).toContain('- Server → client: `tick`')
     expect(guide).toContain('the capture has no record of the upgrade request')
@@ -763,7 +806,7 @@ describe('real-time channels', () => {
 
   it('lists ungrouped messages and sampled schemas as gaps', () => {
     const ticker = tickerChannel()
-    const guide = renderAgentGuide(withChannels([
+    const guide = channelDoc(withChannels([
       tickerChannel({
         messages: ticker.messages.map(message => message.direction === 'receive'
           ? { ...message, count: 1500, schemaSamples: 1000 }
@@ -773,7 +816,7 @@ describe('real-time channels', () => {
           { direction: 'receive', field: null, values: null },
         ],
       }),
-    ]), context)
+    ]))
     const gaps = guide.split('## Gaps')[1] ?? ''
     expect(gaps).toContain('The client messages of `ws://shop.test:8080/ws/ticker` come in several shapes, but `op` looks like their type but has 40 values, too many to tell types from data')
     expect(gaps).toContain('The server messages of `ws://shop.test:8080/ws/ticker` come in several shapes, but no field names their type')
@@ -781,26 +824,26 @@ describe('real-time channels', () => {
   })
 
   it('does not claim the server pushes when no messages were seen at all', () => {
-    const guide = renderAgentGuide(withChannels([
+    const guide = channelDoc(withChannels([
       tickerChannel({ handshake: [], messages: [] }),
-    ]), context)
+    ]))
     expect(guide).toContain('- No messages were seen on this connection during the capture, so what to send after connecting is unknown.')
     expect(guide).not.toContain('pushes')
   })
 
   it('says which handshake message does what, and when none was recognised as setup', () => {
     const ticker = tickerChannel()
-    const named = renderAgentGuide(withChannels([
+    const named = channelDoc(withChannels([
       tickerChannel({
         handshake: [
           { message: 'sendSubscribe', role: 'other', example: null },
         ],
       }),
-    ]), context)
+    ]))
     expect(named).toContain('1. `subscribe` (the first message sent; no message type was recognised as authentication or a subscription), see the spec for its shape')
-    const none = renderAgentGuide(withChannels([
+    const none = channelDoc(withChannels([
       tickerChannel({ handshake: [], messages: ticker.messages }),
-    ]), context)
+    ]))
     expect(none).toContain('- None of the client\'s messages set up the connection')
   })
 
@@ -867,23 +910,36 @@ describe('real-time channels', () => {
     },
   })
 
-  it('cannot inject links, HTML or headings through channel text in AGENT.md', () => {
+  it('cannot inject links, HTML or headings through channel text in AGENT.md or the host file', () => {
     const guide = renderAgentGuide(withChannels([hostile]), context)
     const html = renderMarkdown(guide)
     expect(injected(html)).toEqual([])
-    // The channel heading is a code span: `<h3>` directly followed by `<code>`.
-    expect(html).toContain('<h3><code>ws://shop.test:8080/ws/')
-    expect(html.match(/<h\d>[^<]*/g)?.filter(heading => heading !== '<h3>')).toEqual([
+    expect(html.match(/<h\d>[^<]*/g)).toEqual([
       '<h1>Start here',
       '<h2>Reading order',
-      '<h2>Session requirements',
-      '<h3>shop.example',
-      '<h2>Flows',
+      '<h2>Hosts',
+      '<h3>The site\'s own hosts',
+      '<h3>Third-party hosts',
+      '<h2>Key flows',
       '<h2>Real-time channels',
       '<h2>Values computed in the browser',
       '<h2>Gaps',
     ])
-    for (const line of guide.split('\n'))
+    const doc = channelDoc(withChannels([hostile]))
+    const docHtml = renderMarkdown(doc)
+    expect(injected(docHtml)).toEqual([])
+    // The channel heading is a code span: `<h3>` directly followed by `<code>`.
+    expect(docHtml).toContain('<h3><code>ws://shop.test:8080/ws/')
+    expect(docHtml.match(/<h\d>[^<]*/g)?.filter(heading => heading !== '<h3>')).toEqual([
+      '<h1>shop.test:8080',
+      '<h2>Session',
+      '<h2>Real-time channels',
+      '<h2>Gaps',
+    ])
+    for (const line of [
+      ...guide.split('\n'),
+      ...doc.split('\n'),
+    ])
       expect(line).toMatch(/^(?:$|#{1,3} |- | {2}\d\. |\d\. | {3}`|[A-Z])/)
   })
 
@@ -912,7 +968,7 @@ describe('host sections follow the probe results', () => {
   function render(probe: ReturnType<typeof probeRun> | null, change: (analysis: Analysis) => void = () => {}, pageHosts: Parameters<typeof renderAgentGuide>[1]['pageHosts'] = []): string {
     const analysis = fixture()
     change(analysis)
-    return renderAgentGuide(analysis, {
+    return allDocs(analysis, {
       toolVersion: '0.1.0',
       examples: 'masked',
       probed: false,
@@ -932,8 +988,10 @@ describe('host sections follow the probe results', () => {
         probed: false,
       },
     ])
-    expect(guide).toContain('### news.example\n\n- Serves pages only: no API calls to this host were captured.\n- Needs: plain HTTP works; no session needed (inferred from the capture, not yet probed).')
-    expect(guide).toContain('### shop.example')
+    expect(guide).toContain('# news.example\n\nServes pages only.')
+    expect(guide).toContain('## Session\n\n- Serves pages only: no API calls to this host were captured.\n- Needs: plain HTTP works; no session needed (inferred from the capture, not yet probed).')
+    expect(guide).toContain('### Hosts that served only pages\n\n- `news.example`: plain HTTP, no session (not yet probed). [`hosts/news.example.md`](hosts/news.example.md)')
+    expect(guide).toContain('# shop.example')
   })
 
   it('does not tell the reader to use a browser for a host probe answered without one', () => {
@@ -1048,8 +1106,9 @@ describe('graphQL operations (decision 0027)', () => {
     }),
   ], 'api.example.test')
 
-  it('lists the operations per endpoint in AGENT.md with type, hash, variables and the client call', () => {
-    const guide = renderAgentGuide(analysis, context)
+  it('lists the operations per endpoint in the host file with type, hash, variables and the client call', () => {
+    expect(renderAgentGuide(analysis, context)).toContain('- `POST api.example.test/pathfinder/v2/query`: 2 operations (1 mutation, 1 of unknown type); each with its hash, variables and client call in [`hosts/api.example.test.md`](hosts/api.example.test.md#graphql-operations).')
+    const guide = hostDoc(analysis, context, 'api.example.test')
     const section = guide.split('## GraphQL operations')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain('### `GET api.example.test/graphql`')
     expect(section).toContain('### `POST api.example.test/pathfinder/v2/query`')
@@ -1076,7 +1135,8 @@ describe('graphQL operations (decision 0027)', () => {
         hash: HASH,
       }),
     ], 'api.example.test')
-    expect(injected(renderMarkdown(renderAgentGuide(hostile, context)))).toEqual([])
+    for (const [path, content] of renderHandoffDocs(hostile, context))
+      expect(injected(renderMarkdown(content)), path).toEqual([])
     expect(injected(renderMarkdown(renderApiMap(hostile, 'current')))).toEqual([])
   })
 })
@@ -1091,8 +1151,9 @@ describe('dispatcher endpoints (decision 0039)', () => {
   } as const
   const analysis = graphqlAnalysis(dispatchExchanges('api.example.test'), 'api.example.test')
 
-  it('lists the functions per endpoint in AGENT.md with their parameters and client call', () => {
-    const guide = renderAgentGuide(analysis, context)
+  it('lists the functions per endpoint in the host file with their parameters and client call', () => {
+    expect(renderAgentGuide(analysis, context)).toContain('- `GET api.example.test/api/quote`: query parameter `functionName` picks one of 2 functions; each with its parameters and client call in [`hosts/api.example.test.md`](hosts/api.example.test.md#dispatcher-endpoints).')
+    const guide = hostDoc(analysis, context, 'api.example.test')
     const section = guide.split('## Dispatcher endpoints')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain('### `GET api.example.test/api/quote`')
     expect(section).toContain('Dispatcher: query parameter `functionName`, 2 functions.')

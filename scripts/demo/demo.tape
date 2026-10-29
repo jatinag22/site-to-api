@@ -21,7 +21,7 @@ Sleep 22s
 Type "site-to-api build | tail -2"
 Enter
 Sleep 12s
-Type "clear && sed -n '/## Session requirements/,/^- Spec/p' api-handoff/AGENT.md"
+Type "clear && sed -n '/## Session/,/^- Spec/p' api-handoff/hosts/localhost_4173.md"
 Enter
 Sleep 6s
 Type "clear && sed -n '/## Values computed/,/^## Gaps/p' api-handoff/AGENT.md | fold -s -w 120"

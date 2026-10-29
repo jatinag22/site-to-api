@@ -75,7 +75,9 @@ describe('buildAsyncApiDocuments', () => {
     ]).toEqual(['rt.shop.test', 'shop.test:8080'])
     for (const document of documents.values())
       expect(await validate(document)).toEqual([])
-  })
+    // Legitimately heavy: the official AsyncAPI parser (spectral rules, schema compile) validates two
+    // documents. ~360 ms alone, 5 s+ when the machine is saturated, so it gets an explicit budget.
+  }, 30_000)
 
   it('describes channels, messages and operations from the client side', () => {
     const document = buildAsyncApiDocuments([
@@ -323,7 +325,7 @@ describe('writeAsyncApiDocuments', () => {
   it('writes specs/<host>.asyncapi.yaml with the OpenAPI file-name rules', async () => {
     const result = await writeAsyncApiDocuments(dir, buildAsyncApiDocuments([
       tickerChannel(),
-    ], 1), ['shop.test:8080'])
+    ], 1), ['shop.test:8080'], new Map())
     expect(result.warnings).toEqual([])
     expect(await readdir(join(dir, 'specs'))).toEqual(['shop.test_8080.asyncapi.yaml'])
     expect(await readFile(join(dir, 'specs', 'shop.test_8080.asyncapi.yaml'), 'utf8')).toMatch(/^asyncapi: 3\.0\.0\n/)
@@ -332,7 +334,7 @@ describe('writeAsyncApiDocuments', () => {
   it('never overwrites the OpenAPI spec of a host whose name ends in .asyncapi', async () => {
     const result = await writeAsyncApiDocuments(dir, buildAsyncApiDocuments([
       tickerChannel({ host: 'x' }),
-    ], 1), ['x.asyncapi'])
+    ], 1), ['x.asyncapi'], new Map())
     expect(result.files).toEqual([])
     expect(result.warnings).toEqual(['The WebSocket channels of x were not written: specs/x.asyncapi.yaml is the OpenAPI spec of another host.'])
   })

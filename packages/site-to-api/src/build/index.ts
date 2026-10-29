@@ -22,7 +22,7 @@ import { inferOperationSchemas } from '../analyze/schema'
 import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findSourceEndpoints, isOpaqueFrame, screenSourceRoutes } from '../analyze/source'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
 import { writeFlows } from '../emit/flows'
-import { clientGap, writeHandoffDocs } from '../emit/handoff'
+import { clientGap, handoffStems, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
 import { failedNavigationsWarning, loadSessions } from '../load'
@@ -323,6 +323,8 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     'source',
     'AGENT.md',
     'API_MAP.md',
+    'GAPS.md',
+    'hosts',
     'flows.json',
     'flows.md',
     'flows.schema.json',
@@ -330,13 +332,16 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     await rm(join(outDir, stale), { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 
+  const pageHosts = pageHostRequirements(analysis.operations, analysis.flows.session, probe)
+  // One stem per host for specs/ and hosts/, so two hosts never share a file (decision 0041).
+  const stems = handoffStems(analysis, pageHosts)
   const openApi = buildOpenApiDocuments(analysis)
   const asyncApi = await writeAsyncApiDocuments(outDir, buildAsyncApiDocuments(analysis.channels ?? [], analysis.sessions.length), [
     ...openApi.keys(),
-  ])
+  ], stems)
   analysis.warnings.push(...asyncApi.warnings)
   const files = [
-    ...await writeOpenApiDocuments(outDir, openApi),
+    ...await writeOpenApiDocuments(outDir, openApi, stems),
     ...asyncApi.files,
     ...await writeFlows(outDir, analysis.flows, { operations: analysis.operations }),
     ...await writeExcerpts(outDir, analysis.excerpts),
@@ -378,7 +383,7 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
             skipped: probe.skipped.length,
           }
         : null,
-      pageHosts: pageHostRequirements(analysis.operations, analysis.flows.session, probe),
+      pageHosts,
     }),
     await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION)),
   )
