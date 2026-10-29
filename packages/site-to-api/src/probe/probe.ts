@@ -223,68 +223,105 @@ function failureReason(error: unknown): string {
   return String(error)
 }
 
+/** A live answer, read in full. */
+interface LiveResponse {
+  status: number
+  headers: Headers
+  contentType: string | null
+  text: string
+}
+
+type Fetched = { response: LiveResponse } | { error: string }
+
 interface Runner {
   send: (exchange: Exchange, variant: Variant) => Promise<SendResult>
+  /** The raw answer, for callers that read the body themselves (`check`). Same rate limit. */
+  fetchLive: (exchange: Exchange, variant: Variant) => Promise<Fetched>
 }
 
 function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sleep'>> & { config: ResolvedConfig['probe'] }): Runner {
   const limiter = new RateLimiter(1000 / options.config.maxRps, options.now, options.sleep)
-  return {
-    async send(exchange, variant) {
-      await limiter.wait()
-      const headers = new Headers(variant.headers)
-      if (variant.cookies.length > 0)
-        headers.set('cookie', variant.cookies.map(([name, value]) => `${name}=${value}`).join('; '))
-      const body = exchange.request.body?.text ?? null
-      try {
-        const response = await options.fetch(exchange.request.url, {
-          method: exchange.request.method,
-          headers,
-          body: SAFE_METHODS.has(exchange.request.method)
-            ? null
-            : body,
-          redirect: 'manual',
-          signal: AbortSignal.timeout(options.config.timeoutMs),
-        })
-        const text = await response.text()
-        const contentType = response.headers.get('content-type')
-        const answered = [...response.headers].map(([name, value]) => ({ name, value }))
-        const difference = differenceFromCapture(exchange, response.status, contentType, text, answered)
-        const marker = challengeResponse(contentType, text)
-        return {
-          outcome: difference === null
-            ? 'ok'
-            : 'rejected',
+  const fetchLive = async (exchange: Exchange, variant: Variant): Promise<Fetched> => {
+    await limiter.wait()
+    const headers = new Headers(variant.headers)
+    if (variant.cookies.length > 0)
+      headers.set('cookie', variant.cookies.map(([name, value]) => `${name}=${value}`).join('; '))
+    const body = exchange.request.body?.text ?? null
+    try {
+      const response = await options.fetch(exchange.request.url, {
+        method: exchange.request.method,
+        headers,
+        body: SAFE_METHODS.has(exchange.request.method)
+          ? null
+          : body,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(options.config.timeoutMs),
+      })
+      const text = await response.text()
+      return {
+        response: {
           status: response.status,
-          error: null,
-          // A vendor's denial page, a challenge header (AWS WAF) or a challenge page answered 200.
-          blocked: difference === null
-            ? null
-            : detectBlock(response.status, response.headers, text)
-              ?? (hasChallengeHeader(answered)
-                ? `challenge header, status ${response.status}`
-                : null)
-              ?? (marker === null
-                ? null
-                : `challenge page (${marker}), status ${response.status}`),
-          difference,
-          auth: difference === null
-            ? null
-            : authEvidence(exchange, response.status, response.headers, text),
-        }
+          headers: response.headers,
+          contentType: response.headers.get('content-type'),
+          text,
+        },
       }
-      catch (error) {
+    }
+    catch (error) {
+      return {
+        error: failureReason(error),
+      }
+    }
+  }
+  return {
+    fetchLive,
+    async send(exchange, variant) {
+      const fetched = await fetchLive(exchange, variant)
+      if ('error' in fetched) {
         return {
           outcome: 'failed',
           status: null,
-          error: failureReason(error),
+          error: fetched.error,
           blocked: null,
           difference: null,
           auth: null,
         }
       }
+      const { response, response: { text, contentType } } = fetched
+      const answered = [...response.headers].map(([name, value]) => ({ name, value }))
+      const difference = differenceFromCapture(exchange, response.status, contentType, text, answered)
+      return {
+        outcome: difference === null
+          ? 'ok'
+          : 'rejected',
+        status: response.status,
+        error: null,
+        blocked: difference === null
+          ? null
+          : blockEvidence(response),
+        difference,
+        auth: difference === null
+          ? null
+          : authEvidence(exchange, response.status, response.headers, text),
+      }
     },
   }
+}
+
+/**
+ * Whether bot protection answered instead of the site, and the evidence: a vendor's denial page,
+ * a challenge header (AWS WAF) or a challenge page answered 200.
+ */
+function blockEvidence(response: LiveResponse): string | null {
+  const answered = [...response.headers].map(([name, value]) => ({ name, value }))
+  const marker = challengeResponse(response.contentType, response.text)
+  return detectBlock(response.status, response.headers, response.text)
+    ?? (hasChallengeHeader(answered)
+      ? `challenge header, status ${response.status}`
+      : null)
+    ?? (marker === null
+      ? null
+      : `challenge page (${marker}), status ${response.status}`)
 }
 
 async function minimize(runner: Runner, exchange: Exchange, full: Variant, maxVariants: number, statuses: number[]): Promise<string[]> {
@@ -573,5 +610,67 @@ export async function probeOperations(options: ProbeOptions): Promise<ProbeRepor
     minimizePerHost,
     operations: results,
     skipped,
+  }
+}
+
+export interface ReplayerOptions {
+  config: ResolvedConfig['probe']
+  toolVersion: string
+  fetch?: typeof fetch
+  now?: () => number
+  sleep?: (ms: number) => Promise<void>
+}
+
+/** What one live replay of an operation found. */
+export type LiveReplay
+  = | { kind: 'skipped', reason: string }
+    | { kind: 'unreachable', error: string }
+    | {
+      kind: 'answered'
+      /** The captured exchange that was replayed; its response is what the live one is compared with. */
+      exchange: Exchange
+      status: number
+      contentType: string | null
+      text: string
+      /** Why the answer is not the site's own, with probe's classification (decision 0036). */
+      refusal: { kind: 'bot-protection' | 'session', evidence: string } | null
+    }
+
+/**
+ * Replays one operation's representative request once, as probe's first variant does: the same
+ * safety rules (`skipReason`), rate limit, probe user agent and captured session. `unsafeMethods`
+ * is forced off here, so this can never send a request that changes data (decision 0012).
+ */
+export function createReplayer(options: ReplayerOptions): (operation: Operation) => Promise<LiveReplay> {
+  const config = { ...options.config, unsafeMethods: false }
+  const runner = createRunner({
+    config,
+    fetch: options.fetch ?? fetch,
+    now: options.now ?? Date.now,
+    sleep: options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms))),
+  })
+  return async (operation) => {
+    const reason = skipReason(operation, config)
+    const exchange = representative(operation)
+    if (reason !== null || !exchange)
+      return { kind: 'skipped', reason: reason ?? 'no successful response was captured' }
+    const fetched = await runner.fetchLive(exchange, captured(exchange, options.toolVersion))
+    if ('error' in fetched)
+      return { kind: 'unreachable', error: fetched.error }
+    const { response } = fetched
+    const blocked = blockEvidence(response)
+    const auth = authEvidence(exchange, response.status, response.headers, response.text)
+    return {
+      kind: 'answered',
+      exchange,
+      status: response.status,
+      contentType: response.contentType,
+      text: response.text,
+      refusal: blocked !== null
+        ? { kind: 'bot-protection', evidence: blocked }
+        : auth !== null
+          ? { kind: 'session', evidence: auth }
+          : null,
+    }
   }
 }
