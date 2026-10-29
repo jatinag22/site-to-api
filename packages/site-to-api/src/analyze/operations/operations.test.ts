@@ -478,6 +478,370 @@ describe('buildOperations: slugs', () => {
   })
 })
 
+describe('buildOperations: sibling paths (decision 0035)', () => {
+  const article = (title: string): Parameters<typeof get>[1] => ({
+    kind: 'page',
+    responseBody: textBody(`<header class="top"><nav class="menu"></nav></header><main class="article"><h1 class="title">${title}</h1><p class="lead">x</p></main><footer class="foot"></footer>`),
+  })
+  const summary = (title: string): Parameters<typeof get>[1] => ({
+    responseBody: jsonBody({
+      title,
+      extract: 'text',
+      thumbnail: { source: 'x', width: 1 },
+    }),
+  })
+
+  it('templates titles when many distinct values share one response structure', () => {
+    const operations = build([
+      'Cipher',
+      'Lord_Byron',
+      'Machine',
+      'Finite_set',
+      'Writer',
+    ].map(title => get(`/api/rest_v1/page/summary/${title}`, summary(title))))
+    expect(paths(operations)).toEqual(['GET /api/rest_v1/page/summary/{title}'])
+    expect(operations[0]!.pathParams[0]!.evidence).toEqual(['varies'])
+  })
+
+  it('templates tags that a listing links to, even when only two were opened', () => {
+    const listing = get('/questions', article('<a href="/questions/tagged/python">p</a><a href="/questions/tagged/javascript">j</a><a href="/questions/tagged/rust">r</a>'))
+    const operations = build([
+      listing,
+      get('/questions/tagged/python', article('python')),
+      get('/questions/tagged/javascript', article('javascript')),
+    ])
+    expect(paths(operations)).toEqual(['GET /questions', 'GET /questions/tagged/{tag}'])
+  })
+
+  it('templates the slug after an id', () => {
+    const listing = get('/questions', article('<a href="/questions/80013191/how-do-i-fly">a</a><a href="/questions/80013112/why-is-pyright-angry">b</a><a href="/questions/80013188/how-can-i-unregister">c</a>'))
+    expect(paths(build([
+      listing,
+      get('/questions/80013191/how-do-i-fly', article('a')),
+      get('/questions/80013112/why-is-pyright-angry', article('b')),
+    ]))).toEqual(['GET /questions', 'GET /questions/{questionId}/{slug}'])
+  })
+
+  it('templates an owner/repo pair that recurs under several paths, one repo per session', () => {
+    const repo = (owner: string, name: string, sessionId: string): Exchange[] => [
+      // The dashboard lists the repo, so its owner and name are values from an earlier response.
+      get('/dashboard', {
+        sessionId,
+        responseBody: jsonBody({
+          repos: [
+            { owner, name },
+          ],
+        }),
+      }),
+      get(`/${owner}/${name}/latest-commit`, {
+        sessionId,
+        responseBody: jsonBody({
+          oid: 'a',
+          author: { login: 'x' },
+        }),
+      }),
+      get(`/${owner}/${name}/refs`, {
+        sessionId,
+        responseBody: jsonBody({
+          refs: ['main'],
+          cacheKey: 'k',
+        }),
+      }),
+      get(`/${owner}/${name}/issues/1/timeline`, {
+        sessionId,
+        responseBody: jsonBody({ items: [] }),
+      }),
+      get(`/${owner}/${name}/_file_tree`, {
+        sessionId,
+        method: 'POST',
+        responseBody: jsonBody({ tree: [] }),
+      }),
+    ]
+    const operations = build([
+      ...repo('expressjs', 'express', 's1'),
+      ...repo('koajs', 'koa', 's2').slice(0, 3),
+    ], [
+      route('/{owner}/{repo}/_file_tree', { method: 'POST' }),
+    ])
+    expect(paths(operations)).toEqual([
+      'POST /{owner}/{repo}/_file_tree',
+      'GET /{owner}/{repo}/issues/1/timeline',
+      'GET /{owner}/{repo}/latest-commit',
+      'GET /{owner}/{repo}/refs',
+      'GET /dashboard',
+    ])
+  })
+
+  it('keeps `/api/users/me` apart from `/api/users/123`, even across sessions', () => {
+    const user = jsonBody({ id: 123, name: 'Ann' })
+    expect(paths(build([
+      get('/api/users/me', { sessionId: 's1', responseBody: user }),
+      get('/api/users/123', { sessionId: 's2', responseBody: user }),
+    ]))).toEqual(['GET /api/users/123', 'GET /api/users/me'])
+  })
+
+  it('keeps different endpoints apart when their responses differ', () => {
+    expect(paths(build([
+      get('/api/v1/users', {
+        sessionId: 's1',
+        responseBody: jsonBody({
+          users: [
+            { id: 1, email: 'a' },
+          ],
+        }),
+      }),
+      get('/api/v1/orders', {
+        sessionId: 's2',
+        responseBody: jsonBody({
+          orders: [
+            { id: 1, total: 2 },
+          ],
+        }),
+      }),
+      get('/api/v1/stats', {
+        sessionId: 's3',
+        responseBody: jsonBody({ visits: 1 }),
+      }),
+    ]))).toEqual(['GET /api/v1/orders', 'GET /api/v1/stats', 'GET /api/v1/users'])
+  })
+
+  it('templates docs pages under a section and keeps the section names literal', () => {
+    const sidebar = '<a href="/docs/app/getting-started/caching">c</a><a href="/docs/app/getting-started/css">s</a><a href="/docs/app/getting-started/fonts">f</a><a href="/docs/app/guides">g</a><a href="/docs/app/api-reference">a</a>'
+    const operations = build([
+      get('/docs/app/getting-started', article(sidebar)),
+      get('/docs/app/guides', article(sidebar)),
+      get('/docs/app/api-reference', article(sidebar)),
+      get('/docs/app/getting-started/caching', article('caching')),
+      get('/docs/app/getting-started/css', article('css')),
+      get('/docs/app/guides/server-boundary', article('b')),
+      get('/docs/app/api-reference/cli/create-app', article('cli')),
+    ])
+    expect(paths(operations)).toEqual([
+      'GET /docs/app/api-reference',
+      'GET /docs/app/api-reference/cli/create-app',
+      'GET /docs/app/getting-started',
+      'GET /docs/app/getting-started/{slug}',
+      'GET /docs/app/guides',
+      'GET /docs/app/guides/server-boundary',
+    ])
+  })
+
+  it('templates a value that each session chose differently, and decodes it once', () => {
+    const page = (sessionId: string, title: string): Parameters<typeof get>[1] => ({
+      sessionId,
+      ...article(title),
+    })
+    const operations = build([
+      get('/s/Lisbon--Portugal/homes', page('s1', 'Lisbon')),
+      get('/s/Porto--Portugal/homes', page('s2', 'Porto')),
+      get('/search/radiohead', page('s1', 'radiohead')),
+      get('/search/daft%20punk', page('s2', 'daft punk')),
+    ])
+    expect(paths(operations)).toEqual(['GET /s/{query}/homes', 'GET /search/{query}'])
+    const search = operations.find(operation => operation.path === '/search/{query}')
+    expect(search!.exchanges.map(item => item.request.path)).toContain('/search/daft%20punk')
+    expect(JSON.stringify(search!.pathParams[0]!.schema)).not.toContain('%25')
+  })
+
+  it('keeps endpoints apart whose responses are only empty envelopes', () => {
+    expect(paths(build([
+      'notifications',
+      'messages',
+      'invoices',
+      'teams',
+      'webhooks',
+    ].map(name =>
+      get(`/api/v1/${name}`, {
+        responseBody: jsonBody({ items: [], total: 0 }),
+      }))))).toEqual([
+      'GET /api/v1/invoices',
+      'GET /api/v1/messages',
+      'GET /api/v1/notifications',
+      'GET /api/v1/teams',
+      'GET /api/v1/webhooks',
+    ])
+  })
+
+  it('never templates writes on count alone, nor two positions without traced values', () => {
+    const operations = build([
+      'cart/add',
+      'cart/remove',
+      'wishlist/add',
+      'analytics/track',
+      'session/refresh',
+    ].map(name =>
+      get(`/api/${name}`, { method: 'POST', status: 204, responseBody: null })))
+    expect(operations.every(operation => operation.pathParams.length === 0)).toBe(true)
+    expect(paths(build([
+      get('/api/cart/add', {
+        sessionId: 's1',
+        method: 'POST',
+        responseBody: textBody('ok', 'text/plain'),
+      }),
+      get('/api/cart/clear', {
+        sessionId: 's2',
+        method: 'POST',
+        responseBody: textBody('ok', 'text/plain'),
+      }),
+    ]))).toEqual(['POST /api/cart/add', 'POST /api/cart/clear'])
+  })
+
+  it('keeps users and orders apart across sessions when their items differ, inside the same envelope', () => {
+    expect(paths(build([
+      get('/api/v1/users', {
+        sessionId: 's1',
+        responseBody: jsonBody({
+          data: [
+            { id: 1, name: 'x' },
+          ],
+          meta: { page: 1, total: 1 },
+        }),
+      }),
+      get('/api/v1/orders', {
+        sessionId: 's2',
+        responseBody: jsonBody({
+          data: [
+            { id: 1, total: 3 },
+          ],
+          meta: { page: 1, total: 1 },
+        }),
+      }),
+    ]))).toEqual(['GET /api/v1/orders', 'GET /api/v1/users'])
+  })
+
+  it('takes neither error responses nor one app shell served for every route as evidence', () => {
+    expect(build([
+      'alpha',
+      'beta',
+      'gamma',
+      'delta',
+      'omega',
+    ].map(name =>
+      get(`/api/${name}`, {
+        status: 404,
+        responseBody: jsonBody({
+          error: { message: 'not found', code: 404 },
+        }),
+      })))
+      .every(operation => operation.pathParams.length === 0)).toBe(true)
+    const shell = '<html><body><nav class="n"><a class="x"></a></nav><main class="m"><form class="f"><input class="i"></form></main></body></html>'
+    expect(build([
+      'notifications',
+      'security',
+      'privacy',
+      'appearance',
+      'emails',
+      'profile',
+    ].map(name =>
+      get(`/settings/${name}`, {
+        kind: 'page',
+        resourceType: 'document',
+        responseBody: textBody(shell),
+      })))
+      .every(operation => operation.pathParams.length === 0)).toBe(true)
+  })
+
+  it('gives the same result whatever order the exchanges come in', () => {
+    const make = (): Exchange[] => [
+      ...['expressjs/express', 'koajs/koa', 'vuejs/vue'].flatMap((repo, i) => [
+        get(`/${repo}/issues`, {
+          sessionId: `s${i}`,
+          responseBody: jsonBody({
+            a: { x: 1 },
+            b: [
+              { n: 1 },
+            ],
+          }),
+        }),
+        get(`/${repo}/pulls`, {
+          sessionId: `s${i}`,
+          responseBody: jsonBody({
+            a: { x: 1 },
+            c: { y: 2 },
+          }),
+        }),
+      ]),
+      ...['python', 'go', 'rust', 'java', 'ruby'].map((tag, i) => get(`/questions/tagged/${tag}`, {
+        sessionId: `s${i % 2}`,
+        responseBody: jsonBody({
+          q: [
+            { t: i },
+          ],
+        }),
+      })),
+      ...['users', 'orders'].map((name, i) => get(`/api/${name}`, {
+        sessionId: `s${i}`,
+        responseBody: jsonBody(i
+          ? {
+              x: { a: 1 },
+            }
+          : {
+              y: { b: 1 },
+            }),
+      })),
+    ]
+    const render = (operations: Operation[]): string => JSON.stringify(operations.map(operation => `${operation.method} ${operation.path} ${operation.pathParams.map(param => param.name).join(',')}`))
+    const expected = render(build(make()))
+    for (let k = 1; k < 20; k++) {
+      const copy = make()
+      for (let i = copy.length - 1; i > 0; i--) {
+        const j = (i * 7919 + k * 31) % (i + 1)
+        const swap = copy[i]!
+        copy[i] = copy[j]!
+        copy[j] = swap
+      }
+      expect(render(build(copy))).toBe(expected)
+    }
+    expect(expected).toContain('/questions/tagged/{tag}')
+  })
+
+  it('never names a parameter after a version or `api` segment', () => {
+    const listing = get('/', {
+      kind: 'page',
+      responseBody: textBody('<a href="/api/v1/alpha">a</a><a href="/api/v1/beta">b</a><a href="/api/v1/gamma">c</a>'),
+    })
+    const operations = build([
+      listing,
+      get('/api/v1/alpha', {
+        responseBody: jsonBody({
+          item: { id: 1 },
+        }),
+      }),
+      get('/api/v1/beta', {
+        responseBody: jsonBody({
+          item: { id: 2 },
+        }),
+      }),
+    ])
+    expect(paths(operations)).toContain('GET /api/v1/{param1}')
+  })
+
+  it('templates flat detail records, but not flat outcome bodies', () => {
+    const names = [
+      'hammer',
+      'wrench',
+      'pliers',
+      'chisel',
+      'mallet',
+      'saw',
+    ]
+    expect(paths(build(names.map((name, i) => get(`/api/products/${name}`, {
+      responseBody: jsonBody({ name, price: i, sku: `S${i}` }),
+    }))))).toEqual(['GET /api/products/{product}'])
+    expect(build(names.map(name => get(`/api/jobs/${name}`, {
+      responseBody: jsonBody({ ok: true, message: name }),
+    })))
+      .every(operation => operation.pathParams.length === 0)).toBe(true)
+  })
+
+  it('keeps two different words in one session literal', () => {
+    expect(paths(build([
+      get('/help/contact', article('a')),
+      get('/help/shipping', article('b')),
+    ]))).toEqual(['GET /help/contact', 'GET /help/shipping'])
+  })
+})
+
 describe('buildOperations: GraphQL (decision 0027)', () => {
   const HASH_A = fakeHash('a1')
   const HASH_B = fakeHash('b2')
@@ -606,4 +970,24 @@ describe('buildOperations: GraphQL (decision 0027)', () => {
       ['addToCart', 'mutation', false],
     ])
   })
+})
+
+describe('buildOperations: scale', () => {
+  const word = (n: number): string => {
+    let text = ''
+    let rest = n
+    do {
+      text += String.fromCharCode(97 + (rest % 26))
+      rest = Math.floor(rest / 26)
+    } while (rest > 0)
+    return `w${text}`
+  }
+
+  it('templates thousands of distinct paths in well under a second per thousand', () => {
+    const exchanges = Array.from({ length: 4_000 }, (_, i) => get(`/static/${word(i % 37)}/${word(i)}/${word(i * 7)}/file`, { responseBody: null }))
+    const started = performance.now()
+    build(exchanges)
+    // Quadratic grouping took 4.3 s for 2,000 such paths; the bound leaves room for slow CI.
+    expect(performance.now() - started).toBeLessThan(4_000)
+  }, 30_000)
 })

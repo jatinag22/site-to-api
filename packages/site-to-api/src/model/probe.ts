@@ -37,6 +37,12 @@ export const OperationProbeSchema = z.object({
   /** HTTP statuses seen, in the order the variants ran. */
   statuses: z.array(z.number().int()),
   note: z.string().nullable(),
+  /**
+   * Why a request was refused with and without the captured session: `bot-protection` answered
+   * instead of the site, the `session` was refused (401/403), or `other` (another status, or a
+   * response that looks different). Absent when the replay worked, and in older reports.
+   */
+  rejection: z.enum(['bot-protection', 'session', 'other']).optional(),
 })
 export type OperationProbe = z.infer<typeof OperationProbeSchema>
 

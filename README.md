@@ -150,7 +150,7 @@ The full format is specified in [docs/output-format.md](docs/output-format.md).
 | Command | What it does |
 |---|---|
 | `init` | Writes `site-to-api.config.ts` and gitignores `.site-to-api/` |
-| `capture [url]` | Opens a browser and records everything until you close it. `--script <file>` drives it from code instead; `--headless`; `--channel chrome\|msedge\|bundled`; `--user-data-dir` keeps logins |
+| `capture [url]` | Opens a browser and records everything until you close it. `--script <file>` drives it from code instead (a failing script or Ctrl+C still saves the session, marked incomplete, and exits 1); `--headless`; `--channel chrome\|msedge\|bundled`; `--user-data-dir` keeps logins |
 | `build` | Analyses every capture and writes the handoff folder, including the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client` |
 | `probe` | Replays captured requests against the live site, rate limited, safe methods (and GraphQL queries) only unless `--unsafe-methods`; works out the needed cookies and headers for up to `--minimize-per-host <n>` operations per host (default 5); rebuilds the handoff folder with the flags of the last `build` (from `build.json`) and prints a summary |
 | `gen` | Regenerates only `client/` from an existing handoff folder (no raw captures needed) and updates the client lines of `AGENT.md` and `API_MAP.md` |

@@ -2,3 +2,4 @@
 export { buildFlows } from './build'
 export type { BuildFlowsInput } from './build'
 export { formatLocation } from './locations'
+export { ANALYTICS_COOKIE } from './session'

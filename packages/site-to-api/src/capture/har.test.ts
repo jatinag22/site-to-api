@@ -96,6 +96,7 @@ describe('finishHar', () => {
       bodiesOmitted: 1,
       framesOmitted: 0,
       warnings: [],
+      navigations: expect.any(Array),
     })
     const written = JSON.parse(await readFile(file, 'utf8')) as { log: { version: string, entries: Array<Record<string, unknown>> } }
     expect(written.log.version).toBe('1.2')

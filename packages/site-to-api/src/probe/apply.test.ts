@@ -1,7 +1,7 @@
 import type { HeaderInfo, ParamInfo, SessionRequirement } from '../model'
 import type { OperationProbe, ProbeReport } from '../model/probe'
 import { describe, expect, it } from 'vitest'
-import { applyProbeReport, requirementsByOperation } from './apply'
+import { applyProbeReport, pageHostRequirements, requirementsByOperation } from './apply'
 
 function report(operations: Array<Partial<OperationProbe>>): ProbeReport {
   return {
@@ -146,13 +146,14 @@ describe('applyProbeReport: bot protection', () => {
   })
 
   it('lets bot protection decide only when a real call needs its traces or was left unresolved', () => {
+    // A plain header (a caller id) is plain HTTP with that header, not a browser (decision 0036).
     expect(applyProbeReport([guarded], report([
       { bare: 'ok' },
       {
         bare: 'rejected',
         requires: ['header:x-api-caller-id'],
       },
-    ]), OPS)[0]?.requires).toBe('browser')
+    ]), OPS)[0]?.requires).toBe('none')
     expect(applyProbeReport([guarded], report([
       {
         bare: 'rejected',
@@ -239,13 +240,37 @@ describe('applyProbeReport: vendor cookies and redacted names', () => {
     ]), ops)[0]?.requires).toBe('browser')
   })
 
-  it('keeps the inferred verdict when tested calls needed only plain headers', () => {
+  it('is plain HTTP with the headers when every tested call needed only plain headers (IKEA)', () => {
     expect(applyProbeReport([akamai], report([
       {
         bare: 'rejected',
-        requires: ['header:x-csrf-token'],
+        requires: ['header:x-client-id'],
+      },
+    ]), OPS)[0]).toMatchObject({ requires: 'none', probed: true })
+  })
+
+  it('stays on a browser when a plain header comes with a vendor header', () => {
+    expect(applyProbeReport([akamai], report([
+      {
+        bare: 'rejected',
+        requires: ['header:x-client-id', 'header:x-kpsdk-ct'],
       },
     ]), OPS)[0]?.requires).toBe('browser')
+  })
+
+  it('is neither plain nor confirmed when a plain-header host also has a failed call', () => {
+    expect(applyProbeReport([akamai], report([
+      {
+        bare: 'rejected',
+        requires: ['header:x-client-id'],
+      },
+      {
+        replay: 'rejected',
+        bare: 'rejected',
+        requires: null,
+        rejection: 'other',
+      },
+    ]), OPS)[0]).toMatchObject({ requires: 'browser', probed: false })
   })
 
   it('matches a redacted cookie name in probe.json against the raw name in the model', () => {
@@ -279,5 +304,100 @@ describe('requirementsByOperation', () => {
         ['cookie:sid'],
       ],
     ])
+  })
+})
+
+describe('host verdicts follow probe', () => {
+  const guarded: SessionRequirement = {
+    ...base,
+    requires: 'browser',
+    botProtection: [
+      { vendor: 'Akamai', evidence: 'cookie _abck' },
+    ],
+  }
+
+  it('needs a browser when a request needs a header that a bot-protection script computes', () => {
+    expect(applyProbeReport([base], report([
+      {
+        requires: ['header:x-kpsdk-h', 'header:x-kpsdk-v'],
+      },
+    ]), OPS)[0]?.requires).toBe('browser')
+  })
+
+  it('does not confirm a host, or call it plain HTTP, while some of its calls failed', () => {
+    const entry = applyProbeReport([
+      { ...base, requires: 'cookies' },
+    ], report([
+      { bare: 'ok' },
+      {
+        replay: 'rejected',
+        bare: 'rejected',
+        requires: null,
+        statuses: [401, 401],
+        rejection: 'session',
+      },
+      {
+        replay: 'rejected',
+        bare: 'rejected',
+        requires: null,
+        statuses: [401, 401],
+        rejection: 'session',
+      },
+    ]), OPS)[0]
+    expect(entry).toMatchObject({ requires: 'cookies', probed: false })
+  })
+
+  it('keeps the inferred verdict while tested requests were not all minimized', () => {
+    expect(applyProbeReport([guarded], report([
+      {
+        requires: ['header:x-client-id'],
+      },
+      { requires: null },
+    ]), OPS)[0]?.requires).toBe('browser')
+  })
+})
+
+describe('pageHostRequirements', () => {
+  const page = (host: string, cookies: number): Parameters<typeof pageHostRequirements>[0][number] => ({
+    operationId: `get${host}`,
+    host,
+    method: 'GET',
+    path: '/',
+    kind: 'page',
+    pathParams: [],
+    query: [],
+    headers: [],
+    cookies: Array.from({ length: cookies }, (_, index) => ({
+      name: `c${index}`,
+      required: false,
+      schema: { type: 'string' },
+    })),
+    requestBody: null,
+    responses: [],
+    sentFrom: [],
+    sourceOnly: false,
+    summary: '',
+    exchanges: [],
+  })
+
+  it('adds hosts that only served pages, with probe applied', () => {
+    const entries = pageHostRequirements([
+      page('news.example', 1),
+      page('shop.example', 0),
+    ], [base], report([
+      { host: 'news.example', operationId: 'getnews.example', bare: 'ok' },
+    ]))
+    expect(entries).toEqual([
+      {
+        host: 'news.example',
+        requires: 'none',
+        cookies: [],
+        botProtection: [],
+        probed: true,
+      },
+    ])
+    expect(pageHostRequirements([
+      page('news.example', 1),
+    ], [], null)[0]).toMatchObject({ requires: 'cookies', probed: false })
   })
 })

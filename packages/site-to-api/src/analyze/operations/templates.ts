@@ -2,7 +2,9 @@
  * Path templating: which segments of observed paths are parameters.
  */
 import type { PathParam, SourceRoute } from '../../model'
+import type { SiblingFacts } from './siblings'
 import { isIdentifierLike, isStrongIdentifier } from './identifiers'
+import { markSiblingPositions } from './siblings'
 
 export type Evidence = PathParam['evidence'][number]
 
@@ -67,9 +69,11 @@ function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCand
  * 3. Paths that agree on every segment that is not identifier-like (or a slug some other
  *    response links to) are grouped; in a group an
  *    identifier position is a parameter once two distinct values are seen there (or one, when a
- *    strong identifier already made it a parameter). Plain words never are.
+ *    strong identifier already made it a parameter).
+ * 4. With `siblings`, words that differ in one position of otherwise equal paths are a parameter
+ *    when the capture shows they are data (decision 0035, `markSiblingPositions`).
  */
-export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set()): Map<string, Marks> {
+export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set(), siblings: SiblingFacts | null = null): Map<string, Marks> {
   // A hyphenated slug (`pine-hill`) only counts when another response links to it: plain-word
   // endpoint names (`/api/all-upcoming-issues`) appear in bundles, never as links in data.
   const isCandidate = (segment: string): boolean => isIdentifierLike(segment) || linkedSlugs.has(segment)
@@ -106,6 +110,8 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
   }
 
   markVaryingPositions(free, isCandidate)
+  if (siblings)
+    markSiblingPositions(free, siblings)
   return result
 }
 
