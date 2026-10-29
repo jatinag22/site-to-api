@@ -223,6 +223,24 @@ function zodForType(type: FieldType): string {
   }
 }
 
+/**
+ * The `sdk` of one host: hey-api's functions, with the GraphQL (decision 0027) and dispatcher
+ * (decision 0039) wrappers in place of the raw functions of the same name.
+ */
+function sdkEntry(host: HostSpec): string {
+  const wrappers = [
+    ...(host.graphql.length > 0
+      ? [`${host.identifier}Graphql`]
+      : []),
+    ...(host.dispatch.length > 0
+      ? [`${host.identifier}Dispatch`]
+      : []),
+  ]
+  return wrappers.length === 0
+    ? `    sdk: ${host.identifier},`
+    : `    sdk: { ...${[host.identifier, ...wrappers].join(', ...')} },`
+}
+
 /** `client/index.ts`: every host's SDK under its namespace, plus `createSiteClient`. */
 export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], htmlValues: NamedHtmlValue[] = []): string {
   // `.js` specifiers work under `moduleResolution: bundler` and `nodenext` alike.
@@ -232,14 +250,15 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     ...(host.graphql.length > 0
       ? [`import * as ${host.identifier}Graphql from './${host.identifier}/graphql.js'`]
       : []),
+    ...(host.dispatch.length > 0
+      ? [`import * as ${host.identifier}Dispatch from './${host.identifier}/dispatch.js'`]
+      : []),
   ])
   // GraphQL functions take `{ variables }` and replace the raw SDK functions of the same name.
   const entries = hosts.map(host => [
     `  ${literal(host.host)}: {`,
     `    client: ${host.identifier}Client,`,
-    host.graphql.length > 0
-      ? `    sdk: { ...${host.identifier}, ...${host.identifier}Graphql },`
-      : `    sdk: ${host.identifier},`,
+    sdkEntry(host),
     `  },`,
   ].join('\n'))
   const defaults = hosts.map(host => [
@@ -539,6 +558,7 @@ function renderHostSection(host: HostSpec, session: SessionRequirement | null): 
   if (auth !== null)
     lines.push(auth)
   lines.push(...graphqlLines(host))
+  lines.push(...dispatchLines(host))
   lines.push('', ...codeBlock(sessionExample(host, session?.requires ?? 'unknown', example), 'ts'))
   return lines.join('\n')
 }
@@ -563,6 +583,30 @@ function graphqlLines(host: HostSpec): string[] {
       ? '{}'
       : '{ variables }'})`)} (${text(operation.operationType)})`)
     return `- GraphQL on ${code(endpoint)}: ${calls.join(', ')}. Each sends its operation name, persisted-query hash or document itself; \`variables\` are typed from the capture.`
+  })
+}
+
+/**
+ * One line per dispatcher endpoint: its functions as the wrappers `sdk` has, each sending the
+ * dispatcher parameter itself (decision 0039).
+ */
+function dispatchLines(host: HostSpec): string[] {
+  const byEndpoint = new Map<string, HostSpec['dispatch']>()
+  for (const operation of host.dispatch) {
+    const key = `${operation.method} ${operation.endpoint}`
+    byEndpoint.set(key, [
+      ...(byEndpoint.get(key) ?? []),
+      operation,
+    ])
+  }
+  return [...byEndpoint].sort(([a], [b]) => a.localeCompare(b)).map(([endpoint, operations]) => {
+    const calls = operations.slice(0, LISTED_OPERATIONS).map(operation => code(`sdk.${sdkFunctionName(operation.operationId)}(${operation.argument === null
+      ? ''
+      : `{ ${operation.argument} }`})`))
+    const more = operations.length > LISTED_OPERATIONS
+      ? ` and ${operations.length - LISTED_OPERATIONS} more`
+      : ''
+    return `- Dispatcher ${code(endpoint)} (${code(operations[0]!.parameter)} picks the function): ${calls.join(', ')}${more}. Each sends ${code(operations[0]!.parameter)} itself.`
   })
 }
 

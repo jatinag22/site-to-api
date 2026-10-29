@@ -8,6 +8,7 @@ import { createClient } from '@hey-api/openapi-ts'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
+import { dispatchFunctions, renderDispatchModule } from './dispatch'
 import { graphqlFunctions, renderGraphqlModule } from './graphql'
 import { nameHtmlValues } from './html-values'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
@@ -60,7 +61,11 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
     const graphql = graphqlFunctions(host, warnings)
     if (graphql.length > 0)
       await writeFile(path.join(clientDir, host.identifier, 'graphql.ts'), renderGraphqlModule(graphql))
-    hosts.push({ ...host, graphql })
+    // Dispatcher functions get a wrapper that sends the dispatcher parameter (decision 0039).
+    const dispatch = dispatchFunctions(host, warnings)
+    if (dispatch.length > 0)
+      await writeFile(path.join(clientDir, host.identifier, 'dispatch.ts'), renderDispatchModule(dispatch))
+    hosts.push({ ...host, graphql, dispatch })
   }
 
   const extracts = nameExtracts(hosts, warnings)

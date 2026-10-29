@@ -2,7 +2,7 @@
  * Builds one OpenAPI 3.1 document per host from an {@link Analysis} (docs/output-format.md).
  * Objects are built with a fixed key order so the YAML is byte-identical for the same analysis.
  */
-import type { Analysis, GraphqlOperation, JsonSchema, Operation, ParamInfo, ResponseInfo, SourceRef, ValueOrigin } from '../../model'
+import type { Analysis, DispatchOperation, GraphqlOperation, JsonSchema, Operation, ParamInfo, ResponseInfo, SourceRef, ValueOrigin } from '../../model'
 import { isTelemetryHeader } from '../../analyze/schema'
 import { createStepResolver, operationKey } from '../steps'
 
@@ -352,6 +352,21 @@ function graphqlExtension(graphql: GraphqlOperation): Json {
   }
 }
 
+/**
+ * `x-site-to-api-dispatch` (decision 0039): the dispatcher parameter this operation sends, where,
+ * and with which value; the path is `<endpoint>#<value>`, and the request goes to the endpoint.
+ */
+function dispatchExtension(dispatch: DispatchOperation): Json {
+  return {
+    'x-site-to-api-dispatch': {
+      endpoint: dispatch.endpoint,
+      parameter: dispatch.parameter,
+      in: dispatch.in,
+      value: dispatch.value,
+    },
+  }
+}
+
 function operationObject(operation: Operation, origins: Map<string, ValueOrigin>): Json {
   const params = parameters(operation, origins)
   return {
@@ -372,6 +387,9 @@ function operationObject(operation: Operation, origins: Map<string, ValueOrigin>
     'x-site-to-api-kind': operation.kind,
     ...(operation.graphql
       ? graphqlExtension(operation.graphql)
+      : {}),
+    ...(operation.dispatch
+      ? dispatchExtension(operation.dispatch)
       : {}),
     ...sourceExtension(operation.sentFrom),
     ...(operation.sourceOnly

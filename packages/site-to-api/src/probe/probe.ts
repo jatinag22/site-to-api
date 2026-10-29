@@ -342,6 +342,60 @@ function graphqlSkipReason(operation: Operation, config: ResolvedConfig['probe']
 /** Words in a path that suggest a GET changes state; such requests are never replayed. */
 const STATE_CHANGING = /logout|log-out|signout|sign-out|unsubscribe|delete|remove|cancel|confirm|activate|verify|reset|revoke/i
 
+/**
+ * Words that make a dispatcher function a write, matched as whole words of its value
+ * (`addToCart`, `wc_empty_cart`, `post.like`), not as substrings: `getOrders` and `likely` pass,
+ * `getOrder` does not. Phrases match as runs of words.
+ */
+const STATE_CHANGING_WORDS: readonly string[][] = [
+  'activate',
+  'apply',
+  'cancel',
+  'checkout',
+  'clear',
+  'confirm',
+  'delete',
+  'empty',
+  'follow',
+  'like',
+  'logout',
+  'order',
+  'pay',
+  'purchase',
+  'remove',
+  'reset',
+  'revoke',
+  'send',
+  'signout',
+  'submit',
+  'subscribe',
+  'trash',
+  'unfollow',
+  'unlike',
+  'unsubscribe',
+  'verify',
+  'vote',
+  'add to cart',
+  'log out',
+  'sign out',
+].map(phrase => phrase.split(' '))
+
+/** `addToCart` → `add to cart`, `wc_empty_cart` → `wc empty cart`, `user/get` → `user get`. */
+function valueWords(value: string): string[] {
+  return value
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z\d]+/)
+    .filter(word => word !== '')
+}
+
+/** Whether a dispatcher value names a function that changes state (decision 0039). */
+function dispatchChangesState(value: string): boolean {
+  const words = valueWords(value)
+  return STATE_CHANGING_WORDS.some(phrase => words.some((_, start) => phrase.every((word, offset) => words[start + offset] === word)))
+}
+
 function skipReason(operation: Operation, config: ResolvedConfig['probe']): string | null {
   if (operation.kind === 'bot-protection')
     return 'bot-protection step: needs a real browser by design'
@@ -353,6 +407,13 @@ function skipReason(operation: Operation, config: ResolvedConfig['probe']): stri
   const graphql = graphqlSkipReason(operation, config)
   if (graphql !== null)
     return graphql
+  // A dispatcher function's name (`getQuote`) can only stop a replay, never allow one (decision
+  // 0039): only the method says it is safe. Every GET function is replayed on its own, so its
+  // name is checked word by word.
+  if (operation.dispatch && dispatchChangesState(operation.dispatch.value))
+    return `dispatcher function ${operation.dispatch.value} suggests it changes state (add to cart, subscribe, delete...), so it is never replayed`
+  if (operation.dispatch && !isSafeOperation(operation) && !config.unsafeMethods)
+    return `${operation.method} dispatcher function ${operation.dispatch.value} can change data (its name is no evidence it only reads); pass --unsafe-methods to include it`
   if (!isSafeOperation(operation) && !config.unsafeMethods)
     return `${operation.method} can change data; pass --unsafe-methods to include it`
   if (!representative(operation))

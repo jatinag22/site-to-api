@@ -14,6 +14,7 @@ import { specFileName } from '../openapi/write'
 import { createStepResolver } from '../steps'
 import { channelGaps, channelsSection } from './channels'
 import { clientGap, clientReadingLine } from './client'
+import { dispatchSection } from './dispatch'
 import { graphqlSection } from './graphql'
 import { describeSource } from './source-ref'
 
@@ -413,6 +414,7 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext)
     ...sessionSection(analysis, context),
     ...flowsSection(analysis, resolver),
     ...graphqlSection(analysis),
+    ...dispatchSection(analysis),
     ...channelsSection(channels),
     ...computedSection(analysis, resolver, hasSource),
     ...gapsSection(analysis, context, resolver),

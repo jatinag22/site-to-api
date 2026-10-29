@@ -94,6 +94,23 @@ const GraphqlExtensionSchema = z.object({
   }),
 })
 
+/** `x-site-to-api-dispatch` as `build` writes it (decision 0039). */
+const DispatchExtensionSchema = z.object({
+  endpoint: z.string(),
+  parameter: z.string(),
+  in: z.enum(['query', 'form', 'json']),
+  value: z.string(),
+})
+
+const BodyFieldsSchema = z.looseObject({
+  content: z.record(z.string(), z.looseObject({
+    schema: z.looseObject({
+      properties: z.record(z.string(), z.unknown()).optional(),
+      required: z.array(z.string()).optional(),
+    }).optional(),
+  })).optional(),
+})
+
 const RequiredFlagSchema = z.looseObject({
   required: z.boolean().optional(),
 })
@@ -120,6 +137,7 @@ const OperationSchema = z.looseObject({
   'requestBody': z.unknown().optional(),
   'responses': z.record(z.string(), z.unknown()).optional(),
   'x-site-to-api-graphql': z.unknown().optional(),
+  'x-site-to-api-dispatch': z.unknown().optional(),
 })
 
 const METHODS = [
@@ -257,6 +275,23 @@ export interface GraphqlClientOperation extends z.infer<typeof GraphqlExtensionS
   otherQuery: Array<{ name: string, required: boolean }>
 }
 
+/** A dispatcher function (decision 0039): its function sends the dispatcher parameter itself. */
+export interface DispatchClientOperation extends z.infer<typeof DispatchExtensionSchema> {
+  operationId: string
+  method: string
+  /** Spec path: `<endpoint>#<value>`. */
+  path: string
+  /**
+   * Where the caller's own parameters go (`query` for a query dispatcher, `body` for a form or
+   * JSON one), or null when the function was captured with nothing besides the dispatcher.
+   */
+  argument: 'query' | 'body' | null
+  /** At least one of the caller's parameters is required. */
+  argumentRequired: boolean
+  /** The options cannot be left out: a path parameter, a header or one of the caller's fields is required. */
+  optionsRequired: boolean
+}
+
 /** A security scheme from `components.securitySchemes`, as the generated client applies it. */
 export interface AuthScheme {
   /** Key in `components.securitySchemes`. */
@@ -300,6 +335,8 @@ export interface HostSpec {
   sentContentTypes: Record<string, string>
   /** GraphQL operations, sorted by operation id. */
   graphql: GraphqlClientOperation[]
+  /** Dispatcher functions, sorted by operation id. */
+  dispatch: DispatchClientOperation[]
 }
 
 /**
@@ -364,6 +401,7 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
   const securedOperationIds: string[] = []
   const extracts: ExtractOperation[] = []
   const graphqlOperations: GraphqlClientOperation[] = []
+  const dispatchOperations: DispatchClientOperation[] = []
   for (const { path, method, operation, parameters } of operationsOf(document)) {
     const where = `specs/${file}: ${method.toUpperCase()} ${path}`
     if (operation.operationId === undefined) {
@@ -378,6 +416,9 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
     const graphql = readGraphql(operation, method, path, parameters, where, warnings)
     if (graphql)
       graphqlOperations.push(graphql)
+    const dispatch = readDispatch(operation, method, path, parameters, where, warnings)
+    if (dispatch)
+      dispatchOperations.push(dispatch)
     const extract = findExtract(operation, where, warnings)
     if (extract) {
       extracts.push({
@@ -402,6 +443,62 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
     probedRequires: probedRequiresOf(document),
     sentContentTypes: sentContentTypesOf(document),
     graphql: graphqlOperations.sort((a, b) => a.operationId.localeCompare(b.operationId)),
+    dispatch: dispatchOperations.sort((a, b) => a.operationId.localeCompare(b.operationId)),
+  }
+}
+
+/** The caller's own fields at the dispatcher's location: names with whether each is required. */
+function dispatchArguments(operation: Operation, parameters: unknown[], dispatch: z.infer<typeof DispatchExtensionSchema>): Array<{ name: string, required: boolean }> {
+  if (dispatch.in === 'query') {
+    return parameters.flatMap((raw) => {
+      const parameter = ParameterSchema.safeParse(raw).data
+      return parameter !== undefined && parameter.in === 'query' && parameter.name !== dispatch.parameter
+        ? [
+            { name: parameter.name, required: RequiredFlagSchema.safeParse(raw).data?.required === true },
+          ]
+        : []
+    })
+  }
+  const schema = Object.values(BodyFieldsSchema.safeParse(operation.requestBody).data?.content ?? {})[0]?.schema
+  const required = new Set(schema?.required ?? [])
+  return Object.keys(schema?.properties ?? {})
+    .filter(name => name !== dispatch.parameter)
+    .map(name => ({
+      name,
+      required: required.has(name),
+    }))
+}
+
+/** The dispatcher facts of one operation, or null when it has none (or they cannot be read). */
+function readDispatch(operation: Operation, method: string, path: string, parameters: unknown[], where: string, warnings: string[]): DispatchClientOperation | null {
+  const raw = operation['x-site-to-api-dispatch']
+  if (raw === undefined || operation.operationId === undefined)
+    return null
+  const parsed = DispatchExtensionSchema.safeParse(raw)
+  if (!parsed.success) {
+    warnings.push(`${where}: x-site-to-api-dispatch could not be read (${z.prettifyError(parsed.error).replaceAll('\n', '; ')}); it gets no dispatcher function. Run \`site-to-api build\` again`)
+    return null
+  }
+  const fields = dispatchArguments(operation, parameters, parsed.data)
+  const argumentRequired = fields.some(field => field.required)
+  const otherRequired = parameters.some((raw) => {
+    const parameter = ParameterSchema.safeParse(raw).data
+    return parameter !== undefined
+      && (parameter.in === 'path' || parameter.in === 'header')
+      && RequiredFlagSchema.safeParse(raw).data?.required === true
+  })
+  return {
+    ...parsed.data,
+    operationId: operation.operationId,
+    method: method.toUpperCase(),
+    path,
+    argument: fields.length === 0
+      ? null
+      : parsed.data.in === 'query'
+        ? 'query'
+        : 'body',
+    argumentRequired,
+    optionsRequired: argumentRequired || otherRequired,
   }
 }
 

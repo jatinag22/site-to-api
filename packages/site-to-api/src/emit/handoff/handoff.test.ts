@@ -1,6 +1,7 @@
 import type { Analysis, Operation } from '../../model'
 import { describe, expect, it } from 'vitest'
 import { channelMessage, socketIoChannel, tickerChannel } from '../../../test/channels'
+import { dispatchExchanges } from '../../../test/dispatch'
 import { fakeHash, graphqlAnalysis, graphqlGet, graphqlPost } from '../../../test/graphql'
 import { exchange } from '../../../test/helpers'
 import { HOSTILE, injected, renderMarkdown } from '../../../test/markdown'
@@ -1077,5 +1078,37 @@ describe('graphQL operations (decision 0027)', () => {
     ], 'api.example.test')
     expect(injected(renderMarkdown(renderAgentGuide(hostile, context)))).toEqual([])
     expect(injected(renderMarkdown(renderApiMap(hostile, 'current')))).toEqual([])
+  })
+})
+
+describe('dispatcher endpoints (decision 0039)', () => {
+  const context = {
+    toolVersion: '0.1.0',
+    examples: 'masked',
+    probed: false,
+    client: 'current',
+    probe: null,
+  } as const
+  const analysis = graphqlAnalysis(dispatchExchanges('api.example.test'), 'api.example.test')
+
+  it('lists the functions per endpoint in AGENT.md with their parameters and client call', () => {
+    const guide = renderAgentGuide(analysis, context)
+    const section = guide.split('## Dispatcher endpoints')[1]?.split('\n## ')[0] ?? ''
+    expect(section).toContain('### `GET api.example.test/api/quote`')
+    expect(section).toContain('Dispatcher: query parameter `functionName`, 2 functions.')
+    expect(section).toContain('- `getMarketStatus`: no other parameters. Client: `sdk.getMarketStatus()`; spec path `/api/quote#getMarketStatus`.')
+    expect(section).toContain('- `getSymbolData`: parameters `symbol`, `series`. Client: `sdk.getSymbolData({ query: { symbol, series } })`; spec path `/api/quote#getSymbolData`.')
+    expect(section).toContain('### `POST api.example.test/wp-admin/admin-ajax.php`')
+    expect(section).toContain('Dispatcher: form field `action`, 2 functions.')
+    expect(section).toContain('- `load_more`: parameters `page`. Client: `sdk.loadMore({ body: { page } })`')
+  })
+
+  it('adds a table per endpoint to API_MAP.md and marks the rows of the host table', () => {
+    const map = renderApiMap(analysis, 'current')
+    expect(map).toContain('### GET api.example.test/api/quote (query parameter `functionName`)')
+    expect(map).toContain('| `getSymbolData` | `getSymbolData` | `symbol`, `series` | `sdk.getSymbolData({ query: { symbol, series } })` |')
+    const row = map.split('\n').find(line => line.startsWith('| `heartbeat` |')) ?? ''
+    expect(row).toContain('| `POST /wp-admin/admin-ajax.php#heartbeat` | api (function heartbeat) |')
+    expect(row).toContain('`sdk.heartbeat()`, `zHeartbeatResponse`')
   })
 })

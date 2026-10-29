@@ -792,6 +792,97 @@ describe('graphQL (decision 0027)', () => {
   }, 120_000)
 })
 
+describe('dispatcher endpoints (decision 0039)', () => {
+  it('splits /api/store-api into one operation per functionName', () => {
+    const functions = analysis.operations.filter(op => op.host === host && op.dispatch?.endpoint === '/api/store-api')
+    expect(functions.map(op => [
+      op.operationId,
+      op.method,
+      op.path,
+      op.dispatch?.parameter,
+      op.dispatch?.in,
+      op.query.map(param => param.name).sort(),
+    ]).sort()).toEqual([
+      [
+        'getStoreInfo',
+        'GET',
+        '/api/store-api#getStoreInfo',
+        'functionName',
+        'query',
+        ['functionName', 'slug'],
+      ],
+      [
+        'getStoreServices',
+        'GET',
+        '/api/store-api#getStoreServices',
+        'functionName',
+        'query',
+        ['functionName'],
+      ],
+    ])
+    // The dispatcher value is a constant of each function, which the client sends.
+    const info = functions.find(op => op.operationId === 'getStoreInfo')
+    expect(info?.query.find(param => param.name === 'functionName')).toMatchObject({
+      required: true,
+      schema: { const: 'getStoreInfo', default: 'getStoreInfo' },
+    })
+    expect(analysis.operations.some(op => op.host === host && op.path === '/api/store-api')).toBe(false)
+  })
+
+  it('marks the functions in the spec and lists them in AGENT.md and API_MAP.md', () => {
+    const spec = files.get(`specs/${host.replace(/[^\w.-]/g, '_')}.yaml`) ?? ''
+    expect(spec).toContain('/api/store-api#getStoreInfo:')
+    expect(spec).toMatch(/x-site-to-api-dispatch:\n\s+endpoint: \/api\/store-api\n\s+parameter: functionName\n\s+in: query\n\s+value: getStoreServices/)
+    const guide = files.get('AGENT.md') ?? ''
+    const section = guide.split('## Dispatcher endpoints')[1]?.split('\n## ')[0] ?? ''
+    expect(section).toContain(`### \`GET ${host}/api/store-api\``)
+    expect(section).toContain('- `getStoreInfo`: parameters `slug`. Client: `sdk.getStoreInfo({ query: { slug } })`; spec path `/api/store-api#getStoreInfo`.')
+    expect(section).toContain('- `getStoreServices`: no other parameters. Client: `sdk.getStoreServices()`')
+    const map = files.get('API_MAP.md') ?? ''
+    expect(map).toContain('| `getStoreServices` | `GET /api/store-api#getStoreServices` | api (function getStoreServices) |')
+  })
+
+  it('calls the functions through the generated client, which sends functionName itself', async () => {
+    const driver = join(outDir, 'dispatch-check.ts')
+    await writeFile(driver, [
+      `import type { BrowserCookie } from './client/index.js'`,
+      `import { browserSession, CookieJar, createSiteClient } from './client/index.js'`,
+      ``,
+      `export async function run(origin: string, bootstrap: () => Promise<BrowserCookie[]>) {`,
+      `  const jar = new CookieJar()`,
+      `  const session = browserSession({ jar, bootstrap })`,
+      `  await session.refresh()`,
+      `  const { sdk } = createSiteClient({ host: ${JSON.stringify(host)}, jar, session, baseUrl: origin })`,
+      `  const info = await sdk.getStoreInfo({ query: { slug: 'cedar-park' } })`,
+      `  const services = await sdk.getStoreServices()`,
+      `  return {`,
+      `    slug: info.data?.slug ?? null,`,
+      `    url: info.response?.url ?? null,`,
+      `    services: services.data?.services?.length ?? 0,`,
+      `    errors: [info.error, services.error].filter(error => error !== undefined).map(String),`,
+      `  }`,
+      `}`,
+      ``,
+    ].join('\n'))
+    try {
+      expect(typeCheck([driver], 'bundler')).toEqual([])
+      expect(typeCheck([driver], 'nodenext')).toEqual([])
+      const loaded: unknown = await import(pathToFileURL(driver).href)
+      if (typeof loaded !== 'object' || loaded === null || !('run' in loaded) || typeof loaded.run !== 'function')
+        throw new Error('dispatch-check.ts did not export run()')
+      expect(await loaded.run(site.origin, browserCookies)).toEqual({
+        slug: 'cedar-park',
+        url: `${site.origin}/api/store-api?slug=cedar-park&functionName=getStoreInfo`,
+        services: 3,
+        errors: [],
+      })
+    }
+    finally {
+      await rm(driver, { force: true })
+    }
+  }, 120_000)
+})
+
 describe('gen', () => {
   it('regenerates the client from a committed handoff folder, with no raw captures present', async () => {
     const clone = join(work, 'fresh-clone')
@@ -823,6 +914,8 @@ describe('probe', () => {
     expect(report.operations.find(result => result.operationId === 'productStock')).toMatchObject({ method: 'POST', replay: 'ok' })
     expect(report.operations.find(result => result.operationId === 'storeHours')).toMatchObject({ method: 'GET', replay: 'ok' })
     expect(report.skipped).toContainEqual({ operationId: 'addToWishlist', reason: 'GraphQL mutation AddToWishlist can change data; pass --unsafe-methods to include it' })
+    // A GET dispatcher function is replayed like any GET, at the endpoint without the fragment.
+    expect(report.operations.find(result => result.operationId === 'getStoreServices')).toMatchObject({ method: 'GET', replay: 'ok' })
     await writeProbeReport(outDir, report)
     const rebuilt = await buildHandoff({ config, cwd: work })
     expect(rebuilt.analysis.flows.session.find(entry => entry.host === host)?.probed).toBe(true)
