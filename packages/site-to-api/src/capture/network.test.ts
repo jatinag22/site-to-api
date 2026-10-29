@@ -353,16 +353,34 @@ describe('servedAddresses', () => {
     expect(await localPageOf('https://shop.example.com/next', rebound, served.of('https://shop.example.com/next'))).toBeNull()
   })
 
-  it('counts an origin only ever served from private addresses as local', async () => {
+  it('counts an origin only ever served from private addresses as local when its name is private too', async () => {
     const served = new ServedAddresses()
     served.record('http://app.corp/', '10.1.0.10')
     served.record('http://app.corp/settings', null)
     served.record('http://app.corp/reports', '10.1.0.11')
-    // Even when DNS now gives a public answer, the browser loaded it from the intranet.
-    const publicNow = fakeLookup({
-      'app.corp': ['93.184.216.34'],
+    expect(await localPageOf('http://app.corp/reports', lookup, served.of('http://app.corp/reports'))).toEqual(new URL('http://app.corp/reports'))
+  })
+
+  it('never makes a page local from a private address alone, as behind a proxy', async () => {
+    // Behind mitmproxy or a corporate proxy every document is "served" from the proxy's address.
+    const proxied = new ServedAddresses()
+    proxied.record('https://example.com/', '127.0.0.1')
+    proxied.record('https://intranet-proxy.example/', '10.0.0.1')
+    expect(await localPageOf('https://example.com/', lookup, proxied.of('https://example.com/'))).toBeNull()
+    // A public page whose sourcemap points at a sibling on the metadata address stays refused.
+    const page = await localPageOf('https://www.evil.com/', lookup, servedFrom('https://www.evil.com/', '10.0.0.1'))
+    expect(page).toBeNull()
+    expect(await sourceMapRefusal(new URL('http://meta.evil.com/latest/meta-data/'), new URL('https://www.evil.com/app.js'), page, lookup)).toMatch(/169\.254\.169\.254/)
+  })
+
+  it('records an IPv6 address given in brackets', async () => {
+    const served = new ServedAddresses()
+    served.record('https://shop.example.com/', '[2606:2800:220:1:248:1893:25c8:1946]')
+    expect(served.of('https://shop.example.com/')).toEqual({ last: '2606:2800:220:1:248:1893:25c8:1946', public: true })
+    const rebound = fakeLookup({
+      'shop.example.com': ['10.0.0.9'],
     })
-    expect(await localPageOf('http://app.corp/reports', publicNow, served.of('http://app.corp/reports'))).toEqual(new URL('http://app.corp/reports'))
+    expect(await localPageOf('https://shop.example.com/', rebound, served.of('https://shop.example.com/'))).toBeNull()
   })
 
   it('keeps origins apart and ignores documents without an address or outside http(s)', () => {

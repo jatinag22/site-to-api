@@ -243,6 +243,10 @@ export function pageOrigin(url: string): string | null {
  * fresh DNS lookup would let a name that now resolves only to private addresses make an origin
  * local that the browser had loaded from a public one. So the origin keeps what was seen: the last
  * address, and whether any was public.
+ *
+ * A recorded address can only make a page public. Behind an HTTP proxy (a corporate one on
+ * `10.x`, or mitmproxy, Charles or a VPN on `127.0.0.1`) the address is the proxy's, so a private
+ * address says nothing about where the page came from.
  */
 export class ServedAddresses {
   private readonly byOrigin = new Map<string, ServedFrom>()
@@ -250,10 +254,12 @@ export class ServedAddresses {
   /** Notes that a document at `url` was loaded from `address`; a missing or non-IP address is ignored. */
   record(url: string, address: string | null): void {
     const origin = pageOrigin(url)
-    if (origin === null || address === null || isIP(address) === 0)
+    // Playwright may report an IPv6 address in URL form, `[2606:4700::1]`.
+    const ip = address?.replace(/^\[|\]$/g, '') ?? null
+    if (origin === null || ip === null || isIP(ip) === 0)
       return
     const seenPublic = this.byOrigin.get(origin)?.public ?? false
-    this.byOrigin.set(origin, { last: address, public: seenPublic || isPublicAddress(address) })
+    this.byOrigin.set(origin, { last: ip, public: seenPublic || isPublicAddress(ip) })
   }
 
   /** What was seen for the origin of `url`, or `null` when no document of it had an address. */
@@ -269,12 +275,12 @@ export class ServedAddresses {
  * The page URL when the page is on a non-public host, which earns it the intranet allowances of
  * {@link sourceMapRefusal}; otherwise null, the safe side (decisions 0019 and 0040).
  *
- * The page is judged by `served`, the addresses the browser loaded documents of its origin from
- * during the capture, when there are any: a name can resolve to public and private addresses at
- * once, and only the ones used tell which network the page came from. An origin seen served from
- * a public address once stays public. Without any, the page is local only when its name is a
- * local one or every address it resolves to is non-public; a mixed answer, no answer or a failed
- * lookup make it public.
+ * `served` holds the addresses the browser loaded documents of the page's origin from during the
+ * capture. They can only make the page public: an origin seen served from a public address once
+ * stays public, whatever DNS says later. A private address may be a proxy's, so it never makes a
+ * page local. Otherwise the page is local only when its name is a local one, it is a non-public IP
+ * literal, or every address its name resolves to is non-public; a mixed answer, no answer or a
+ * failed lookup make it public.
  */
 export async function localPageOf(pageUrl: string | null, lookup: Lookup = systemLookup, served: ServedFrom | null = null): Promise<URL | null> {
   if (pageUrl === null)
@@ -294,8 +300,8 @@ export async function localPageOf(pageUrl: string | null, lookup: Lookup = syste
 }
 
 async function isPrivatePage(hostname: string, lookup: Lookup, served: ServedFrom | null): Promise<boolean> {
-  if (served !== null)
-    return !served.public && !isPublicAddress(served.last)
+  if (served?.public === true)
+    return false
   const host = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '')
   if (isIP(host) !== 0)
     return !isPublicAddress(host)
