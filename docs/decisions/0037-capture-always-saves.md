@@ -1,4 +1,4 @@
-# 0033 Capture always saves the session, with bounded waits
+# 0037 Capture always saves the session, with bounded waits
 
 Status: Accepted (2026-10-29)
 

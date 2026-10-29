@@ -183,7 +183,7 @@ the cookies and headers it needs (`requires`, names only; `null` when not worked
 `probe.minimizePerHost` operations per host (default 5, `--minimize-per-host <n>`), recorded as
 `minimizePerHost`. When neither the captured session nor a bare request was accepted,
 `rejection` says why: `bot-protection`, `session` (401/403) or `other`, and `note` says what the
-site answered (decision 0032). Probe sends its own `user-agent` (`site-to-api/<version> (probe;
+site answered (decision 0036). Probe sends its own `user-agent` (`site-to-api/<version> (probe;
 automated)`), never the capture browser's. Names only.
 
 `probe` writes `probe.json` and then rebuilds the handoff folder. Every `build`, including that

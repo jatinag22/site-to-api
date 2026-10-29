@@ -44,7 +44,7 @@ export interface RunCaptureOptions {
   timeouts?: Partial<CaptureTimeouts>
 }
 
-/** How long saving a session waits before it gives up and saves what exists (decision 0033). */
+/** How long saving a session waits before it gives up and saves what exists (decision 0037). */
 interface CaptureTimeouts {
   /** For pending page work (navigation labels, binding attachment) and for scripts being saved. */
   settleMs: number
@@ -241,7 +241,7 @@ async function launchContext(browser: BrowserConfig, cwd: string, harPath: strin
  * itself, starting from `baseUrl`. Either way the context is closed properly so the HAR is
  * flushed, and `meta.json` is written even when the script fails, the run is interrupted
  * (SIGINT, SIGTERM, `signal`) or a page never finishes: such sessions are marked `incomplete`
- * (decision 0033). Every wait while saving is bounded.
+ * (decision 0037). Every wait while saving is bounded.
  */
 export async function runCapture(config: ResolvedConfig, options: RunCaptureOptions): Promise<CaptureResult> {
   const log = options.log ?? ((): void => {})

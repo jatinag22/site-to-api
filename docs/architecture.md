@@ -25,7 +25,7 @@
 All stages are pure functions over the data contracts in `packages/site-to-api/src/model/`.
 
 1. **load** (`src/load`): reads `meta.json`, `traffic.har` and `events.jsonl` of every session
-   (sessions marked `incomplete` are used with a warning, decision 0033),
+   (sessions marked `incomplete` are used with a warning, decision 0037),
    validates them with Zod, and produces `Exchange[]`. Instrumentation `request` events are matched
    to HAR entries (method + URL + time window + body preview) to attach the initiator stack, and
    `response` events fill bodies the HAR lost when the page navigated (decision 0016).

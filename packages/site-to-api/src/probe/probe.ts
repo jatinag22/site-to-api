@@ -57,7 +57,7 @@ function representative(operation: Operation): Exchange | null {
 }
 
 /**
- * The user agent probe sends (decision 0032): the tool's own name. Probe is a plain HTTP client,
+ * The user agent probe sends (decision 0036): the tool's own name. Probe is a plain HTTP client,
  * so it never replays the capture browser's user agent or client hints: claiming to be Chrome
  * would hide automation, and `HeadlessChrome` is blocked outright by some bot protection. It is
  * also what a generated client sends, since clients never default a browser user agent (0026).

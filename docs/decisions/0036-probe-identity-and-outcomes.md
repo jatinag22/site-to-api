@@ -1,4 +1,4 @@
-# 0032 Probe names itself and says why a request was refused
+# 0036 Probe names itself and says why a request was refused
 
 Status: Accepted (2026-10-29). Refines 0012.
 

@@ -44,7 +44,7 @@ export const SessionMetaSchema = z.object({
     }).nullable(),
   })),
   /**
-   * Set when the session did not end normally (decision 0033): the capture script threw, the run
+   * Set when the session did not end normally (decision 0037): the capture script threw, the run
    * was interrupted (Ctrl+C, SIGTERM, abort), or a page or the browser did not finish in time. What was
    * recorded up to then is kept and `build` uses it with a warning. Optional and additive, so the
    * format version is unchanged and older readers still accept the file.
