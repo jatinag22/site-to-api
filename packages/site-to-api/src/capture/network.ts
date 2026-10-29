@@ -216,17 +216,73 @@ async function hostStatus(hostname: string, lookup: Lookup): Promise<HostStatus>
     : { kind: 'non-public', reason: `${host} resolves to the non-public address ${inside}` }
 }
 
+/** What capture saw of the addresses the browser loaded one page origin's documents from. */
+export interface ServedFrom {
+  /** The last address a document of the origin was loaded from. */
+  last: string
+  /** True once any document of the origin came from a public address; it never goes back. */
+  public: boolean
+}
+
+/** The origin of an http(s) URL, the key {@link ServedAddresses} uses; `null` for anything else. */
+export function pageOrigin(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    return /^https?:$/.test(parsed.protocol)
+      ? parsed.origin
+      : null
+  }
+  catch {
+    return null
+  }
+}
+
+/**
+ * The addresses the browser connected to for each page origin during one capture (decision
+ * 0040). A document served by a service worker or from cache has no address, and judging it by a
+ * fresh DNS lookup would let a name that now resolves only to private addresses make an origin
+ * local that the browser had loaded from a public one. So the origin keeps what was seen: the last
+ * address, and whether any was public.
+ *
+ * A recorded address can only make a page public. Behind an HTTP proxy (a corporate one on
+ * `10.x`, or mitmproxy, Charles or a VPN on `127.0.0.1`) the address is the proxy's, so a private
+ * address says nothing about where the page came from.
+ */
+export class ServedAddresses {
+  private readonly byOrigin = new Map<string, ServedFrom>()
+
+  /** Notes that a document at `url` was loaded from `address`; a missing or non-IP address is ignored. */
+  record(url: string, address: string | null): void {
+    const origin = pageOrigin(url)
+    // Playwright may report an IPv6 address in URL form, `[2606:4700::1]`.
+    const ip = address?.replace(/^\[|\]$/g, '') ?? null
+    if (origin === null || ip === null || isIP(ip) === 0)
+      return
+    const seenPublic = this.byOrigin.get(origin)?.public ?? false
+    this.byOrigin.set(origin, { last: ip, public: seenPublic || isPublicAddress(ip) })
+  }
+
+  /** What was seen for the origin of `url`, or `null` when no document of it had an address. */
+  of(url: string): ServedFrom | null {
+    const origin = pageOrigin(url)
+    return origin === null
+      ? null
+      : this.byOrigin.get(origin) ?? null
+  }
+}
+
 /**
  * The page URL when the page is on a non-public host, which earns it the intranet allowances of
- * {@link sourceMapRefusal}; otherwise null, the safe side (decision 0019).
+ * {@link sourceMapRefusal}; otherwise null, the safe side (decisions 0019 and 0040).
  *
- * The page is judged by `connectedAddress`, the address the browser loaded the document from,
- * when it is known: a name can resolve to public and private addresses at once, and only the one
- * used tells which network the page came from. Without it, the page is local only when its name
- * is a local one or every address it resolves to is non-public; a mixed answer, no answer or a
+ * `served` holds the addresses the browser loaded documents of the page's origin from during the
+ * capture. They can only make the page public: an origin seen served from a public address once
+ * stays public, whatever DNS says later. A private address may be a proxy's, so it never makes a
+ * page local. Otherwise the page is local only when its name is a local one, it is a non-public IP
+ * literal, or every address its name resolves to is non-public; a mixed answer, no answer or a
  * failed lookup make it public.
  */
-export async function localPageOf(pageUrl: string | null, lookup: Lookup = systemLookup, connectedAddress: string | null = null): Promise<URL | null> {
+export async function localPageOf(pageUrl: string | null, lookup: Lookup = systemLookup, served: ServedFrom | null = null): Promise<URL | null> {
   if (pageUrl === null)
     return null
   let parsed: URL
@@ -238,14 +294,14 @@ export async function localPageOf(pageUrl: string | null, lookup: Lookup = syste
   }
   if (!/^https?:$/.test(parsed.protocol))
     return null
-  return await isPrivatePage(parsed.hostname, lookup, connectedAddress)
+  return await isPrivatePage(parsed.hostname, lookup, served)
     ? parsed
     : null
 }
 
-async function isPrivatePage(hostname: string, lookup: Lookup, connectedAddress: string | null): Promise<boolean> {
-  if (connectedAddress !== null && isIP(connectedAddress) !== 0)
-    return !isPublicAddress(connectedAddress)
+async function isPrivatePage(hostname: string, lookup: Lookup, served: ServedFrom | null): Promise<boolean> {
+  if (served?.public === true)
+    return false
   const host = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '')
   if (isIP(host) !== 0)
     return !isPublicAddress(host)
