@@ -6,7 +6,7 @@
 import type { ChannelMessage, ChannelProtocol, ChannelProtocolId, ChannelValueLink, ChannelValueOrigin, Exchange, Operation, Redactor, SourceRef, SourceResolver, SourceRoute, ValueTrace, WebSocketChannel } from '../../model'
 import type { ChannelExchanges, Connection, StandIn } from './connections'
 import type { KeyedFrame } from './messages'
-import { formatLocation } from '../flows'
+import { formatLocation, keySafeLocation, keySafePointer } from '../flows'
 import { buildOperations, camelCase, pathPhrase } from '../operations'
 import { inferOperationSchemas } from '../schema'
 import { connectionFacts } from './facts'
@@ -127,7 +127,7 @@ function linkOrigin(trace: ValueTrace, context: LinkContext): ChannelValueOrigin
     kind: 'response',
     operationId: operation.operationId,
     host: operation.host,
-    output: safeText(formatLocation(location)),
+    output: safeText(formatLocation(keySafeLocation(location, context.redactor.isSecretKey))),
     transform: origin.transform,
   }
 }
@@ -165,7 +165,7 @@ function linkOf(trace: ValueTrace, standIn: StandIn, operation: Operation, messa
   return location.in === 'body' && message !== undefined
     ? {
         link: {
-          input: safeText(`body.${location.pointer}`),
+          input: safeText(`body.${keySafePointer(location.pointer, context.redactor.isSecretKey)}`),
           origin,
         },
         message,

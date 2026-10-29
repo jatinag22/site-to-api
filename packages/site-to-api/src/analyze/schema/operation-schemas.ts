@@ -259,23 +259,30 @@ function formObject(form: NameValue[]): Record<string, string> {
 }
 
 function inferFormSchema(items: Array<{ form: NameValue[], sessionId: string }>, redactor: ValueRedactor): JsonSchema {
-  const names = namesInOrder(items.map(item => item.form))
+  const all = namesInOrder(items.map(item => item.form))
+  // Field names that are secret or personal values (a token as the name) form a map, as in JSON
+  // bodies (decision 0042): their values share one `additionalProperties` schema.
+  const names = all.filter(name => !redactor.isSecretKey(name))
+  const mapNames = new Set(all.filter(name => redactor.isSecretKey(name)))
+  const samplesOf = (wanted: (name: string) => boolean): Array<{ value: string, sessionId: string }> => items.flatMap(item => item.form
+    .filter(field => wanted(field.name))
+    .map(field => ({ value: field.value, sessionId: item.sessionId })))
   // Defined, not assigned: a field named `__proto__` must stay a key (see `infer.ts`).
-  const properties: Record<string, JsonSchema> = Object.fromEntries(names.map((name) => {
-    const samples = items.flatMap(item => item.form
-      .filter(field => field.name === name)
-      .map(field => ({ value: field.value, sessionId: item.sessionId })))
-    return [
-      name,
-      inferStringSchema(samples, enumGuard(redactor, { in: 'form', name })),
-    ]
-  }))
+  const properties: Record<string, JsonSchema> = Object.fromEntries(names.map(name => [
+    name,
+    inferStringSchema(samplesOf(field => field === name), enumGuard(redactor, { in: 'form', name })),
+  ]))
   // As for JSON bodies: present in every sample and taking more than one value.
   const required = names.filter(name => items.every(item => item.form.some(field => field.name === name))
     && new Set(items.flatMap(item => item.form.filter(field => field.name === name).map(field => field.value))).size > 1)
-  return required.length > 0
-    ? { type: 'object', properties, required }
-    : { type: 'object', properties }
+  const schema: JsonSchema = { type: 'object' }
+  if (names.length > 0 || mapNames.size === 0)
+    schema.properties = properties
+  if (required.length > 0)
+    schema.required = required
+  if (mapNames.size > 0)
+    schema.additionalProperties = inferStringSchema(samplesOf(field => mapNames.has(field)), enumGuard(redactor, { in: 'form' }))
+  return schema
 }
 
 /** `application/json`, `application/ld+json`, `application/vnd.x+json`: types a JSON serializer fits. */

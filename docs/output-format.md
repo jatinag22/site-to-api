@@ -131,8 +131,8 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
   often repeated, have no required fields.
 - An object keyed by secret or personal values (session ids, tokens, emails, user ids) is a map:
   `additionalProperties` describes the values and the keys are not listed; examples show each
-  such key as its shape (`<redacted: 32 hex chars>`). Ordinary keys stay properties (decision
-  0042).
+  such key as its shape (`<redacted: 32 hex chars>`), and JSON pointers in flows write it as
+  `{key}` (`body./sessions/{key}/current`). Ordinary keys stay properties (decision 0042).
 - GraphQL variables follow the captured document: declared non-null without a default
   (`$id: Int!`) is required; declared nullable or with a default (`$first: Int! = 20`) is
   optional. Persisted queries without a document use the request body rule.

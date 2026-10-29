@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { anyItemPointer, formatLocation, outputName, positionSkeleton, repeatedSelector, safePageUrl, slugify, uniqueName } from './locations'
+import { anyItemPointer, formatLocation, keySafeLocation, keySafePointer, outputName, positionSkeleton, repeatedSelector, safePageUrl, slugify, uniqueName } from './locations'
 
 describe('formatLocation', () => {
   it.each([
@@ -157,5 +157,23 @@ describe('repeatedSelector', () => {
 
   it('gives a skeleton shared by selectors that differ only by position', () => {
     expect(positionSkeleton('ul > li:nth-of-type(3) > a')).toBe('ul > li:nth-of-type(#) > a')
+  })
+})
+
+describe('keySafePointer / keySafeLocation', () => {
+  const isSecretKey = (key: string): boolean => key === 'a/b@x.test' || key === 'tok'
+
+  it('replaces secret segments, unescaped first, and keeps the rest', () => {
+    expect(keySafePointer('/users/a~1b@x.test/name', isSecretKey)).toBe('/users/{key}/name')
+    expect(keySafePointer('/items/*/tok', isSecretKey)).toBe('/items/*/{key}')
+    expect(keySafePointer('/items/0/id', isSecretKey)).toBe('/items/0/id')
+    expect(keySafePointer('', isSecretKey)).toBe('')
+  })
+
+  it('replaces secret form field names, and leaves other locations alone', () => {
+    expect(keySafeLocation({ in: 'form', name: 'tok' }, isSecretKey)).toEqual({ in: 'form', name: '{key}' })
+    expect(keySafeLocation({ in: 'form', name: 'q' }, isSecretKey)).toEqual({ in: 'form', name: 'q' })
+    expect(keySafeLocation({ in: 'body', pointer: '/tok' }, isSecretKey)).toEqual({ in: 'body', pointer: '/{key}' })
+    expect(keySafeLocation({ in: 'query', name: 'tok' }, isSecretKey)).toEqual({ in: 'query', name: 'tok' })
   })
 })

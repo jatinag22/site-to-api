@@ -2,7 +2,7 @@ import type { ResolvedConfig } from '../../config/schema'
 import type { CaptureEvent, Exchange, FlowsDocument, LoadedSession, Operation, Redactor, ValueTrace } from '../../model'
 import type { BuildFlowsInput } from './index'
 import { describe, expect, it } from 'vitest'
-import { exchange, jsonBody } from '../../../test/helpers'
+import { exchange, formBody, jsonBody } from '../../../test/helpers'
 import { CLIENT_VERSION, CONSTANT_API_KEY, fakeHtmlLocator, fakeSourceResolver, HOST, SECRET_VALUES, shopCapture } from '../../../test/scenarios'
 import { FlowsDocumentSchema } from '../../model'
 import { traceValues } from '../correlate'
@@ -832,6 +832,77 @@ describe('buildFlows: values taken from one of several items', () => {
     expect(consumer?.inputs['query.category']).toMatchObject({ kind: 'step', output: 'body./*/slug' })
     expect(consumer?.inputs['query.report']).toMatchObject({ kind: 'step', output: 'body./2024/report' })
     expect(steps.find(step => step.operationId === 'getApiCategories')?.outputs).toEqual({ slug: 'body./*/slug' })
+  })
+
+  it('writes {key} for pointer segments and form names that are secret or personal values (decision 0042)', () => {
+    const userId = '3f2c9a4e-1b7d-4c8e-9f60-2a5b8c1d7e43'
+    const token = 'Zq8xT2mLp4VwRk7YbN3c'
+    const me = exchange({
+      url: 'https://shop.example.test/api/me',
+      startedAt: 1,
+      responseBody: jsonBody({ userId }),
+    })
+    const carts = exchange({
+      url: 'https://shop.example.test/api/carts',
+      startedAt: 2,
+      responseBody: jsonBody({
+        carts: {
+          [userId]: { cartRef: 'cart-77aa-ref' },
+        },
+      }),
+    })
+    const checkout = exchange({
+      method: 'POST',
+      url: 'https://shop.example.test/api/checkout',
+      startedAt: 3,
+      requestBody: jsonBody({
+        owners: { [userId]: 'cart-77aa-ref' },
+      }),
+    })
+    const vote = exchange({
+      method: 'POST',
+      url: 'https://shop.example.test/api/vote',
+      startedAt: 4,
+      requestBody: formBody({ [token]: 'cart-77aa-ref' }),
+    })
+    const exchanges = [me, carts, checkout, vote]
+    const fromCarts = {
+      kind: 'response',
+      exchangeId: carts.id,
+      location: { in: 'body', pointer: `/carts/${userId}/cartRef` },
+      transform: 'none',
+    } as const
+    const traces: ValueTrace[] = [
+      {
+        exchangeId: checkout.id,
+        location: { in: 'body', pointer: `/owners/${userId}` },
+        value: 'cart-77aa-ref',
+        origin: fromCarts,
+      },
+      {
+        exchangeId: vote.id,
+        location: { in: 'form', name: token },
+        value: 'cart-77aa-ref',
+        origin: fromCarts,
+      },
+    ]
+    const doc = build(exchanges, [
+      op('getApiMe', [me]),
+      op('getApiCarts', [carts]),
+      op('postApiCheckout', [checkout]),
+      op('postApiVote', [vote]),
+    ], [
+      loaded('s1', [], 'https://shop.example.test/'),
+    ], traces)
+    const steps = doc.flows.flatMap(entry => entry.steps)
+    expect(steps.find(step => step.operationId === 'postApiCheckout')?.inputs['body./owners/{key}'])
+      .toMatchObject({ kind: 'step', output: 'body./carts/{key}/cartRef' })
+    expect(steps.find(step => step.operationId === 'postApiVote')?.inputs['form.{key}'])
+      .toMatchObject({ kind: 'step', output: 'body./carts/{key}/cartRef' })
+    expect(steps.find(step => step.operationId === 'getApiCarts')?.outputs).toEqual({ cartRef: 'body./carts/{key}/cartRef' })
+    const text = JSON.stringify(doc)
+    expect(text).not.toContain(userId)
+    expect(text).not.toContain(token)
   })
 
   it('generalises HTML selectors that differ only by position across samples to the repeated element', () => {

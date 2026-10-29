@@ -20,7 +20,7 @@ import { isBotProtectionHeader } from '../classify'
 import { botProtectionVendor, responseText, responseValues } from '../correlate'
 import { describeShape } from '../shape'
 import { createLocationGeneralizer } from './items'
-import { formatLocation, lastPointerToken, outputName, slugify, uniqueName } from './locations'
+import { formatLocation, keySafeLocation, lastPointerToken, outputName, slugify, uniqueName } from './locations'
 import { splitSession } from './segments'
 import { sessionRequirements } from './session'
 import { looksTyped, typedInputField } from './typed-input'
@@ -137,15 +137,15 @@ function collectInputs(
   operation: Operation,
   tracesByExchange: ReadonlyMap<string, ValueTrace[]>,
   originOf: (trace: ValueTrace, exchange: Exchange) => ValueOrigin,
-  /** Redacts an input key: JSON pointers can hold data used as keys (`/users/<email>`). */
-  safeKey: (key: string) => string,
+  /** Writes an input key, redacted: JSON pointers can hold data used as keys (`/users/<email>`). */
+  safeKey: (location: ValueLocation) => string,
 ): Map<string, ValueOrigin> {
   const inputs = new Map<string, ValueOrigin>()
   for (const exchange of occurrences.flatMap(occurrence => occurrence.exchanges.slice(0, 1))) {
     for (const trace of tracesByExchange.get(exchange.id) ?? []) {
       if (!isStepInput(trace, operation))
         continue
-      const key = safeKey(formatLocation(trace.location))
+      const key = safeKey(trace.location)
       const existing = inputs.get(key)
       if (existing && existing.kind !== 'unknown')
         continue
@@ -227,7 +227,9 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
   }
   const safeLocation = (location: ValueLocation): ValueLocation => location.in === 'html'
     ? safeHtmlLocation(location)
-    : location
+    : keySafeLocation(location, redactor.isSecretKey)
+  /** A request location as an input key: map keys become `{key}`, then the text is redacted. */
+  const inputKeyOf = (location: ValueLocation): string => safeText(formatLocation(keySafeLocation(location, redactor.isSecretKey)))
   const safeTrigger = (trigger: Trigger): Trigger => ({
     kind: trigger.kind,
     label: safeText(trigger.label),
@@ -473,7 +475,7 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       case 'response':
         return responseOrigin(origin.exchangeId, origin.location, origin.transform, trace.value, flowId)
       case 'transform':
-        return computedOrigin(trace, exchange, operation, safeText(formatLocation(trace.location)), origin.eventIndex, origin.sessionId)
+        return computedOrigin(trace, exchange, operation, inputKeyOf(trace.location), origin.eventIndex, origin.sessionId)
       case 'user-input':
         return { kind: 'user-input', field: origin.field }
       case 'constant':
@@ -503,7 +505,7 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
           ? [step]
           : []
       })
-      const inputs = collectInputs(occurrences, draftStep.operation, tracesByExchange, (trace, exchange) => originOf(trace, exchange, draftStep.operation, draft.id), safeText)
+      const inputs = collectInputs(occurrences, draftStep.operation, tracesByExchange, (trace, exchange) => originOf(trace, exchange, draftStep.operation, draft.id), inputKeyOf)
       const representative = occurrences[0]?.exchanges[0]
       return {
         id: draftStep.id,

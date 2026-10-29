@@ -29,6 +29,35 @@ export function formatLocation(location: ValueLocation): string {
   }
 }
 
+/** Written instead of a pointer segment or form field name that is a secret or personal value. */
+const KEY_PLACEHOLDER = '{key}'
+
+/**
+ * A JSON pointer with every segment that is a secret or personal value (a session id, a user's
+ * UUID, an email used as a key) replaced by `{key}`, as schemas turn such objects into maps
+ * (decision 0042): `/sessions/<id>/current` → `/sessions/{key}/current`.
+ */
+export function keySafePointer(pointer: string, isSecretKey: (key: string) => boolean): string {
+  if (!pointer.startsWith('/'))
+    return pointer
+  return `/${pointer.split('/').slice(1).map(token => isSecretKey(token.replace(/~1/g, '/').replace(/~0/g, '~'))
+    ? KEY_PLACEHOLDER
+    : token).join('/')}`
+}
+
+/** The location with secret pointer segments and form field names replaced by `{key}`. */
+export function keySafeLocation(location: ValueLocation, isSecretKey: (key: string) => boolean): ValueLocation {
+  if (location.in === 'body') {
+    return {
+      in: 'body',
+      pointer: keySafePointer(location.pointer, isSecretKey),
+    }
+  }
+  if (location.in === 'form' && isSecretKey(location.name))
+    return { in: 'form', name: KEY_PLACEHOLDER }
+  return location
+}
+
 /** The last property name in a JSON pointer, skipping array indexes and `*`: `/items/0/id` → `id`. */
 export function lastPointerToken(pointer: string): string | null {
   const token = pointer.split('/').slice(1).filter(part => !/^(?:\d+|\*)$/.test(part)).at(-1)

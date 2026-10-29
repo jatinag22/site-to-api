@@ -464,6 +464,25 @@ describe('inferOperationSchemas', () => {
     expect(JSON.stringify(result.responses)).not.toContain(sid)
   })
 
+  it('describes form fields named by a token as a map', () => {
+    const token = 'Zq8xT2mLp4VwRk7YbN3c'
+    const result = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: formBody({ q: 'a', [token]: 'yes' }),
+      }),
+    ])
+    expect(result.requestBody?.schema).toEqual({
+      type: 'object',
+      properties: {
+        q: { type: 'string' },
+      },
+      additionalProperties: { type: 'string' },
+    })
+    expect(JSON.stringify(result.requestBody)).not.toContain(token)
+  })
+
   it('keeps a form field named __proto__ as a property', () => {
     const fields = (value: string): Record<string, string> => Object.fromEntries([
       ['__proto__', value],

@@ -34,6 +34,11 @@ session cookie itself.
   deterministic. On the e2e fixture, output without such keys is byte-identical to before.
 - Maps are written whatever `redact.examples` is: they are the correct schema. With
   `examples: raw` the example keys are copied as captured, like every other example value.
+- JSON pointers in `flows.json` (input keys such as `body./owners/<id>`, response outputs such
+  as `body./carts/<id>/cartRef`, which `API_MAP.md` and `AGENT.md` repeat) and in channel links
+  pass each segment through the same check; a secret segment becomes `{key}`. A traced form
+  field whose name is a secret becomes `form.{key}`, and form body schemas put such fields in
+  `additionalProperties` like JSON maps.
 - Independent of keys: schema property maps are built with `Object.fromEntries`, so a key named
   `__proto__` (an own property after `JSON.parse`) is a property like any other instead of
   setting the prototype and leaving a `required` entry with no property.
@@ -42,6 +47,5 @@ session cookie itself.
 A site that keys objects by a public id that looks random (a 20-character mixed-case product
 token) also gets a map schema in a single-session capture, until a second session shows the key
 is constant. That is the safe side, and a map is a reasonable type for such an object. Hex ids
-and UUIDs that are not learnt secrets or personal values stay keys, as they stay values. Form
-field names and JSON pointers in flows are not judged as keys: form fields keyed by data are
-rare, and flow keys already pass through the redactor's text scan.
+and UUIDs that are not learnt secrets or personal values stay keys, as they stay values. Query
+parameter names are not judged as keys.
