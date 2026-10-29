@@ -30,19 +30,41 @@ export function failedNavigationsWarning(navigations: readonly Navigation[]): st
   return `${share}: the site probably blocks automated browsers, so this capture has little or none of its traffic. Capture with a visible browser (--channel chrome, without --headless); if it still fails, the site does not allow automated access and its official API or data feed is the way in.`
 }
 
-/** The page loads in a HAR's entries (`_resourceType: document`). */
+function field(value: unknown, key: string): unknown {
+  return value !== null && typeof value === 'object' && key in value
+    ? (value as Record<string, unknown>)[key]
+    : undefined
+}
+
+/**
+ * The top-level page loads in a HAR's entries: document requests of each page's main frame,
+ * which is the frame of that page's first document request. Iframes are not page loads, and a
+ * load the browser aborted itself (`net::ERR_ABORTED`, a navigation replaced by another) did not
+ * fail, so neither counts.
+ */
 export function harNavigations(entries: readonly unknown[]): Navigation[] {
+  const mainFrame = new Map<string, unknown>()
   const result: Navigation[] = []
   for (const entry of entries) {
-    if (entry === null || typeof entry !== 'object' || !('_resourceType' in entry) || entry._resourceType !== 'document' || !('response' in entry))
+    if (field(entry, '_resourceType') !== 'document')
       continue
-    const response = entry.response
-    if (response === null || typeof response !== 'object' || !('status' in response) || typeof response.status !== 'number')
+    const response = field(entry, 'response')
+    const status = field(response, 'status')
+    if (typeof status !== 'number')
       continue
-    const failure = '_failureText' in response && typeof response._failureText === 'string'
-      ? response._failureText
+    const page = String(field(entry, 'pageref') ?? '')
+    const frame = field(entry, '_frameref')
+    if (!mainFrame.has(page))
+      mainFrame.set(page, frame)
+    if (mainFrame.get(page) !== frame)
+      continue
+    const failureText = field(response, '_failureText')
+    const failure = typeof failureText === 'string'
+      ? failureText
       : null
-    result.push({ status: response.status, failure })
+    if (failure?.includes('ERR_ABORTED'))
+      continue
+    result.push({ status, failure })
   }
   return result
 }

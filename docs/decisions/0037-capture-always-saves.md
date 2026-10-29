@@ -15,18 +15,23 @@ context or browser has been closed". A capture where every page load failed
 ## Decision
 - `meta.json` is always written once the browser has started. A session that did not end
   normally carries `incomplete: { reason, error }` with reason `script-failed`, `interrupted`
-  (SIGINT, SIGTERM or abort) or `timeout`. `build` uses such a session with a warning; a folder
+  (SIGINT, SIGTERM or abort while a script ran, or a second signal), `timeout`, or `error`
+  (instrumentation or the first page failed before the run). Ending an interactive session
+  with Ctrl+C is the normal way to finish it and is not marked. meta.json is written through a
+  temporary file and a rename. `build` uses such a session with a warning; a folder
   with a HAR and no `meta.json` (from older versions) gets a warning that says how to proceed.
   The field is optional and additive, so `RAW_FORMAT_VERSION` stays 1 and older readers accept
   the file.
 - SIGINT and SIGTERM are handled from launch until the session is saved; Playwright's own
   SIGINT, SIGTERM and SIGHUP handling is off. A signal ends the session, or cuts the waiting
-  short while it is being saved.
+  short while it is being saved; a second one gives up on the browser at once.
 - Every wait while saving is bounded: page work and scripts being saved (15 s each), then pages
-  are closed without `beforeunload` and the context is closed (30 s each). A timeout saves what
-  exists, marks the session `timeout` and says what it stopped waiting for.
+  are closed without `beforeunload` and the context is closed (30 s each). When the context does
+  not close (or on the second signal) the browser process is ended through a CDP session opened
+  at launch. A timeout saves what exists, marks the session and says what it stopped waiting for.
 - `capture` exits with status 1 when the session is incomplete.
-- When half or more of the page loads failed with no response, `capture` warns and `build` puts
+- When half or more of the main-frame page loads failed with no response (iframes and loads the
+  browser aborted itself, `net::ERR_ABORTED`, do not count), `capture` warns and `build` puts
   the same sentence in AGENT.md's gaps (first among the warnings), with the browser's error: the site probably blocks
   automated browsers; capture with a visible browser (`--channel chrome`, without `--headless`),
   and if that fails too, use the site's official API (decision 0008).

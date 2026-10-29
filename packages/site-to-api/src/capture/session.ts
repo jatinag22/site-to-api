@@ -8,21 +8,20 @@ import type { BrowserContext, Page, WebSocket } from 'playwright'
 import type { ResolvedConfig } from '../config/schema'
 import type { CaptureEvent, SessionMeta } from '../model'
 import type { EventLimits } from './events'
+import type { CaptureTimeouts, Incomplete } from './save'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import process from 'node:process'
 import { createJiti } from 'jiti'
 import { chromium } from 'playwright'
-import { z } from 'zod'
 import pkg from '../../package.json' with { type: 'json' }
 import { SiteToApiError } from '../errors'
-import { failedNavigationsWarning, harNavigations } from '../load'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { EventWriter } from './events'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
+import { createStopper, DEFAULT_TIMEOUTS, saveSession, waitBounded, writeJsonAtomic } from './save'
 import { ScriptCollector } from './scripts'
 import { launchArgs, minimizes, minimizeWindow } from './window'
 
@@ -42,19 +41,6 @@ export interface RunCaptureOptions {
   eventLimits?: Partial<EventLimits>
   /** Overrides how long saving waits on the page and the browser; tests use short ones. */
   timeouts?: Partial<CaptureTimeouts>
-}
-
-/** How long saving a session waits before it gives up and saves what exists (decision 0037). */
-interface CaptureTimeouts {
-  /** For pending page work (navigation labels, binding attachment) and for scripts being saved. */
-  settleMs: number
-  /** For the browser to close, which is when Playwright writes the HAR. */
-  closeMs: number
-}
-
-const DEFAULT_TIMEOUTS: CaptureTimeouts = {
-  settleMs: 15_000,
-  closeMs: 30_000,
 }
 
 /** What {@link runCapture} produced. */
@@ -77,12 +63,6 @@ type CaptureScript = (context: CaptureScriptContext) => Promise<void> | void
 const HAR_FILE = 'traffic.har'
 const EVENTS_FILE = 'events.jsonl'
 const META_FILE = 'meta.json'
-
-const HarSchema = z.object({
-  log: z.object({
-    entries: z.array(z.unknown()),
-  }),
-})
 
 function errorMessage(error: unknown): string {
   return error instanceof Error
@@ -114,81 +94,6 @@ async function loadCaptureScript(file: string): Promise<CaptureScript> {
   return async (scriptContext) => {
     await Reflect.apply(loaded, undefined, [scriptContext])
   }
-}
-
-/**
- * One stop signal for the whole session, from launch until it is saved: `signal` aborting, SIGINT
- * or SIGTERM. Keeping the handlers until the end means Ctrl+C while the session is being saved
- * cuts the waiting short instead of killing the process before the HAR and meta.json exist.
- */
-function createStopper(signal: AbortSignal | undefined): { signal: AbortSignal, dispose: () => void } {
-  const controller = new AbortController()
-  const stop = (): void => controller.abort()
-  if (signal?.aborted)
-    stop()
-  signal?.addEventListener('abort', stop, { once: true })
-  process.on('SIGINT', stop)
-  process.on('SIGTERM', stop)
-  return {
-    signal: controller.signal,
-    dispose: () => {
-      signal?.removeEventListener('abort', stop)
-      process.removeListener('SIGINT', stop)
-      process.removeListener('SIGTERM', stop)
-    },
-  }
-}
-
-type WaitResult = 'done' | 'timeout' | 'stopped'
-
-/** Waits for `task` at most `ms`, or until `stop` aborts; never throws. */
-async function waitBounded(task: Promise<unknown>, ms: number, stop: AbortSignal | null): Promise<WaitResult> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let onAbort = (): void => {}
-  try {
-    return await Promise.race([
-      task.then(() => 'done' as const, () => 'done' as const),
-      new Promise<WaitResult>((resolve) => {
-        timer = setTimeout(resolve, ms, 'timeout')
-      }),
-      new Promise<WaitResult>((resolve) => {
-        if (stop === null)
-          return
-        onAbort = () => resolve('stopped')
-        if (stop.aborted)
-          onAbort()
-        stop.addEventListener('abort', onAbort, { once: true })
-      }),
-    ])
-  }
-  finally {
-    clearTimeout(timer)
-    stop?.removeEventListener('abort', onAbort)
-  }
-}
-
-/** The HAR's entries, or why there are none (missing, empty or invalid). */
-async function readHar(file: string): Promise<unknown[] | string> {
-  let size = 0
-  try {
-    size = (await stat(file)).size
-  }
-  catch {
-    return `The browser closed without writing ${file}. Capture again and end the session by closing the browser window or pressing Ctrl+C, not by killing the process.`
-  }
-  if (size === 0)
-    return `${file} is empty. Capture again and end the session by closing the browser window or pressing Ctrl+C.`
-  let data: unknown
-  try {
-    data = JSON.parse(await readFile(file, 'utf8'))
-  }
-  catch {
-    return `${file} is not a valid HAR file. Capture again.`
-  }
-  const parsed = HarSchema.safeParse(data)
-  return parsed.success
-    ? parsed.data.log.entries
-    : `${file} is not a valid HAR file. Capture again.`
 }
 
 type BrowserConfig = ResolvedConfig['capture']['browser']
@@ -290,88 +195,57 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     void task.finally(() => pending.delete(task))
   }
   const collector = new ScriptCollector(sessionDir, context.request, { saveScripts: capture.saveScripts, sourcemaps: capture.sourcemaps })
+  if (capture.saveScripts || capture.sourcemaps)
+    context.on('response', response => collector.onResponse(response))
   const ignoredFrames = new Map<string, number>()
+  // Opened now, while the browser answers: the way to end it when closing does not work.
+  const browserSession = await context.browser()?.newBrowserCDPSession().catch(() => null) ?? null
+  const kill = async (): Promise<void> => {
+    await browserSession?.send('Browser.close').catch(() => {})
+  }
+  let closed = false
 
   try {
-    // Every document can call the binding; only the site's own are listened to (frames.ts).
-    const binding = capture.instrument
-      ? new InstrumentBinding(context, options.url, {
-          accept: (text, origin) => {
-            const result = pageMessageToEvent(text, origin)
-            if ('event' in result)
-              events.write(result.event)
-            else
-              events.reject(result.error)
-          },
-          ignore: (origin) => {
-            ignoredFrames.set(origin, (ignoredFrames.get(origin) ?? 0) + 1)
-          },
-        })
-      : null
-    if (capture.instrument) {
-      await context.addInitScript({
-        content: instrumentSource(),
+    let userAgent = browser.userAgent ?? ''
+    let incomplete: Incomplete | null = null
+    try {
+      const page = await prepare({
+        context,
+        capture,
+        options,
+        events,
+        ignoredFrames,
+        warnings,
+        track,
       })
+      userAgent = browser.userAgent ?? await page.evaluate(() => navigator.userAgent)
+      incomplete = script === null
+        ? await runInteractive(context, page, options, stopper.signal, log)
+        : await runScripted(script, context, page, options, stopper.signal, log)
     }
-    if (capture.saveScripts || capture.sourcemaps)
-      context.on('response', response => collector.onResponse(response))
-
-    let nextSocket = 0
-    const watchPage = (page: Page): void => {
-      page.on('framenavigated', (frame) => {
-        if (frame !== page.mainFrame())
-          return
-        const ts = Date.now()
-        const url = frame.url()
-        track(navigationLabel(page, url).then((label) => {
-          events.write({
-            t: 'action',
-            kind: 'navigate',
-            ts,
-            pageUrl: url,
-            label,
-            selector: '',
-            field: null,
-          })
-        }))
-      })
-      if (capture.websockets)
-        page.on('websocket', ws => recordWebSocket(ws, page, nextSocket++, event => events.write(event)))
-      // Popups open their own window, so every new page is minimized, not only the first.
-      if (minimizes(browser)) {
-        track(minimizeWindow(page).then((warning) => {
-          if (warning !== null && !warnings.includes(warning))
-            warnings.push(warning)
-        }))
+    catch (error) {
+      // Instrumentation or the first page failed before the run: save what exists anyway.
+      incomplete = {
+        reason: 'error',
+        error: errorMessage(error),
       }
     }
-    context.pages().forEach(watchPage)
-    context.on('page', watchPage)
-
-    const page = context.pages()[0] ?? await context.newPage()
-    if (binding !== null) {
-      // Attached before the first navigation, so the first page never misses an event.
-      await binding.attach(page, true)
-      context.on('page', p => track(binding.attach(p, false)))
-      for (const other of context.pages())
-        track(binding.attach(other, false))
+    if (incomplete !== null && incomplete.reason !== 'interrupted') {
+      log(`Capture ${incomplete.reason === 'script-failed'
+        ? 'script '
+        : ''}failed: ${incomplete.error ?? 'unknown error'}. Saving what was recorded.`)
     }
-    const userAgent = browser.userAgent ?? await page.evaluate(() => navigator.userAgent)
-
-    const incomplete = script === null
-      ? await runInteractive(context, page, options, stopper.signal, log)
-      : await runScripted(script, context, page, options, stopper.signal, log)
-    if (incomplete?.reason === 'script-failed')
-      log(`Capture script failed: ${incomplete.error ?? 'unknown error'}. Saving what was recorded.`)
     const saved = await saveSession({
       context,
       pending,
       collector,
       harPath,
       timeouts,
-      stop: stopper.signal,
-      log,
+      stopper,
+      scripted: script !== null,
+      kill,
     })
+    closed = true
     const finalIncomplete = incomplete ?? saved.incomplete
     warnings.push(...saved.warnings)
     warnings.push(...collector.warnings, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
@@ -389,21 +263,97 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       scripts: collector.scripts.toSorted((a, b) => a.url.localeCompare(b.url)),
       ...incompleteField(finalIncomplete),
     } satisfies SessionMeta)
-    await writeFile(path.join(sessionDir, META_FILE), `${JSON.stringify(meta, null, 2)}\n`)
+    await writeJsonAtomic(path.join(sessionDir, META_FILE), meta)
     warnings.push(...incompleteWarning(sessionId, finalIncomplete))
     log(`Saved session ${sessionId} to ${sessionDir} (${saved.entries} requests, ${events.count} events, ${meta.scripts.length} scripts).`)
     return { sessionDir, meta, warnings }
   }
   finally {
     stopper.dispose()
-    // Idempotent: makes sure the browser never outlives a failed capture. Bounded, because a
-    // context that did not close in time will not close now either.
-    await waitBounded(context.close(), timeouts.closeMs, null)
+    // Makes sure the browser never outlives a failed capture. Bounded, and skipped once saving
+    // closed or ended it: a context that did not close in time will not close now either.
+    if (!closed && await waitBounded(context.close(), timeouts.closeMs, null) !== 'done')
+      await kill()
     await events.close()
   }
 }
 
-type Incomplete = NonNullable<SessionMeta['incomplete']>
+interface PrepareInput {
+  context: BrowserContext
+  capture: ResolvedConfig['capture']
+  options: RunCaptureOptions
+  events: EventWriter
+  ignoredFrames: Map<string, number>
+  warnings: string[]
+  track: (task: Promise<void>) => void
+}
+
+/** Wires instrumentation, script collection and page watchers; returns the first page. */
+async function prepare({ context, capture, options, events, ignoredFrames, warnings, track }: PrepareInput): Promise<Page> {
+  const { browser } = capture
+  // Every document can call the binding; only the site's own are listened to (frames.ts).
+  const binding = capture.instrument
+    ? new InstrumentBinding(context, options.url, {
+        accept: (text, origin) => {
+          const result = pageMessageToEvent(text, origin)
+          if ('event' in result)
+            events.write(result.event)
+          else
+            events.reject(result.error)
+        },
+        ignore: (origin) => {
+          ignoredFrames.set(origin, (ignoredFrames.get(origin) ?? 0) + 1)
+        },
+      })
+    : null
+  if (capture.instrument) {
+    await context.addInitScript({
+      content: instrumentSource(),
+    })
+  }
+
+  let nextSocket = 0
+  const watchPage = (page: Page): void => {
+    page.on('framenavigated', (frame) => {
+      if (frame !== page.mainFrame())
+        return
+      const ts = Date.now()
+      const url = frame.url()
+      track(navigationLabel(page, url).then((label) => {
+        events.write({
+          t: 'action',
+          kind: 'navigate',
+          ts,
+          pageUrl: url,
+          label,
+          selector: '',
+          field: null,
+        })
+      }))
+    })
+    if (capture.websockets)
+      page.on('websocket', ws => recordWebSocket(ws, page, nextSocket++, event => events.write(event)))
+    // Popups open their own window, so every new page is minimized, not only the first.
+    if (minimizes(browser)) {
+      track(minimizeWindow(page).then((warning) => {
+        if (warning !== null && !warnings.includes(warning))
+          warnings.push(warning)
+      }))
+    }
+  }
+  context.pages().forEach(watchPage)
+  context.on('page', watchPage)
+
+  const page = context.pages()[0] ?? await context.newPage()
+  if (binding !== null) {
+    // Attached before the first navigation, so the first page never misses an event.
+    await binding.attach(page, true)
+    context.on('page', p => track(binding.attach(p, false)))
+    for (const other of context.pages())
+      track(binding.attach(other, false))
+  }
+  return page
+}
 
 function incompleteField(incomplete: Incomplete | null): Pick<SessionMeta, 'incomplete'> {
   return incomplete === null
@@ -418,59 +368,6 @@ function incompleteWarning(sessionId: string, incomplete: Incomplete | null): st
     ? `: ${incomplete.error}`
     : ''
   return [`Session ${sessionId} is incomplete (${incomplete.reason}${detail}). What was recorded is saved and \`build\` will use it with a warning; capture again for full coverage.`]
-}
-
-interface SaveInput {
-  context: BrowserContext
-  pending: Set<Promise<void>>
-  collector: ScriptCollector
-  harPath: string
-  timeouts: CaptureTimeouts
-  stop: AbortSignal
-  log: (message: string) => void
-}
-
-/**
- * Waits (bounded) for page work and scripts being saved, closes the context so Playwright writes
- * the HAR, and reads it back. Never throws: whatever happens, the caller writes meta.json.
- */
-async function saveSession(input: SaveInput): Promise<{ entries: number, warnings: string[], incomplete: Incomplete | null }> {
-  const warnings: string[] = []
-  const seconds = (ms: number): string => `${Math.round(ms / 1000)} s`
-  let incomplete: Incomplete | null = null
-  const settle = async (task: Promise<unknown>, what: string): Promise<void> => {
-    const result = await waitBounded(task, input.timeouts.settleMs, input.stop)
-    if (result === 'timeout') {
-      incomplete ??= { reason: 'timeout', error: `${what} did not finish within ${seconds(input.timeouts.settleMs)}` }
-      warnings.push(`Stopped waiting for ${what} after ${seconds(input.timeouts.settleMs)}; a page kept a connection open or stopped responding. The session was saved without it.`)
-    }
-    else if (result === 'stopped') {
-      warnings.push(`Stopped waiting for ${what}: the capture was interrupted.`)
-    }
-  }
-  await settle(Promise.all(input.pending), 'the pages')
-  await settle(input.collector.settle(), 'scripts being saved')
-  // Pages first, without beforeunload: closing the context waits forever on a page whose main
-  // thread never yields, and the HAR is only written once the context has closed.
-  await Promise.all(input.context.pages().map(page => waitBounded(page.close({ runBeforeUnload: false }), input.timeouts.closeMs, null)))
-  const closed = await waitBounded(input.context.close().then(() => {}), input.timeouts.closeMs, null)
-  if (closed === 'timeout') {
-    incomplete = { reason: 'timeout', error: `the browser did not close within ${seconds(input.timeouts.closeMs)}` }
-    warnings.push(`The browser did not close within ${seconds(input.timeouts.closeMs)}, so the HAR may be missing or incomplete.`)
-  }
-  if (input.stop.aborted && incomplete === null)
-    incomplete = { reason: 'interrupted', error: null }
-  const har = await readHar(input.harPath)
-  if (typeof har === 'string') {
-    warnings.push(har)
-    return { entries: 0, warnings, incomplete: incomplete ?? { reason: 'timeout', error: har } }
-  }
-  if (har.length === 0)
-    warnings.push('The HAR has no requests. Did the page load?')
-  const blocked = failedNavigationsWarning(harNavigations(har))
-  if (blocked !== null)
-    warnings.push(blocked)
-  return { entries: har.length, warnings, incomplete }
 }
 
 function ignoredFramesWarning(ignored: Map<string, number>): string[] {

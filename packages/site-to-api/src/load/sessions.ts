@@ -4,6 +4,7 @@
 import type { CaptureEvent, Exchange, LoadedSession, RequestEvent, ResponseEvent, SessionMeta } from '../model'
 import type { HarEntry } from './har'
 import type { MatchableEntry } from './initiator'
+import type { Navigation } from './navigation'
 import { existsSync } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -13,6 +14,7 @@ import { fillMissingBodies } from './bodies'
 import { buildExchange } from './exchange'
 import { HarEntrySchema, HarFileSchema } from './har'
 import { matchRequestEvents, urlWithoutFragment } from './initiator'
+import { harNavigations } from './navigation'
 
 interface LoadResult {
   /** Sessions sorted by start time, then id. */
@@ -21,6 +23,8 @@ interface LoadResult {
   exchanges: Exchange[]
   /** Problems that did not stop loading: bad event lines, odd HAR entries, skipped folders. */
   warnings: string[]
+  /** Top-level page loads of every session, to tell a capture the site blocked. */
+  navigations: Navigation[]
 }
 
 async function readText(path: string): Promise<string | null> {
@@ -70,22 +74,23 @@ async function readEvents(dir: string, meta: SessionMeta, warnings: string[]): P
   return events
 }
 
-async function readHarEntries(dir: string, meta: SessionMeta, warnings: string[]): Promise<Array<HarEntry | null>> {
+async function readHarEntries(dir: string, meta: SessionMeta, warnings: string[]): Promise<{ entries: Array<HarEntry | null>, raw: unknown[] }> {
   const text = await readText(join(dir, meta.har))
   const file = HarFileSchema.safeParse(text === null
     ? undefined
     : parseJson(text))
   if (!file.success) {
     warnings.push(`${meta.sessionId}: ${meta.har} is missing or not a HAR file; the session has no traffic`)
-    return []
+    return { entries: [], raw: [] }
   }
-  return file.data.log.entries.map((raw, index) => {
+  const entries = file.data.log.entries.map((raw, index) => {
     const entry = HarEntrySchema.safeParse(raw)
     if (entry.success)
       return entry.data
     warnings.push(`${meta.sessionId}: HAR entry ${index} skipped (${zodMessage(entry.error)})`)
     return null
   })
+  return { entries, raw: file.data.log.entries }
 }
 
 function toMatchable(entries: Array<HarEntry | null>): MatchableEntry[] {
@@ -111,7 +116,7 @@ function toMatchable(entries: Array<HarEntry | null>): MatchableEntry[] {
  * `dir` is absolute; warnings name the folder by its name inside the raw directory instead,
  * because they are copied into the committed `AGENT.md` and must not reveal local paths.
  */
-async function loadSession(dir: string, name: string, warnings: string[]): Promise<{ session: LoadedSession, exchanges: Exchange[] } | null> {
+async function loadSession(dir: string, name: string, warnings: string[]): Promise<{ session: LoadedSession, exchanges: Exchange[], navigations: Navigation[] } | null> {
   const metaText = await readText(join(dir, 'meta.json'))
   if (metaText === null) {
     warnings.push(existsSync(join(dir, 'traffic.har'))
@@ -130,13 +135,14 @@ async function loadSession(dir: string, name: string, warnings: string[]): Promi
       'script-failed': 'the capture script failed',
       'interrupted': 'the capture was interrupted',
       'timeout': 'a page or the browser did not finish in time',
+      'error': 'the capture failed before the run',
     }[incomplete.reason]
     warnings.push(`${meta.data.sessionId}: incomplete capture (${why}${incomplete.error
       ? `: ${incomplete.error}`
       : ''}). It is used as recorded; pages after that point are missing, so capture again for full coverage.`)
   }
   const events = await readEvents(dir, meta.data, warnings)
-  const entries = await readHarEntries(dir, meta.data, warnings)
+  const { entries, raw } = await readHarEntries(dir, meta.data, warnings)
   const requestEvents = events.filter((event): event is RequestEvent => event.t === 'request')
   const matches = matchRequestEvents(toMatchable(entries), requestEvents)
 
@@ -163,6 +169,7 @@ async function loadSession(dir: string, name: string, warnings: string[]): Promi
   return {
     session: { meta: meta.data, dir, events },
     exchanges,
+    navigations: harNavigations(raw),
   }
 }
 
@@ -200,7 +207,7 @@ export async function loadSessions(rawDir: string): Promise<LoadResult> {
   }
 
   const warnings: string[] = []
-  const loaded: Array<{ session: LoadedSession, exchanges: Exchange[] }> = []
+  const loaded: Array<{ session: LoadedSession, exchanges: Exchange[], navigations: Navigation[] }> = []
   for (const name of names) {
     const result = await loadSession(join(root, name), name, warnings)
     if (result)
@@ -219,6 +226,7 @@ export async function loadSessions(rawDir: string): Promise<LoadResult> {
   return {
     sessions: loaded.map(entry => entry.session),
     exchanges: loaded.flatMap(entry => entry.exchanges),
+    navigations: loaded.flatMap(entry => entry.navigations),
     warnings,
   }
 }

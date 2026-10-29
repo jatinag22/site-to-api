@@ -224,9 +224,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     .filter(operation => !operation.sourceOnly || wanted(operation.host))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
   operations = inferOperationSchemas(operations, redactor)
-  const blocked = failedNavigationsWarning(loaded.exchanges
-    .filter(exchange => exchange.resourceType === 'document')
-    .map(exchange => ({ status: exchange.response.status, failure: exchange.response.statusText || null })))
+  const blocked = failedNavigationsWarning(loaded.navigations)
   const warnings = [
     // First: when the site blocked the browser, nothing else in the folder is representative.
     ...(blocked === null

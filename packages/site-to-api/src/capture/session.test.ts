@@ -514,6 +514,8 @@ describe('runCapture errors and interactive mode', () => {
       },
     })
     expect(path.basename(result.sessionDir)).toMatch(/^127\.0\.0\.1-\d{8}-\d{6}$/)
+    // Ending an interactive session (abort, Ctrl+C) is the normal way to finish it.
+    expect(result.meta.incomplete).toBeUndefined()
     expect(logs.some(m => m.includes('close the browser window'))).toBe(true)
     const files = await readdir(result.sessionDir)
     expect(files).toEqual(expect.arrayContaining(['meta.json', 'traffic.har', 'events.jsonl']))
@@ -866,6 +868,20 @@ describe('runCapture with a page that never finishes', () => {
     expect(await readdir(result.sessionDir)).toEqual(expect.arrayContaining(['meta.json', 'traffic.har', 'events.jsonl']))
     expect(result.meta.incomplete).toMatchObject({ reason: 'timeout' })
     expect(result.warnings.some(warning => warning.startsWith('Stopped waiting for the pages after 2 s'))).toBe(true)
+    expect(await readFile(path.join(result.sessionDir, 'traffic.har'), 'utf8')).toContain('/hang')
+  }, 90_000)
+
+  it('saves on SIGTERM while waiting on the page', async () => {
+    const running = runCapture(headlessConfig('hang.mjs'), {
+      url: site.url,
+      sessionId: 'hang-sigterm',
+      cwd: work,
+      timeouts: { settleMs: 120_000, closeMs: 15_000 },
+    })
+    await new Promise(resolve => setTimeout(resolve, 6_000))
+    process.emit('SIGTERM')
+    const result = await running
+    expect(result.meta.incomplete).toEqual({ reason: 'interrupted', error: null })
     expect(await readFile(path.join(result.sessionDir, 'traffic.har'), 'utf8')).toContain('/hang')
   }, 90_000)
 

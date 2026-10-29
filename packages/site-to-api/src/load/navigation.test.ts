@@ -26,6 +26,30 @@ describe('failedNavigationsWarning', () => {
     expect(failedNavigationsWarning([])).toBeNull()
   })
 
+  it('counts main-frame page loads only, and never a load the browser aborted itself', () => {
+    const doc = (frame: string, status: number, failure?: string): Record<string, unknown> => ({
+      _resourceType: 'document',
+      pageref: 'page@1',
+      _frameref: frame,
+      response: {
+        status,
+        ...(failure
+          ? { _failureText: failure }
+          : {}),
+      },
+    })
+    expect(harNavigations([
+      doc('frame@main', 200),
+      doc('frame@ad', -1, 'net::ERR_BLOCKED_BY_CLIENT'),
+      doc('frame@ad', -1, 'net::ERR_BLOCKED_BY_CLIENT'),
+      doc('frame@main', -1, 'net::ERR_ABORTED'),
+      doc('frame@main', 200),
+    ])).toEqual([
+      { status: 200, failure: null },
+      { status: 200, failure: null },
+    ])
+  })
+
   it('reads page loads from HAR entries', () => {
     expect(harNavigations([
       {
