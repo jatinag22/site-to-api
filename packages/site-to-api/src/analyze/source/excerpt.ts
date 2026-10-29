@@ -7,7 +7,7 @@ import type { LoadedSession, SourceRef } from '../../model'
 import { Visitor } from 'oxc-parser'
 import { commentText } from '../../emit/escape'
 import { LineIndex, parseCode, walkWithFunctions } from './ast'
-import { findUnpacked, readSessionFile, urlHost, urlPath } from './files'
+import { displayScriptUrl, findUnpacked, readSessionFile, urlHost, urlPath } from './files'
 
 /** Functions up to this many lines are included whole. */
 const MAX_FUNCTION_LINES = 120
@@ -262,7 +262,7 @@ function bundleExcerpt(ref: SourceRef, text: string, host: string, url: string, 
     const range = lineWindow(lines, line)
     const header = [
       ...preamble(ref.file),
-      comment(`site-to-api excerpt of ${describe(ref)} in ${url}`),
+      comment(`site-to-api excerpt of ${describe(ref)} in ${displayScriptUrl(url)}`),
       comment(`Lines ${range.first}-${range.last} of the bundle (no sourcemap was available), captured in session ${sessionId}.`),
     ]
     return { path, content: `${header.join('\n')}\n${text.slice(lines.lineStart(range.first), lines.lineEnd(range.last))}\n` }
@@ -309,7 +309,7 @@ function bundleExcerpt(ref: SourceRef, text: string, host: string, url: string, 
   }
   const header = [
     ...preamble(ref.file),
-    comment(`site-to-api excerpt of ${describe(ref)} in ${url}`),
+    comment(`site-to-api excerpt of ${describe(ref)} in ${displayScriptUrl(url)}`),
     comment(`Characters ${start - lines.lineStart(line) + 1}-${end - lines.lineStart(line)} of minified line ${line}, split at statement boundaries; the marker shows the location. Captured in session ${sessionId}; no sourcemap was available.`),
   ]
   return { path, content: `${header.join('\n')}\n${out.trim()}\n` }

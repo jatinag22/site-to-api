@@ -102,6 +102,22 @@ describe('buildExcerpt', () => {
     expect(topLevel?.path).toBe('src/cart.L1-11.ts')
   })
 
+  it('never writes a script URL\'s query or token path segments into the header', async () => {
+    const secret = 'Zq8Wm3Np5Rt7Vx9Bc2DfKp7xQ2mZ9vLr'
+    const tokenSession = await writeSession('s-tok', [
+      { url: `https://shop.test/static/${secret}/ips.js?KP_UIDz=${secret}&v=1`, file: 'scripts/shop.test/ips.js', content: 'a()\nb()\nc()' },
+    ])
+    const excerpt = await buildExcerpt(ref({
+      file: '/static/{token}/ips.js',
+      line: 2,
+      column: 1,
+      original: false,
+      functionName: 'f',
+    }), [tokenSession], 's-tok')
+    expect(code(excerpt).split('\n')[0]).toBe('// site-to-api excerpt of /static/{token}/ips.js:2:1 (function f) in https://shop.test/static/{token}/ips.js?<query omitted>')
+    expect(excerpt?.content).not.toContain(secret)
+  })
+
   it('cuts a minified bundle at statement boundaries around the column', async () => {
     const column = minified.indexOf('fetch(') + 1
     const excerpt = await buildExcerpt(ref({
@@ -113,7 +129,7 @@ describe('buildExcerpt', () => {
     }), [session], '2026-01-01-abc')
     expect(excerpt?.path).toBe(`bundles/shop.test/static/app.min.L1C${column}.js`)
     const lines = code(excerpt).split('\n') ?? []
-    expect(lines[0]).toBe(`// site-to-api excerpt of /static/app.min.js:1:${column} (function send) in https://shop.test/static/app.min.js?v=3`)
+    expect(lines[0]).toBe(`// site-to-api excerpt of /static/app.min.js:1:${column} (function send) in https://shop.test/static/app.min.js?<query omitted>`)
     expect(lines).toContain('function send(t){')
     expect(lines).toContain(`  return /* <-- 1:${column} */ fetch("/api/orders/"+t,{method:"POST"})`)
     // The closing brace of `send` goes back to the function's own depth.
@@ -264,7 +280,7 @@ describe('buildExcerpt', () => {
     expect(code(vue).split('\n')[2]).toBe('<script>')
     expect(code(ts).split('\n')[2]).toBe('function f(){')
     expect(code(ts).split('\n')[0]).toBe('// site-to-api excerpt of src/w.ts:2:3 (function f -\\-> <script>evil()</script> <!-- *\\/ evil() /* x)')
-    expect(code(bundle).split('\n')[0]).toBe('// site-to-api excerpt of /b.js:2:1 (function f -\\-> <script>evil()</script> <!-- *\\/ evil() /* x) in https://shop.test/b.js?x= *\\/ evil() /*')
+    expect(code(bundle).split('\n')[0]).toBe('// site-to-api excerpt of /b.js:2:1 (function f -\\-> <script>evil()</script> <!-- *\\/ evil() /* x) in https://shop.test/b.js?<query omitted>')
   })
 })
 
