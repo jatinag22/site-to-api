@@ -93,7 +93,9 @@ describe('loadConfig', () => {
     `)
     const { config } = await loadConfig({ cwd: dir })
     expect(config.outDir).toBe('typed')
-  })
+    // Legitimately heavy: jiti transpiles the TypeScript config and resolves the running copy of
+    // site-to-api. ~360 ms alone, 5 s+ when the machine is saturated, so it gets an explicit budget.
+  }, 30_000)
 
   it('fails clearly for a missing explicit config file', async () => {
     await expect(loadConfig({ cwd: dir, configFile: 'nope.config.ts' })).rejects.toThrow(/Config file not found/)

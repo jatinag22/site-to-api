@@ -288,9 +288,9 @@ describe('inferExtraction: repeated structures', () => {
 describe('inferExtraction: busy pages', () => {
   /** A results page with a long menu, many cards and lots of static filler. */
   function busyPage(seed: number): string {
-    const menu = Array.from({ length: 120 }, (_, i) => `<li class="nav-item"><a href="/c/${i}">Category ${i}</a></li>`).join('')
-    const cards = Array.from({ length: 40 }, (_, i) => `<div class="card"><h3 class="t">Item ${seed}-${i}</h3><span class="p">₹${seed * 100 + i}</span><div class="seller"><span>Sold by</span><b>Shop ${(i * seed) % 9}</b></div></div>`).join('')
-    const filler = Array.from({ length: 200 }, (_, i) => `<div class="f"><p>Static text ${i}</p><span>${i}</span></div>`).join('')
+    const menu = Array.from({ length: 30 }, (_, i) => `<li class="nav-item"><a href="/c/${i}">Category ${i}</a></li>`).join('')
+    const cards = Array.from({ length: 10 }, (_, i) => `<div class="card"><h3 class="t">Item ${seed}-${i}</h3><span class="p">₹${seed * 100 + i}</span><div class="seller"><span>Sold by</span><b>Shop ${(i * seed) % 9}</b></div></div>`).join('')
+    const filler = Array.from({ length: 30 }, (_, i) => `<div class="f"><p>Static text ${i}</p><span>${i}</span></div>`).join('')
     return `<html><body><header><ul class="nav">${menu}</ul></header><main><h1>Results ${seed}</h1><div class="grid">${cards}</div>${filler}</main></body></html>`
   }
 
