@@ -28,7 +28,8 @@ The entry point for a coding agent. Generated from a template, no LLM. Sections,
    the message types per direction with counts, and which HTTP operation each client value comes
    from.
 4. **Computed values**: one line each, with the file and function to port.
-5. **Reading order**: `API_MAP.md` → `flows.md` → the spec for the host → `source/` excerpts →
+5. **Reading order**: `API_MAP.md` → `flows.md` → the spec for the host → `source/` excerpts
+   (only when an excerpt was written) →
    `client/` usage.
 6. **Gaps**: operations with low-confidence extraction, unresolved value origins, endpoints seen
    only in source (with "method unknown" when the code did not show the method), host patterns
@@ -54,6 +55,10 @@ abbreviated), response (JSON / extract / text), needs (cookies, token, browser),
   (`body./items/*/id`) is marked `(one of the items)`: the value comes from any item of that
   array, not the one the sample used; an HTML origin whose selector matches a repeated element
   reads `html one of the elements matching <selector>`.
+- **Source** is `file:line function` of the code that sends the request, or
+  `no source available (eval or minified)` when the page sent it only from code no capture can
+  show: evaluated code (an `eval` frame, webpack's `webpack-internal:///5467` modules) or an
+  anonymous `VM` script. `flows.md` says the same on the step's "Sent from" line.
 - **Needs** ends with `(confirmed by probe)` when it comes from `probe.json` (`requires`), and
   with `(seen in capture)` when it lists the cookies the captured request was sent with, which
   may include ones it does not need. `nothing (confirmed by probe)` means the request works with
@@ -91,7 +96,32 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
 
 - `operationId` matches `flows.json` and the generated SDK function.
 - Required cookies are `in: cookie` parameters, names only.
-- Constant headers are parameters with `x-site-to-api-constant: true` and a `default`.
+- Constant headers are parameters with `x-site-to-api-constant: true` and a `default`. A header
+  is constant when it had one value in every request of the operation, and that value was seen
+  in two or more sessions, in the operation itself or in every request to the host.
+- A header parameter is `required` only when `probe` proved it is needed
+  (`x-site-to-api-requires`); being sent in every captured request is not enough. Tracing
+  headers (`baggage`, `sentry-trace`, `traceparent`, `tracestate`, `b3`, `x-b3-*`,
+  `x-datadog-*`) are never required and never get a default.
+- Query, form and path values that are all digits become `integer` unless they are codes:
+  a value with a leading zero, a name with the whole word `id`, `no`, `code`, `sku`, `number`,
+  `zip`, `pin` or `otp` (`itemNos`, `storeCode`, `phoneNumber`), a compound such as `totp`,
+  `zipcode`, `pincode`, `postcode` or `barcode`, or at least two different values of one fixed
+  length of six or more that are not Unix times. `pageNumber`, `pageNo`, `numberOf…`, `encode`
+  and `decode` are not code names. Codes stay `string`, and digit strings never become an
+  `enum`.
+- A request body field is `required` only when every sample has it and it took more than one
+  value; a field sent with the same value every time is optional.
+- A response field is `required` only when every object at its level had it and those objects
+  answered at least two different requests (path, query or body after redaction, cache-busters
+  such as `_=<epoch>` left out; decision 0034). Responses captured from one request, however
+  often repeated, have no required fields.
+- GraphQL variables follow the captured document: declared non-null without a default
+  (`$id: Int!`) is required; declared nullable or with a default (`$first: Int! = 20`) is
+  optional. Persisted queries without a document use the request body rule.
+- String `format`s (`date-time`, `date`, `uuid`, `email`, `uri`) are written only when every
+  captured sample passes the Zod check the generated client runs for that format;
+  `date-time` accepts offsets (`-05:00`) and values without a zone.
 - HTML/text data responses use `content: text/html` (or `text/plain`, `text/csv`) with
   `x-site-to-api-extract` holding the extraction spec. An HTML spec may carry `recordsName`, what
   its records are (`submissions`), which names the generated parser
@@ -120,6 +150,10 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
   - `x-site-to-api-method-unknown`: on a source-only endpoint, the code did not show its HTTP
     method; the operation is listed under `get` because OpenAPI needs a method
   - `x-site-to-api-requires`: from `probe`, e.g. `[cookie:session, header:referer]`
+  - `x-site-to-api-content-type`: on an `application/json` request body, the `Content-Type` the
+    site sent with it (`application/x-www-form-urlencoded`, `text/plain`). A request body's media
+    type comes from its syntax: JSON text is `application/json` whatever its header said, so the
+    client serializes it as JSON, and the generated client then sends the site's own header.
 
 ## `specs/<host>.asyncapi.yaml`
 
@@ -151,8 +185,12 @@ generating code and lists the channels and their handshake in `client/README.md`
 
 Excerpts of the site's own code: the function that computes a value, the call site that sends a
 request. Path mirrors the original source path (or `bundles/<host>/<file>` when no sourcemap was
-available, pretty-printed around the location). Each file starts with a comment naming the
-original location and the capture session.
+available, pretty-printed around the location), with the line range and `.md` added:
+`src/auth/crypto.ts` → `src/auth/crypto.L18-28.ts.md`. Each file is Markdown (decision 0032): a
+heading naming the original location, a line naming the capture session, and the code in a
+fence tagged with its language. Fragments are rarely valid code on their own, so they are never
+`.ts` or `.js` files that a project's type check would pick up. The folder exists only when at
+least one excerpt was written.
 
 ## `client/`
 

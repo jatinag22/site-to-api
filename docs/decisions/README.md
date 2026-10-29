@@ -37,6 +37,8 @@ or `Proposed`.
 | [0027](0027-graphql-operations.md) | One operation per GraphQL operation: `<endpoint>#<name>` paths and `x-site-to-api-graphql` | Accepted |
 | [0028](0028-graphql-detection-refinements.md) | Stricter GraphQL detection and type evidence (refines 0027) | Accepted |
 | [0029](0029-html-records-and-field-names.md) | HTML records that span siblings, ranked by coverage; names from the markup | Accepted |
+| [0032](0032-excerpts-as-markdown.md) | Source excerpts are Markdown files | Accepted |
+| [0034](0034-required-from-evidence.md) | `required` in responses needs two distinct requests; GraphQL variables follow the document | Accepted |
 | [0035](0035-sibling-path-templates.md) | Sibling paths with word values become one template, on evidence | Accepted |
 | [0036](0036-probe-identity-and-outcomes.md) | Probe names itself and says why a request was refused (refines 0012) | Accepted |
 | [0037](0037-capture-always-saves.md) | Capture always saves the session, with bounded waits | Accepted |

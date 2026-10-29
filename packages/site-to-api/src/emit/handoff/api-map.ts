@@ -13,7 +13,7 @@ import { createStepResolver } from '../steps'
 import { channelsTable } from './channels'
 import { apiMapClientLine } from './client'
 import { graphqlClientCall, graphqlKind, graphqlTables } from './graphql'
-import { describeSource } from './source-ref'
+import { describeSource, NO_SOURCE } from './source-ref'
 
 /** Renders a step reference from an origin (`s2` or `<flowId>.<stepId>`) for a table cell. */
 export type StepLabel = (reference: string) => string
@@ -224,7 +224,9 @@ function clientSymbols(operation: Operation): string {
 function row(operation: Operation, analysis: Analysis, resolver: StepResolver): string {
   const source = operation.sentFrom[0]
     ? cellCode(describeSource(operation.sentFrom[0]))
-    : ''
+    : operation.sourceUnavailable === true
+      ? NO_SOURCE
+      : ''
   const kind = operation.sourceOnly
     ? `${operation.kind} (seen in code only${operation.methodUnknown === true
       ? ', method unknown'

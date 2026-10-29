@@ -1,7 +1,7 @@
 /**
  * Fills each operation's query, headers, cookies, request body and responses from its exchanges.
  */
-import type { Body, Exchange, HeaderInfo, JsonSchema, NameValue, Operation, ParamInfo, RedactContext, Redactor, ResponseInfo } from '../../model'
+import type { Body, Exchange, HeaderInfo, JsonSchema, NameValue, Operation, ParamInfo, RedactContext, Redactor, RequestBodyInfo, ResponseInfo } from '../../model'
 import type { InferOptions } from './infer'
 import { pinGraphqlSchemas } from '../graphql'
 import { coerceStrings, inferSchema, inferStringSchema } from './infer'
@@ -56,17 +56,6 @@ const BROWSER_IDENTITY_HEADERS: readonly string[] = [
   'user-agent',
   'accept-language',
   'sec-ch-ua*',
-]
-
-/**
- * Headers every browser fills in from the page that sends the request. A server may check them,
- * so they stay documented (and get a default when constant), but a client that does not send them
- * is not calling the API wrongly, so they are never required: a value seen in one session only
- * would otherwise be a required SDK argument nobody can know.
- */
-const BROWSER_CONTEXT_HEADERS: readonly string[] = [
-  'origin',
-  'referer',
 ]
 
 /** Sessions a value must be identical in before it counts as a constant (decision 0004). */
@@ -151,7 +140,7 @@ function inferParams(exchanges: Exchange[], pick: (exchange: Exchange) => NameVa
     if (json)
       return json
     const item = inferStringSchema(samples, enumGuard(redactor, context))
-    const examples = redactor.examples(coerceStrings(samples.map(sample => sample.value)), context)
+    const examples = redactor.examples(coerceStrings(samples.map(sample => sample.value), name), context)
     return {
       name,
       required: present === exchanges.length,
@@ -162,7 +151,55 @@ function inferParams(exchanges: Exchange[], pick: (exchange: Exchange) => NameVa
   })
 }
 
-function inferHeaders(exchanges: Exchange[], redactor: Redactor): HeaderInfo[] {
+/**
+ * Tracing headers that monitoring scripts (Sentry, OpenTelemetry, Datadog, Zipkin, New Relic) add to the
+ * page's requests. Servers do not need them, so they are never required and never a default: a
+ * client that replayed the capture's trace ids would report into someone else's trace.
+ */
+const TELEMETRY_HEADERS: readonly string[] = [
+  'baggage',
+  'sentry-trace',
+  'traceparent',
+  'tracestate',
+  'b3',
+  'x-b3-*',
+  'x-datadog-*',
+  'x-newrelic-id',
+]
+
+/** True for `baggage`, `sentry-trace`, `traceparent`, `x-datadog-*`, `x-b3-*` and the like. */
+export function isTelemetryHeader(name: string): boolean {
+  return matchesHeaderList(TELEMETRY_HEADERS, name.toLowerCase())
+}
+
+/**
+ * Header values that are the same in every request to the host across two or more sessions
+ * (`x-requested-with: XMLHttpRequest`, `github-is-react: true`). An operation seen in one session
+ * only cannot prove its own constants, but the host's other requests can.
+ */
+function hostConstantHeaders(exchanges: Exchange[]): Map<string, string> {
+  const seen = new Map<string, { values: Set<string>, sessions: Set<string> }>()
+  for (const exchange of exchanges) {
+    for (const header of exchange.request.headers) {
+      const entry = seen.get(header.name) ?? {
+        values: new Set<string>(),
+        sessions: new Set<string>(),
+      }
+      entry.values.add(header.value)
+      entry.sessions.add(exchange.sessionId)
+      seen.set(header.name, entry)
+    }
+  }
+  const constants = new Map<string, string>()
+  for (const [name, entry] of seen) {
+    const [only] = entry.values
+    if (entry.values.size === 1 && only !== undefined && entry.sessions.size >= MIN_CONSTANT_SESSIONS)
+      constants.set(name, only)
+  }
+  return constants
+}
+
+function inferHeaders(exchanges: Exchange[], redactor: Redactor, hostConstants: ReadonlyMap<string, string>): HeaderInfo[] {
   const lists = exchanges.map(exchange => exchange.request.headers.filter(header => !isBrowserManagedHeader(header.name)))
   return namesInOrder(lists).map((name) => {
     const context: RedactContext = { in: 'header', name }
@@ -174,12 +211,14 @@ function inferHeaders(exchanges: Exchange[], redactor: Redactor): HeaderInfo[] {
     const sessions = new Set(samples.map(sample => sample.sessionId))
     // Identical in one session says nothing: a CSRF token or a referer is the same for every
     // request of a session. Constants need two or more sessions agreeing (decision 0004).
+    const [first] = distinct
     const constant = present === exchanges.length
       && distinct.size === 1
-      && sessions.size >= MIN_CONSTANT_SESSIONS
+      && (sessions.size >= MIN_CONSTANT_SESSIONS || (first !== undefined && hostConstants.get(name) === first))
       && !isBrowserIdentityHeader(name)
+      && !isTelemetryHeader(name)
     let schema = withExamples(inferSchema(samples, enumGuard(redactor, context)), redactor.examples(samples.map(sample => sample.value), context))
-    if (isBrowserIdentityHeader(name))
+    if (isBrowserIdentityHeader(name) || isTelemetryHeader(name))
       delete schema['x-constant']
     const only = samples[0]?.value
     // A constant that the redactor would change is a secret: it must not become a default.
@@ -187,9 +226,10 @@ function inferHeaders(exchanges: Exchange[], redactor: Redactor): HeaderInfo[] {
       schema = { ...schema, default: only }
     return {
       name,
-      // Every HTTP client sends its own user agent; a generated SDK must not demand one, nor the
-      // page context a browser adds.
-      required: present === exchanges.length && !isBrowserIdentityHeader(name) && !matchesHeaderList(BROWSER_CONTEXT_HEADERS, name.toLowerCase()),
+      // Being sent is not being needed: GitHub's pages send `x-fetch-nonce` with every fetch, but
+      // probe showed the requests work without it. Only probe can prove a header is needed, so
+      // the emitter marks a header required when `x-site-to-api-requires` lists it.
+      required: false,
       constant,
       schema,
     }
@@ -225,10 +265,30 @@ function inferFormSchema(items: Array<{ form: NameValue[], sessionId: string }>,
       .map(field => ({ value: field.value, sessionId: item.sessionId })))
     properties[name] = inferStringSchema(samples, enumGuard(redactor, { in: 'form', name }))
   }
-  const required = names.filter(name => items.every(item => item.form.some(field => field.name === name)))
+  // As for JSON bodies: present in every sample and taking more than one value.
+  const required = names.filter(name => items.every(item => item.form.some(field => field.name === name))
+    && new Set(items.flatMap(item => item.form.filter(field => field.name === name).map(field => field.value))).size > 1)
   return required.length > 0
     ? { type: 'object', properties, required }
     : { type: 'object', properties }
+}
+
+/** `application/json`, `application/ld+json`, `application/vnd.x+json`: types a JSON serializer fits. */
+function isJsonMimeType(mimeType: string): boolean {
+  return mimeType === 'application/json' || /^application\/[\w.-]+\+json$/.test(mimeType)
+}
+
+/**
+ * The media type of a JSON body comes from its syntax, not its header: Algolia sends JSON text as
+ * `application/x-www-form-urlencoded`, and a client that believed the header would serialize the
+ * object as `query=...` and get `400 Expecting object or array`. The header is kept beside it.
+ */
+function jsonMediaType(mimeType: string): Pick<RequestBodyInfo, 'mimeType' | 'sentContentType'> {
+  if (isJsonMimeType(mimeType))
+    return { mimeType }
+  return mimeType === ''
+    ? { mimeType: 'application/json' }
+    : { mimeType: 'application/json', sentContentType: mimeType }
 }
 
 function inferRequestBody(exchanges: Exchange[], redactor: Redactor): Operation['requestBody'] {
@@ -242,8 +302,13 @@ function inferRequestBody(exchanges: Exchange[], redactor: Redactor): Operation[
   if (bodies.every(body => body.json !== undefined)) {
     const context: RedactContext = { in: 'body' }
     return {
-      mimeType,
-      schema: inferSchema(group.map(exchange => ({ value: exchange.request.body.json, sessionId: exchange.sessionId })), enumGuard(redactor, context)),
+      ...jsonMediaType(mimeType),
+      // A field sent every time with the same value is the page's setting, not a value the caller
+      // must supply: request fields are required only when present in every sample and varying.
+      schema: inferSchema(group.map(exchange => ({ value: exchange.request.body.json, sessionId: exchange.sessionId })), {
+        ...enumGuard(redactor, context),
+        required: 'varies',
+      }),
       examples: redactor.examples(bodies.map(body => body.json), context),
     }
   }
@@ -268,6 +333,105 @@ function inferRequestBody(exchanges: Exchange[], redactor: Redactor): Operation[
     schema: { type: 'string', format: 'binary' },
     examples: [],
   }
+}
+
+/** Names that only ever defeat caches, whatever their values look like. */
+const CACHE_BUSTER_NAMES: ReadonlySet<string> = new Set([
+  '_',
+  'cb',
+  'nonce',
+  'rand',
+  'cachebuster',
+])
+/** Names that are a cache-buster only when they carry the current time. */
+const TIME_NAMES: ReadonlySet<string> = new Set([
+  't',
+  'ts',
+  'time',
+  'timestamp',
+])
+/** Unix time in seconds or milliseconds, between 2001 and 2033. */
+const EPOCH_VALUE = /^1\d{9}(?:\d{3})?$/
+
+/** The values one request sent: query parameters and form or top-level JSON body fields. */
+function requestFields(exchange: Exchange): NameValue[] {
+  const { query, body } = exchange.request
+  const fields = query.map(param => ({ name: `query.${param.name}`, value: param.value }))
+  if (body?.form) {
+    fields.push(...body.form.map(field => ({ name: `body.${field.name}`, value: field.value })))
+  }
+  else if (body?.json !== null && typeof body?.json === 'object' && !Array.isArray(body.json)) {
+    fields.push(...Object.entries(body.json).map(([name, value]) => ({
+      name: `body.${name}`,
+      value: JSON.stringify(value),
+    })))
+  }
+  return fields
+}
+
+/**
+ * Fields that only defeat caches: a different value in every sample, under a cache-buster name
+ * (`_`, `cb`, `nonce`, `rand`), or under a time name (`t`, `ts`, `time`, `timestamp`) with
+ * Unix-time values. They make repeats of one request look like different requests. The name is
+ * always required: a 10- or 13-digit id (`itemNo`, a GTIN) or a time filter (`since`) varies
+ * with meaning, and `t=search` is a selector, so none of them is dropped.
+ */
+function cacheBusters(exchanges: readonly Exchange[]): Set<string> {
+  const values = new Map<string, string[]>()
+  for (const exchange of exchanges) {
+    for (const field of requestFields(exchange)) {
+      values.set(field.name, [
+        ...(values.get(field.name) ?? []),
+        field.value,
+      ])
+    }
+  }
+  const busters = new Set<string>()
+  for (const [name, seen] of values) {
+    const everyTimeDifferent = seen.length === exchanges.length && new Set(seen).size === seen.length
+    const bare = name.slice(name.indexOf('.') + 1)
+    const lower = bare.toLowerCase()
+    const looksLikeBuster = CACHE_BUSTER_NAMES.has(lower)
+      || (TIME_NAMES.has(lower) && seen.every(value => EPOCH_VALUE.test(value.replace(/^"|"$/g, ''))))
+    if (everyTimeDifferent && looksLikeBuster && exchanges.length > 1)
+      busters.add(name)
+  }
+  return busters
+}
+
+/**
+ * What one exchange asked for, after redaction: path, query and body, without cache-busters. Two
+ * exchanges with the same identity are the same request repeated, which says nothing about what
+ * the response depends on.
+ */
+function requestIdentity(exchange: Exchange, redactor: Redactor, busters: ReadonlySet<string>): string {
+  const { path, body } = exchange.request
+  const fields = requestFields(exchange)
+    .filter(field => !busters.has(field.name))
+    .map(field => [
+      field.name,
+      redactor.value(field.value, field.name.startsWith('query.')
+        ? {
+            in: 'query',
+            name: field.name.slice(6),
+          }
+        : {
+            in: 'body',
+            name: field.name.slice(5),
+          }),
+    ])
+  // Bodies that are not a form or a JSON object are compared whole.
+  const structured = body === null || body.form !== null || (body.json !== null && typeof body.json === 'object' && !Array.isArray(body.json))
+  const whole = structured
+    ? null
+    : body.json !== undefined
+      ? redactor.json(body.json, { in: 'body' })
+      : redactor.value(body.text ?? body.base64 ?? '', { in: 'body' })
+  return JSON.stringify([
+    redactor.value(path, { in: 'path' }),
+    fields,
+    whole,
+  ])
 }
 
 function inferResponses(exchanges: Exchange[], redactor: Redactor): ResponseInfo[] {
@@ -299,10 +463,19 @@ function inferResponses(exchanges: Exchange[], redactor: Redactor): ResponseInfo
         }
       }
       const context: RedactContext = { in: 'response-body' }
+      const busters = cacheBusters(members)
       return {
         status,
         mimeType,
-        schema: inferSchema(members.map(exchange => ({ value: exchange.response.body?.json, sessionId: exchange.sessionId })), enumGuard(redactor, context)),
+        // A field is promised only when answers to two different requests all had it (decision 0034).
+        schema: inferSchema(members.map(exchange => ({
+          value: exchange.response.body?.json,
+          sessionId: exchange.sessionId,
+          request: requestIdentity(exchange, redactor, busters),
+        })), {
+          ...enumGuard(redactor, context),
+          required: 'distinct-requests',
+        }),
         extract: null,
         examples: redactor.examples(bodies.map(body => body?.json), context),
       }
@@ -324,10 +497,11 @@ function enrichPathParams(operation: Operation, redactor: Redactor): Operation['
     // Path values identify one resource; an enum would wrongly limit the client to those seen.
     const schema = inferStringSchema(samples, {
       allowEnumValue: () => false,
+      name: param.name,
     })
     return {
       ...param,
-      schema: withExamples(schema, redactor.examples(coerceStrings(samples.map(sample => sample.value)), context)),
+      schema: withExamples(schema, redactor.examples(coerceStrings(samples.map(sample => sample.value), param.name), context)),
     }
   })
 }
@@ -348,6 +522,9 @@ function safeDecode(segment: string): string {
  * (decision 0027).
  */
 export function inferOperationSchemas(operations: Operation[], redactor: Redactor): Operation[] {
+  const hostConstants = new Map<string, Map<string, string>>()
+  for (const host of new Set(operations.map(operation => operation.host)))
+    hostConstants.set(host, hostConstantHeaders(operations.filter(operation => operation.host === host).flatMap(operation => operation.exchanges)))
   return operations.map((operation) => {
     const { exchanges } = operation
     if (exchanges.length === 0)
@@ -358,7 +535,7 @@ export function inferOperationSchemas(operations: Operation[], redactor: Redacto
       query: inferParams(exchanges, exchange => exchange.request.query, 'query', redactor, operation.graphql
         ? GRAPHQL_JSON_PARAMS
         : undefined),
-      headers: inferHeaders(exchanges, redactor),
+      headers: inferHeaders(exchanges, redactor, hostConstants.get(operation.host) ?? new Map()),
       cookies: inferCookies(exchanges),
       requestBody: inferRequestBody(exchanges, redactor),
       responses: inferResponses(exchanges, redactor),
