@@ -35,7 +35,8 @@ const SIGNATURES: readonly BlockSignature[] = [
   },
   {
     vendor: 'PerimeterX',
-    body: [/px-captcha/],
+    // Its HTML page, or the JSON block an API gets: `{ "appId": "PX…", "blockScript": "…" }`.
+    body: [/px-captcha/, /"appId"\s*:\s*"PX[^"]*"[\s\S]*"blockScript"|"blockScript"[\s\S]*"appId"\s*:\s*"PX/],
   },
   {
     vendor: 'Imperva',

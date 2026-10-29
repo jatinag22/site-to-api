@@ -45,6 +45,14 @@ const ROUTES: Record<string, Handler> = {
     res.writeHead(200, { 'content-type': 'text/html' }).end('<form action="/session"><input name="user"><input type="password" name="pw"></form>')
   },
   '/api/open': json(200, '{"items":[1]}'),
+  '/api/px': json(403, JSON.stringify({
+    appId: 'PXabc123',
+    jsClientSrc: '/abc/init.js',
+    blockScript: '/abc/captcha/captcha.js?a=c',
+    uuid: 'u',
+    vid: 'v',
+  })),
+  '/api/denied-list': json(403, '{"items":[]}'),
   '/api/private': (req, res) => {
     const ok = (req.headers.cookie ?? '').includes('sid=good') && req.headers['x-api-key'] === 'k1'
     res.writeHead(ok ? 200 : 403, { 'content-type': 'application/json' }).end(ok ? '{"items":[1],"total":1}' : '{"error":"forbidden"}')
@@ -52,6 +60,21 @@ const ROUTES: Record<string, Handler> = {
   '/api/challenge': (_req, res) => {
     res.writeHead(200, { 'content-type': 'text/html' }).end('<html>checking your browser</html>')
   },
+}
+
+const REDIRECTS: Record<string, string> = {
+  '/r/devise': '/users/sign_in',
+  '/r/wordpress': '/wp-login.php?redirect_to=%2Fapi',
+  '/r/rails': '/sessions/new',
+  '/r/oauth': 'https://id.example.com/oauth2/authorize?client_id=1',
+  '/r/home': '/',
+  '/r/products': '/products',
+}
+
+for (const [from, to] of Object.entries(REDIRECTS)) {
+  ROUTES[from] = (_req, res) => {
+    res.writeHead(302, { location: to }).end()
+  }
 }
 
 const server = createServer((req, res) => {
@@ -227,6 +250,33 @@ describe('probeOperations', () => {
     expect(byId.get('getRedirected')?.note).toContain('a redirect to /login')
     expect(byId.get('getLoginForm')).toMatchObject({ rejection: 'session' })
     expect(byId.get('getLoginForm')?.note).toContain('a login form where the capture had JSON')
+  })
+
+  it('reads login redirects of common frameworks as a refused session, and other redirects not', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        ...Object.keys(REDIRECTS),
+        '/api/px',
+        '/api/denied-list',
+      ].map(path => op(`get${path.replace(/\W/g, '')}`, 'GET', path, {
+        url: `${origin}${path}`,
+        cookies: { sid: 'old' },
+        responseBody: jsonBody({ items: [] }),
+      })),
+    })
+    const rejection = Object.fromEntries(report.operations.map(entry => [entry.operationId, entry.rejection]))
+    expect(rejection).toEqual({
+      getrdevise: 'session',
+      getrwordpress: 'session',
+      getrrails: 'session',
+      getroauth: 'session',
+      getrhome: 'other',
+      getrproducts: 'other',
+      getapipx: 'bot-protection',
+      getapideniedlist: 'other',
+    })
   })
 
   it('skips unsafe methods and bot-protection steps by default, without sending anything', async () => {

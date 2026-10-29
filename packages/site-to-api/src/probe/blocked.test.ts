@@ -11,6 +11,18 @@ describe('detectBlock', () => {
     expect(detectBlock(503, headers(), 'Request unsuccessful. Incapsula incident ID: 1')).toBe('Imperva: challenge page, status 503')
   })
 
+  it('recognises PerimeterX\'s JSON block', () => {
+    const body = JSON.stringify({
+      appId: 'PXabc123',
+      jsClientSrc: '/abc/init.js',
+      blockScript: '/abc/captcha/captcha.js?a=c&u=1',
+      uuid: 'u',
+      vid: 'v',
+    })
+    expect(detectBlock(403, headers({ 'content-type': 'application/json' }), body)).toBe('PerimeterX: challenge page, status 403')
+    expect(detectBlock(403, headers(), JSON.stringify({ appId: 'myapp', blockScript: 'x' }))).toBeNull()
+  })
+
   it('ignores vendor headers and script includes on ordinary responses', () => {
     expect(detectBlock(200, headers({ 'x-datadome': 'protected' }), '{"ok":true}')).toBeNull()
     expect(detectBlock(403, headers({ 'x-datadome': 'protected' }), '{"error":"forbidden"}')).toBeNull()

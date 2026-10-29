@@ -338,7 +338,19 @@ interface ProbeContext {
   minimizePerHost: number
 }
 
-const LOGIN_PATH = /\/(?:log-?in|sign-?in|auth|sso|session|account\/login)\b/i
+const LOGIN_PATH = /(?:log[-_]?in|sign[-_]?in|wp-login|auth|authorize|oauth2?|sso|sessions?)\b/i
+/** Keys an authentication error body has (`{ "error": "unauthorized" }`). */
+const ERROR_KEYS = /^(?:error|errors|error_description|message|code|detail)$/i
+
+function hasErrorKey(body: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(body)
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).some(key => ERROR_KEYS.test(key))
+  }
+  catch {
+    return false
+  }
+}
 const PASSWORD_FIELD = /<input[^>]+type=["']?password/i
 
 /**
@@ -355,7 +367,7 @@ function authEvidence(exchange: Exchange, status: number, headers: Headers, body
     return `a redirect to ${location.split('?')[0]}`
   if (status === 419)
     return 'status 419 (session or CSRF token expired)'
-  if ((status === 401 || status === 403) && mediaType(headers.get('content-type')).includes('json'))
+  if ((status === 401 || status === 403) && mediaType(headers.get('content-type')).includes('json') && hasErrorKey(body))
     return `status ${status} with a JSON error`
   if (status >= 200 && status < 300 && (exchange.response.body?.mimeType ?? '').includes('json') && PASSWORD_FIELD.test(body))
     return 'a login form where the capture had JSON'
