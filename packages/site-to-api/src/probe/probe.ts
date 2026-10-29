@@ -62,7 +62,7 @@ function representative(operation: Operation): Exchange | null {
  * would hide automation, and `HeadlessChrome` is blocked outright by some bot protection. It is
  * also what a generated client sends, since clients never default a browser user agent (0026).
  */
-export function probeUserAgent(toolVersion: string): string {
+function probeUserAgent(toolVersion: string): string {
   return `site-to-api/${toolVersion} (probe; automated)`
 }
 
@@ -132,7 +132,7 @@ function jsonDifference(exchange: Exchange, body: string): string | null {
  * How a live response differs from the captured one, or null when it looks the same. Guards
  * against challenge and login pages, which often answer 200 with HTML where the capture had JSON.
  */
-export function differenceFromCapture(exchange: Exchange, status: number, contentType: string | null, body: string): string | null {
+function differenceFromCapture(exchange: Exchange, status: number, contentType: string | null, body: string): string | null {
   if (status < 200 || status >= 300)
     return `status ${status}, captured ${exchange.response.status}`
   const expected = exchange.response.body?.mimeType ?? ''
