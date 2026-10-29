@@ -27,6 +27,15 @@ describe('collectStaticStrings', () => {
     expect([...strings].sort()).toEqual(['bundle-salt-value', 'client-web-1', 'demo-public-key-0123'])
   })
 
+  it('collects shorter items of a list of string literals, the options a page offers', async () => {
+    const session = await writeSession('s1', [
+      { url: 'https://shop.test/chain.js', file: 'scripts/chain.js', content: 'var indices=["NIFTY","FINNIFTY","BANK"],pair=["abc","USD"],mixed=["EURO",x],word="NIFTY50"' },
+    ])
+    expect([
+      ...await collectStaticStrings([session]),
+    ].sort()).toEqual(['BANK', 'FINNIFTY', 'NIFTY', 'NIFTY50'])
+  })
+
   it('skips strings longer than 1,024 characters', async () => {
     const session = await writeSession('s1', [
       { url: 'https://shop.test/a.js', file: 'scripts/a.js', content: `var a="${'x'.repeat(2000)}",b="normal-value"` },
