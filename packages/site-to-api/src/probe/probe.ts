@@ -9,8 +9,8 @@ import type { OperationProbe, ProbeOutcome, ProbeReport } from '../model/probe'
 import { challengePageMarker, hasChallengeHeader } from '../analyze/classify'
 import { PROBE_FORMAT_VERSION } from '../model/probe'
 import { detectBlock } from './blocked'
-
-const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+import { RateLimiter } from './rate-limit'
+import { isSafeMethod, isSafeOperation, replaySkipReason } from './safety'
 
 /** Headers fetch manages itself or forbids, plus ones that only describe the original transport. */
 const NOT_REPLAYED = new Set([
@@ -176,24 +176,6 @@ export function resemblesCapture(exchange: Exchange, status: number, contentType
   return differenceFromCapture(exchange, status, contentType, body, headers) === null
 }
 
-class RateLimiter {
-  private next = 0
-
-  constructor(
-    private readonly intervalMs: number,
-    private readonly now: () => number,
-    private readonly sleep: (ms: number) => Promise<void>,
-  ) {}
-
-  async wait(): Promise<void> {
-    const current = this.now()
-    const start = Math.max(current, this.next)
-    this.next = start + this.intervalMs
-    if (start > current)
-      await this.sleep(start - current)
-  }
-}
-
 interface SendResult {
   outcome: ProbeOutcome
   status: number | null
@@ -240,7 +222,7 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
         const response = await options.fetch(exchange.request.url, {
           method: exchange.request.method,
           headers,
-          body: SAFE_METHODS.has(exchange.request.method)
+          body: isSafeMethod(exchange.request.method)
             ? null
             : body,
           redirect: 'manual',
@@ -313,109 +295,10 @@ async function minimize(runner: Runner, exchange: Exchange, full: Variant, maxVa
   return required.sort()
 }
 
-/**
- * Whether replaying the operation cannot change data: a safe HTTP method, or a GraphQL query
- * (decision 0027), which GraphQL defines as read-only whatever method carries it. Mutations and
- * operations of unknown type are not safe, even over GET.
- */
-function isSafeOperation(operation: Pick<Operation, 'method' | 'graphql'>): boolean {
-  if (operation.graphql)
-    return operation.graphql.operationType === 'query'
-  return SAFE_METHODS.has(operation.method)
-}
-
-/** Why a GraphQL operation is not replayed, or null when it may be. */
-function graphqlSkipReason(operation: Operation, config: ResolvedConfig['probe']): string | null {
-  const graphql = operation.graphql
-  if (!graphql)
-    return null
-  const name = graphql.operationName ?? operation.operationId
-  if (graphql.operationType === 'subscription')
-    return `GraphQL subscription ${name}: it streams over a long-lived connection, so it is never replayed`
-  if (graphql.operationType === 'mutation' && !config.unsafeMethods)
-    return `GraphQL mutation ${name} can change data; pass --unsafe-methods to include it`
-  if (graphql.operationType === 'unknown' && !config.unsafeMethods)
-    return `GraphQL operation ${name} has an unknown type (no query document, and the site's code did not say), so it may change data; pass --unsafe-methods to include it`
-  return null
-}
-
-/** Words in a path that suggest a GET changes state; such requests are never replayed. */
-const STATE_CHANGING = /logout|log-out|signout|sign-out|unsubscribe|delete|remove|cancel|confirm|activate|verify|reset|revoke/i
-
-/**
- * Words that make a dispatcher function a write, matched as whole words of its value
- * (`addToCart`, `wc_empty_cart`, `post.like`), not as substrings: `getOrders` and `likely` pass,
- * `getOrder` does not. Phrases match as runs of words.
- */
-const STATE_CHANGING_WORDS: readonly string[][] = [
-  'activate',
-  'apply',
-  'cancel',
-  'checkout',
-  'clear',
-  'confirm',
-  'delete',
-  'empty',
-  'follow',
-  'like',
-  'logout',
-  'order',
-  'pay',
-  'purchase',
-  'remove',
-  'reset',
-  'revoke',
-  'send',
-  'signout',
-  'submit',
-  'subscribe',
-  'trash',
-  'unfollow',
-  'unlike',
-  'unsubscribe',
-  'verify',
-  'vote',
-  'add to cart',
-  'log out',
-  'sign out',
-].map(phrase => phrase.split(' '))
-
-/** `addToCart` → `add to cart`, `wc_empty_cart` → `wc empty cart`, `user/get` → `user get`. */
-function valueWords(value: string): string[] {
-  return value
-    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-    .toLowerCase()
-    .split(/[^a-z\d]+/)
-    .filter(word => word !== '')
-}
-
-/** Whether a dispatcher value names a function that changes state (decision 0039). */
-function dispatchChangesState(value: string): boolean {
-  const words = valueWords(value)
-  return STATE_CHANGING_WORDS.some(phrase => words.some((_, start) => phrase.every((word, offset) => words[start + offset] === word)))
-}
-
 function skipReason(operation: Operation, config: ResolvedConfig['probe']): string | null {
-  if (operation.kind === 'bot-protection')
-    return 'bot-protection step: needs a real browser by design'
-  if (operation.sourceOnly)
-    return 'seen in code only: it was never called during capture, so there is no request to replay'
-  // A GraphQL operation's name is in its spec path; its type, not its name, says whether it is safe.
-  if (STATE_CHANGING.test(operation.graphql?.endpoint ?? operation.path))
-    return 'its path suggests it changes state (logout, unsubscribe, delete...), so it is never replayed'
-  const graphql = graphqlSkipReason(operation, config)
-  if (graphql !== null)
-    return graphql
-  // A dispatcher function's name (`getQuote`) can only stop a replay, never allow one (decision
-  // 0039): only the method says it is safe. Every GET function is replayed on its own, so its
-  // name is checked word by word.
-  if (operation.dispatch && dispatchChangesState(operation.dispatch.value))
-    return `dispatcher function ${operation.dispatch.value} suggests it changes state (add to cart, subscribe, delete...), so it is never replayed`
-  if (operation.dispatch && !isSafeOperation(operation) && !config.unsafeMethods)
-    return `${operation.method} dispatcher function ${operation.dispatch.value} can change data (its name is no evidence it only reads); pass --unsafe-methods to include it`
-  if (!isSafeOperation(operation) && !config.unsafeMethods)
-    return `${operation.method} can change data; pass --unsafe-methods to include it`
+  const reason = replaySkipReason(operation, config.unsafeMethods)
+  if (reason !== null)
+    return reason
   if (!representative(operation))
     return 'no successful response was captured'
   return null
