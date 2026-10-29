@@ -104,7 +104,8 @@ const RequiredListSchema = z.looseObject({
 
 const RequestBodySchema = z.looseObject({
   content: z.record(z.string(), z.looseObject({
-    schema: RequiredListSchema.optional(),
+    'schema': RequiredListSchema.optional(),
+    'x-site-to-api-content-type': z.string().optional(),
   })).optional(),
 })
 
@@ -290,6 +291,11 @@ export interface HostSpec {
    * which cookies probe confirmed (see emit/cookies). Empty before probing.
    */
   probedRequires: string[][]
+  /**
+   * `x-site-to-api-content-type` of JSON request bodies, keyed by `METHOD /path` as in the spec:
+   * the client sends JSON text under the content type the site used (see analyze/schema).
+   */
+  sentContentTypes: Record<string, string>
   /** GraphQL operations, sorted by operation id. */
   graphql: GraphqlClientOperation[]
 }
@@ -371,6 +377,7 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
     auth: readAuthSchemes(file, document, warnings),
     securedOperationIds: securedOperationIds.sort(),
     probedRequires: probedRequiresOf(document),
+    sentContentTypes: sentContentTypesOf(document),
     graphql: graphqlOperations.sort((a, b) => a.operationId.localeCompare(b.operationId)),
   }
 }
@@ -417,6 +424,34 @@ function readGraphql(operation: Operation, method: string, path: string, paramet
       : variablesIn === 'query' && queryParams.some(parameter => parameter.name === 'variables' && parameter.required),
     otherQuery: queryParams.filter(parameter => !GRAPHQL_FIELDS.has(parameter.name)),
   }
+}
+
+/** {@link sentContentType} of every operation that has one, keyed by `METHOD /path`, sorted. */
+function sentContentTypesOf(document: OpenApiDocument): Record<string, string> {
+  const entries = Object.entries(document.paths ?? {}).flatMap(([path, item]) => METHODS.flatMap((method) => {
+    const operation = item[method]
+    const sent = operation
+      ? sentContentType(operation)
+      : null
+    return sent === null
+      ? []
+      : [
+          [`${method.toUpperCase()} ${path}`, sent] as const,
+        ]
+  }))
+  return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
+}
+
+/**
+ * The content type to send a JSON body under, when the spec says the site used another one.
+ * Only an `application/json` body qualifies: that is the one hey-api serializes as JSON text.
+ */
+function sentContentType(operation: Operation): string | null {
+  const content = RequestBodySchema.safeParse(operation.requestBody).data?.content ?? {}
+  const sent = content['application/json']?.['x-site-to-api-content-type']
+  return sent === undefined || sent === '' || /[\r\n]/.test(sent)
+    ? null
+    : sent
 }
 
 function readAuthSchemes(file: string, document: OpenApiDocument, warnings: string[]): AuthScheme[] {

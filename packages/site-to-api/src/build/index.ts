@@ -19,7 +19,7 @@ import { createHtmlLocator, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
 import { createRedactor } from '../analyze/redact'
 import { inferOperationSchemas } from '../analyze/schema'
-import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findSourceEndpoints } from '../analyze/source'
+import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findSourceEndpoints, isOpaqueFrame } from '../analyze/source'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
 import { writeFlows } from '../emit/flows'
 import { clientGap, writeHandoffDocs } from '../emit/handoff'
@@ -102,12 +102,15 @@ function refKey(ref: SourceRef): string {
 function addCallSites(operations: Operation[], resolver: SourceResolver): Operation[] {
   return operations.map((operation) => {
     const counts = new Map<string, { ref: SourceRef, count: number }>()
+    let opaque = false
     for (const exchange of operation.exchanges) {
       if (!exchange.initiator || exchange.initiator.stack.length === 0)
         continue
       const ref = resolver.callSite(exchange.initiator.stack, exchange.sessionId)
-      if (!ref)
+      if (!ref) {
+        opaque ||= exchange.initiator.stack.some(isOpaqueFrame)
         continue
+      }
       const entry = counts.get(refKey(ref)) ?? { ref, count: 0 }
       entry.count++
       counts.set(refKey(ref), entry)
@@ -118,7 +121,9 @@ function addCallSites(operations: Operation[], resolver: SourceResolver): Operat
       .sort((a, b) => b.count - a.count || refKey(a.ref).localeCompare(refKey(b.ref)))
       .slice(0, 3)
       .map(entry => entry.ref)
-    return { ...operation, sentFrom }
+    return sentFrom.length === 0 && opaque
+      ? { ...operation, sentFrom, sourceUnavailable: true }
+      : { ...operation, sentFrom }
   })
 }
 

@@ -1,11 +1,14 @@
 /**
  * Excerpts of the site's code for the handoff folder's `source/` directory: the whole function
- * around a location in an original file, or a readable window of a minified bundle.
+ * around a location in an original file, or a readable window of a minified bundle. Each excerpt
+ * is a Markdown file with the code in a fence (decision 0032): a fragment is rarely valid code on
+ * its own (a bare class method, a block cut at the window's edge), and as a `.ts` file it broke
+ * every project that type-checks the handoff folder; `// @ts-nocheck` does not hide syntax errors.
  */
 import type { Program } from 'oxc-parser'
 import type { LoadedSession, SourceRef } from '../../model'
 import { Visitor } from 'oxc-parser'
-import { commentText } from '../../emit/escape'
+import { code, codeBlock } from '../../emit/escape'
 import { LineIndex, parseCode, walkWithFunctions } from './ast'
 import { findUnpacked, readSessionFile, urlHost, urlPath } from './files'
 
@@ -49,30 +52,53 @@ function withSuffix(path: string, suffix: string): string {
   return `${stem}.${suffix}${ext}`
 }
 
-/**
- * The header comment style for an excerpt. The header quotes the file path and URL, which come
- * from the site (sourcemap `sources`, script URLs), so the text is flattened to one line and
- * cannot close the comment early.
- */
-function commentFor(path: string): (line: string) => string {
-  return /\.(?:vue|svelte|html?|astro)$/i.test(path)
-    ? line => `<!-- ${commentText(line)} -->`
-    : line => `// ${commentText(line)}`
+const LANGUAGES: Record<string, string> = {
+  ts: 'ts',
+  mts: 'ts',
+  cts: 'ts',
+  tsx: 'tsx',
+  js: 'js',
+  mjs: 'js',
+  cjs: 'js',
+  jsx: 'jsx',
+  vue: 'vue',
+  svelte: 'svelte',
+  astro: 'astro',
+  html: 'html',
+  htm: 'html',
+}
+
+/** Info string of the code fence, from the original file's extension; `''` when unknown. */
+function languageOf(path: string): string {
+  const ext = /\.(\w+)$/.exec(path)?.[1]?.toLowerCase() ?? ''
+  return LANGUAGES[ext] ?? ''
 }
 
 /**
- * First line of JavaScript and TypeScript excerpts. They are fragments of the site's code (helpers
- * they call are not included), so a project that type-checks the handoff folder must skip them.
+ * The Markdown file of an excerpt: a heading, one line saying where the code comes from, and the
+ * code in a fence. The heading and the line quote the file path and URL, which come from the site
+ * (sourcemap `sources`, script URLs), so they are code spans that nothing in them can close; the
+ * fence is longer than any backtick run in the code.
  */
-function preamble(path: string): string[] {
-  return /\.[cm]?[jt]sx?$/i.test(path)
-    ? ['// @ts-nocheck']
-    : []
+function excerptMarkdown(title: string, about: string, body: string, language: string): string {
+  return [
+    `# ${title}`,
+    '',
+    about,
+    '',
+    ...codeBlock(body.split('\n'), language),
+    '',
+  ].join('\n')
+}
+
+/** `src/api.L10-42.ts` → `src/api.L10-42.ts.md`: never compiled, read as Markdown everywhere. */
+function markdownPath(path: string): string {
+  return `${path}.md`
 }
 
 function describe(ref: SourceRef): string {
-  return `${ref.file}:${ref.line}:${ref.column}${ref.functionName
-    ? ` (function ${ref.functionName})`
+  return `${code(`${ref.file}:${ref.line}:${ref.column}`)}${ref.functionName
+    ? ` (function ${code(ref.functionName)})`
     : ''}`
 }
 
@@ -109,16 +135,15 @@ function originalExcerpt(ref: SourceRef, text: string, sessionId: string): { pat
       what = 'the enclosing function'
     }
   }
-  const comment = commentFor(ref.file)
-  const header = [
-    ...preamble(ref.file),
-    comment(`site-to-api excerpt of ${describe(ref)}`),
-    comment(`Lines ${range.first}-${range.last} (${what}) of the original source, captured in session ${sessionId}.`),
-  ]
   const body = text.slice(lines.lineStart(range.first), lines.lineEnd(range.last))
   return {
-    path: withSuffix(safePath(ref.file), `L${range.first}-${range.last}`),
-    content: `${header.join('\n')}\n${body}\n`,
+    path: markdownPath(withSuffix(safePath(ref.file), `L${range.first}-${range.last}`)),
+    content: excerptMarkdown(
+      `Excerpt of ${describe(ref)}`,
+      `Lines ${range.first}-${range.last} (${what}) of the original source, captured in session ${code(sessionId)}.`,
+      body,
+      languageOf(ref.file),
+    ),
   }
 }
 
@@ -256,16 +281,21 @@ function statements(program: Program): StatementSpan[] {
 function bundleExcerpt(ref: SourceRef, text: string, host: string, url: string, sessionId: string): { path: string, content: string } {
   const lines = new LineIndex(text)
   const line = Math.min(Math.max(ref.line, 1), lines.lineCount)
-  const comment = commentFor(ref.file)
-  const path = `bundles/${safePath(host)}/${withSuffix(safePath(ref.file), `L${line}C${ref.column}`)}`
+  const path = markdownPath(`bundles/${safePath(host)}/${withSuffix(safePath(ref.file), `L${line}C${ref.column}`)}`)
+  const title = `Excerpt of ${describe(ref)} in ${code(url)}`
+  // A bundle is a script whatever its URL says (`load.php`, `/js?v=3`).
+  const language = 'js'
   if (!isMinifiedLine(text.slice(lines.lineStart(line), lines.lineEnd(line)))) {
     const range = lineWindow(lines, line)
-    const header = [
-      ...preamble(ref.file),
-      comment(`site-to-api excerpt of ${describe(ref)} in ${url}`),
-      comment(`Lines ${range.first}-${range.last} of the bundle (no sourcemap was available), captured in session ${sessionId}.`),
-    ]
-    return { path, content: `${header.join('\n')}\n${text.slice(lines.lineStart(range.first), lines.lineEnd(range.last))}\n` }
+    return {
+      path,
+      content: excerptMarkdown(
+        title,
+        `Lines ${range.first}-${range.last} of the bundle (no sourcemap was available), captured in session ${code(sessionId)}.`,
+        text.slice(lines.lineStart(range.first), lines.lineEnd(range.last)),
+        language,
+      ),
+    }
   }
 
   const offset = lines.offset(line, ref.column)
@@ -307,16 +337,20 @@ function bundleExcerpt(ref: SourceRef, text: string, host: string, url: string, 
       out += marker
     out += text[i]
   }
-  const header = [
-    ...preamble(ref.file),
-    comment(`site-to-api excerpt of ${describe(ref)} in ${url}`),
-    comment(`Characters ${start - lines.lineStart(line) + 1}-${end - lines.lineStart(line)} of minified line ${line}, split at statement boundaries; the marker shows the location. Captured in session ${sessionId}; no sourcemap was available.`),
-  ]
-  return { path, content: `${header.join('\n')}\n${out.trim()}\n` }
+  return {
+    path,
+    content: excerptMarkdown(
+      title,
+      `Characters ${start - lines.lineStart(line) + 1}-${end - lines.lineStart(line)} of minified line ${line}, split at statement boundaries; the marker shows the location. Captured in session ${code(sessionId)}; no sourcemap was available.`,
+      out.trim(),
+      language,
+    ),
+  }
 }
 
 /**
- * Builds the excerpt for a source reference in one session. Original files give the whole
+ * Builds the excerpt for a source reference in one session, as Markdown (`<path>.md`, see
+ * {@link excerptMarkdown}). Original files give the whole
  * enclosing function (up to 120 lines, otherwise 40 lines either side) under the original path;
  * minified bundle locations (one long line, or a shorter line packed with statements) give a
  * window of about 1,500 characters either side, broken at statement boundaries and closing

@@ -96,6 +96,18 @@ describe('inferSchema', () => {
     expect(inferSchema(s1(value, 'plain'))).toEqual({ type: 'string' })
   })
 
+  it('keeps a format only when the generated client\'s validator accepts every sample', () => {
+    // GitHub dates carry an offset; they are date-times, and the client must accept them.
+    expect(inferSchema(s1('2026-10-23T16:21:08.000-05:00', '2026-10-09T13:53:54.000+02:00'))).toEqual({ type: 'string', format: 'date-time' })
+    expect(inferSchema(s1('2026-10-23T16:21:08'))).toEqual({ type: 'string', format: 'date-time' })
+    // Shapes the regexes here accept but Zod rejects: offsets without a colon, a UUID with a
+    // non-RFC variant, an e-mail address without a real top-level domain, an impossible date.
+    expect(inferSchema(s1('2026-10-23T16:21:08+0530'))).toEqual({ type: 'string' })
+    expect(inferSchema(s1('123e4567-e89b-12d3-c456-426614174000'))).toEqual({ type: 'string' })
+    expect(inferSchema(s1('a@b.c'))).toEqual({ type: 'string' })
+    expect(inferSchema(s1('2026-02-30'))).toEqual({ type: 'string' })
+  })
+
   it('infers enums only with enough evidence', () => {
     expect(inferSchema(s1('NSE', 'BSE', 'NSE', 'BSE'))).toEqual({
       type: 'string',
@@ -239,8 +251,70 @@ describe('coerceStrings / inferStringSchema', () => {
     expect(coerceStrings(['true', 'false'])).toEqual([true, false])
     expect(coerceStrings(['1', 'x'])).toEqual(['1', 'x'])
     expect(coerceStrings(['007'])).toEqual(['007'])
+    expect(coerceStrings(['007', '120'], 'page')).toEqual(['007', '120'])
+  })
+
+  it('keeps digit codes as strings and real numbers as numbers', () => {
+    // IKEA `itemNos`, Spotify `totp`: codes by name, and by a fixed length of six or more digits.
+    expect(coerceStrings(['90529469'], 'itemNos')).toEqual(['90529469'])
+    expect(coerceStrings(['12', '345'], 'userId')).toEqual(['12', '345'])
+    expect(coerceStrings(['560001'], 'pincode')).toEqual(['560001'])
+    expect(coerceStrings(['123456', '654321'], 'totp')).toEqual(['123456', '654321'])
+    expect(coerceStrings(['123456', '654321'], 'value')).toEqual(['123456', '654321'])
+    expect(inferStringSchema([
+      { value: '90529469', sessionId: 's1' },
+    ], { name: 'itemNos' })).toMatchObject({ type: 'string' })
+    // Amounts, counts and pages stay numbers.
+    expect(coerceStrings(['1', '20'], 'page')).toEqual([1, 20])
+    expect(coerceStrings(['1500', '250000'], 'price')).toEqual([1500, 250000])
+    expect(coerceStrings(['2.5'], 'productId')).toEqual([2.5])
+    expect(coerceStrings(['3'], 'width')).toEqual([3])
+    expect(coerceStrings(['1', '2'], 'notes')).toEqual([1, 2])
     expect(inferStringSchema([
       { value: '10', sessionId: 's1' },
     ])).toEqual({ type: 'integer' })
+  })
+
+  it('matches code names as whole words or known compounds, never page numbers or counts', () => {
+    expect(coerceStrings(['1', '2', '3'], 'pageNumber')).toEqual([1, 2, 3])
+    expect(coerceStrings(['1', '2'], 'pageNo')).toEqual([1, 2])
+    expect(coerceStrings(['4'], 'numberOfGuests')).toEqual([4])
+    expect(coerceStrings(['1', '2'], 'encode')).toEqual([1, 2])
+    expect(coerceStrings(['0', '1'], 'decode')).toEqual([0, 1])
+    expect(coerceStrings(['91'], 'countryCode')).toEqual(['91'])
+    expect(coerceStrings(['400001'], 'postcode')).toEqual(['400001'])
+    expect(coerceStrings(['8901234567890'], 'barcode')).toEqual(['8901234567890'])
+    expect(coerceStrings(['9876543210'], 'phoneNumber')).toEqual(['9876543210'])
+  })
+
+  it('needs two different values for the fixed-length rule, and never takes Unix times for codes', () => {
+    expect(coerceStrings(['250000'], 'amount')).toEqual([250000])
+    expect(coerceStrings(['250000', '250000'], 'amount')).toEqual([250000, 250000])
+    expect(coerceStrings(['1730000000', '1730000500'], 'since')).toEqual([1730000000, 1730000500])
+    expect(coerceStrings(['1730000000001', '1730000000002'], 'since')).toEqual([1730000000001, 1730000000002])
+    expect(coerceStrings(['123456', '654321'], 'value')).toEqual(['123456', '654321'])
+  })
+})
+
+describe('enums of digit strings', () => {
+  it('never makes an enum when every value is all digits', () => {
+    for (const name of [
+      'storeCode',
+      'postalCode',
+      'zipCode',
+      'areaCode',
+      'countryCode',
+    ]) {
+      const schema = inferStringSchema(['1234', '1234', '5678', '5678'].map(value => ({ value, sessionId: 's1' })), { name })
+      expect(schema, name).toEqual({ type: 'string' })
+    }
+    const json = inferSchema(['1234', '1234', '5678', '5678'].map(value => ({
+      value: { storeCode: value },
+      sessionId: 's1',
+    })))
+    expect(json.properties?.storeCode).toEqual({ type: 'string' })
+    // Code words still get enums.
+    const letters = inferStringSchema(['IN', 'IN', 'US', 'US'].map(value => ({ value, sessionId: 's1' })), { name: 'countryCode' })
+    expect(letters.enum).toEqual(['IN', 'US'])
   })
 })

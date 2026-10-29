@@ -39,3 +39,5 @@ or `Proposed`.
 | [0029](0029-html-records-and-field-names.md) | HTML records that span siblings, ranked by coverage; names from the markup | Accepted |
 | [0030](0030-websocket-setup-messages-and-grouping.md) | WebSocket setup messages by role; discriminators chosen by how well they group (refines 0023) | Accepted |
 | [0031](0031-raw-capture-har-and-browser.md) | Raw capture: compact the HAR, name the bundled browser | Accepted |
+| [0032](0032-excerpts-as-markdown.md) | Source excerpts are Markdown files | Accepted |
+| [0034](0034-required-from-evidence.md) | `required` in responses needs two distinct requests; GraphQL variables follow the document | Accepted |

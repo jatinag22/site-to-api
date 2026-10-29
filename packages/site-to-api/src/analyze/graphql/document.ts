@@ -146,15 +146,16 @@ function definitionAt(tokens: Token[], i: number): OperationDefinition | 'fragme
   }
 }
 
-/**
- * The operations a document defines, in order, or null when the text is not a GraphQL
- * document (or defines no operation, only fragments).
- */
-export function readOperations(text: string): OperationDefinition[] | null {
-  const tokens = tokenize(text)
-  if (tokens === null || tokens.length === 0)
-    return null
-  const operations: OperationDefinition[] = []
+interface DefinitionSpan {
+  definition: OperationDefinition
+  /** Token index where the definition starts, and just past where it ends. */
+  start: number
+  end: number
+}
+
+/** The operation definitions of a token list, in order, or null when it is not a document. */
+function definitionSpans(tokens: Token[]): DefinitionSpan[] | null {
+  const spans: DefinitionSpan[] = []
   let i = 0
   while (i < tokens.length) {
     const definition = definitionAt(tokens, i)
@@ -164,11 +165,23 @@ export function readOperations(text: string): OperationDefinition[] | null {
     if (end === -1)
       return null
     if (definition !== 'fragment' && definition !== null)
-      operations.push(definition)
+      spans.push({ definition, start: i, end })
     i = end
   }
-  return operations.length > 0
-    ? operations
+  return spans
+}
+
+/**
+ * The operations a document defines, in order, or null when the text is not a GraphQL
+ * document (or defines no operation, only fragments).
+ */
+export function readOperations(text: string): OperationDefinition[] | null {
+  const tokens = tokenize(text)
+  if (tokens === null || tokens.length === 0)
+    return null
+  const spans = definitionSpans(tokens)
+  return spans !== null && spans.length > 0
+    ? spans.map(span => span.definition)
     : null
 }
 
@@ -193,4 +206,73 @@ export function normalizeDocument(text: string): string | null {
   return tokens === null
     ? null
     : tokens.map(token => token.text).join(' ')
+}
+
+/**
+ * Index of the last token of the type that starts at `from`: the named type itself, or the `]`
+ * that closes its outermost list. A `!` after that token makes the type non-null.
+ */
+function typeEnd(tokens: Token[], from: number, end: number): number {
+  let depth = 0
+  for (let j = from; j < end; j++) {
+    const token = tokens[j]!
+    if (token.text === '[')
+      depth++
+    if (token.text === ']')
+      depth--
+    if (depth === 0 && (token.text === ']' || token.kind === 'name'))
+      return j
+  }
+  return end
+}
+
+/** Whether a variable definition (`$`, name, `:`) starts at `tokens[i]`. */
+function startsVariable(tokens: Token[], i: number): boolean {
+  return tokens[i]?.text === '$' && tokens[i + 1]?.kind === 'name' && tokens[i + 2]?.text === ':'
+}
+
+/**
+ * Whether each variable the operation declares must be sent: non-null at the top level and
+ * without a default. `$id: Int!` and `$ids: [ID]!` must; `$id: Int`, `$ids: [ID!]` and
+ * `$first: Int! = 20` need not. Reads the variable definitions in
+ * `tokens[start..end)`, the span of one operation definition.
+ */
+function variableDefinitions(tokens: Token[], start: number, end: number): Map<string, boolean> {
+  const variables = new Map<string, boolean>()
+  const open = tokens.slice(start, end).findIndex(token => token.text === '(' || token.text === '{')
+  if (open === -1 || tokens[start + open]!.text !== '(')
+    return variables
+  // Defaults and directives never hold `$` at this level, so every `$ name :` starts a variable.
+  for (let i = start + open + 1; i < end && tokens[i]!.text !== ')'; i++) {
+    if (!startsVariable(tokens, i))
+      continue
+    const last = typeEnd(tokens, i + 3, end)
+    const nonNull = tokens[last + 1]?.text === '!'
+    const defaulted = tokens[nonNull
+      ? last + 2
+      : last + 1]?.text === '='
+    // A variable with a default may be left out, even when its type is non-null.
+    variables.set(tokens[i + 1]!.text, nonNull && !defaulted)
+    i = last
+  }
+  return variables
+}
+
+/**
+ * The variables of the operation a request runs (chosen as {@link selectOperation} does), each
+ * with whether it must be sent (non-null, no default). Null when the text is not a GraphQL document or does not
+ * say which operation runs.
+ */
+export function readVariables(text: string, operationName: string | null): Map<string, boolean> | null {
+  const tokens = tokenize(text)
+  const spans = tokens === null
+    ? null
+    : definitionSpans(tokens)
+  if (tokens === null || spans === null)
+    return null
+  const chosen = selectOperation(spans.map(span => span.definition), operationName)
+  const span = spans.find(item => item.definition === chosen)
+  return span === undefined
+    ? null
+    : variableDefinitions(tokens, span.start, span.end)
 }

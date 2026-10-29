@@ -14,10 +14,13 @@ import { join } from 'pathe'
  */
 export type ClientState = 'current' | 'stale' | 'none'
 
+const STATES: ClientState[] = ['current', 'stale', 'none']
+
+/** The last item of the reading order, without its number (4 or 5, depending on `source/`). */
 const READING_LINE: Record<ClientState, string> = {
-  current: '5. `client/`: typed client with Zod validation; see `client/README.md`.',
-  stale: '5. `client/`: from an earlier build and not regenerated (`--no-client`), so it may not match these specs; run `site-to-api gen`.',
-  none: '5. `client/`: not generated; run `site-to-api gen`. `API_MAP.md` names the functions it will have.',
+  current: '`client/`: typed client with Zod validation; see `client/README.md`.',
+  stale: '`client/`: from an earlier build and not regenerated (`--no-client`), so it may not match these specs; run `site-to-api gen`.',
+  none: '`client/`: not generated; run `site-to-api gen`. `API_MAP.md` names the functions it will have.',
 }
 
 const GAP: Record<ClientState, string | null> = {
@@ -32,9 +35,23 @@ const MAP_LINE: Record<ClientState, string> = {
   none: 'The Client column names what `site-to-api gen` will generate into `client/`; no client has been generated yet.',
 }
 
-/** Line 5 of the reading order in `AGENT.md`. */
-export function clientReadingLine(state: ClientState): string {
-  return READING_LINE[state]
+/** The client item of the reading order in `AGENT.md`, numbered `position`. */
+export function clientReadingLine(state: ClientState, position: number): string {
+  return `${position}. ${READING_LINE[state]}`
+}
+
+/** `[index, number]` of the reading-order line that describes the client, or null. */
+function findReadingLine(lines: readonly string[]): [number, number] | null {
+  for (const [index, line] of lines.entries()) {
+    const match = /^(\d+)\. (.*)$/.exec(line)
+    if (match && STATES.some(candidate => READING_LINE[candidate] === match[2])) {
+      return [
+        index,
+        Number(match[1]),
+      ]
+    }
+  }
+  return null
 }
 
 /** The `AGENT.md` gap for this client state (also printed by `build` as a warning), or `null`. */
@@ -47,16 +64,14 @@ export function apiMapClientLine(state: ClientState): string {
   return MAP_LINE[state]
 }
 
-const STATES: ClientState[] = ['current', 'stale', 'none']
-
 /** `AGENT.md` with the client line and gap for `state`, or `null` when the file has neither marker. */
 export function withClientState(guide: string, state: ClientState): string | null {
   const lines = guide.split('\n')
-  const reading = lines.findIndex(line => STATES.some(candidate => READING_LINE[candidate] === line))
+  const reading = findReadingLine(lines)
   const gaps = lines.indexOf('## Gaps')
-  if (reading === -1 || gaps === -1)
+  if (reading === null || gaps === -1)
     return null
-  lines[reading] = READING_LINE[state]
+  lines[reading[0]] = clientReadingLine(state, reading[1])
   const next = lines.findIndex((line, index) => index > gaps && line.startsWith('## '))
   const end = next === -1
     ? lines.length
