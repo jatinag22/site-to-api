@@ -34,6 +34,7 @@ packages/site-to-api/   CLI + analysis engine (published as `site-to-api`)
   src/analyze/          classify, operations, schema inference, correlate, flows, source, html, redact
   src/emit/             OpenAPI, flows.json/md, API_MAP.md, AGENT.md, excerpts
   src/probe/            live replay checks
+  src/check/            drift detection: probe's replay compared with the response schemas
   src/gen/              typed client generation (hey-api) and extraction parsers
 packages/runtime/       `@site-to-api/runtime`: cookie jar, retry, sessions, extract(); no Node-only APIs
 e2e/                    fixture website + full capture → build → probe → gen tests

@@ -50,3 +50,4 @@ or `Proposed`.
 | [0040](0040-page-locality-from-served-addresses.md) | Page locality from the addresses the browser used (refines 0019) | Accepted |
 | [0041](0041-compact-agent-md-and-host-files.md) | A short `AGENT.md` index and one `hosts/<host>.md` per host (refines 0011) | Accepted |
 | [0042](0042-secret-object-keys.md) | Secret and personal object keys: maps in schemas, shapes in examples (refines 0004, 0015) | Accepted |
+| [0044](0044-check-api-drift.md) | `check` replays safe requests and compares the answers with the specs to detect API drift (builds on 0012, 0036) | Accepted |

@@ -20,6 +20,7 @@ import { countSessions } from '../load'
 import { FlowsDocumentSchema } from '../model'
 import { probeOperations, summarizeProbe, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
+import { checkCommands } from './check'
 import { resolveConfig } from './program'
 
 function parseNumber(value: string): number {
@@ -255,4 +256,5 @@ export const pipelineCommands: CommandRegistrar[] = [
   buildCommand,
   probeCommand,
   genCommand,
+  ...checkCommands,
 ]
