@@ -8,6 +8,7 @@ import type { HostStems } from '../host-files'
 import type { StepResolver } from '../steps'
 import type { ClientState } from './client'
 import { cookieNeedsBrowser } from '../../model'
+import { browserOnlyCalls } from '../../probe'
 import { cellCode, text } from '../escape'
 import { responseSchemaName, sdkFunctionName } from '../naming'
 import { createStepResolver } from '../steps'
@@ -178,7 +179,9 @@ function capturedNeeds(operation: Operation, session: SessionRequirement | undef
     ...(operation.headers.some(header => header.name === 'authorization')
       ? ['token']
       : []),
-    ...(session?.requires === 'browser'
+    // A call that sends the bot-protection script's headers needs the browser even when the
+    // host's other calls work with plain HTTP (decision 0046).
+    ...(session?.requires === 'browser' || (session !== undefined && browserOnlyCalls(session, [operation]).length > 0)
       ? ['browser session']
       : []),
   ]

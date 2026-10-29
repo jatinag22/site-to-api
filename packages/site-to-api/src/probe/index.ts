@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 import { ProbeReportSchema } from '../model/probe'
 
-export { applyProbeReport, pageHostRequirements, requirementsByOperation } from './apply'
+export { alignProbeReport, applyProbeReport, browserOnlyCalls, pageHostRequirements, requirementsByOperation } from './apply'
 export { createReplayer, probeOperations } from './probe'
 export type { LiveReplay, ProbeOptions } from './probe'
 export { minimizeLimit, notMinimized, probeFailures, summarizeProbe } from './summary'

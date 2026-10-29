@@ -447,6 +447,57 @@ describe('probe evidence, qualified references and unknown methods', () => {
     expect(allDocs(unguarded, options)).not.toContain('bot-protection script\'s headers')
   })
 
+  it('keeps a plain-HTTP verdict and names the one call that needs a browser (Nike)', () => {
+    const analysis = fixture()
+    const kpsdk = {
+      name: 'x-kpsdk-ct',
+      required: true,
+      schema: { type: 'string' as const },
+      constant: false,
+    }
+    analysis.operations = analysis.operations.map(entry => ({
+      ...entry,
+      requires: entry.kind === 'api'
+        ? ['header:origin']
+        : null,
+    }))
+    analysis.operations.push(operation({
+      operationId: 'putApiCart',
+      method: 'PUT',
+      path: '/api/cart',
+      headers: [kpsdk],
+    }))
+    analysis.flows.session = analysis.flows.session.map(entry => ({
+      ...entry,
+      requires: 'none',
+      probed: true,
+      botProtection: [
+        { vendor: 'Kasada', evidence: 'request header x-kpsdk-ct' },
+      ],
+    }))
+    const context = {
+      toolVersion: '0.1.0',
+      examples: 'masked' as const,
+      probed: true,
+      client: 'current' as const,
+      probe: {
+        minimizePerHost: 5,
+        notMinimized: [],
+        failures: [],
+        triedHosts: ['shop.example'],
+        replayed: 2,
+        skipped: 0,
+      },
+    }
+    const guide = renderAgentGuide(analysis, context)
+    expect(guide).toContain('- `shop.example`: plain HTTP; requests need header `origin` (confirmed by probe); except `putApiCart`, which only a real browser can make (bot-protection headers);')
+    const doc = hostDoc(analysis, context, 'shop.example')
+    expect(doc).toContain('- Needs: plain HTTP works; requests need header `origin` (confirmed by probe).')
+    expect(doc).toContain('- Only a real browser can make this call, although the host\'s other calls work with plain HTTP: `putApiCart`.')
+    expect(doc).not.toContain('so only a real browser can make them')
+    expect(renderApiMap(analysis, 'current')).toMatch(/putApiCart[^\n]*browser session \(seen in capture\)/)
+  })
+
   it('says a host that only answered with challenge pages has no real content', () => {
     const analysis = fixture()
     const challenged = {
