@@ -249,6 +249,26 @@ describe('resemblesCapture', () => {
   })
 })
 
+describe('probeOperations: challenge tokens', () => {
+  it('never replays a request that carries a Cloudflare challenge token', async () => {
+    const page = op('getQuestions', 'GET', '/questions', {
+      url: 'https://x.test/questions?__cf_chl_tk=abc-1700000000-0-gaN',
+      resourceType: 'document',
+      responseBody: textBody('<html>'.padEnd(900, 'q')),
+    })
+    page.kind = 'page'
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [page],
+    })
+    expect(report.operations).toEqual([])
+    expect(report.skipped).toEqual([
+      { operationId: 'getQuestions', reason: 'no successful response was captured' },
+    ])
+  })
+})
+
 describe('probeOperations: challenge pages in the capture', () => {
   it('does not replay a page whose only successful samples were challenge pages', async () => {
     const page = op('getRoot', 'GET', '/', {

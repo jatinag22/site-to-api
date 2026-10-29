@@ -488,6 +488,25 @@ describe('createRedactor: bot protection', () => {
   })
 })
 
+describe('createRedactor: captcha and challenge tokens', () => {
+  it('redacts captcha answers and Cloudflare challenge tokens, constant or not', () => {
+    const turnstile = '0.Hq7ZpL2xVb9KmR4tWc8NyD3fJs6GaE1uYo5Tk0Xi.d62306d4ee00c77dda697f959ebbd7bd'
+    const items = ['s1', 's2'].map(sessionId => exchange({
+      method: 'POST',
+      url: 'https://shop.test/questions?__cf_chl_tk=Zq8Wm3Np5Rt7Vx9Bc2Df-1700000000-0-gaNycGzNCuU',
+      sessionId,
+      requestBody: jsonBody({ 'cf-turnstile-response': turnstile, 'g-recaptcha-response': 'r3c4ptch4-answer', 'h-captcha-response': 'hc4ptch4-answer' }),
+    }))
+    const r = redactor(items)
+    expect(r.value(turnstile, { in: 'form', name: 'cf-turnstile-response' })).toMatch(/^<redacted: /)
+    expect(r.value('r3c4ptch4-answer', { in: 'body', name: 'g-recaptcha-response' })).toMatch(/^<redacted: /)
+    expect(r.value('hc4ptch4-answer', { in: 'body', name: 'h-captcha-response' })).toMatch(/^<redacted: /)
+    for (const name of ['__cf_chl_tk', '__cf_chl_rt_tk', '__cf_chl_f_tk'])
+      expect(r.value('Zq8Wm3Np5Rt7Vx9Bc2Df-1700000000-0-gaNycGzNCuU', { in: 'query', name })).toMatch(/^<redacted: /)
+    expect(r.value(`echo ${turnstile}`, { in: 'text' })).not.toContain('Hq7ZpL2x')
+  })
+})
+
 describe('createRedactor: free text and percent-encoding', () => {
   const withCookie = (value: string): Redactor => redactor([
     exchange({

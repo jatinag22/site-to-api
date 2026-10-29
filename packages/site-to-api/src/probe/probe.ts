@@ -52,10 +52,15 @@ interface Variant {
   cookies: Array<[string, string]>
 }
 
-/** The last successful exchange with real content: a challenge page answered 200 is not one. */
+/**
+ * The last successful exchange with real content: a challenge page answered 200 is not one, and
+ * neither is a request carrying a challenge token.
+ */
 function representative(operation: Operation): Exchange | null {
+  // A URL holding a Cloudflare challenge token (`?__cf_chl_tk=`) would replay the challenge answer.
   const successful = operation.exchanges.filter(exchange => exchange.response.status >= 200 && exchange.response.status < 300
-    && exchange.kind !== 'bot-protection')
+    && exchange.kind !== 'bot-protection'
+    && !exchange.request.query.some(item => /^__cf_chl_/i.test(item.name)))
   return successful.at(-1) ?? null
 }
 

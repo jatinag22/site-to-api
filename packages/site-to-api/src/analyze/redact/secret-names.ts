@@ -44,7 +44,14 @@ const SECRET_WORDS = new Set([
   'refresh',
   'nonce',
   'captcha',
+  // Captcha and challenge answers: `g-recaptcha-response`, `cf-turnstile-response`.
+  'recaptcha',
+  'hcaptcha',
+  'turnstile',
 ])
+
+/** Cloudflare challenge tokens in URLs: `__cf_chl_tk`, `__cf_chl_rt_tk`, `__cf_chl_f_tk`. */
+const CHALLENGE_TOKEN_NAME = /^__cf_chl_/i
 
 /**
  * Words that are secrets only in URLs and forms, where OAuth and SSO put one-time credentials
@@ -83,6 +90,8 @@ export function nameWords(name: string): string[] {
 export function isSecretName(name: string | null | undefined, inQuery = false): boolean {
   if (name === null || name === undefined || name === '')
     return false
+  if (CHALLENGE_TOKEN_NAME.test(name))
+    return true
   const parts = nameWords(name)
   if (parts.some(part => SECRET_WORDS.has(part) || (inQuery && QUERY_SECRET_WORDS.has(part))))
     return true
