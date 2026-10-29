@@ -17,6 +17,7 @@
 | `build` | all raw sessions, `probe.json` | `<outDir>/` including `client/` and `build.json` | none |
 | `probe` | raw sessions, `build.json` | `probe.json`, then rebuilds `<outDir>/` with the last build's options | the target site, rate limited |
 | `gen` | `<outDir>/specs`, `flows.json` | `<outDir>/client/`, client lines of `AGENT.md` and `API_MAP.md`, `build.json` | none |
+| `mcp [dir]` | `<outDir>/specs`, `flows.json`, `build.json`, `source/` (never raw captures) | nothing (stdio MCP server) | none, unless `--allow-calls` (the target site, rate limited, safe methods only by default) |
 | `config` | config sources | stdout | none |
 | `init` | nothing | `site-to-api.config.ts`, `.gitignore` entries | none |
 
@@ -91,7 +92,7 @@ See `docs/output-format.md` for the full specification.
   specs/<host>.yaml OpenAPI 3.1, with x-site-to-api-* extensions
   specs/<host>.asyncapi.yaml  AsyncAPI 3.0 for WebSocket channels, when there are any
   source/           code excerpts referenced by flows and specs
-  client/           generated TypeScript client (gen)
+  client/           generated TypeScript client (gen); client/mcp/ with gen.mcp
   probe.json        probe results (names only)
   build.json        options of the last build, reused by probe (gen updates its client entry)
 ```

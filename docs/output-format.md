@@ -263,6 +263,50 @@ HTTP only). Relative imports end in `.js`, so
 the client works under `moduleResolution` `bundler` and `nodenext`. The generated code needs
 `zod` 4 and `@site-to-api/runtime` in the consuming project.
 
+### `client/mcp/`
+
+Written only when `gen.mcp` is `read` or `write` (`--mcp [mode]` on `build`, `gen` and `probe`;
+decision 0043):
+
+- `server.ts`: an MCP server over stdio with one tool per operation, built with
+  `@modelcontextprotocol/server`. `read` gives a tool to every operation that does not change data
+  (GET, HEAD, OPTIONS and GraphQL queries, minus paths and dispatcher functions named as writes,
+  such as `/logout` or `addToCart`); `write` adds the rest. Bot-protection steps, endpoints seen
+  only in code and GraphQL subscriptions never get one. Tool names are the operation ids limited
+  to `A-Za-z0-9_-` and 64 characters (the host is added when two hosts share an id); input schemas
+  are the hey-api Zod schemas (`path`, `query`, `body`, `headers`, or `variables` for a GraphQL
+  operation); annotations say whether a tool reads or writes. Every call goes through
+  `createSiteClient`, at most `SITE_API_MAX_RPS` requests per second (default 1), without retries.
+  Credentials come only from `SITE_API_COOKIE_<HOST>` / `SITE_API_AUTH_<HOST>` (and the plain
+  names when there is one host); `SITE_API_BASE_URL_<HOST>` points it elsewhere. `<HOST>` is the
+  host's folder under `client/` in upper case.
+- `README.md`: the packages it needs, `claude mcp add` and a JSON configuration for other clients,
+  and the environment variables.
+
+`build.json` records `mcp` (the mode the client was generated with); `--mcp` is sticky like
+`--no-client`.
+
+## MCP server (`site-to-api mcp`)
+
+Not a file: `site-to-api mcp [dir]` serves the handoff folder (`outDir` by default) over stdio.
+It reads `specs/`, `flows.json`, `build.json` and `source/` only, never the raw captures. Tools,
+all read-only:
+
+| Tool | Returns |
+|---|---|
+| `list_hosts` | per host: base URL, spec files, operation counts by kind, session requirement (from `flows.json`), auth schemes, WebSocket channels; the flows and computed values |
+| `search_operations` | rows (id, method, path, kind, summary, GraphQL or dispatcher name, whether it changes data) matching every word of `query`, filtered by `host` and `kind`, paged with `limit`/`offset` |
+| `get_operation` | the spec slice without examples, each input with where its value comes from, session needs (`x-site-to-api-requires`, security), the client call, the flow steps, computed values and source references, and whether `call_operation` would send it |
+| `get_flow` | one flow of `flows.json`, each step with its method and path, and its computed values |
+| `get_examples` | the masked examples of parameters, request body and responses; refused when `build.json` says `raw` or is missing |
+| `get_source` | an excerpt by its `source/…md` path, or every excerpt linked to an operation; nothing outside `source/` |
+
+With `--allow-calls`, `call_operation` sends one request through `client/` under probe's rules:
+safe methods and GraphQL queries only unless `--unsafe-methods`, never bot-protection steps,
+code-only endpoints, subscriptions or state-changing paths, `--max-rps` (default `probe.maxRps`),
+no retries. Credentials: the same `SITE_API_*` variables as `client/mcp/`. It returns the status,
+content type and the validated body (cut at 50,000 characters).
+
 ## `probe.json`
 
 Written by `probe`; schema `ProbeReportSchema` in `src/model/probe.ts`. Per operation: whether the
@@ -298,6 +342,7 @@ Written by every `build` (and the rebuild `probe` runs): the options it ran with
   "examples": "none",
   "hosts": { "include": [], "exclude": [] },
   "client": false,
+  "mcp": "off",
   "sticky": ["gen.client", "redact.examples"]
 }
 ```

@@ -49,3 +49,4 @@ or `Proposed`.
 | [0039](0039-dispatcher-operations.md) | One operation per dispatcher function: `<endpoint>#<value>` paths and `x-site-to-api-dispatch` | Accepted |
 | [0040](0040-page-locality-from-served-addresses.md) | Page locality from the addresses the browser used (refines 0019) | Accepted |
 | [0042](0042-secret-object-keys.md) | Secret and personal object keys: maps in schemas, shapes in examples (refines 0004, 0015) | Accepted |
+| [0043](0043-mcp-servers.md) | MCP servers: `site-to-api mcp` for the handoff folder, `client/mcp/` per site (opt-in) | Accepted |

@@ -151,9 +151,10 @@ The full format is specified in [docs/output-format.md](docs/output-format.md).
 |---|---|
 | `init` | Writes `site-to-api.config.ts` and gitignores `.site-to-api/` |
 | `capture [url]` | Opens a browser and records everything until you close it. `--script <file>` drives it from code instead (a failing script or Ctrl+C still saves the session, marked incomplete, and exits 1); `--headless`; `--channel chrome\|msedge\|bundled`; `--user-data-dir` keeps logins |
-| `build` | Analyses every capture and writes the handoff folder, including the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client` |
+| `build` | Analyses every capture and writes the handoff folder, including the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client`, `--mcp [read\|write]` |
 | `probe` | Replays captured requests against the live site, rate limited, safe methods (and GraphQL queries) only unless `--unsafe-methods`; works out the needed cookies and headers for up to `--minimize-per-host <n>` operations per host (default 5); rebuilds the handoff folder with the flags of the last `build` (from `build.json`) and prints a summary |
-| `gen` | Regenerates only `client/` from an existing handoff folder (no raw captures needed) and updates the client lines of `AGENT.md` and `API_MAP.md` |
+| `gen` | Regenerates only `client/` from an existing handoff folder (no raw captures needed) and updates the client lines of `AGENT.md` and `API_MAP.md`. `--mcp [read\|write]` also writes `client/mcp/`, an MCP server for the site |
+| `mcp [dir]` | Serves the handoff folder to an AI agent as an MCP server over stdio (read-only tools; see [Use with AI agents](#use-with-ai-agents-mcp)). `--allow-calls` adds `call_operation`, `--unsafe-methods`, `--max-rps <n>` |
 | `config` | Prints the resolved config and where each value came from; `--json` for machine-readable output |
 
 Options every command accepts: `-c, --config <file>`, `--cwd <dir>`, `--raw-dir <dir>`,
@@ -192,7 +193,7 @@ Environment variables name a config key in upper snake case, with `__` between n
 (`true`, `0.5`, `["*.example.com"]`), otherwise as text.
 
 The flags and variables a `build` ran with (`--examples`, `--include`, `--exclude`,
-`--no-client`) are recorded in `build.json` and reused by `probe`, so probing does not undo them; flags and variables given to `probe` win.
+`--no-client`, `--mcp`) are recorded in `build.json` and reused by `probe`, so probing does not undo them; flags and variables given to `probe` win.
 
 ## Using the generated client
 
@@ -300,6 +301,50 @@ sends that parameter itself: `await sdk.getSymbolData({ query: { symbol } })`.
 replaces the configuration. Hosts that work with plain HTTP need no browser: leave out `session`, or
 use `tokenSession`. `api-handoff/client/README.md` says what each host needs, which operations are
 secured and how to send `auth`.
+
+## Use with AI agents (MCP)
+
+Two MCP servers, both over stdio (decision 0043).
+
+**Explore the handoff folder.** `site-to-api mcp` lets an agent look up one operation at a time
+instead of reading every spec. It reads only the redacted handoff files, never the raw captures.
+
+```sh
+claude mcp add site-api -- site-to-api mcp ./api-handoff
+```
+
+Tools: `list_hosts` (hosts, session needs, flows), `search_operations` (by words, host, kind),
+`get_operation` (spec slice, each input and where its value comes from, session needs, the client
+call), `get_flow`, `get_examples` (masked examples only; refused for `--examples raw` folders) and
+`get_source` (excerpts in `source/`). Other clients take the same command in their MCP settings
+(`"command": "site-to-api", "args": ["mcp", "./api-handoff"]`).
+
+`--allow-calls` adds `call_operation`, which sends a request through the generated client with
+probe's rules: safe methods and GraphQL queries only, never bot-protection steps or state-changing
+paths, rate limited (`--max-rps`, default 1 per second), no retries; `--unsafe-methods` allows
+writes. Credentials come only from environment variables you set:
+
+```sh
+claude mcp add site-api -e SITE_API_COOKIE='session=…' -e SITE_API_AUTH='Bearer …' \
+  -- site-to-api mcp ./api-handoff --allow-calls
+```
+
+With several hosts, use `SITE_API_COOKIE_<HOST>` / `SITE_API_AUTH_<HOST>` (the host's folder
+under `client/` in upper case, e.g. `SITE_API_COOKIE_SHOP_EXAMPLE_COM`); the plain names are then
+ignored, so a cookie is never sent to the wrong site.
+
+**A server for one site.** `site-to-api gen --mcp` (or `build --mcp`, or `gen: { mcp: 'read' }` in
+the config) writes `api-handoff/client/mcp/server.ts`: one tool per operation, input schemas from
+the generated Zod schemas, calls through the typed client. `read` (the default) exposes only
+operations that read; `--mcp write` adds the ones that change data. Bot-protection steps never get
+a tool. Run it with the same packages as the client plus the SDK:
+
+```sh
+npm install @modelcontextprotocol/server@2.4.0 zod @site-to-api/runtime && npm install -D tsx
+claude mcp add pinewood -e SITE_API_COOKIE='…' -- npx tsx ./api-handoff/client/mcp/server.ts
+```
+
+`api-handoff/client/mcp/README.md` lists its settings and a JSON configuration for other clients.
 
 ## How it compares
 
