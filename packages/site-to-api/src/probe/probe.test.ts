@@ -3,6 +3,7 @@ import type { Operation } from '../model'
 import { createServer } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { exchange, jsonBody, textBody } from '../../test/helpers'
+import { applyGraphqlTypes } from '../analyze/graphql'
 import { probeOperations, resemblesCapture } from './probe'
 
 let origin: string
@@ -45,6 +46,10 @@ const server = createServer((req, res) => {
   if (req.url === '/api/private') {
     const ok = cookie.includes('sid=good') && req.headers['x-api-key'] === 'k1'
     res.writeHead(ok ? 200 : 403, { 'content-type': 'application/json' }).end(ok ? '{"items":[1],"total":1}' : '{"error":"forbidden"}')
+    return
+  }
+  if (req.url?.startsWith('/graphql')) {
+    res.writeHead(200, { 'content-type': 'application/json' }).end('{"data":{"a":1}}')
     return
   }
   if (req.url === '/api/challenge') {
@@ -350,5 +355,135 @@ describe('probeOperations: failures and data-changing requests', () => {
     })
     expect(requests).toBe(before)
     expect(report.skipped[0]?.reason).toContain('changes state')
+  })
+})
+
+describe('probeOperations: GraphQL (decision 0027)', () => {
+  function graphqlOp(operationId: string, operationType: NonNullable<Operation['graphql']>['operationType'], method = 'POST'): Operation {
+    return {
+      ...op(operationId, method, `/graphql#${operationId}`, {
+        method,
+        url: method === 'GET'
+          ? `${origin}/graphql?operationName=${operationId}`
+          : `${origin}/graphql`,
+        requestBody: method === 'GET'
+          ? null
+          : jsonBody({ operationName: operationId, variables: {} }),
+        responseBody: jsonBody({
+          data: { a: 1 },
+        }),
+      }),
+      graphql: {
+        endpoint: '/graphql',
+        operationName: operationId,
+        operationType,
+        operationTypeFrom: operationType === 'unknown'
+          ? null
+          : 'document',
+        persistedQuery: null,
+        hashes: [],
+        document: null,
+        batched: false,
+        sent: {
+          body: ['operationName', 'variables'],
+          query: [],
+        },
+      },
+    }
+  }
+
+  it('replays queries sent with POST like GETs, bare and minimized', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        graphqlOp('ProductStock', 'query'),
+      ],
+    })
+    expect(report.skipped).toEqual([])
+    expect(report.operations[0]).toMatchObject({
+      operationId: 'ProductStock',
+      replay: 'ok',
+      bare: 'ok',
+      requires: [],
+    })
+  })
+
+  it('skips mutations and operations of unknown type unless --unsafe-methods, and then sends them once', async () => {
+    const operations = [
+      graphqlOp('AddToWishlist', 'mutation'),
+      graphqlOp('getAlbum', 'unknown'),
+    ]
+    const safe = await probeOperations({ toolVersion: 'test', config, operations })
+    expect(safe.operations).toEqual([])
+    expect(safe.skipped).toEqual([
+      { operationId: 'AddToWishlist', reason: 'GraphQL mutation AddToWishlist can change data; pass --unsafe-methods to include it' },
+      {
+        operationId: 'getAlbum',
+        reason: expect.stringMatching(/^GraphQL operation getAlbum has an unknown type .*--unsafe-methods/),
+      },
+    ])
+    const before = requests
+    const unsafe = await probeOperations({
+      toolVersion: 'test',
+      config: { ...config, unsafeMethods: true },
+      operations,
+    })
+    expect(requests - before).toBe(2)
+    expect(unsafe.operations.map(result => [result.operationId, result.bare, result.note])).toEqual([
+      [
+        'AddToWishlist',
+        'skipped',
+        expect.stringContaining('GraphQL mutation was replayed once only'),
+      ],
+      [
+        'getAlbum',
+        'skipped',
+        expect.stringContaining('GraphQL operation of unknown type was replayed once only'),
+      ],
+    ])
+  })
+
+  it('never replays a mutation whose type came from the site\'s code', async () => {
+    const [typed] = applyGraphqlTypes([
+      {
+        ...graphqlOp('saveRecentSearches', 'unknown'),
+        operationId: 'saveRecentSearches',
+      },
+    ], new Map([
+      [
+        `${new URL(origin).host} saveRecentSearches`,
+        ['mutation'],
+      ],
+    ]))
+    expect(typed?.graphql).toMatchObject({ operationType: 'mutation', operationTypeFrom: 'source' })
+    const before = requests
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: typed
+        ? [typed]
+        : [],
+    })
+    expect(requests - before).toBe(0)
+    expect(report.operations).toEqual([])
+    expect(report.skipped).toEqual([
+      { operationId: 'saveRecentSearches', reason: 'GraphQL mutation saveRecentSearches can change data; pass --unsafe-methods to include it' },
+    ])
+  })
+
+  it('never replays subscriptions, and treats a mutation sent with GET as a mutation', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config: { ...config, unsafeMethods: true },
+      operations: [
+        graphqlOp('OnTick', 'subscription'),
+        graphqlOp('Rename', 'mutation', 'GET'),
+      ],
+    })
+    expect(report.skipped).toEqual([
+      { operationId: 'OnTick', reason: 'GraphQL subscription OnTick: it streams over a long-lived connection, so it is never replayed' },
+    ])
+    expect(report.operations[0]).toMatchObject({ operationId: 'Rename', bare: 'skipped' })
   })
 })

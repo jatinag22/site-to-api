@@ -1,5 +1,6 @@
 /** Product page: details, reviews on demand and a polled live price. */
 import { fetchLivePrice, fetchProduct, fetchRelatedProducts, fetchReviews } from '../api/catalog'
+import { addToWishlist, fetchProductStock } from '../api/graphql'
 import { formatPrice, requireElement, textElement } from '../format'
 
 async function showReviews(productId: number): Promise<void> {
@@ -21,6 +22,16 @@ async function showRelatedProducts(productId: number): Promise<void> {
     item.append(link)
     return item
   }))
+}
+
+async function showStock(productId: number): Promise<void> {
+  const { quantity, stores } = await fetchProductStock(productId)
+  requireElement('#product-stock', HTMLSpanElement).textContent = `${quantity} in ${stores} stores`
+}
+
+async function saveToWishlist(productId: number): Promise<void> {
+  const count = await addToWishlist(productId)
+  requireElement('#wishlist-status', HTMLSpanElement).textContent = `Saved (${count} in wishlist)`
 }
 
 /** Polls the live price every `intervalMs` while the page is open. */
@@ -46,5 +57,7 @@ export async function renderProductPage(productId: number, pollMs: number): Prom
   requireElement('#product-price', HTMLElement).textContent = formatPrice(product.priceInr)
   requireElement('#reviews-button', HTMLButtonElement).addEventListener('click', () => void showReviews(productId))
   requireElement('#related-button', HTMLButtonElement).addEventListener('click', () => void showRelatedProducts(productId))
+  requireElement('#wishlist-button', HTMLButtonElement).addEventListener('click', () => void saveToWishlist(productId))
   startLivePricePolling(productId, pollMs)
+  await showStock(productId)
 }

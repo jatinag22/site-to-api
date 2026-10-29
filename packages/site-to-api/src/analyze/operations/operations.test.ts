@@ -1,6 +1,8 @@
 import type { Exchange, Operation, SourceRoute } from '../../model'
 import { describe, expect, it } from 'vitest'
+import { fakeHash, graphqlGet, graphqlPost } from '../../../test/graphql'
 import { exchange, jsonBody, textBody } from '../../../test/helpers'
+import { annotateGraphql } from '../graphql'
 import { isIdentifierLike, isStrongIdentifier } from './identifiers'
 import { operationIdFor, singular } from './naming'
 import { buildOperations } from './operations'
@@ -522,5 +524,135 @@ describe('buildOperations: sibling paths (decision 0031)', () => {
       get('/help/contact', article('a')),
       get('/help/shipping', article('b')),
     ]))).toEqual(['GET /help/contact', 'GET /help/shipping'])
+  })
+})
+
+describe('buildOperations: GraphQL (decision 0027)', () => {
+  const HASH_A = fakeHash('a1')
+  const HASH_B = fakeHash('b2')
+
+  it('gives every operation on a shared endpoint its own operation, id and spec path', () => {
+    const operations = build(annotateGraphql([
+      graphqlPost({
+        path: '/pathfinder/v2/query',
+        operationName: 'queryArtistOverview',
+        variables: { uri: 'a' },
+        hash: HASH_A,
+        data: { artistUnion: {} },
+      }),
+      graphqlPost({
+        path: '/pathfinder/v2/query',
+        operationName: 'queryArtistOverview',
+        variables: { uri: 'b' },
+        hash: HASH_A,
+        sessionId: 's2',
+      }),
+      graphqlPost({
+        path: '/pathfinder/v2/query',
+        operationName: 'searchDesktop',
+        variables: { searchTerm: 'x', limit: 10 },
+        hash: HASH_B,
+      }),
+      exchange({ url: 'https://api.example.test/api/items' }),
+    ]))
+    expect(operations.map(operation => [operation.operationId, operation.method, operation.path])).toEqual([
+      ['getApiItems', 'GET', '/api/items'],
+      ['queryArtistOverview', 'POST', '/pathfinder/v2/query#queryArtistOverview'],
+      ['searchDesktop', 'POST', '/pathfinder/v2/query#searchDesktop'],
+    ])
+    const artist = operations.find(operation => operation.operationId === 'queryArtistOverview')
+    expect(artist?.exchanges).toHaveLength(2)
+    expect(artist?.graphql).toEqual({
+      endpoint: '/pathfinder/v2/query',
+      operationName: 'queryArtistOverview',
+      operationType: 'unknown',
+      operationTypeFrom: null,
+      persistedQuery: { version: 1, sha256Hash: HASH_A },
+      hashes: [HASH_A],
+      document: null,
+      batched: false,
+      sent: {
+        body: ['extensions', 'operationName', 'variables'],
+        query: [],
+      },
+    })
+    expect(artist?.summary).toBe('GraphQL operation queryArtistOverview (POST /pathfinder/v2/query). Returns artistUnion.')
+  })
+
+  it('keeps the literal path when it names the operation, and never makes the hash a parameter', () => {
+    const operations = build(annotateGraphql([
+      graphqlGet({
+        path: `/api/v3/Header/${HASH_A}`,
+        operationName: 'Header',
+        variables: { a: 1 },
+        hash: HASH_A,
+      }),
+      graphqlGet({
+        path: `/api/v3/PdpCalendar/${HASH_B}`,
+        operationName: 'PdpCalendar',
+        variables: { id: '1' },
+        hash: HASH_B,
+      }),
+      graphqlGet({
+        path: `/api/v3/PdpCalendar/${HASH_B}`,
+        operationName: 'PdpCalendar',
+        variables: { id: '2' },
+        hash: HASH_B,
+        sessionId: 's2',
+      }),
+    ]))
+    expect(operations.map(operation => [operation.operationId, operation.path, operation.pathParams.length])).toEqual([
+      ['header', `/api/v3/Header/${HASH_A}`, 0],
+      ['pdpCalendar', `/api/v3/PdpCalendar/${HASH_B}`, 0],
+    ])
+    expect(operations[0]?.graphql).toMatchObject({ operationType: 'query', operationTypeFrom: 'get' })
+  })
+
+  it('groups a redeployed operation (new hash in the path) and keeps the latest hash', () => {
+    const operations = build(annotateGraphql([
+      graphqlGet({
+        path: `/api/v3/Header/${HASH_A}`,
+        operationName: 'Header',
+        variables: {},
+        hash: HASH_A,
+      }),
+      graphqlGet({
+        path: `/api/v3/Header/${HASH_B}`,
+        operationName: 'Header',
+        variables: {},
+        hash: HASH_B,
+        sessionId: 's2',
+      }),
+    ]))
+    expect(operations).toHaveLength(1)
+    expect(operations[0]?.path).toBe(`/api/v3/Header/${HASH_B}`)
+    expect(operations[0]?.graphql?.hashes).toEqual([HASH_A, HASH_B].sort())
+    expect(operations[0]?.graphql?.persistedQuery?.sha256Hash).toBe(HASH_B)
+  })
+
+  it('names operations without a name after their hash or document', () => {
+    const operations = build(annotateGraphql([
+      graphqlPost({ hash: HASH_A }),
+      graphqlPost({ query: '{ me { id } }' }),
+    ]))
+    expect(operations.map(operation => operation.operationId)).toEqual([
+      expect.stringMatching(/^graphqlDocument[0-9A-Za-z]{12}$/),
+      'graphqlPersistedA1a1a1a1a1a1',
+    ])
+    expect(operations.every(operation => operation.path.startsWith('/graphql#'))).toBe(true)
+  })
+
+  it('reads the type from a document and matches source routes against the endpoint', () => {
+    const operations = build(annotateGraphql([
+      graphqlPost({
+        query: 'mutation AddToCart($id: ID!) { addToCart(id: $id) { ok } }',
+        variables: { id: '1' },
+      }),
+    ]), [
+      route('/graphql', { method: 'POST' }),
+    ])
+    expect(operations.map(operation => [operation.operationId, operation.graphql?.operationType, operation.sourceOnly])).toEqual([
+      ['addToCart', 'mutation', false],
+    ])
   })
 })

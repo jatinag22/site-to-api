@@ -41,6 +41,7 @@ function printWarnings(warnings: string[]): void {
 interface CaptureFlags {
   session?: string
   headless?: boolean
+  minimized?: boolean
   channel?: string
   script?: string
   userDataDir?: string
@@ -52,7 +53,8 @@ const captureCommand: CommandRegistrar = (program) => {
     .description('open a browser, record everything while you use the site, then close the browser to finish')
     .argument('[url]', 'page to open first')
     .option('--session <id>', 'session id (default: <host>-<timestamp>)')
-    .option('--headless', 'run without a window (for scripted captures)')
+    .option('--headless', 'run without a window (for scripted captures; sites with bot protection often block it)')
+    .option('--minimized', 'a normal browser with its windows minimized, for scripted captures that should not take over the screen')
     .option('--channel <name>', 'browser channel, e.g. chrome, msedge, or "bundled" for Playwright\'s Chromium')
     .option('--script <file>', 'drive the browser with a script instead of by hand: export default async ({ page, baseUrl }) => {}')
     .option('--user-data-dir <dir>', 'reuse a browser profile so logins persist')
@@ -61,6 +63,7 @@ const captureCommand: CommandRegistrar = (program) => {
         capture: {
           browser: {
             headless: flags.headless,
+            minimized: flags.minimized,
             channel: flags.channel === 'bundled'
               ? null
               : flags.channel,
@@ -158,7 +161,7 @@ const probeCommand: CommandRegistrar = (program) => {
       .command('probe')
       .description('replay captured requests against the live site to learn what plain HTTP needs (rate limited, safe methods only by default), then rebuild the handoff folder with the options of the last build')
       .option('--max-rps <n>', 'requests per second', parseNumber)
-      .option('--unsafe-methods', 'also replay POST, PUT, PATCH and DELETE (they can change data on the site)')
+      .option('--unsafe-methods', 'also replay POST, PUT, PATCH and DELETE, GraphQL mutations and GraphQL operations of unknown type (they can change data on the site)')
       .option('--minimize-per-host <n>', 'operations per host whose required cookies and headers are worked out one by one (default 5)', parseCount),
     ' (default: as in the last build)',
   )

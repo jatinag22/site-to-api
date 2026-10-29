@@ -15,8 +15,9 @@ with a service you use. It is not a tool for getting around a site's rules.
 - Defeat or emulate bot protection, captchas, rate limits or access controls. Bot-protection
   steps are recorded as "needs a real browser" (decision 0008).
 - Hide that the browser is automated.
-- Replay requests that can change data (POST, PUT, PATCH, DELETE) unless you pass
-  `--unsafe-methods` to `probe`.
+- Replay requests that can change data (POST, PUT, PATCH, DELETE, GraphQL mutations and GraphQL
+  operations of unknown type) unless you pass `--unsafe-methods` to `probe`. GraphQL
+  subscriptions are never replayed.
 
 ## Keep it polite
 

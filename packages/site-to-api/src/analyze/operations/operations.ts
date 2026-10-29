@@ -2,7 +2,9 @@
  * Groups exchanges into operations by host + method + path template.
  */
 import type { Exchange, Operation, PathParam, SourceRoute } from '../../model'
+import type { GraphqlExchange } from '../graphql'
 import type { Evidence, Marks } from './templates'
+import { graphqlGroupKey, graphqlOperationId, graphqlOperationOf, graphqlSpecPath, graphqlSummary, isGraphqlExchange } from '../graphql'
 import { inferStringSchema } from '../schema'
 import { isSlug } from './identifiers'
 import { linkedSlugs } from './links'
@@ -243,7 +245,7 @@ function capitalize(phrase: string): string {
   return phrase.charAt(0).toUpperCase() + phrase.slice(1)
 }
 
-function emptyOperation(init: Pick<Operation, 'host' | 'method' | 'path' | 'kind' | 'pathParams' | 'summary' | 'exchanges' | 'sourceOnly' | 'methodUnknown'>): Operation {
+function emptyOperation(init: Pick<Operation, 'host' | 'method' | 'path' | 'kind' | 'pathParams' | 'summary' | 'exchanges' | 'sourceOnly' | 'methodUnknown' | 'graphql'>): Operation {
   return {
     operationId: '',
     query: [],
@@ -256,8 +258,48 @@ function emptyOperation(init: Pick<Operation, 'host' | 'method' | 'path' | 'kind
   }
 }
 
+/**
+ * One operation per GraphQL operation (decision 0027): requests that share an endpoint are told
+ * apart by operation name, persisted hash or document, never merged into one path template.
+ */
+function graphqlOperations(exchanges: Exchange[]): Operation[] {
+  const groups = new Map<string, GraphqlExchange[]>()
+  for (const exchange of exchanges) {
+    if (!isGraphqlExchange(exchange))
+      continue
+    const key = graphqlGroupKey(exchange)
+    groups.set(key, [
+      ...(groups.get(key) ?? []),
+      exchange,
+    ])
+  }
+  return [
+    ...groups.values(),
+  ].flatMap((group) => {
+    const [first, ...rest] = group
+    if (first === undefined)
+      return []
+    const graphql = graphqlOperationOf([first, ...rest])
+    const pathNamesOperation = group.every(exchange => exchange.graphql.pathNamesOperation)
+    return [
+      emptyOperation({
+        host: first.request.host,
+        method: first.request.method,
+        path: graphqlSpecPath(graphql, first.graphql.key, pathNamesOperation),
+        kind: 'api',
+        pathParams: [],
+        summary: graphqlSummary(graphql, first.request.method, group),
+        exchanges: group,
+        sourceOnly: false,
+        graphql,
+      }),
+    ]
+  })
+}
+
 function observedOperations(exchanges: Exchange[], routes: SourceRoute[]): Operation[] {
-  const relevant = exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind))
+  // GraphQL requests get their own operations; templating their paths would merge them.
+  const relevant = exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind) && !isGraphqlExchange(exchange))
   // 1. Parameter positions per host + method.
   const byHostMethod = new Map<string, Exchange[]>()
   for (const exchange of relevant) {
@@ -395,7 +437,7 @@ function sourceOnlyOperations(routes: SourceRoute[], observed: Operation[]): Ope
       seen.add(anyMethod)
       const matched = observed.some(operation => operation.host === host
         && (route.method === null || operation.method === method)
-        && templateMatches(template, segmentsOf(operation.path)))
+        && templateMatches(template, segmentsOf(operation.graphql?.endpoint ?? operation.path)))
       if (matched)
         continue
       result.push(sourceOnlyOperation(route, host, template))
@@ -414,7 +456,9 @@ function assignOperationIds(operations: Operation[]): Operation[] {
   return sorted.map((operation) => {
     const ids = used.get(operation.host) ?? new Set<string>()
     used.set(operation.host, ids)
-    const base = operationIdFor(operation.method, operation.path)
+    const base = operation.graphql
+      ? graphqlOperationId(operation.graphql, operation.exchanges[0]?.graphql?.key ?? '')
+      : operationIdFor(operation.method, operation.path)
     let id = base
     for (let suffix = 2; ids.has(id); suffix++)
       id = `${base}${suffix}`
@@ -431,7 +475,10 @@ function assignOperationIds(operations: Operation[]): Operation[] {
  * @returns operations sorted by host, path, method
  */
 export function buildOperations(exchanges: Exchange[], options: BuildOperationsOptions): Operation[] {
-  const observed = observedOperations(exchanges, options.sourceRoutes)
+  const observed = [
+    ...observedOperations(exchanges, options.sourceRoutes),
+    ...graphqlOperations(exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind))),
+  ]
   return assignOperationIds([
     ...observed,
     ...sourceOnlyOperations(options.sourceRoutes, observed),

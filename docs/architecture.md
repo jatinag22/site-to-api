@@ -32,7 +32,9 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    `asset` or `noise` using resource type, media type, host lists and bot-protection signatures
    (Akamai, Cloudflare, PerimeterX, DataDome, Imperva, Kasada, reCAPTCHA, hCaptcha, Turnstile).
 3. **operations** (`src/analyze/operations`): groups exchanges into operations by host + method +
-   path template. Path parameters come from source route templates, value tracing, variation
+   path template. GraphQL requests, recognised by content and split out of batches by
+   `src/analyze/graphql` first, become one operation per GraphQL operation instead (decision
+   0027); the source stage reads the site's code for the type of persisted queries. Path parameters come from source route templates, value tracing, variation
    across samples, ID-like segments (UUID, hex, base58, numbers, upper-case slugs) and sibling
    paths whose word values the capture shows are data (decision 0031).
 4. **schema** (`src/analyze/schema`): infers JSON Schema for query, headers, request bodies and
