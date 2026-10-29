@@ -1,4 +1,4 @@
-import type { LoadedConfig } from '../config/load'
+import type { LoadConfigOptions, LoadedConfig } from '../config/load'
 import process from 'node:process'
 import { Command } from 'commander'
 import { consola } from 'consola'
@@ -19,7 +19,7 @@ interface CommandContext extends LoadedConfig {
 }
 
 /** Loads config for a command, layering this command's flags on top. */
-export async function resolveConfig(command: Command, flags: Record<string, unknown> = {}): Promise<CommandContext> {
+export async function resolveConfig(command: Command, flags: Record<string, unknown> = {}, load: Pick<LoadConfigOptions, 'code'> = {}): Promise<CommandContext> {
   const options = command.optsWithGlobals<GlobalOptions>()
   const cwd = options.cwd ?? process.cwd()
   const loaded = await loadConfig({
@@ -27,6 +27,7 @@ export async function resolveConfig(command: Command, flags: Record<string, unkn
     configFile: options.config ?? null,
     env: process.env,
     flags: { rawDir: options.rawDir, outDir: options.outDir, ...flags },
+    ...load,
   })
   return { ...loaded, cwd }
 }
