@@ -3,6 +3,7 @@
  * `/api/stock.txt` requires, then shows that store's stock.
  */
 import { apiFetch } from '../api/client'
+import { fetchStoreHours } from '../api/graphql'
 import { requireElement, textElement } from '../format'
 
 interface StockLine {
@@ -44,7 +45,15 @@ async function showStoreStock(): Promise<void> {
     : 'sold out'}`)))
 }
 
+async function showStoreHours(slug: string): Promise<void> {
+  const { hours, open } = await fetchStoreHours(slug)
+  requireElement('#store-hours-live', HTMLParagraphElement).textContent = `${open ? 'Open now' : 'Closed'}: ${hours}`
+}
+
 export async function renderStorePage(slug: string): Promise<void> {
   rememberStore(slug)
-  await showStoreStock()
+  await Promise.all([
+    showStoreHours(slug),
+    showStoreStock(),
+  ])
 }

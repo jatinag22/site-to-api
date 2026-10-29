@@ -1,6 +1,7 @@
 import type { Analysis, Operation } from '../../model'
 import { describe, expect, it } from 'vitest'
 import { channelMessage, tickerChannel } from '../../../test/channels'
+import { fakeHash, graphqlAnalysis, graphqlGet, graphqlPost } from '../../../test/graphql'
 import { HOSTILE, injected, renderMarkdown } from '../../../test/markdown'
 import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { renderAgentGuide } from './agent-guide'
@@ -781,5 +782,66 @@ describe('real-time channels', () => {
     expect(rows).toHaveLength(2)
     for (const row of rows)
       expect(row.match(/<t[dh][\s>]/g)).toHaveLength(8)
+  })
+})
+
+describe('graphQL operations (decision 0027)', () => {
+  const HASH = fakeHash('5e')
+  const context = {
+    toolVersion: '0.1.0',
+    examples: 'masked',
+    probed: false,
+    client: 'current',
+    probe: null,
+  } as const
+  const analysis = graphqlAnalysis([
+    graphqlPost({
+      path: '/pathfinder/v2/query',
+      operationName: 'queryArtistOverview',
+      variables: { uri: 'spotify:artist:1', limit: 10 },
+      hash: HASH,
+    }),
+    graphqlPost({
+      path: '/pathfinder/v2/query',
+      query: 'mutation AddToWishlist($id: Int!) { addToWishlist(id: $id) { count } }',
+      variables: { id: 1 },
+    }),
+    graphqlGet({
+      operationName: 'StoreHours',
+      variables: { slug: 'pine-hill' },
+      hash: HASH,
+    }),
+  ], 'api.example.test')
+
+  it('lists the operations per endpoint in AGENT.md with type, hash, variables and the client call', () => {
+    const guide = renderAgentGuide(analysis, context)
+    const section = guide.split('## GraphQL operations')[1]?.split('\n## ')[0] ?? ''
+    expect(section).toContain('### `GET api.example.test/graphql`')
+    expect(section).toContain('### `POST api.example.test/pathfinder/v2/query`')
+    expect(section).toContain('- `AddToWishlist`: mutation (from the query document), sends the query document, variables `id: integer`. Client: `sdk.addToWishlist({ variables })`; spec path `/pathfinder/v2/query#AddToWishlist`.')
+    expect(section).toContain(`- \`queryArtistOverview\`: type unknown (no query document, and the site's code did not say), so \`probe\` skips it unless \`--unsafe-methods\`, persisted query \`${HASH}\`, variables \`uri: string\`, \`limit: integer\`.`)
+    expect(section).toContain('- `StoreHours`: query (sent with GET, which GraphQL allows for queries only)')
+  })
+
+  it('adds a table per endpoint to API_MAP.md and marks the rows of the host table', () => {
+    const map = renderApiMap(analysis, 'current')
+    expect(map).toContain('## GraphQL operations')
+    expect(map).toContain(`| \`queryArtistOverview\` | unknown | \`${HASH}\` | \`uri: string\`, \`limit: integer\` | \`sdk.queryArtistOverview({ variables })\` |`)
+    expect(map).toContain('| `AddToWishlist` | mutation (from the query document) | none, sends the document | `id: integer` | `sdk.addToWishlist({ variables })` |')
+    const row = map.split('\n').find(line => line.startsWith('| `storeHours` |')) ?? ''
+    expect(row).toContain('| api (GraphQL query) |')
+    expect(row).toContain('`sdk.storeHours({ variables })`, `zStoreHoursResponse`')
+  })
+
+  it('cannot be injected through operation and variable names', () => {
+    const hostile = graphqlAnalysis([
+      graphqlPost({
+        operationName: HOSTILE,
+        variables: { [HOSTILE]: 1 },
+        hash: HASH,
+      }),
+    ], 'api.example.test')
+    expect(injected(renderMarkdown(renderAgentGuide(hostile, context)))).toEqual([])
+    expect(injected(renderMarkdown(renderApiMap(hostile, 'current')))).toEqual([])
   })
 })
