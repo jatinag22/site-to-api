@@ -2,6 +2,7 @@ import type { Analysis, Operation } from '../../model'
 import { describe, expect, it } from 'vitest'
 import { channelMessage, tickerChannel } from '../../../test/channels'
 import { fakeHash, graphqlAnalysis, graphqlGet, graphqlPost } from '../../../test/graphql'
+import { exchange } from '../../../test/helpers'
 import { HOSTILE, injected, renderMarkdown } from '../../../test/markdown'
 import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { renderAgentGuide } from './agent-guide'
@@ -388,6 +389,96 @@ describe('probe evidence, qualified references and unknown methods', () => {
     expect(guide).toContain('- Cookie `_abck`: set by a script in the page; only a real browser produces its value. Seen in capture, but none of the 2 requests probe tested needed it.')
     expect(guide).toContain('`probe` did not work out which cookies and headers 1 operation on `shop.example` need (`getDeals`): it minimizes at most 5 operations per host (`probe.minimizePerHost`)')
     expect(guide).toContain('`site-to-api probe --minimize-per-host 6`')
+  })
+
+  it('names the calls that send bot-protection headers on a protected host', () => {
+    const analysis = fixture()
+    analysis.operations.push(operation({
+      operationId: 'putApiCart',
+      method: 'PUT',
+      path: '/api/cart',
+      headers: [
+        {
+          name: 'x-kpsdk-ct',
+          required: true,
+          schema: { type: 'string' },
+          constant: false,
+        },
+      ],
+    }))
+    const options = {
+      toolVersion: '0.1.0',
+      examples: 'masked' as const,
+      probed: false,
+      client: 'current' as const,
+      probe: null,
+    }
+    expect(renderAgentGuide(analysis, options)).toContain('- Calls that send the bot-protection script\'s headers, so only a real browser can make them: `putApiCart`.')
+    const unguarded = fixture()
+    expect(renderAgentGuide(unguarded, options)).not.toContain('bot-protection script\'s headers')
+  })
+
+  it('says a host that only answered with challenge pages has no real content', () => {
+    const analysis = fixture()
+    const challenged = {
+      ...exchange({ url: 'https://blocked.example/', resourceType: 'document' }),
+      kind: 'bot-protection' as const,
+      kindReason: 'Challenge page: challenge page (title "prove your humanity")',
+    }
+    analysis.operations.push(operation({
+      operationId: 'getRoot',
+      method: 'GET',
+      path: '/',
+      host: 'blocked.example',
+      kind: 'bot-protection',
+      exchanges: [challenged],
+    }))
+    analysis.flows.session.push({
+      host: 'blocked.example',
+      requires: 'browser',
+      cookies: [],
+      botProtection: [
+        { vendor: 'Challenge page', evidence: 'challenge page (title "prove your humanity")' },
+      ],
+      probed: false,
+    })
+    const guide = renderAgentGuide(analysis, {
+      toolVersion: '0.1.0',
+      examples: 'masked',
+      probed: false,
+      client: 'current',
+      probe: null,
+    })
+    const section = guide.slice(guide.indexOf('### blocked.example'), guide.indexOf('### shop.example'))
+    expect(section).toContain('- No real content: every response this host gave the capture was a bot challenge or block page')
+    expect(guide.slice(guide.indexOf('### shop.example'))).not.toContain('No real content')
+    expect(guide.split('\n')[2]).toBe('**The capture holds no real content for `blocked.example`**: every page and call it answered was a bot challenge or block page. Its specs describe the interstitial, not the site; capture again with a browser session the site lets through.')
+  })
+
+  it('does not present a captcha vendor\'s host as an API the folder documents', () => {
+    const analysis = fixture()
+    const frame = {
+      ...exchange({ url: 'https://captcha.example/recaptcha/api2/anchor', resourceType: 'document' }),
+      kind: 'bot-protection' as const,
+      kindReason: 'reCAPTCHA: request to captcha.example/recaptcha/…',
+    }
+    analysis.hosts = ['captcha.example', 'shop.example']
+    analysis.operations.push(operation({
+      operationId: 'getAnchor',
+      method: 'GET',
+      path: '/recaptcha/api2/anchor',
+      host: 'captcha.example',
+      kind: 'bot-protection',
+      exchanges: [frame],
+    }))
+    const guide = renderAgentGuide(analysis, {
+      toolVersion: '0.1.0',
+      examples: 'masked',
+      probed: false,
+      client: 'current',
+      probe: null,
+    })
+    expect(guide).toContain('This folder documents the internal API behind `shop.example`, generated')
   })
 
   it('says "method unknown" instead of presenting the placeholder method', () => {

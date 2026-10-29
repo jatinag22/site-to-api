@@ -12,10 +12,17 @@ const LEGACY_MINIMIZE_PER_HOST = 5
  * What happened to one replayed operation: `bare` worked with no cookies or auth (`requires` is
  * `[]`), `minimized` had its needs worked out one by one, `limit` worked as captured but its host
  * had used up `minimizePerHost`, `once` is a data-changing method sent once and not repeated,
- * `rejected` means the captured session was not accepted any more, `unreachable` that the host
+ * `challenged` that the site answered with a bot challenge page, `rejected` that the captured
+ * session was not accepted any more, `unreachable` that the host
  * could not be reached.
  */
-export type ProbeResultKind = 'bare' | 'minimized' | 'limit' | 'once' | 'rejected' | 'unreachable'
+export type ProbeResultKind = 'bare' | 'minimized' | 'limit' | 'once' | 'challenged' | 'rejected' | 'unreachable'
+
+/**
+ * Note of a replay the site answered with a bot challenge or block page: the site does not let
+ * this machine's plain HTTP through, which says nothing about whether the session expired.
+ */
+export const CHALLENGED_NOTE = 'The site answered with a bot challenge page instead of the captured response: it does not let plain HTTP from here through, so nothing about the session was concluded. Use a real browser session (`browserSession` in `@site-to-api/runtime`).'
 
 /** Classifies one entry of `probe.json`. */
 export function probeResultKind(probe: OperationProbe): ProbeResultKind {
@@ -28,8 +35,11 @@ export function probeResultKind(probe: OperationProbe): ProbeResultKind {
   }
   if (probe.bare === 'skipped')
     return 'once'
-  if (probe.replay !== 'ok')
-    return 'rejected'
+  if (probe.replay !== 'ok') {
+    return probe.note === CHALLENGED_NOTE
+      ? 'challenged'
+      : 'rejected'
+  }
   return 'limit'
 }
 
@@ -89,6 +99,8 @@ export function summarizeProbe(report: ProbeReport): string[] {
     lines.push(`- Not minimized, limit of ${limit} per host reached (probe.minimizePerHost): ${limited.length} (${list(limited)}). Run again with --minimize-per-host ${limit + limited.length} to test them.`)
   if (ids('once').length > 0)
     lines.push(`- Not minimized, data-changing method replayed once only: ${ids('once').length} (${list(ids('once'))}).`)
+  if (ids('challenged').length > 0)
+    lines.push(`- Not minimized, the site answered with a bot challenge page: ${ids('challenged').length} (${list(ids('challenged'))}). It does not let plain HTTP through; use a real browser session.`)
   if (ids('rejected').length > 0)
     lines.push(`- Not minimized, the captured session was not accepted any more: ${ids('rejected').length} (${list(ids('rejected'))}). Capture again shortly before probing.`)
   if (ids('unreachable').length > 0)

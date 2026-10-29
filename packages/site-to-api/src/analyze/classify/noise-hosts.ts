@@ -85,11 +85,48 @@ const NOISE_DOMAINS: readonly string[] = [
   'browser-intake-datadoghq.eu',
   'datadoghq-browser-agent.com',
   'rum.hlx.page',
+  // Akamai mPulse real-user monitoring (boomerang beacons and config)
+  'go-mpulse.net',
+  'akstat.io',
+  'telemetry.algolia.com',
+  'insights.algolia.io',
+  'intake-analytics.wikimedia.org',
+  'intake-logging.wikimedia.org',
   'cloudflareinsights.com',
   'speedcurve.com',
   'raygun.io',
   'rollbar.com',
   'trackjs.com',
+  // Header bidding (Prebid partners and identity syncs) and supply-side platforms seen on
+  // Stack Overflow: ID5, Kargo, Media.net, Aditude, AppNexus/Xandr, TripleLift, Sharethrough,
+  // Index Exchange, 33Across, Amobee (turn.com), Moloco, Yahoo, Epsilon (dotomi), Simpli.fi
+  'id5-sync.com',
+  'eu-1-id5-sync.com',
+  'kargo.com',
+  'media.net',
+  'aditude.io',
+  'aditude.cloud',
+  'prebid.cloud',
+  'adnxs-simple.com',
+  '3lift.com',
+  'sharethrough.com',
+  'indexww.com',
+  '33across.com',
+  'turn.com',
+  'amspbs.com',
+  'brand-display.com',
+  'adtrafficquality.google',
+  'dsp-api.moloco.com',
+  'mxptint.net',
+  'ssp.wp.pl',
+  'ad-m.asia',
+  'blismedia.com',
+  'simpli.fi',
+  'analytics.yahoo.com',
+  'dotomi.com',
+  'lijit.com',
+  'gumgum.com',
+  'doubleverify.com',
   // Ad networks and measurement
   'adnxs.com',
   'criteo.com',
@@ -118,6 +155,15 @@ const NOISE_DOMAINS: readonly string[] = [
   'exelator.com',
   'rlcdn.com',
   'tapad.com',
+  // Experimentation and session analytics: Optimizely's event API (logx), Contentsquare
+  'logx.optimizely.com',
+  'contentsquare.com',
+  // Ad retargeting and attribution: RTB House, Amazon Ads, Singular, Reddit and Pinterest pixels
+  'creativecdn.com',
+  'singular.net',
+  'pixel-config.reddit.com',
+  'trk.pinterest.com',
+  'analytics-ipv6.tiktokw.us',
   // Attribution and marketing automation
   'branch.io',
   'app.link',
@@ -154,6 +200,23 @@ const NOISE_DOMAINS: readonly string[] = [
   'quantcast.com',
 ]
 
+/**
+ * Telemetry hosts named by convention rather than one domain: server-side Google Tag Manager runs
+ * on a first-party `sgtm.` subdomain, and Amazon's client telemetry on `unagi[-region].amazon.<tld>`.
+ */
+const NOISE_HOST_PATTERNS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
+  { pattern: /^sgtm\./, label: 'server-side Google Tag Manager (sgtm.*)' },
+  { pattern: /^unagi(?:-[a-z]+)?\.amazon\.[a-z.]+$/, label: 'Amazon client telemetry (unagi)' },
+]
+
+/**
+ * Analytics paths on any host: Google Analytics 4 hits sent through a first-party server-side tag
+ * manager (`collect.shop.com/g/collect?v=2&tid=G-…`).
+ */
+const NOISE_PATHS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
+  { pattern: /^\/[gj]\/collect$/, label: 'Google Analytics hits (/g/collect)' },
+]
+
 /** Noise on domains that also serve real content: host suffix + path prefix. */
 const NOISE_ENDPOINTS: ReadonlyArray<{ domain: string, pathPrefix: string }> = [
   { domain: 'www.facebook.com', pathPrefix: '/tr' },
@@ -162,7 +225,30 @@ const NOISE_ENDPOINTS: ReadonlyArray<{ domain: string, pathPrefix: string }> = [
   { domain: 'www.google.com', pathPrefix: '/ccm/' },
   { domain: 'www.youtube.com', pathPrefix: '/api/stats/' },
   { domain: 'www.linkedin.com', pathPrefix: '/li/track' },
+  // Datadog RUM through the app host; Algolia's client pinging its search hosts for health.
+  { domain: 'datadoghq.com', pathPrefix: '/rum/' },
+  { domain: 'datadoghq.eu', pathPrefix: '/rum/' },
+  { domain: 'algolia.net', pathPrefix: '/1/isalive' },
+  // Retail ad-exchange beacons on a shop's own host (Temu's cookie-matching pixels)
+  { domain: 'temu.com', pathPrefix: '/api/adx/' },
+  { domain: 'algolianet.com', pathPrefix: '/1/isalive' },
 ]
+
+/** `<app>-1.algolianet.com`: the Algolia client's fallback copies of `<app>-dsn.algolia.net`. */
+const ALGOLIA_MIRROR = /^([a-z0-9]+)-\d+\.algolianet\.com$/i
+
+/**
+ * The host a fallback mirror duplicates, when that host is in `hosts`: the Algolia client retries
+ * the same query on `<app>-1..3.algolianet.com` when `<app>-dsn.algolia.net` is slow, so their
+ * operations would repeat the main host's. `null` for any other host, or when the capture only
+ * reached the mirror.
+ */
+export function mirrorOf(host: string, hosts: ReadonlySet<string>): string | null {
+  const app = ALGOLIA_MIRROR.exec(host.replace(/:\d+$/, ''))?.[1]?.toLowerCase()
+  if (app === undefined)
+    return null
+  return [`${app}-dsn.algolia.net`, `${app}.algolia.net`].find(candidate => hosts.has(candidate)) ?? null
+}
 
 /** True when `host` is `domain` or one of its subdomains. */
 export function hostMatchesDomain(host: string, domain: string): boolean {
@@ -175,6 +261,13 @@ export function findNoise(host: string, path: string): string | null {
   const domain = NOISE_DOMAINS.find(entry => hostMatchesDomain(host, entry))
   if (domain)
     return domain
+  const hostname = host.replace(/:\d+$/, '').toLowerCase()
+  const named = NOISE_HOST_PATTERNS.find(entry => entry.pattern.test(hostname))
+  if (named)
+    return named.label
+  const analyticsPath = NOISE_PATHS.find(entry => entry.pattern.test(path))
+  if (analyticsPath)
+    return analyticsPath.label
   const endpoint = NOISE_ENDPOINTS.find(entry => hostMatchesDomain(host, entry.domain) && path.startsWith(entry.pathPrefix))
   return endpoint
     ? `${endpoint.domain}${endpoint.pathPrefix}`

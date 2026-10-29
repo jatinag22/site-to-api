@@ -6,7 +6,7 @@ import type { TraceMap } from '@jridgewell/trace-mapping'
 import type { LoadedSession, SessionMeta, SourceRef, SourceResolver, StackFrame } from '../../model'
 import { AnyMap, originalPositionFor } from '@jridgewell/trace-mapping'
 import { z } from 'zod'
-import { isLibraryPath, normalizeSourcePath, readSessionFile, urlPath } from './files'
+import { displayScriptUrl, isLibraryPath, normalizeSourcePath, readSessionFile, urlPath } from './files'
 
 type ScriptEntry = SessionMeta['scripts'][number]
 
@@ -80,7 +80,7 @@ async function loadMap(session: LoadedSession, script: ScriptEntry, warnings: st
     return null
   const text = await readSessionFile(session, script.sourceMap.file)
   if (text === null) {
-    warnings.push(`Sourcemap ${script.sourceMap.file} for ${script.url} is listed in session ${session.meta.sessionId} but missing; frames in it point at the bundle instead.`)
+    warnings.push(`Sourcemap ${script.sourceMap.file} for ${displayScriptUrl(script.url)} is listed in session ${session.meta.sessionId} but missing; frames in it point at the bundle instead.`)
     return null
   }
   let parsed: unknown

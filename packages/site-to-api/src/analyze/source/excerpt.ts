@@ -10,7 +10,7 @@ import type { LoadedSession, SourceRef } from '../../model'
 import { Visitor } from 'oxc-parser'
 import { code, codeBlock } from '../../emit/escape'
 import { LineIndex, parseCode, walkWithFunctions } from './ast'
-import { findUnpacked, readSessionFile, urlHost, urlPath } from './files'
+import { displayScriptUrl, findUnpacked, readSessionFile, urlHost, urlPath } from './files'
 
 /** Functions up to this many lines are included whole. */
 const MAX_FUNCTION_LINES = 120
@@ -282,7 +282,7 @@ function bundleExcerpt(ref: SourceRef, text: string, host: string, url: string, 
   const lines = new LineIndex(text)
   const line = Math.min(Math.max(ref.line, 1), lines.lineCount)
   const path = markdownPath(`bundles/${safePath(host)}/${withSuffix(safePath(ref.file), `L${line}C${ref.column}`)}`)
-  const title = `Excerpt of ${describe(ref)} in ${code(url)}`
+  const title = `Excerpt of ${describe(ref)} in ${code(displayScriptUrl(url))}`
   // A bundle is a script whatever its URL says (`load.php`, `/js?v=3`).
   const language = 'js'
   if (!isMinifiedLine(text.slice(lines.lineStart(line), lines.lineEnd(line)))) {

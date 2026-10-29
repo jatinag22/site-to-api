@@ -38,4 +38,5 @@ or `Proposed`.
 | [0028](0028-graphql-detection-refinements.md) | Stricter GraphQL detection and type evidence (refines 0027) | Accepted |
 | [0029](0029-html-records-and-field-names.md) | HTML records that span siblings, ranked by coverage; names from the markup | Accepted |
 | [0032](0032-excerpts-as-markdown.md) | Source excerpts are Markdown files | Accepted |
+| [0033](0033-bot-protection-output-and-code-only-evidence.md) | Bot-protection output, challenge pages and code-only evidence (refines 0008, 0015, 0017, 0021) | Accepted |
 | [0034](0034-required-from-evidence.md) | `required` in responses needs two distinct requests; GraphQL variables follow the document | Accepted |

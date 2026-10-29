@@ -271,6 +271,16 @@ describe('classifyExchanges: bot protection', () => {
       }),
     ],
     [
+      'Cloudflare',
+      on({
+        method: 'POST',
+        url: 'https://shop.test/questions/tagged/typescript',
+        resourceType: 'document',
+        requestBody: formBody({ ['a1'.repeat(32)]: 'x', ['b2'.repeat(32)]: 'y' }),
+        responseBody: textBody('<html><title>Questions</title></html>'),
+      }),
+    ],
+    [
       'Cloudflare Turnstile',
       on({
         url: 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/if/ov2',
@@ -317,6 +327,52 @@ describe('classifyExchanges: bot protection', () => {
         method: 'POST',
         url: 'https://shop.test/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/tl',
         responseBody: jsonBody({}),
+      }),
+    ],
+    [
+      'Kasada',
+      on({
+        url: 'https://shop.test/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/mfc',
+        requestHeaders: { 'x-kpsdk-h': '01', 'x-kpsdk-v': 'j-1.2.3' },
+        responseHeaders: { 'x-kpsdk-fc': 'f', 'x-kpsdk-h': '01' },
+        responseBody: {
+          mimeType: 'x-unknown',
+          text: null,
+          base64: null,
+          json: undefined,
+          form: null,
+        },
+      }),
+    ],
+    [
+      'AWS WAF',
+      on({
+        url: 'https://a1b2c3d4e5f6.0a1b2c3d.eu-west-1.token.awswaf.com/a1b2c3d4e5f6/0a1b2c3d4e5f/6a7b8c9d0e1f/inputs?client=browser',
+        pageUrl: PAGE,
+        responseBody: jsonBody({
+          challenge: { input: 'i' },
+          challenge_type: 't',
+          difficulty: 1,
+        }),
+      }),
+    ],
+    [
+      'AWS WAF',
+      on({
+        method: 'POST',
+        url: 'https://a1b2c3d4e5f6.0a1b2c3d.eu-west-1.token.awswaf.com/a1b2c3d4e5f6/0a1b2c3d4e5f/6a7b8c9d0e1f/mp_verify',
+        pageUrl: PAGE,
+        requestBody: formBody({ solution_data: 's', solution_metadata: 'm' }),
+        responseBody: jsonBody({ token: 't', inputs: {} }),
+      }),
+    ],
+    [
+      'AWS WAF',
+      on({
+        url: 'https://shop.test/api/prices',
+        status: 202,
+        responseHeaders: { 'x-amzn-waf-action': 'challenge' },
+        responseBody: textBody('<html>'),
       }),
     ],
     [
@@ -382,6 +438,12 @@ describe('classifyExchanges: bot protection', () => {
         requestHeaders: { 'x-kpsdk-ct': 'k' },
       },
     ],
+    [
+      'AWS WAF',
+      {
+        cookies: { 'aws-waf-token': 'w' },
+      },
+    ],
   ])('records %s cookies and headers as evidence without relabelling the call', (vendor, init) => {
     const result = classify([
       page(),
@@ -393,6 +455,28 @@ describe('classifyExchanges: bot protection', () => {
     ])
     expect(result.exchanges[1]!.kind).toBe('api')
     expect(result.botProtection.map(finding => finding.vendor)).toEqual([vendor])
+  })
+
+  it('describes vendor paths by a label, never by the captured path', () => {
+    const token = 'Hq7ZpL2xVb9KmR4tWc8NyD3fJs6GaE1uYo5Tk0Xi'
+    const result = classify([
+      page(),
+      on({
+        method: 'POST',
+        url: `https://shop.test/cdn-cgi/challenge-platform/h/g/jsd/oneshot/0a1b2c3d4e5f/0.4182736455:1700000000:${token}/9f8e7d6c5b4a3210`,
+        responseBody: textBody('x', 'text/plain'),
+      }),
+      on({
+        url: 'https://shop.test/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/mfc',
+        responseBody: jsonBody({}),
+      }),
+    ])
+    expect(result.exchanges[1]!.kindReason).toBe('Cloudflare: request to shop.test/cdn-cgi/challenge-platform/…')
+    expect(result.botProtection.map(finding => finding.evidence)).toEqual([
+      'request to shop.test/cdn-cgi/challenge-platform/…',
+      'request to shop.test/<uuid>/<uuid>/mfc',
+    ])
+    expect(JSON.stringify(result.botProtection)).not.toContain(token)
   })
 
   it('keeps vendor scripts out of the specs, still reports the vendor, and skips findings on hosts outside the analysis', () => {
@@ -410,6 +494,155 @@ describe('classifyExchanges: bot protection', () => {
     expect(result.botProtection.map(finding => [finding.vendor, finding.host])).toEqual([
       ['reCAPTCHA', 'shop.test'],
     ])
+  })
+})
+
+describe('classifyExchanges: challenge frames', () => {
+  it('reports captcha frames for the site that embeds them, never for the vendor host', () => {
+    const anchor = 'https://www.google.com/recaptcha/api2/anchor?k=key'
+    const result = classify([
+      page(),
+      on({ url: 'https://www.gstatic.com/recaptcha/releases/x/recaptcha__en.js', resourceType: 'script' }),
+      on({
+        url: anchor,
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+      on({
+        url: 'https://www.google.com/recaptcha/api2/bframe?k=key',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+        pageUrl: anchor,
+      }),
+      on({
+        url: 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/if/ov2',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+        pageUrl: 'https://challenges.cloudflare.com/x',
+      }),
+    ])
+    expect(result.exchanges.slice(2).map(item => item.kind)).toEqual(['bot-protection', 'bot-protection', 'bot-protection'])
+    expect([
+      ...new Set(result.botProtection.map(finding => finding.host)),
+    ]).toEqual(['shop.test'])
+  })
+})
+
+describe('classifyExchanges: telemetry and mirrors', () => {
+  it('drops telemetry, RUM and health checks, and folds search mirrors into their main host', () => {
+    const call = (url: string): Exchange => on({
+      method: 'POST',
+      url,
+      responseBody: jsonBody({ ok: true }),
+    })
+    const result = classify([
+      page(),
+      call('https://telemetry.algolia.com/1/events'),
+      call('https://app.datadoghq.com/rum/v1/input'),
+      call('https://intake-analytics.wikimedia.org/v1/events'),
+      call('https://app1-dsn.algolia.net/1/isalive'),
+      call('https://app1-dsn.algolia.net/1/indexes/items/query'),
+      call('https://app1-2.algolianet.com/1/indexes/items/query'),
+      call('https://app2-3.algolianet.com/1/indexes/items/query'),
+    ])
+    expect(result.exchanges.map(item => item.kind)).toEqual([
+      'page',
+      'noise',
+      'noise',
+      'noise',
+      'noise',
+      'api',
+      'noise',
+      'api',
+    ])
+    expect(result.exchanges[6]!.kindReason).toBe('fallback mirror of app1-dsn.algolia.net, which the specs describe')
+  })
+
+  it('drops header-bidding, identity-sync and retail ad beacons', () => {
+    const urls = [
+      'https://lb.eu-1-id5-sync.com/lb/v1',
+      'https://krk2.kargo.com/api/v1/prebid',
+      'https://hbx.media.net/bidexchange.php',
+      'https://edge.aditude.io/v1/config',
+      'https://event-ingestor.judy.pnap.aditude.cloud/e',
+      'https://geo-location.prebid.cloud/',
+      'https://www.temu.com/api/adx/cm/pixel-pubmatic',
+      'https://collect.shop.test/g/collect?v=2&tid=G-ABC123',
+    ]
+    expect(kinds([
+      page(),
+      ...urls.map(url => on({
+        method: 'POST',
+        url,
+        responseBody: jsonBody({}),
+      })),
+    ]).slice(1)).toEqual(urls.map(() => 'noise'))
+  })
+
+  it('drops ad, RUM and tag-manager hosts, including the ones named by convention', () => {
+    const urls = [
+      'https://logx.optimizely.com/v1/events',
+      'https://app.contentsquare.com/',
+      'https://asia.creativecdn.com/tags/v2',
+      'https://c.go-mpulse.net/api/config.json',
+      'https://c.amazon-adsystem.com/aax2/apstag.js',
+      'https://sdk-api-v1.singular.net/api/v1/event',
+      'https://pixel-config.reddit.com/pixels/t2_x/config',
+      'https://sgtm.shop.test/g/collect',
+      'https://unagi.amazon.in/1/events/com.amazon.csm.csa.prod',
+      'https://unagi-na.amazon.com/1/events/x',
+    ]
+    expect(kinds([
+      page(),
+      ...urls.map(url => on({
+        method: 'POST',
+        url,
+        responseBody: jsonBody({}),
+      })),
+    ]).slice(1)).toEqual(urls.map(() => 'noise'))
+    expect(kinds([
+      page(),
+      on({
+        url: 'https://www.amazon.in/api/cart',
+        responseBody: jsonBody({}),
+      }),
+    ])).toEqual(['page', 'api'])
+  })
+})
+
+describe('classifyExchanges: challenge pages', () => {
+  const doc = (url: string, html: string, status = 200): Exchange => on({
+    url,
+    resourceType: 'document',
+    status,
+    responseBody: textBody(html),
+    pageUrl: null,
+  })
+
+  it('labels interstitials by title or challenge markup, whatever the status', () => {
+    const result = classify([
+      doc('https://shop.test/', '<html><head><title>Shop - Prove your humanity</title></head><body>…</body></html>'),
+      doc('https://shop.test/r/news/', '<html><head><title>Shop</title><script>location.href = "?solution=1&js_challenge=1&jsc_token=" + t</script></head></html>'),
+      doc('https://shop.test/r/news/?js_challenge=1', '<html><body><div>You\'ve been blocked by network security.</div></body></html>', 403),
+      doc('https://shop.test/about', '<html><head><title>About us</title></head><body>We sell shoes.</body></html>'),
+    ])
+    expect(result.exchanges.map(item => item.kind)).toEqual([
+      'bot-protection',
+      'bot-protection',
+      'bot-protection',
+      'page',
+    ])
+    expect(result.exchanges[0]!.kindReason).toBe('Challenge page: challenge page (title "prove your humanity")')
+    expect(result.botProtection.map(finding => [finding.vendor, finding.host, finding.evidence])).toEqual([
+      ['Challenge page', 'shop.test', 'challenge page (JavaScript challenge redirect); challenge page (block page); challenge page (title "prove your humanity")'],
+    ])
+  })
+
+  it('leaves ordinary pages that mention captchas or load a challenge script alone', () => {
+    expect(kinds([
+      doc('https://shop.test/login', '<html><head><title>Log in</title></head><body><div class="g-recaptcha" data-sitekey="k"></div></body></html>'),
+      doc('https://shop.test/', '<html><head><title>Home</title><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></head></html>'),
+    ])).toEqual(['page', 'page'])
   })
 })
 
