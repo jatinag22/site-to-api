@@ -1,4 +1,4 @@
-import type { ExtractSpec, HtmlExtractSpec } from '@site-to-api/runtime'
+import type { ExtractField, ExtractSpec, HtmlExtractSpec } from '@site-to-api/runtime'
 import { extract } from '@site-to-api/runtime'
 import { describe, expect, it } from 'vitest'
 import { applyExtractSpec } from '../analyze/html'
@@ -59,6 +59,23 @@ describe('alignWithRuntime', () => {
     ])
     expect(extract(samples[1] ?? '', s)).toEqual({ about: '' })
     expect(alignWithRuntime(s, samples)).toEqual({ spec: s, error: null })
+  })
+
+  it('keeps an optional field named like an Object member when a record lacks it', () => {
+    const team: ExtractField = {
+      selector: 'td:nth-child(2)',
+      attr: null,
+      pattern: null,
+      type: 'string',
+      optional: true,
+    }
+    const s = spec({ constructor: team })
+    expect(alignWithRuntime(s, [
+      page([
+        ['Ann', 'Ferrari'],
+        ['Bo'],
+      ]),
+    ])).toEqual({ spec: s, error: null })
   })
 
   it('downgrades fields the runtime coerces differently, so clients match the verified output', () => {
