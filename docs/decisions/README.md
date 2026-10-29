@@ -38,3 +38,4 @@ or `Proposed`.
 | [0028](0028-graphql-detection-refinements.md) | Stricter GraphQL detection and type evidence (refines 0027) | Accepted |
 | [0031](0031-sibling-path-templates.md) | Sibling paths with word values become one template, on evidence | Accepted |
 | [0032](0032-probe-identity-and-outcomes.md) | Probe names itself and says why a request was refused (refines 0012) | Accepted |
+| [0033](0033-capture-always-saves.md) | Capture always saves the session, with bounded waits | Accepted |

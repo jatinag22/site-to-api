@@ -114,13 +114,26 @@ function toMatchable(entries: Array<HarEntry | null>): MatchableEntry[] {
 async function loadSession(dir: string, name: string, warnings: string[]): Promise<{ session: LoadedSession, exchanges: Exchange[] } | null> {
   const metaText = await readText(join(dir, 'meta.json'))
   if (metaText === null) {
-    warnings.push(`${name}: no meta.json; not a capture session, skipped`)
+    warnings.push(existsSync(join(dir, 'traffic.har'))
+      ? `${name}: has traffic.har but no meta.json, so the capture never finished saving (older versions lost it when the capture script failed or on Ctrl+C); skipped. Capture it again: capture now always writes meta.json, marked incomplete when it did not end normally.`
+      : `${name}: no meta.json; not a capture session, skipped`)
     return null
   }
   const meta = SessionMetaSchema.safeParse(parseJson(metaText))
   if (!meta.success) {
     warnings.push(`${name}: meta.json is invalid (${zodMessage(meta.error)}); session skipped. Capture it again with this version of site-to-api.`)
     return null
+  }
+  const incomplete = meta.data.incomplete
+  if (incomplete) {
+    const why = {
+      'script-failed': 'the capture script failed',
+      'interrupted': 'the capture was interrupted',
+      'timeout': 'a page or the browser did not finish in time',
+    }[incomplete.reason]
+    warnings.push(`${meta.data.sessionId}: incomplete capture (${why}${incomplete.error
+      ? `: ${incomplete.error}`
+      : ''}). It is used as recorded; pages after that point are missing, so capture again for full coverage.`)
   }
   const events = await readEvents(dir, meta.data, warnings)
   const entries = await readHarEntries(dir, meta.data, warnings)
@@ -193,8 +206,12 @@ export async function loadSessions(rawDir: string): Promise<LoadResult> {
     if (result)
       loaded.push(result)
   }
-  if (loaded.length === 0)
-    throw new SiteToApiError(`No capture sessions found in ${root}. Run \`site-to-api capture\` first.`)
+  if (loaded.length === 0) {
+    const reasons = warnings.length > 0
+      ? ` ${warnings.join(' ')}`
+      : ''
+    throw new SiteToApiError(`No capture sessions found in ${root}. Run \`site-to-api capture\` first.${reasons}`)
+  }
 
   loaded.sort((a, b) =>
     a.session.meta.startedAt.localeCompare(b.session.meta.startedAt)

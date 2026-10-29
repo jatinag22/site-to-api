@@ -17,6 +17,7 @@ import { chromium } from 'playwright'
 import { z } from 'zod'
 import pkg from '../../package.json' with { type: 'json' }
 import { SiteToApiError } from '../errors'
+import { failedNavigationsWarning, harNavigations } from '../load'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { EventWriter } from './events'
@@ -39,6 +40,21 @@ export interface RunCaptureOptions {
   log?: (message: string) => void
   /** Overrides the per-session event caps; tests use small ones. */
   eventLimits?: Partial<EventLimits>
+  /** Overrides how long saving waits on the page and the browser; tests use short ones. */
+  timeouts?: Partial<CaptureTimeouts>
+}
+
+/** How long saving a session waits before it gives up and saves what exists (decision 0033). */
+interface CaptureTimeouts {
+  /** For pending page work (navigation labels, binding attachment) and for scripts being saved. */
+  settleMs: number
+  /** For the browser to close, which is when Playwright writes the HAR. */
+  closeMs: number
+}
+
+const DEFAULT_TIMEOUTS: CaptureTimeouts = {
+  settleMs: 15_000,
+  closeMs: 30_000,
 }
 
 /** What {@link runCapture} produced. */
@@ -100,31 +116,79 @@ async function loadCaptureScript(file: string): Promise<CaptureScript> {
   }
 }
 
-/** Calls `stop` when `signal` aborts or the process gets SIGINT; the returned function unsubscribes. */
-function onStop(signal: AbortSignal | undefined, stop: () => void): () => void {
-  const handler = (): void => stop()
-  signal?.addEventListener('abort', handler, { once: true })
-  process.once('SIGINT', handler)
-  return () => {
-    signal?.removeEventListener('abort', handler)
-    process.removeListener('SIGINT', handler)
+/**
+ * One stop signal for the whole session, from launch until it is saved: `signal` aborting, SIGINT
+ * or SIGTERM. Keeping the handlers until the end means Ctrl+C while the session is being saved
+ * cuts the waiting short instead of killing the process before the HAR and meta.json exist.
+ */
+function createStopper(signal: AbortSignal | undefined): { signal: AbortSignal, dispose: () => void } {
+  const controller = new AbortController()
+  const stop = (): void => controller.abort()
+  if (signal?.aborted)
+    stop()
+  signal?.addEventListener('abort', stop, { once: true })
+  process.on('SIGINT', stop)
+  process.on('SIGTERM', stop)
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      signal?.removeEventListener('abort', stop)
+      process.removeListener('SIGINT', stop)
+      process.removeListener('SIGTERM', stop)
+    },
   }
 }
 
-async function validateHar(file: string): Promise<number> {
+type WaitResult = 'done' | 'timeout' | 'stopped'
+
+/** Waits for `task` at most `ms`, or until `stop` aborts; never throws. */
+async function waitBounded(task: Promise<unknown>, ms: number, stop: AbortSignal | null): Promise<WaitResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort = (): void => {}
+  try {
+    return await Promise.race([
+      task.then(() => 'done' as const, () => 'done' as const),
+      new Promise<WaitResult>((resolve) => {
+        timer = setTimeout(resolve, ms, 'timeout')
+      }),
+      new Promise<WaitResult>((resolve) => {
+        if (stop === null)
+          return
+        onAbort = () => resolve('stopped')
+        if (stop.aborted)
+          onAbort()
+        stop.addEventListener('abort', onAbort, { once: true })
+      }),
+    ])
+  }
+  finally {
+    clearTimeout(timer)
+    stop?.removeEventListener('abort', onAbort)
+  }
+}
+
+/** The HAR's entries, or why there are none (missing, empty or invalid). */
+async function readHar(file: string): Promise<unknown[] | string> {
   let size = 0
   try {
     size = (await stat(file)).size
   }
   catch {
-    throw new SiteToApiError(`The browser closed without writing ${file}. Capture again and end the session by closing the browser window or pressing Ctrl+C, not by killing the process.`)
+    return `The browser closed without writing ${file}. Capture again and end the session by closing the browser window or pressing Ctrl+C, not by killing the process.`
   }
   if (size === 0)
-    throw new SiteToApiError(`${file} is empty. Capture again and end the session by closing the browser window or pressing Ctrl+C.`)
-  const parsed = HarSchema.safeParse(JSON.parse(await readFile(file, 'utf8')))
-  if (!parsed.success)
-    throw new SiteToApiError(`${file} is not a valid HAR file. Capture again.`)
-  return parsed.data.log.entries.length
+    return `${file} is empty. Capture again and end the session by closing the browser window or pressing Ctrl+C.`
+  let data: unknown
+  try {
+    data = JSON.parse(await readFile(file, 'utf8'))
+  }
+  catch {
+    return `${file} is not a valid HAR file. Capture again.`
+  }
+  const parsed = HarSchema.safeParse(data)
+  return parsed.success
+    ? parsed.data.log.entries
+    : `${file} is not a valid HAR file. Capture again.`
 }
 
 type BrowserConfig = ResolvedConfig['capture']['browser']
@@ -152,8 +216,11 @@ async function launchContext(browser: BrowserConfig, cwd: string, harPath: strin
       ...optional,
       headless: browser.headless,
       args: launchArgs(browser),
-      // SIGINT ends the session through onStop, which closes the context and so flushes the HAR.
+      // SIGINT and SIGTERM end the session through createStopper, which closes the context and so
+      // flushes the HAR; Playwright closing the browser itself would lose it.
       handleSIGINT: false,
+      handleSIGTERM: false,
+      handleSIGHUP: false,
       recordHar: { path: harPath, content: 'embed', mode: 'full' },
     })
   }
@@ -172,7 +239,9 @@ async function launchContext(browser: BrowserConfig, cwd: string, harPath: strin
  * tab or the browser, `signal` aborts, or SIGINT arrives. Script mode loads `capture.script` with
  * jiti and awaits its default export with `{ page, context, baseUrl }`; the script navigates
  * itself, starting from `baseUrl`. Either way the context is closed properly so the HAR is
- * flushed, and the HAR is checked before returning.
+ * flushed, and `meta.json` is written even when the script fails, the run is interrupted
+ * (SIGINT, SIGTERM, `signal`) or a page never finishes: such sessions are marked `incomplete`
+ * (decision 0033). Every wait while saving is bounded.
  */
 export async function runCapture(config: ResolvedConfig, options: RunCaptureOptions): Promise<CaptureResult> {
   const log = options.log ?? ((): void => {})
@@ -199,12 +268,18 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
   const harPath = path.join(sessionDir, HAR_FILE)
   const events = new EventWriter(path.join(sessionDir, EVENTS_FILE), options.eventLimits)
   const { browser } = capture
+  const timeouts: CaptureTimeouts = {
+    ...DEFAULT_TIMEOUTS,
+    ...options.timeouts,
+  }
+  const stopper = createStopper(options.signal)
 
   let context: BrowserContext
   try {
     context = await launchContext(browser, options.cwd, harPath)
   }
   catch (error) {
+    stopper.dispose()
     await events.close()
     throw error
   }
@@ -283,18 +358,22 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     }
     const userAgent = browser.userAgent ?? await page.evaluate(() => navigator.userAgent)
 
-    if (script === null)
-      await runInteractive(context, page, options, log)
-    else
-      await runScripted(script, context, page, options, log)
-
-    await Promise.all(pending)
-    await collector.settle()
-    await context.close()
-
-    const entries = await validateHar(harPath)
-    if (entries === 0)
-      warnings.push('The HAR has no requests. Did the page load?')
+    const incomplete = script === null
+      ? await runInteractive(context, page, options, stopper.signal, log)
+      : await runScripted(script, context, page, options, stopper.signal, log)
+    if (incomplete?.reason === 'script-failed')
+      log(`Capture script failed: ${incomplete.error ?? 'unknown error'}. Saving what was recorded.`)
+    const saved = await saveSession({
+      context,
+      pending,
+      collector,
+      harPath,
+      timeouts,
+      stop: stopper.signal,
+      log,
+    })
+    const finalIncomplete = incomplete ?? saved.incomplete
+    warnings.push(...saved.warnings)
     warnings.push(...collector.warnings, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
 
     const meta = SessionMetaSchema.parse({
@@ -308,16 +387,90 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       har: HAR_FILE,
       events: EVENTS_FILE,
       scripts: collector.scripts.toSorted((a, b) => a.url.localeCompare(b.url)),
+      ...incompleteField(finalIncomplete),
     } satisfies SessionMeta)
     await writeFile(path.join(sessionDir, META_FILE), `${JSON.stringify(meta, null, 2)}\n`)
-    log(`Saved session ${sessionId} to ${sessionDir} (${entries} requests, ${events.count} events, ${meta.scripts.length} scripts).`)
+    warnings.push(...incompleteWarning(sessionId, finalIncomplete))
+    log(`Saved session ${sessionId} to ${sessionDir} (${saved.entries} requests, ${events.count} events, ${meta.scripts.length} scripts).`)
     return { sessionDir, meta, warnings }
   }
   finally {
-    // Idempotent: makes sure the browser never outlives a failed capture.
-    await context.close().catch(() => {})
+    stopper.dispose()
+    // Idempotent: makes sure the browser never outlives a failed capture. Bounded, because a
+    // context that did not close in time will not close now either.
+    await waitBounded(context.close(), timeouts.closeMs, null)
     await events.close()
   }
+}
+
+type Incomplete = NonNullable<SessionMeta['incomplete']>
+
+function incompleteField(incomplete: Incomplete | null): Pick<SessionMeta, 'incomplete'> {
+  return incomplete === null
+    ? {}
+    : { incomplete }
+}
+
+function incompleteWarning(sessionId: string, incomplete: Incomplete | null): string[] {
+  if (incomplete === null)
+    return []
+  const detail = incomplete.error
+    ? `: ${incomplete.error}`
+    : ''
+  return [`Session ${sessionId} is incomplete (${incomplete.reason}${detail}). What was recorded is saved and \`build\` will use it with a warning; capture again for full coverage.`]
+}
+
+interface SaveInput {
+  context: BrowserContext
+  pending: Set<Promise<void>>
+  collector: ScriptCollector
+  harPath: string
+  timeouts: CaptureTimeouts
+  stop: AbortSignal
+  log: (message: string) => void
+}
+
+/**
+ * Waits (bounded) for page work and scripts being saved, closes the context so Playwright writes
+ * the HAR, and reads it back. Never throws: whatever happens, the caller writes meta.json.
+ */
+async function saveSession(input: SaveInput): Promise<{ entries: number, warnings: string[], incomplete: Incomplete | null }> {
+  const warnings: string[] = []
+  const seconds = (ms: number): string => `${Math.round(ms / 1000)} s`
+  let incomplete: Incomplete | null = null
+  const settle = async (task: Promise<unknown>, what: string): Promise<void> => {
+    const result = await waitBounded(task, input.timeouts.settleMs, input.stop)
+    if (result === 'timeout') {
+      incomplete ??= { reason: 'timeout', error: `${what} did not finish within ${seconds(input.timeouts.settleMs)}` }
+      warnings.push(`Stopped waiting for ${what} after ${seconds(input.timeouts.settleMs)}; a page kept a connection open or stopped responding. The session was saved without it.`)
+    }
+    else if (result === 'stopped') {
+      warnings.push(`Stopped waiting for ${what}: the capture was interrupted.`)
+    }
+  }
+  await settle(Promise.all(input.pending), 'the pages')
+  await settle(input.collector.settle(), 'scripts being saved')
+  // Pages first, without beforeunload: closing the context waits forever on a page whose main
+  // thread never yields, and the HAR is only written once the context has closed.
+  await Promise.all(input.context.pages().map(page => waitBounded(page.close({ runBeforeUnload: false }), input.timeouts.closeMs, null)))
+  const closed = await waitBounded(input.context.close().then(() => {}), input.timeouts.closeMs, null)
+  if (closed === 'timeout') {
+    incomplete = { reason: 'timeout', error: `the browser did not close within ${seconds(input.timeouts.closeMs)}` }
+    warnings.push(`The browser did not close within ${seconds(input.timeouts.closeMs)}, so the HAR may be missing or incomplete.`)
+  }
+  if (input.stop.aborted && incomplete === null)
+    incomplete = { reason: 'interrupted', error: null }
+  const har = await readHar(input.harPath)
+  if (typeof har === 'string') {
+    warnings.push(har)
+    return { entries: 0, warnings, incomplete: incomplete ?? { reason: 'timeout', error: har } }
+  }
+  if (har.length === 0)
+    warnings.push('The HAR has no requests. Did the page load?')
+  const blocked = failedNavigationsWarning(harNavigations(har))
+  if (blocked !== null)
+    warnings.push(blocked)
+  return { entries: har.length, warnings, incomplete }
 }
 
 function ignoredFramesWarning(ignored: Map<string, number>): string[] {
@@ -392,7 +545,7 @@ function recordWebSocket(ws: WebSocket, page: Page, socket: number, write: (even
   }))
 }
 
-async function runInteractive(context: BrowserContext, page: Page, options: RunCaptureOptions, log: (message: string) => void): Promise<void> {
+async function runInteractive(context: BrowserContext, page: Page, options: RunCaptureOptions, stop: AbortSignal, log: (message: string) => void): Promise<null> {
   let unsubscribe = (): void => {}
   const done = new Promise<void>((resolve) => {
     const finishIfEmpty = (): void => {
@@ -405,7 +558,11 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
     context.pages().forEach(watch)
     context.on('page', watch)
     context.on('close', () => resolve())
-    unsubscribe = onStop(options.signal, resolve)
+    const onStop = (): void => resolve()
+    if (stop.aborted)
+      onStop()
+    stop.addEventListener('abort', onStop, { once: true })
+    unsubscribe = () => stop.removeEventListener('abort', onStop)
   })
   try {
     if (options.url !== null) {
@@ -417,31 +574,40 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
     log('Browser open. Use the site the way a person would: log in, search, open the pages you want covered.')
     log('When you are done, close the browser window (or press Ctrl+C here). The capture is saved on exit.')
     await done
+    // Ending an interactive session is the normal way to finish it, not an interruption.
+    return null
   }
   finally {
     unsubscribe()
   }
 }
 
-async function runScripted(script: CaptureScript, context: BrowserContext, page: Page, options: RunCaptureOptions, log: (message: string) => void): Promise<void> {
+/** Runs the capture script; a failure or interruption is returned, so the session is still saved. */
+async function runScripted(script: CaptureScript, context: BrowserContext, page: Page, options: RunCaptureOptions, stop: AbortSignal, log: (message: string) => void): Promise<Incomplete | null> {
   log('Running capture script.')
-  let unsubscribe = (): void => {}
-  const aborted = new Promise<never>((_resolve, reject) => {
-    unsubscribe = onStop(options.signal, () => reject(new SiteToApiError('Capture script was cancelled.')))
+  if (stop.aborted)
+    return { reason: 'interrupted', error: null }
+  let onStop = (): void => {}
+  const stopped = new Promise<'stopped'>((resolve) => {
+    onStop = () => resolve('stopped')
+    stop.addEventListener('abort', onStop, { once: true })
   })
-  aborted.catch(() => {})
   try {
-    await Promise.race([
-      script({ page, context, baseUrl: options.url }),
-      aborted,
+    const result = await Promise.race([
+      Promise.resolve(script({ page, context, baseUrl: options.url })).then(() => 'done' as const),
+      stopped,
     ])
+    return result === 'stopped'
+      ? { reason: 'interrupted', error: 'capture script cancelled' }
+      : null
   }
   catch (error) {
-    if (error instanceof SiteToApiError)
-      throw error
-    throw new SiteToApiError(`Capture script failed: ${errorMessage(error)}`, { cause: error })
+    return {
+      reason: 'script-failed',
+      error: errorMessage(error),
+    }
   }
   finally {
-    unsubscribe()
+    stop.removeEventListener('abort', onStop)
   }
 }

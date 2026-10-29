@@ -43,6 +43,16 @@ export const SessionMetaSchema = z.object({
       sources: z.array(z.string()),
     }).nullable(),
   })),
+  /**
+   * Set when the session did not end normally (decision 0033): the capture script threw, the run
+   * was interrupted (Ctrl+C, SIGTERM, abort), or a page or the browser did not finish in time. What was
+   * recorded up to then is kept and `build` uses it with a warning. Optional and additive, so the
+   * format version is unchanged and older readers still accept the file.
+   */
+  incomplete: z.object({
+    reason: z.enum(['script-failed', 'interrupted', 'timeout']),
+    error: z.string().nullable(),
+  }).optional(),
 })
 export type SessionMeta = z.infer<typeof SessionMetaSchema>
 

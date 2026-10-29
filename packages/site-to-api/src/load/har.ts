@@ -43,6 +43,8 @@ export const HarEntrySchema = z.object({
   response: z.object({
     status: z.number(),
     statusText: z.string().nullish(),
+    /** Playwright: the network error of a request that got no response (`net::ERR_…`). */
+    _failureText: z.string().nullish(),
     headers: z.array(HarNameValueSchema),
     cookies: z.array(HarCookieSchema).nullish(),
     content: z.object({

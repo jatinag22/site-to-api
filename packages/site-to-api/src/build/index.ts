@@ -25,7 +25,7 @@ import { writeFlows } from '../emit/flows'
 import { clientGap, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
-import { loadSessions } from '../load'
+import { failedNavigationsWarning, loadSessions } from '../load'
 import { applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation } from '../probe'
 import { VERSION } from '../version'
 import { alignWithRuntime } from './extract-check'
@@ -224,7 +224,14 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     .filter(operation => !operation.sourceOnly || wanted(operation.host))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
   operations = inferOperationSchemas(operations, redactor)
+  const blocked = failedNavigationsWarning(loaded.exchanges
+    .filter(exchange => exchange.resourceType === 'document')
+    .map(exchange => ({ status: exchange.response.status, failure: exchange.response.statusText || null })))
   const warnings = [
+    // First: when the site blocked the browser, nothing else in the folder is representative.
+    ...(blocked === null
+      ? []
+      : [blocked]),
     ...loaded.warnings,
     // WebSocket hosts count as captured: a pattern that only matches a socket host is not a typo.
     ...unmatchedHostPatterns([
