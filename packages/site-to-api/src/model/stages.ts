@@ -91,6 +91,13 @@ export interface ValueRedactor {
   json: (value: unknown, context: RedactContext) => unknown
   /** Redacted, de-duplicated examples, at most `redact.maxExamples`; empty when examples are `none`. */
   examples: (values: unknown[], context: RedactContext) => unknown[]
+  /**
+   * Whether a JSON object key is itself a secret or personal value (a session token, a JWT, an
+   * email, a learnt cookie value), so the object is a map keyed by data, not a record with named
+   * fields. `json` and `examples` replace such keys by their shape; schemas describe the object
+   * with `additionalProperties`. Ordinary keys are never secret. Independent of `examples`.
+   */
+  isSecretKey: (key: string) => boolean
 }
 
 /**

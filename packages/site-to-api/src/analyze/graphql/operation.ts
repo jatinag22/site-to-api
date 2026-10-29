@@ -104,8 +104,11 @@ export function graphqlOperationId(operation: GraphqlOperation, key: string): st
     : fromName
 }
 
-/** The fields of `data` in successful responses, for the summary. */
-function dataFields(exchanges: Exchange[]): string[] {
+/**
+ * The fields of `data` in successful responses, for the summary. A key that is a secret or
+ * personal value (decision 0042) is written `{key}`.
+ */
+function dataFields(exchanges: Exchange[], isSecretKey: (key: string) => boolean): string[] {
   const fields = new Set<string>()
   for (const exchange of exchanges) {
     const json = exchange.response.body?.json
@@ -113,8 +116,11 @@ function dataFields(exchanges: Exchange[]): string[] {
       continue
     const data: unknown = json.data
     if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
-      for (const key of Object.keys(data))
-        fields.add(key)
+      for (const key of Object.keys(data)) {
+        fields.add(isSecretKey(key)
+          ? '{key}'
+          : key)
+      }
     }
   }
   return [...fields]
@@ -123,7 +129,7 @@ function dataFields(exchanges: Exchange[]): string[] {
 const MAX_SUMMARY_FIELDS = 8
 
 /** `GraphQL query queryArtistOverview (POST /pathfinder/v2/query). Returns artistUnion.` */
-export function graphqlSummary(operation: GraphqlOperation, method: string, exchanges: Exchange[]): string {
+export function graphqlSummary(operation: GraphqlOperation, method: string, exchanges: Exchange[], isSecretKey: (key: string) => boolean): string {
   const type = operation.operationType === 'unknown'
     ? 'operation'
     : operation.operationType
@@ -131,7 +137,7 @@ export function graphqlSummary(operation: GraphqlOperation, method: string, exch
     ? ''
     : ` ${operation.operationName}`
   const base = `GraphQL ${type}${name} (${method} ${operation.endpoint}).`
-  const fields = dataFields(exchanges)
+  const fields = dataFields(exchanges, isSecretKey)
   if (fields.length === 0)
     return base
   const shown = fields.slice(0, MAX_SUMMARY_FIELDS)

@@ -160,7 +160,7 @@ function analyse(config: ResolvedConfig['redact'], input = capture()): Analysis 
     ],
     config,
   })
-  const operations = inferOperationSchemas(buildOperations(exchanges, { sourceRoutes: [] }), redactor)
+  const operations = inferOperationSchemas(buildOperations(exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey }), redactor)
   const allTraces = traceValues({
     exchanges: [
       ...exchanges,

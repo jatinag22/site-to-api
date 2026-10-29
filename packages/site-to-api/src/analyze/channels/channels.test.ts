@@ -30,7 +30,7 @@ function channelsOf(exchanges: Exchange[], sessions: LoadedSession[], hosts: Res
     ],
     config: REDACT,
   })
-  const operations = inferOperationSchemas(buildOperations(classified.exchanges, { sourceRoutes: [] }), redactor)
+  const operations = inferOperationSchemas(buildOperations(classified.exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey }), redactor)
   const traces = traceValues({
     exchanges: [
       ...classified.exchanges,

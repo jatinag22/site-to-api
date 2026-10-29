@@ -98,7 +98,7 @@ export function graphqlAnalysis(exchanges: Exchange[], host: string): Analysis {
       fields: [],
     },
   })
-  const operations = inferOperationSchemas(buildOperations(annotated, { sourceRoutes: [] }), redactor)
+  const operations = inferOperationSchemas(buildOperations(annotated, { sourceRoutes: [], isSecretKey: redactor.isSecretKey }), redactor)
   const analysis: Analysis = {
     sessions: ['s1'],
     hosts: [host],

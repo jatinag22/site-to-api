@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { fakeHash, graphqlGet, graphqlPost } from '../../../test/graphql'
 import { exchange, jsonBody, textBody } from '../../../test/helpers'
 import { annotateGraphql } from '../graphql'
+import { createRedactor } from '../redact'
 import { isIdentifierLike, isStrongIdentifier } from './identifiers'
 import { operationIdFor, singular } from './naming'
 import { buildOperations } from './operations'
@@ -39,7 +40,19 @@ function paths(operations: Operation[]): string[] {
   return operations.map(operation => `${operation.method} ${operation.path}`)
 }
 
-const build = (exchanges: Exchange[], sourceRoutes: SourceRoute[] = []): Operation[] => buildOperations(exchanges, { sourceRoutes })
+/** Operations with summaries judged by a redactor of the same exchanges, as `build` does. */
+function build(exchanges: Exchange[], sourceRoutes: SourceRoute[] = []): Operation[] {
+  const redactor = createRedactor({
+    exchanges,
+    config: {
+      examples: 'masked',
+      maxExamples: 3,
+      patterns: [],
+      fields: [],
+    },
+  })
+  return buildOperations(exchanges, { sourceRoutes, isSecretKey: redactor.isSecretKey })
+}
 
 describe('buildOperations: path parameters', () => {
   it('turns varying identifier segments into named parameters', () => {
@@ -299,6 +312,45 @@ describe('buildOperations: grouping, ids and summaries', () => {
         responseBody: jsonBody(many),
       }),
     ])[0]!.summary).toBe('Get a. Returns f0, f1, f2, f3, f4, f5, f6, f7, +2 more.')
+  })
+
+  it('writes {key} for response keys that are tokens or personal values, in REST, dispatcher and GraphQL summaries (decision 0042)', () => {
+    const token = 'Zq8xT2mLp4VwRk7YbN3c'
+    const email = 'jane.doe@example.org'
+    const operations = build(annotateGraphql([
+      get('/api/sessions', {
+        responseBody: jsonBody({
+          [token]: { device: 'web' },
+          [email]: { device: 'ios' },
+          count: 2,
+        }),
+      }),
+      get('/api/quote?functionName=getPeers', {
+        responseBody: jsonBody({ [token]: 1 }),
+      }),
+      get('/api/quote?functionName=getMeta', {
+        responseBody: jsonBody({ name: 'x' }),
+      }),
+      get('/api/quote?functionName=getMeta', {
+        responseBody: jsonBody({ name: 'y' }),
+      }),
+      graphqlPost({
+        operationName: 'viewer',
+        variables: {},
+        query: 'query viewer { x }',
+        data: {
+          [email]: { id: 1 },
+        },
+      }),
+    ]))
+    const summaries = operations.map(operation => operation.summary)
+    expect(summaries).toContain('Get api sessions. Returns {key}, count.')
+    expect(summaries.some(summary => summary.startsWith('Function getPeers') && summary.endsWith('Returns {key}.'))).toBe(true)
+    expect(summaries.some(summary => summary.startsWith('GraphQL query viewer') && summary.endsWith('Returns {key}.'))).toBe(true)
+    for (const summary of summaries) {
+      expect(summary).not.toContain(token)
+      expect(summary).not.toContain(email)
+    }
   })
 
   it('adds source-only operations for routes never observed', () => {
@@ -998,7 +1050,7 @@ describe('buildOperations: dispatcher endpoints (decision 0039)', () => {
   })
 
   it('splits a GET dispatcher into one operation per value at <endpoint>#<value>', () => {
-    const operations = buildOperations([
+    const operations = build([
       quote({ functionName: 'getSymbolData', symbol: 'A' }, {
         equity: [
           { price: 1, change: 2 },
@@ -1006,7 +1058,7 @@ describe('buildOperations: dispatcher endpoints (decision 0039)', () => {
       }),
       quote({ functionName: 'getMetaData', symbol: 'A' }, { companyName: 'x', isin: 'y' }),
       quote({ functionName: 'getMetaData', symbol: 'B' }, { companyName: 'z', isin: 'w' }),
-    ], { sourceRoutes: [] })
+    ])
     expect(operations.map(operation => [operation.operationId, operation.path, operation.exchanges.length])).toEqual([
       ['getMetaData', '/api/quote#getMetaData', 2],
       ['getSymbolData', '/api/quote#getSymbolData', 1],
@@ -1022,7 +1074,7 @@ describe('buildOperations: dispatcher endpoints (decision 0039)', () => {
   })
 
   it('prefixes a function name another operation of the host already has, and reserved words', () => {
-    const operations = buildOperations([
+    const operations = build([
       get('/api/items', {
         responseBody: jsonBody([
           { id: 1 },
@@ -1036,7 +1088,7 @@ describe('buildOperations: dispatcher endpoints (decision 0039)', () => {
       quote({ action: 'delete' }, {
         removed: { count: 1 },
       }),
-    ], { sourceRoutes: [] })
+    ])
     expect(operations.map(operation => operation.operationId).sort()).toEqual([
       'getApiItems',
       'getApiQuoteDelete',
@@ -1045,7 +1097,7 @@ describe('buildOperations: dispatcher endpoints (decision 0039)', () => {
   })
 
   it('keeps an endpoint whole when its parameter only filters', () => {
-    const operations = buildOperations([
+    const operations = build([
       quote({ action: 'active' }, {
         orders: [
           { id: 1, total: 2 },
@@ -1056,7 +1108,7 @@ describe('buildOperations: dispatcher endpoints (decision 0039)', () => {
           { id: 2, total: 3 },
         ],
       }),
-    ], { sourceRoutes: [] })
+    ])
     expect(paths(operations)).toEqual(['GET /api/quote'])
     expect(operations[0]?.dispatch).toBeUndefined()
   })
@@ -1071,9 +1123,9 @@ describe('buildOperations: dispatcher endpoints (decision 0039)', () => {
       'options',
       'getQuote',
     ]
-    const operations = buildOperations(values.map((value, index) => quote({ action: value }, {
+    const operations = build(values.map((value, index) => quote({ action: value }, {
       [`field${index}`]: { [`inner${index}`]: index },
-    })), { sourceRoutes: [] })
+    })))
     expect(operations.map(operation => operation.operationId).sort()).toEqual([
       'getApiQuoteAwait',
       'getApiQuoteFetchWithoutFragment',
@@ -1089,14 +1141,14 @@ describe('buildOperations: dispatcher endpoints (decision 0039)', () => {
     const calls = ['a', 'b', 'c', 'd'].map((suffix, index) => quote({ functionName: `get${suffix.toUpperCase()}` }, {
       [`f${suffix}`]: { [`g${suffix}`]: index },
     }))
-    const operations = buildOperations([
+    const operations = build([
       ...calls,
       get('/api/quote', {
         responseBody: jsonBody({
           status: { up: true },
         }),
       }),
-    ], { sourceRoutes: [] })
+    ])
     expect(paths(operations)).toEqual([
       'GET /api/quote',
       'GET /api/quote#getA',

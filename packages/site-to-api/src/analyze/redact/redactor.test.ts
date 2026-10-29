@@ -578,6 +578,144 @@ describe('createRedactor: opaque blobs', () => {
   })
 })
 
+describe('createRedactor: secret object keys (decision 0042)', () => {
+  const sessionToken = 'Zq8xT2mLp4VwRk7YbN3c'
+  const cookie = 'c0ffee00deadbeef0123456789abcdef'
+  const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln'
+  const userId = '3f2c9a4e-1b7d-4c8e-9f60-2a5b8c1d7e43'
+
+  function capture(sessionId: string): Exchange[] {
+    return [
+      exchange({
+        url: 'https://shop.test/api/me',
+        sessionId,
+        cookies: { sid: cookie },
+        responseBody: jsonBody({ userId, name: 'x' }),
+      }),
+      exchange({
+        url: 'https://shop.test/api/sessions',
+        sessionId,
+        responseBody: jsonBody({
+          sessions: {
+            [sessionToken]: { device: 'web' },
+          },
+        }),
+      }),
+    ]
+  }
+
+  it('recognises keys that are tokens, JWTs, learnt secrets, personal data or personal values', () => {
+    const r = redactor(capture('s1'))
+    for (const key of [
+      sessionToken,
+      jwt,
+      cookie,
+      userId,
+      'a.person@example.com',
+      `user:${cookie}`,
+    ])
+      expect(r.isSecretKey(key), key).toBe(true)
+  })
+
+  it('keeps ordinary keys, including long camelCase names, ids and dates', () => {
+    const r = redactor(capture('s1'))
+    for (const key of [
+      'sessions',
+      'device',
+      'isPromotionalOfferEligible',
+      'shipping_address_line_2',
+      '__proto__',
+      'constructor',
+      '2024-01-31',
+      '1001',
+      'en-IN',
+      '9a0364b9e99bb480dd25e1f0284c8555',
+      '',
+    ])
+      expect(r.isSecretKey(key), key).toBe(false)
+  })
+
+  it('replaces secret keys in json, examples and nested JSON text by their shape, keeping values', () => {
+    const r = redactor(capture('s1'))
+    const body = {
+      sessions: {
+        [sessionToken]: { device: 'web' },
+        count: 1,
+      },
+    }
+    const expected = {
+      sessions: {
+        '<redacted: 20 base64 chars>': { device: 'web' },
+        'count': 1,
+      },
+    }
+    expect(r.json(body, { in: 'response-body' })).toEqual(expected)
+    expect(r.examples([body], { in: 'response-body' })).toEqual([expected])
+    expect(r.value(JSON.stringify(body), { in: 'response-body' })).toBe(JSON.stringify(expected))
+  })
+
+  it('numbers keys of the same shape so no entry is lost, and never renames ordinary keys', () => {
+    const other = 'c0ffee00deadbeef0123456789abcdee'
+    const r = redactor([
+      ...capture('s1'),
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { sid2: other },
+      }),
+    ])
+    expect(r.json({
+      '<redacted: 32 hex chars>': 'a',
+      [cookie]: 'b',
+      [other]: 'c',
+    }, { in: 'body' })).toEqual({
+      '<redacted: 32 hex chars>': 'a',
+      '<redacted: 32 hex chars> (2)': 'b',
+      '<redacted: 32 hex chars> (3)': 'c',
+    })
+  })
+
+  it('names a value under a secret key by the map that holds it', () => {
+    const r = redactor(capture('s1'))
+    expect(r.json({
+      tokens: { [sessionToken]: 'hunter22' },
+    }, { in: 'body' })).toEqual({
+      tokens: { '<redacted: 20 base64 chars>': '<redacted: 8 chars>' },
+    })
+  })
+
+  it('masks secret keys in bot-protection payloads too', () => {
+    const r = redactor(capture('s1'))
+    expect(r.browserOnly.json({ [jwt]: 1 }, { in: 'body' })).toEqual({
+      '<redacted: JWT (alg=HS256, claims=[sub])>': '<redacted: 1-digit number>',
+    })
+  })
+
+  it('keeps an opaque key identical in every session, like an opaque value', () => {
+    const r = redactor([
+      ...capture('s1'),
+      ...capture('s2'),
+    ])
+    expect(r.isSecretKey(sessionToken)).toBe(false)
+    expect(r.isSecretKey(cookie)).toBe(true)
+  })
+
+  it('learns an opaque key as a secret, so the same token is removed from other text', () => {
+    const r = redactor(capture('s1'))
+    expect(r.value(`ref=${sessionToken}`, { in: 'text' })).toBe('ref=<redacted: 20 base64 chars>')
+  })
+
+  it('leaves keys alone in raw mode but still reports them', () => {
+    const r = redactor(capture('s1'), { examples: 'raw' })
+    const body = {
+      sessions: {
+        [sessionToken]: { device: 'web' },
+      },
+    }
+    expect(r.json(body, { in: 'body' })).toEqual(body)
+    expect(r.isSecretKey(sessionToken)).toBe(true)
+  })
+})
+
 describe('createRedactor: modes and examples', () => {
   const exchanges = fixtureExchanges()
 

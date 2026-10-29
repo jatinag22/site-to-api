@@ -30,7 +30,7 @@ const NO_FLOWS: FlowsDocument = {
 function analyse(exchanges: Exchange[], flows: FlowsDocument = NO_FLOWS, mutate: (operations: Operation[]) => Operation[] = list => list): Analysis {
   const { exchanges: classified, botProtection } = classifyExchanges(exchanges, { include: [], exclude: [] })
   const redactor = createRedactor({ exchanges: classified, config: CONFIG })
-  const operations = mutate(inferOperationSchemas(buildOperations(classified, { sourceRoutes: [] }), redactor))
+  const operations = mutate(inferOperationSchemas(buildOperations(classified, { sourceRoutes: [], isSecretKey: redactor.isSecretKey }), redactor))
   return {
     sessions: [
       ...new Set(exchanges.map(item => item.sessionId)),
