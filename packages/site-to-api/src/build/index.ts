@@ -143,7 +143,7 @@ async function addExcerpts(analysis: Analysis, sessions: LoadedSession[], redact
       const excerpt = await excerptFor(ref, sessions)
       // Code can embed what the capture learnt is secret (a token minted into a script).
       if (excerpt)
-        analysis.excerpts.set(excerpt.path, redactor.value(excerpt.content, { in: 'text' }))
+        analysis.excerpts.set(excerpt.path, redactor.text(excerpt.content))
       byKey.set(key, excerpt
         ? `source/${excerpt.path}`
         : null)

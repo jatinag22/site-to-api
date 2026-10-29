@@ -86,6 +86,16 @@ function parseJson(text: string): unknown {
   }
 }
 
+/** `decodeURIComponent` without the form-encoding `+`: what a percent-encoded value means. */
+function percentDecoded(text: string): string {
+  try {
+    return decodeURIComponent(text)
+  }
+  catch {
+    return text
+  }
+}
+
 function safeDecode(text: string): string | null {
   try {
     return decodeURIComponent(text.replace(/\+/g, ' '))
@@ -312,9 +322,11 @@ export function createRedactor(input: RedactorInput): Redactor {
     ...always,
     ...[...unlessConstant].filter(value => !isConstant(value)),
   ]
+    // As sent, percent-encoded, and percent-decoded (a cookie sent as `a%2Bb` is `a+b` in a page).
     .flatMap(value => [
       value,
       encodeURIComponent(value),
+      percentDecoded(value),
     ])
     .filter(value => value.length >= MIN_SEARCHED_SECRET_LENGTH))
   const secretPattern = secrets.size === 0
@@ -363,16 +375,27 @@ export function createRedactor(input: RedactorInput): Redactor {
     }
     if (URLENCODED.test(text) && text.includes('='))
       return redactQuery(text, depth)
-    if (/%[0-9a-f]{2}/i.test(text)) {
-      const decoded = safeDecode(text)
-      if (decoded !== null && decoded !== text) {
-        const redacted = redactString(decoded, context, depth + 1)
-        return redacted === decoded
-          ? text
-          : redacted
-      }
-    }
-    return null
+    return /%[0-9a-f]{2}/i.test(text)
+      ? redactPercentEncoded(text, context, depth)
+      : null
+  }
+
+  /**
+   * The original text is scanned first, for secrets in every form they were learnt in, and stays
+   * the text written. Only a value whose secret shows up decoded alone (an encoding other than
+   * encodeURIComponent's) is written decoded and redacted, which is safe.
+   */
+  function redactPercentEncoded(text: string, context: RedactContext, depth: number): string | null {
+    const scanned = scanText(text)
+    if (scanned !== text)
+      return scanned
+    const decoded = safeDecode(text)
+    if (decoded === null || decoded === text)
+      return null
+    const redacted = redactString(decoded, context, depth + 1)
+    return redacted === decoded
+      ? null
+      : redacted
   }
 
   /**
@@ -465,6 +488,9 @@ export function createRedactor(input: RedactorInput): Redactor {
     value: (text, context) => raw
       ? text
       : redactString(text, context, 0),
+    text: text => raw
+      ? text
+      : scanText(text),
     json: (value, context) => raw
       ? value
       : redactJson(value, context, 0),

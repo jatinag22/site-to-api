@@ -97,6 +97,12 @@ export interface ValueRedactor {
  */
 export interface Redactor extends ValueRedactor {
   /**
+   * Redacts large free text (code excerpts) where it stands: learnt secrets in every form, JWTs
+   * and personal data are replaced, and nothing else changes; the text is never decoded, parsed
+   * or re-encoded.
+   */
+  text: (text: string) => string
+  /**
    * For bot-protection steps: every string and number becomes its shape (challenge inputs,
    * solutions, sensor data), since nothing in them is for a client to reuse. Still copies
    * values with `examples: raw` and writes none with `none`.

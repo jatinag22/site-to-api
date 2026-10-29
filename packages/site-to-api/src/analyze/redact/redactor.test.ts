@@ -488,6 +488,41 @@ describe('createRedactor: bot protection', () => {
   })
 })
 
+describe('createRedactor: free text and percent-encoding', () => {
+  const withCookie = (value: string): Redactor => redactor([
+    exchange({
+      url: 'https://shop.test/api/x',
+      cookies: { sid: value },
+    }),
+  ])
+
+  it('scrubs a percent-encoded cookie from text that also holds other %xx sequences', () => {
+    const cookie = 'AbC123xYz%2BqWe%3D'
+    const text = `// excerpt\nconst q = "a%20b";\nconst t = "${cookie}";\n`
+    for (const out of [
+      withCookie(cookie).value(text, { in: 'text' }),
+      withCookie(cookie).text(text),
+    ]) {
+      expect(out).not.toContain(cookie)
+      expect(out).not.toContain('AbC123xYz+qWe=')
+      expect(out).toContain('const q = "a%20b";')
+    }
+  })
+
+  it('scrubs a cookie with + and / beside unrelated %20, and the decoded form of an encoded one', () => {
+    const plus = 'AbC123+xYz/qWeRtY='
+    expect(withCookie(plus).value(`const q = "a%20b";\nconst t = "${plus}";`, { in: 'text' })).not.toContain(plus)
+    expect(withCookie('AbC123xYz%2BqWe%3D').text('t = "AbC123xYz+qWe="')).not.toContain('AbC123xYz+qWe=')
+  })
+
+  it('never decodes or rewrites code it scans', () => {
+    const code = '// x\nconst u = "/a%2Fb?q=%20"; i = a + b; t = "Zq81kLmN03pp"\n'
+    const out = withCookie('Zq81kLmN03pp').text(code)
+    expect(out).toBe(code.replace('Zq81kLmN03pp', '<redacted: 12 chars>'))
+    expect(withCookie('Zq81kLmN03pp').value(code, { in: 'text' })).toBe(out)
+  })
+})
+
 describe('createRedactor: opaque blobs', () => {
   const blob = 'Qm9vT2pLcFh5ZVd6M1JhTnNUdUlvUG1BYkNkRWZHaElqS2xNbk9wUXJTdFV2V3hZeg'.repeat(5)
   const fingerprint = 'hX7kQ2mZpL9vRt4WcB8nYd3JfS6gAe1U'
