@@ -177,7 +177,7 @@ The full format is specified in [docs/output-format.md](docs/output-format.md).
 | `probe` | Replays captured requests against the live site, rate limited, safe methods (and GraphQL queries) only unless `--unsafe-methods`; works out the needed cookies and headers for up to `--minimize-per-host <n>` operations per host (default 5); rebuilds the handoff folder with the flags of the last `build` (from `build.json`) and prints a summary |
 | `check` | Replays safe requests (same runner and limits as `probe`, never unsafe methods) and compares each live answer with the operation's response schema: status changes, added fields, missing required fields, type changes. Writes `check.json`, prints a summary. Exit code 0 no drift, 1 drift, 2 error or nothing could be checked. `--include/--exclude <host>`, `--operations <ids>`, `--json` |
 | `gen` | Regenerates only `client/` from an existing handoff folder (no raw captures needed) and updates the client lines of `AGENT.md` and `API_MAP.md`. `--mcp [read\|write]` also writes `client/mcp/`, an MCP server for the site |
-| `mcp [dir]` | Serves the handoff folder to an AI agent as an MCP server over stdio (read-only tools; see [Use with AI agents](#use-with-ai-agents-mcp)). `--allow-calls` adds `call_operation`, `--unsafe-methods`, `--max-rps <n>` |
+| `mcp [dir]` | Serves the handoff folder to an AI agent as an MCP server over stdio (read-only tools; see [Use with AI agents](#use-with-ai-agents-mcp)). `--allow-calls` adds `call_operation`, `--unsafe-methods`, `--max-rps <n>`; `--generated` serves `client/mcp/` instead; `--trust-client` runs a `client/` this machine did not generate |
 | `config` | Prints the resolved config and where each value came from; `--json` for machine-readable output |
 
 Options every command accepts: `-c, --config <file>`, `--cwd <dir>`, `--raw-dir <dir>`,
@@ -389,7 +389,8 @@ Two MCP servers, both over stdio (decision 0043).
 **Explore the handoff folder.** `site-to-api mcp` lets an agent look up one operation at a time
 instead of reading every spec. It reads only the redacted handoff files, never the raw captures.
 It also starts before the folder exists; its tools then say to run `capture` and `build`, and pick
-the folder up once it is written.
+the folder up once it is written. It runs no code from the project: a `site-to-api.config.ts` is
+ignored (pass the folder, or use `site-to-api.config.json`).
 
 ```sh
 claude mcp add site-api -- site-to-api mcp ./api-handoff
@@ -413,18 +414,30 @@ claude mcp add site-api -e SITE_API_COOKIE='session=…' -e SITE_API_AUTH='Beare
 
 With several hosts, use `SITE_API_COOKIE_<HOST>` / `SITE_API_AUTH_<HOST>` (the host's folder
 under `client/` in upper case, e.g. `SITE_API_COOKIE_SHOP_EXAMPLE_COM`); the plain names are then
-ignored, so a cookie is never sent to the wrong site.
+ignored, so a cookie is never sent to the wrong site. A redirect to another origin is refused, so
+credentials stay on the site.
+
+**Only clients you generated run.** `call_operation` and the per-site server execute the code in
+`client/`, and a cloned repository can put any code there, which would run with your whole
+environment. So `gen` (and `build`) records a hash of `client/` in
+`~/.config/site-to-api/trusted-clients.json` (or under `$XDG_CONFIG_HOME`), outside every
+project, and both refuse a client whose files do not match: "this client wasn't generated on this
+machine; run `site-to-api gen` to regenerate it, or pass `--trust-client` if you reviewed it".
+This check is the protection; the per-host variable names are not, since code in the process can
+read any of them.
 
 **A server for one site.** `site-to-api gen --mcp` (or `build --mcp`, or `gen: { mcp: 'read' }` in
 the config) writes `api-handoff/client/mcp/server.ts`: one tool per operation, input schemas from
 the generated Zod schemas, calls through the typed client. `read` (the default) exposes only
 operations that read; `--mcp write` adds the ones that change data. Bot-protection steps never get
-a tool. Run it with the same packages as the client plus the SDK:
+a tool. Run it through the CLI, which checks the client first and brings the SDK, zod and the
+runtime itself:
 
 ```sh
-npm install @modelcontextprotocol/server@2.4.0 zod @site-to-api/runtime && npm install -D tsx
-claude mcp add pinewood -e SITE_API_COOKIE='…' -- npx tsx ./api-handoff/client/mcp/server.ts
+claude mcp add pinewood -e SITE_API_COOKIE='…' -- site-to-api mcp ./api-handoff --generated
 ```
+
+Running `npx tsx ./api-handoff/client/mcp/server.ts` directly works too, but skips that check.
 
 `api-handoff/client/mcp/README.md` lists its settings and a JSON configuration for other clients.
 
