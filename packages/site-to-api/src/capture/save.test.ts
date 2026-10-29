@@ -89,6 +89,27 @@ describe('saveSession', () => {
     expect(result.incomplete).toEqual({ reason: 'interrupted', error: 'a second stop signal ended the browser' })
   })
 
+  it('still waits for pending work after the Ctrl+C that ends an interactive session', async () => {
+    const stopped = new AbortController()
+    stopped.abort()
+    let done = false
+    const work = new Promise<void>(resolve => setTimeout(() => {
+      done = true
+      resolve()
+    }, 150))
+    const result = await saveSession(input({
+      pages: () => [],
+      close: async () => {},
+    }, {
+      scripted: false,
+      pending: new Set([work]),
+      timeouts: { settleMs: 5_000, closeMs: 5_000 },
+      stopper: { signal: stopped.signal, forced: new AbortController().signal },
+    }))
+    expect(done).toBe(true)
+    expect(result.warnings.some(warning => warning.includes('interrupted'))).toBe(false)
+  })
+
   it('marks a stopped script interrupted, but not an interactive session the person ended', async () => {
     const stopped = new AbortController()
     stopped.abort()

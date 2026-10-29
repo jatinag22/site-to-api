@@ -514,8 +514,10 @@ describe('runCapture errors and interactive mode', () => {
       },
     })
     expect(path.basename(result.sessionDir)).toMatch(/^127\.0\.0\.1-\d{8}-\d{6}$/)
-    // Ending an interactive session (abort, Ctrl+C) is the normal way to finish it.
+    // Ending an interactive session (abort, Ctrl+C) is the normal way to finish it: nothing is
+    // marked incomplete and pending work (the navigation label checked below) is still saved.
     expect(result.meta.incomplete).toBeUndefined()
+    expect(result.warnings.some(warning => warning.includes('interrupted'))).toBe(false)
     expect(logs.some(m => m.includes('close the browser window'))).toBe(true)
     const files = await readdir(result.sessionDir)
     expect(files).toEqual(expect.arrayContaining(['meta.json', 'traffic.har', 'events.jsonl']))

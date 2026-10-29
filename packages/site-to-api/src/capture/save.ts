@@ -162,7 +162,10 @@ const seconds = (ms: number): string => `${Math.round(ms / 1000)} s`
 async function settleAll(input: SaveInput, warnings: string[]): Promise<Incomplete | null> {
   let incomplete: Incomplete | null = null
   const settle = async (task: Promise<unknown>, what: string): Promise<void> => {
-    const result = await waitBounded(task, input.timeouts.settleMs, input.stopper.signal)
+    // In interactive mode the first Ctrl+C is the normal end, so only the second cuts waits short.
+    const result = await waitBounded(task, input.timeouts.settleMs, input.scripted
+      ? input.stopper.signal
+      : input.stopper.forced)
     if (result === 'timeout') {
       incomplete ??= { reason: 'timeout', error: `${what} did not finish within ${seconds(input.timeouts.settleMs)}` }
       warnings.push(`Stopped waiting for ${what} after ${seconds(input.timeouts.settleMs)}; a page kept a connection open or stopped responding. The session was saved without it.`)
