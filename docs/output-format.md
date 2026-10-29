@@ -35,8 +35,9 @@ The entry point for a coding agent. Generated from a template, no LLM. Sections,
    only in source (with "method unknown" when the code did not show the method), host patterns
    that matched nothing, operations `probe` did not minimize because of `probe.minimizePerHost`,
    operations probe could not confirm (session refused, blocked by bot protection, answered
-   differently, unreachable), a probe run that replayed nothing, and the state of `client/` (last). Each gap says what would resolve it (usually "capture again
-   and do X").
+   differently, unreachable), a probe run that replayed nothing, WebSocket messages that could
+   not be grouped by type or whose schema came from the first 1000 frames, and the state of
+   `client/` (last). Each gap says what would resolve it (usually "capture again and do X").
 
 ## `API_MAP.md`
 
@@ -163,14 +164,18 @@ are written from the client's point of view: `send` is client → server, `recei
 
 - One server per scheme (`ws`, `wss`); one channel per connection path template, with path
   parameters (`/rooms/{roomId}`) and query parameters as the `ws` binding's `query` schema.
-- Messages are grouped per direction by a discriminator: the top-level string field every JSON
-  message of that direction has (`type`, `event`, `op`, `action`, `method`, ... preferred). Each
-  group is a message with `name` = the discriminator value, a JSON Schema `payload` with the
-  discriminator pinned as `const`, and redacted examples. Non-JSON text frames are one `text/plain`
+- Messages are grouped per direction by a discriminator: a string field, top level or one object
+  down (`type`, `stream`, `data.e`), on at least 80% of that direction's JSON messages, with at
+  most 32 values (`type`, `event`, `op`, `action`, `method`, ... preferred on ties; decision
+  0030). Messages without it form one more group. Each group is a message with `name` = the
+  discriminator value, a JSON Schema `payload` with the discriminator pinned as `const`, and
+  redacted examples; its summary says when the schema came from the first 1000 frames only.
+  Non-JSON text frames are one `text/plain`
   message with their shapes; binary frames are one `application/octet-stream` message, counted only.
 - Extensions:
-  - `x-site-to-api-handshake` (channel): the messages to send right after connecting, in order,
-    each with a redacted example
+  - `x-site-to-api-handshake` (channel): the messages that set up the connection, in order, each
+    with its `role` (`init`, `auth`, `subscribe`, or `other` when no message type was recognised
+    and the first message the client sent is listed) and a redacted example (decision 0030)
   - `x-site-to-api-cookies` (channel): `{ status: sent | none | unknown, names }` from the HTTP
     upgrade request; `unknown` when the HAR has none
   - `x-site-to-api-connections` (channel), `x-site-to-api-count` (message): how often each was seen

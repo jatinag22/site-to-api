@@ -7,11 +7,12 @@
 import type { Analysis, Operation, SessionRequirement, ValueOrigin } from '../../model'
 import type { StepResolver } from '../steps'
 import type { ClientState } from './client'
+import { isBotProtectionHeader, isChallengeAnswer, sendsBotProtectionHeaders } from '../../analyze/classify'
 import { cookieLines } from '../cookies'
 import { anchor, code, text } from '../escape'
 import { specFileName } from '../openapi/write'
 import { createStepResolver } from '../steps'
-import { channelsSection } from './channels'
+import { channelGaps, channelsSection } from './channels'
 import { clientGap, clientReadingLine } from './client'
 import { graphqlSection } from './graphql'
 import { describeSource } from './source-ref'
@@ -102,9 +103,6 @@ function verdictSource(entry: SessionRequirement, probe: ProbeGaps | null): stri
     : 'inferred from the capture; probe tested no operation on this host'
 }
 
-/** Request headers bot-protection scripts compute (Kasada, PerimeterX, Akamai, DataDome). */
-const BROWSER_MADE_HEADER = /^(?:x-kpsdk-|x-px-|x-acf-sensor-data$|x-dd-b$)/
-
 /** Headers probe found necessary on this host, beyond cookies. */
 function neededHeaders(tested: string[][]): string[] {
   return [
@@ -125,7 +123,7 @@ function needsLine(entry: SessionRequirement, headers: string[], context: AgentG
     : ''
   // Probe can find a browser needed for a header a bot-protection script computes, with no cookie
   // involved; say that instead of the cookie advice.
-  const browserHeaders = headers.filter(name => BROWSER_MADE_HEADER.test(name))
+  const browserHeaders = headers.filter(name => isBotProtectionHeader(name))
   const needs = entry.requires === 'browser' && browserHeaders.length > 0
     ? `a real browser is needed: ${browserHeaders.map(code).join(', ')} ${plural(browserHeaders.length, 'is', 'are')} computed by a bot-protection script in the page`
     : REQUIREMENT_TEXT[entry.requires]
@@ -147,9 +145,35 @@ function hostLines(entry: SessionRequirement, analysis: Analysis, context: Agent
       ? `- Bot protection seen: ${text(finding.vendor)} (${text(finding.evidence)}). Probe's plain requests were answered without it; if they start being challenged, use a real browser session (\`browserSession\` in \`@site-to-api/runtime\`) rather than reproducing it.`
       : `- Bot protection: ${text(finding.vendor)} (${text(finding.evidence)}). Do not try to reproduce it; let a real browser run it (\`browserSession\` in \`@site-to-api/runtime\`).`)
   }
+  if (servedOnlyChallenges(entry.host, analysis))
+    lines.push('- No real content: every response this host gave the capture was a bot challenge or block page, so its specs describe the interstitial, not the site. Capture again with a browser session the site lets through; probe results cannot show that plain HTTP works here.')
+  const guarded = entry.botProtection.length === 0
+    ? []
+    : analysis.operations.filter(operation => operation.host === entry.host && operation.kind === 'api' && sendsBotProtectionHeaders(operation))
+  if (guarded.length > 0)
+    lines.push(`- Calls that send the bot-protection script's headers, so only a real browser can make them: ${guarded.map(operation => code(operation.operationId)).join(', ')}${entry.probed ? '. Whatever probe found for other calls, these keep the host on a real browser' : ''}.`)
   lines.push(...cookieLines(entry, tested))
   lines.push(`- Spec: ${code(`specs/${specFileName(entry.host)}`)}.`, '')
   return lines
+}
+
+/**
+ * True when every observed page and call of a host was answered with a challenge (Reddit's
+ * "Prove your humanity" on every page): the capture holds nothing of the site itself.
+ */
+function servedOnlyChallenges(host: string, analysis: Analysis): boolean {
+  const exchanges = analysis.operations
+    .filter(operation => operation.host === host && !operation.sourceOnly)
+    .flatMap(operation => operation.kind === 'bot-protection' && !operation.exchanges.some(isChallengeAnswer)
+      ? []
+      : operation.exchanges)
+  return exchanges.length > 0 && exchanges.every(isChallengeAnswer)
+}
+
+/** True when every observed operation of a host is a bot-protection step at a vendor endpoint. */
+function onlyVendorSteps(host: string, analysis: Analysis): boolean {
+  const observed = analysis.operations.filter(operation => operation.host === host && !operation.sourceOnly)
+  return observed.length > 0 && observed.every(operation => operation.kind === 'bot-protection' && !operation.exchanges.some(isChallengeAnswer))
 }
 
 function sessionSection(analysis: Analysis, context: AgentGuideContext): string[] {
@@ -311,6 +335,7 @@ function gapsSection(analysis: Analysis, context: AgentGuideContext, resolver: S
   const gaps = [
     ...operationGaps(analysis, resolver),
     ...unknownOriginGaps(analysis, resolver),
+    ...channelGaps(analysis.channels ?? []),
   ]
   if (!context.probe)
     gaps.push('`site-to-api probe` has not been run, so session requirements are inferred, not tested.')
@@ -350,10 +375,19 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext)
     none: 'No example values were written (`redact.examples: none`).',
   }[context.examples]
 
+  // A host whose only traffic was a vendor's challenge endpoints (reCAPTCHA on www.google.com) is
+  // bot protection, not an API this folder documents.
+  const apiHosts = analysis.hosts.filter(host => !onlyVendorSteps(host, analysis))
+  const challenged = [
+    ...new Set(analysis.operations.map(operation => operation.host)),
+  ]
+    .sort()
+    .filter(host => servedOnlyChallenges(host, analysis))
   const lines = [
     '# Start here',
     '',
-    `This folder documents the internal API behind ${analysis.hosts.map(code).join(', ') || 'the captured site'}, generated by site-to-api ${text(context.toolVersion)} from ${analysis.sessions.length} capture session${analysis.sessions.length === 1
+    ...challenged.map(host => `**The capture holds no real content for ${code(host)}**: every page and call it answered was a bot challenge or block page. Its specs describe the interstitial, not the site; capture again with a browser session the site lets through.\n`),
+    `This folder documents the internal API behind ${apiHosts.map(code).join(', ') || 'the captured site'}, generated by site-to-api ${text(context.toolVersion)} from ${analysis.sessions.length} capture session${analysis.sessions.length === 1
       ? ''
       : 's'} (${analysis.sessions.map(text).join(', ')}). Everything here was computed from recorded traffic and the site's own code; nothing was guessed by a language model. ${exampleNote}`,
     '',

@@ -2,6 +2,7 @@ import type { Analysis, Operation } from '../../model'
 import { describe, expect, it } from 'vitest'
 import { channelMessage, tickerChannel } from '../../../test/channels'
 import { fakeHash, graphqlAnalysis, graphqlGet, graphqlPost } from '../../../test/graphql'
+import { exchange } from '../../../test/helpers'
 import { HOSTILE, injected, renderMarkdown } from '../../../test/markdown'
 import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { renderAgentGuide } from './agent-guide'
@@ -394,6 +395,96 @@ describe('probe evidence, qualified references and unknown methods', () => {
     expect(guide).toContain('`site-to-api probe --minimize-per-host 6`')
   })
 
+  it('names the calls that send bot-protection headers on a protected host', () => {
+    const analysis = fixture()
+    analysis.operations.push(operation({
+      operationId: 'putApiCart',
+      method: 'PUT',
+      path: '/api/cart',
+      headers: [
+        {
+          name: 'x-kpsdk-ct',
+          required: true,
+          schema: { type: 'string' },
+          constant: false,
+        },
+      ],
+    }))
+    const options = {
+      toolVersion: '0.1.0',
+      examples: 'masked' as const,
+      probed: false,
+      client: 'current' as const,
+      probe: null,
+    }
+    expect(renderAgentGuide(analysis, options)).toContain('- Calls that send the bot-protection script\'s headers, so only a real browser can make them: `putApiCart`.')
+    const unguarded = fixture()
+    expect(renderAgentGuide(unguarded, options)).not.toContain('bot-protection script\'s headers')
+  })
+
+  it('says a host that only answered with challenge pages has no real content', () => {
+    const analysis = fixture()
+    const challenged = {
+      ...exchange({ url: 'https://blocked.example/', resourceType: 'document' }),
+      kind: 'bot-protection' as const,
+      kindReason: 'Challenge page: challenge page (title "prove your humanity")',
+    }
+    analysis.operations.push(operation({
+      operationId: 'getRoot',
+      method: 'GET',
+      path: '/',
+      host: 'blocked.example',
+      kind: 'bot-protection',
+      exchanges: [challenged],
+    }))
+    analysis.flows.session.push({
+      host: 'blocked.example',
+      requires: 'browser',
+      cookies: [],
+      botProtection: [
+        { vendor: 'Challenge page', evidence: 'challenge page (title "prove your humanity")' },
+      ],
+      probed: false,
+    })
+    const guide = renderAgentGuide(analysis, {
+      toolVersion: '0.1.0',
+      examples: 'masked',
+      probed: false,
+      client: 'current',
+      probe: null,
+    })
+    const section = guide.slice(guide.indexOf('### blocked.example'), guide.indexOf('### shop.example'))
+    expect(section).toContain('- No real content: every response this host gave the capture was a bot challenge or block page')
+    expect(guide.slice(guide.indexOf('### shop.example'))).not.toContain('No real content')
+    expect(guide.split('\n')[2]).toBe('**The capture holds no real content for `blocked.example`**: every page and call it answered was a bot challenge or block page. Its specs describe the interstitial, not the site; capture again with a browser session the site lets through.')
+  })
+
+  it('does not present a captcha vendor\'s host as an API the folder documents', () => {
+    const analysis = fixture()
+    const frame = {
+      ...exchange({ url: 'https://captcha.example/recaptcha/api2/anchor', resourceType: 'document' }),
+      kind: 'bot-protection' as const,
+      kindReason: 'reCAPTCHA: request to captcha.example/recaptcha/…',
+    }
+    analysis.hosts = ['captcha.example', 'shop.example']
+    analysis.operations.push(operation({
+      operationId: 'getAnchor',
+      method: 'GET',
+      path: '/recaptcha/api2/anchor',
+      host: 'captcha.example',
+      kind: 'bot-protection',
+      exchanges: [frame],
+    }))
+    const guide = renderAgentGuide(analysis, {
+      toolVersion: '0.1.0',
+      examples: 'masked',
+      probed: false,
+      client: 'current',
+      probe: null,
+    })
+    expect(guide).toContain('This folder documents the internal API behind `shop.example`, generated')
+  })
+
   it('says "method unknown" instead of presenting the placeholder method', () => {
     const analysis = probed()
     const map = renderApiMap(analysis, 'current')
@@ -447,6 +538,22 @@ describe('helpers', () => {
       pattern: null,
       confidence: 'high',
     })).toBe('`a.s1` → html `meta`')
+    expect(describeOrigin({
+      kind: 'html',
+      step: 'a.s1',
+      selector: 'script#state',
+      attr: null,
+      pattern: '"csrf":"([^"]*)',
+      confidence: 'high',
+    })).toBe('`a.s1` → html `script#state` matching `"csrf":"([^"]*)`')
+    expect(describeOrigin({
+      kind: 'html',
+      step: 'a.s1',
+      selector: '',
+      attr: null,
+      pattern: null,
+      confidence: 'low',
+    })).toBe('`a.s1` → the whole text response (low confidence)')
   })
 
   it('describes every origin kind', () => {
@@ -613,7 +720,7 @@ describe('real-time channels', () => {
     const section = guide.split('## Real-time channels')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain('### `ws://shop.test:8080/ws/ticker`')
     expect(section).toContain('- Spec: `specs/shop.test_8080.asyncapi.yaml`, channel `wsTicker`. Seen in 2 connections.')
-    expect(section).toContain('1. `subscribe`, e.g. `{"type":"subscribe","productId":1007}`')
+    expect(section).toContain('1. `subscribe` (subscription), e.g. `{"type":"subscribe","productId":1007}`')
     expect(section).toContain('- Client → server: `subscribe` (2×).')
     expect(section).toContain('- Server → client: `tick` (6×), text frames (1×), binary frames (1×).')
     expect(section).toContain('- `body./productId` of `subscribe` comes from `body./items/0/id` of `getApiProducts`.')
@@ -623,14 +730,60 @@ describe('real-time channels', () => {
   })
 
   it('says when the server pushes without a subscription and when cookies are unknown', () => {
+    const ticker = tickerChannel()
     const guide = renderAgentGuide(withChannels([
       tickerChannel({
         handshake: [],
+        messages: ticker.messages.filter(message => message.direction === 'receive'),
         cookies: { status: 'unknown', names: [] },
       }),
     ]), context)
-    expect(guide).toContain('- The client sent nothing after connecting: the server pushes on its own.')
+    expect(guide).toContain('- The client sent nothing after connecting: the server sent its messages on its own.')
+    expect(guide).toContain('- Server → client: `tick`')
     expect(guide).toContain('the capture has no record of the upgrade request')
+  })
+
+  it('lists ungrouped messages and sampled schemas as gaps', () => {
+    const ticker = tickerChannel()
+    const guide = renderAgentGuide(withChannels([
+      tickerChannel({
+        messages: ticker.messages.map(message => message.direction === 'receive'
+          ? { ...message, count: 1500, schemaSamples: 1000 }
+          : message),
+        ungrouped: [
+          { direction: 'send', field: 'op', values: 40 },
+          { direction: 'receive', field: null, values: null },
+        ],
+      }),
+    ]), context)
+    const gaps = guide.split('## Gaps')[1] ?? ''
+    expect(gaps).toContain('The client messages of `ws://shop.test:8080/ws/ticker` come in several shapes, but `op` looks like their type but has 40 values, too many to tell types from data')
+    expect(gaps).toContain('The server messages of `ws://shop.test:8080/ws/ticker` come in several shapes, but no field names their type')
+    expect(gaps).toContain('was inferred from the first 1000 of its 1500 messages')
+  })
+
+  it('does not claim the server pushes when no messages were seen at all', () => {
+    const guide = renderAgentGuide(withChannels([
+      tickerChannel({ handshake: [], messages: [] }),
+    ]), context)
+    expect(guide).toContain('- No messages were seen on this connection during the capture, so what to send after connecting is unknown.')
+    expect(guide).not.toContain('pushes')
+  })
+
+  it('says which handshake message does what, and when none was recognised as setup', () => {
+    const ticker = tickerChannel()
+    const named = renderAgentGuide(withChannels([
+      tickerChannel({
+        handshake: [
+          { message: 'sendSubscribe', role: 'other', example: null },
+        ],
+      }),
+    ]), context)
+    expect(named).toContain('1. `subscribe` (the first message sent; no message type was recognised as authentication or a subscription), see the spec for its shape')
+    const none = renderAgentGuide(withChannels([
+      tickerChannel({ handshake: [], messages: ticker.messages }),
+    ]), context)
+    expect(none).toContain('- None of the client\'s messages set up the connection')
   })
 
   it('lets gen switch the client state of AGENT.md and API_MAP.md that have channels', () => {
@@ -686,6 +839,7 @@ describe('real-time channels', () => {
     handshake: [
       {
         message: 'sendMessage',
+        role: 'other',
         example: { [HOSTILE]: HOSTILE },
       },
     ],

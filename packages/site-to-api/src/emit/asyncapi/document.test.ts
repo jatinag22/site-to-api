@@ -164,6 +164,45 @@ describe('buildAsyncApiDocuments', () => {
     })
   })
 
+  it('describes a path parameter by the evidence that made it one', () => {
+    const describe = (evidence: Array<'source-template' | 'value-trace' | 'varies' | 'looks-like-id'>, connections: number): unknown => {
+      const channel = {
+        ...roomsChannel,
+        connections,
+        pathParams: roomsChannel.pathParams.map(param => ({ ...param, evidence })),
+      }
+      const parsed: unknown = parse(toYaml(buildAsyncApiDocuments([channel], 1).get('shop.test:8080') ?? {}))
+      return parsed
+    }
+    expect(describe(['varies', 'looks-like-id'], 2)).toMatchObject({
+      channels: {
+        roomsByRoomId: {
+          parameters: {
+            roomId: { description: 'Path segment (integer) that varied between connections.' },
+          },
+        },
+      },
+    })
+    expect(describe(['looks-like-id'], 1)).toMatchObject({
+      channels: {
+        roomsByRoomId: {
+          parameters: {
+            roomId: { description: 'Path segment (integer) that looks like an identifier.' },
+          },
+        },
+      },
+    })
+    expect(describe(['source-template'], 1)).toMatchObject({
+      channels: {
+        roomsByRoomId: {
+          parameters: {
+            roomId: { description: 'Path segment (integer) named by a URL template in the site\'s code.' },
+          },
+        },
+      },
+    })
+  })
+
   it('names operations by channel and message', () => {
     const channel = tickerChannel()
     expect(channel.messages.map(item => asyncApiOperationId(channel, item))).toEqual([

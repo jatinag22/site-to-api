@@ -4,10 +4,11 @@
  * `session.ts` so the waiting and killing can be tested without a browser.
  */
 import type { SessionMeta } from '../model'
-import { readFile, rename, stat, writeFile } from 'node:fs/promises'
+import type { FinishedHar } from './har'
+import { rename, writeFile } from 'node:fs/promises'
 import process from 'node:process'
-import { z } from 'zod'
-import { failedNavigationsWarning, harNavigations } from '../load'
+import { failedNavigationsWarning } from '../load'
+import { finishHar } from './har'
 
 /** How long saving a session waits before it gives up and saves what exists. */
 export interface CaptureTimeouts {
@@ -93,36 +94,6 @@ export async function waitBounded(task: Promise<unknown>, ms: number, stop: Abor
   }
 }
 
-const HarSchema = z.object({
-  log: z.object({
-    entries: z.array(z.unknown()),
-  }),
-})
-
-/** The HAR's entries, or why there are none (missing, empty or invalid). */
-async function readHar(file: string): Promise<unknown[] | string> {
-  let size = 0
-  try {
-    size = (await stat(file)).size
-  }
-  catch {
-    return `The browser closed without writing ${file}. Capture again and end the session by closing the browser window or pressing Ctrl+C, not by killing the process.`
-  }
-  if (size === 0)
-    return `${file} is empty. Capture again and end the session by closing the browser window or pressing Ctrl+C.`
-  let data: unknown
-  try {
-    data = JSON.parse(await readFile(file, 'utf8'))
-  }
-  catch {
-    return `${file} is not a valid HAR file. Capture again.`
-  }
-  const parsed = HarSchema.safeParse(data)
-  return parsed.success
-    ? parsed.data.log.entries
-    : `${file} is not a valid HAR file. Capture again.`
-}
-
 /** Writes JSON through a temporary file and a rename, so a crash never leaves half a file. */
 export async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
   const temporary = `${file}.${process.pid}.tmp`
@@ -151,6 +122,8 @@ export interface SaveInput {
 
 export interface SaveResult {
   entries: number
+  /** The checked and compacted HAR, or null when there is none to read. */
+  har: FinishedHar | null
   warnings: string[]
   incomplete: Incomplete | null
   /** False when the context did not close and the browser was killed instead. */
@@ -207,7 +180,7 @@ async function closeBrowser(input: SaveInput, warnings: string[]): Promise<{ clo
 
 /**
  * Waits (bounded) for page work and scripts being saved, closes the browser so Playwright writes
- * the HAR, and reads it back. Never throws: whatever happens, the caller writes meta.json.
+ * the HAR, and checks and compacts it (`finishHar`). Never throws: whatever happens, the caller writes meta.json.
  */
 export async function saveSession(input: SaveInput): Promise<SaveResult> {
   const warnings: string[] = []
@@ -218,23 +191,32 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
     ? { reason: 'interrupted', error: null }
     : null
   const incomplete = browser.incomplete ?? settled ?? interrupted
-  const har = await readHar(input.harPath)
-  if (typeof har === 'string') {
-    warnings.push(har)
+  let har: FinishedHar
+  try {
+    har = await finishHar(input.harPath)
+  }
+  catch (error) {
+    const reason = error instanceof Error
+      ? error.message
+      : String(error)
+    warnings.push(reason)
     return {
       entries: 0,
+      har: null,
       warnings,
-      incomplete: incomplete ?? { reason: 'timeout', error: har },
+      incomplete: incomplete ?? { reason: 'timeout', error: reason },
       closed: browser.closed,
     }
   }
-  if (har.length === 0)
+  warnings.push(...har.warnings)
+  if (har.entries === 0)
     warnings.push('The HAR has no requests. Did the page load?')
-  const blocked = failedNavigationsWarning(harNavigations(har))
+  const blocked = failedNavigationsWarning(har.navigations)
   if (blocked !== null)
     warnings.push(blocked)
   return {
-    entries: har.length,
+    entries: har.entries,
+    har,
     warnings,
     incomplete,
     closed: browser.closed,

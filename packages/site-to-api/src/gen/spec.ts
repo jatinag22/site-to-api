@@ -4,6 +4,7 @@
  * reads the file.
  */
 import type { ExtractSpec } from '@site-to-api/runtime'
+import type { HandshakeRole } from '../model'
 import { z } from 'zod'
 
 const FieldTypeSchema = z.enum([
@@ -110,6 +111,8 @@ const RequestBodySchema = z.looseObject({
 
 const OperationSchema = z.looseObject({
   'operationId': z.string().optional(),
+  // `api`, `page` or `bot-protection` (emit/openapi); bot-protection steps get no client method.
+  'x-site-to-api-kind': z.string().optional(),
   'security': SecurityRequirementsSchema.optional(),
   // What `probe` found this operation needs (`cookie:<name>`, ...); absent when not minimized.
   'x-site-to-api-requires': z.array(z.string()).optional(),
@@ -183,6 +186,8 @@ export const AsyncApiSummarySchema = z.object({
     })).default({}),
     'x-site-to-api-handshake': z.array(z.object({
       message: z.string(),
+      // Absent in documents written before roles existed (decision 0030).
+      role: z.enum(['init', 'auth', 'subscribe', 'other']).optional(),
       example: z.unknown(),
     })).default([]),
   })),
@@ -196,7 +201,9 @@ export interface ChannelSummary {
   /** `ws://host/path`. */
   url: string
   /** Messages to send right after connecting, with a redacted example (null when none was written). */
-  handshake: Array<{ name: string, example: unknown }>
+  handshake: Array<{ name: string, role: HandshakeRole | null, example: unknown }>
+  /** Message types the capture saw on the channel, both directions. */
+  messageTypes: number
 }
 
 /** Channels of one parsed AsyncAPI document, in document order. */
@@ -215,8 +222,10 @@ export function describeChannels(file: string, document: z.infer<typeof AsyncApi
       url,
       handshake: channel['x-site-to-api-handshake'].map(step => ({
         name: channel.messages[step.message]?.name ?? step.message,
+        role: step.role ?? null,
         example: step.example ?? null,
       })),
+      messageTypes: Object.keys(channel.messages).length,
     }
   })
 }
@@ -291,6 +300,27 @@ export interface HostSpec {
   sentContentTypes: Record<string, string>
   /** GraphQL operations, sorted by operation id. */
   graphql: GraphqlClientOperation[]
+}
+
+/**
+ * The document without its bot-protection steps (`x-site-to-api-kind: bot-protection`), which
+ * only a real browser may run (decision 0008): a client method for them would invite replaying a
+ * challenge. `null` when nothing else is left, so the host gets no client folder at all.
+ */
+export function withoutBrowserOnlySteps(document: OpenApiDocument): OpenApiDocument | null {
+  const paths: NonNullable<OpenApiDocument['paths']> = {}
+  for (const [path, item] of Object.entries(document.paths ?? {})) {
+    const kept = { ...item }
+    for (const method of METHODS) {
+      if (kept[method]?.['x-site-to-api-kind'] === 'bot-protection')
+        delete kept[method]
+    }
+    if (METHODS.some(method => kept[method] !== undefined))
+      paths[path] = kept
+  }
+  if (Object.keys(paths).length === 0 && Object.keys(document.paths ?? {}).length > 0)
+    return null
+  return { ...document, paths }
 }
 
 /** `x-site-to-api-requires` of every operation that has one, in spec order. */

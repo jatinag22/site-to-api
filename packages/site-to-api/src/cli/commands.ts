@@ -11,7 +11,7 @@ import process from 'node:process'
 import { InvalidArgumentError } from 'commander'
 import { consola } from 'consola'
 import { dirname, join, resolve } from 'pathe'
-import { analyzeCaptures, buildHandoff, readBuildRecord, recordClientGenerated, stickyOptions } from '../build'
+import { analyzeForProbe, buildHandoff, readBuildRecord, recordClientGenerated, stickyOptions } from '../build'
 import { runCapture } from '../capture'
 import { updateClientState } from '../emit/handoff'
 import { SiteToApiError } from '../errors'
@@ -193,7 +193,7 @@ const probeCommand: CommandRegistrar = (program) => {
       if (sticky.described.length > 0)
         consola.info(`Using the options of the last build (build.json): ${sticky.described.join(', ')}.`)
       warnIfRaw(config.redact.examples)
-      const analysis = await analyzeCaptures({ config, cwd })
+      const { analysis, redactProbeReport } = await analyzeForProbe({ config, cwd })
       const report = await probeOperations({
         operations: analysis.operations,
         config: config.probe,
@@ -201,7 +201,9 @@ const probeCommand: CommandRegistrar = (program) => {
         log: message => consola.info(message),
       })
       const outDir = resolve(cwd, config.outDir)
-      await writeProbeReport(outDir, report)
+      // probe.json lives in the handoff folder: names that carry values are redacted here, not
+      // only by the rebuild below, which may fail.
+      await writeProbeReport(outDir, redactProbeReport(report))
       const result = await buildHandoff({ config, cwd, sources })
       printWarnings(result.warnings)
       for (const line of summarizeProbe(report))

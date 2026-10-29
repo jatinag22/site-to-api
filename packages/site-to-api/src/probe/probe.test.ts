@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { exchange, jsonBody, textBody } from '../../test/helpers'
 import { applyGraphqlTypes } from '../analyze/graphql'
 import { probeOperations, resemblesCapture } from './probe'
+import { summarizeProbe } from './summary'
 
 let origin: string
 let requests = 0
@@ -56,6 +57,9 @@ const ROUTES: Record<string, Handler> = {
   '/api/private': (req, res) => {
     const ok = (req.headers.cookie ?? '').includes('sid=good') && req.headers['x-api-key'] === 'k1'
     res.writeHead(ok ? 200 : 403, { 'content-type': 'application/json' }).end(ok ? '{"items":[1],"total":1}' : '{"error":"forbidden"}')
+  },
+  '/humanity': (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' }).end('<html><head><title>Shop - Prove your humanity</title></head><body>'.padEnd(1200, 'x'))
   },
   '/api/challenge': (_req, res) => {
     res.writeHead(200, { 'content-type': 'text/html' }).end('<html>checking your browser</html>')
@@ -279,6 +283,24 @@ describe('probeOperations', () => {
     })
   })
 
+  it('says the site answered with a challenge page, not that the session expired', async () => {
+    const page = op('getHumanity', 'GET', '/humanity', {
+      url: `${origin}/humanity`,
+      resourceType: 'document',
+      responseBody: textBody('<html><head><title>Shop</title></head><body>'.padEnd(1200, 'y')),
+    })
+    page.kind = 'page'
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [page],
+    })
+    expect(report.operations[0]).toMatchObject({ replay: 'rejected', requires: null })
+    expect(report.operations[0]).toMatchObject({ rejection: 'bot-protection' })
+    expect(report.operations[0]?.note).toContain('Blocked by bot protection (challenge page')
+    expect(summarizeProbe(report).join('\n')).toContain('blocked by bot protection (not a session problem; these need a real browser): 1 (getHumanity)')
+  })
+
   it('skips unsafe methods and bot-protection steps by default, without sending anything', async () => {
     const before = requests
     const botStep = op('postShield', 'POST', '/shield/collect', { method: 'POST', url: `${origin}/shield/collect` })
@@ -365,6 +387,63 @@ describe('resemblesCapture', () => {
     expect(resemblesCapture(html, 200, 'text/html; charset=utf-8', '<html>'.padEnd(900, 'y'))).toBe(true)
     expect(resemblesCapture(html, 200, 'text/html', '<html>denied</html>')).toBe(false)
     expect(resemblesCapture(html, 302, 'text/html', '')).toBe(false)
+  })
+
+  it('never takes an AWS WAF challenge for success, by header or by its interstitial', () => {
+    const goku = '<html><head><script>window.gokuProps = { "key": "k" }</script></head><body>'.padEnd(1000, 'z')
+    expect(resemblesCapture(html, 202, 'text/html', goku, [
+      { name: 'x-amzn-waf-action', value: 'challenge' },
+    ])).toBe(false)
+    expect(resemblesCapture(html, 200, 'text/html', '<html>'.padEnd(900, 'y'), [
+      { name: 'X-Amzn-Waf-Action', value: 'challenge' },
+    ])).toBe(false)
+    expect(resemblesCapture(html, 200, 'text/html', goku)).toBe(false)
+  })
+
+  it('never takes a challenge page answered 200 for the page', () => {
+    const challenge = '<html><head><title>Shop - Prove your humanity</title></head><body>'.padEnd(1000, 'z')
+    expect(resemblesCapture(html, 200, 'text/html', challenge)).toBe(false)
+  })
+})
+
+describe('probeOperations: challenge tokens', () => {
+  it('never replays a request that carries a Cloudflare challenge token', async () => {
+    const page = op('getQuestions', 'GET', '/questions', {
+      url: 'https://x.test/questions?__cf_chl_tk=abc-1700000000-0-gaN',
+      resourceType: 'document',
+      responseBody: textBody('<html>'.padEnd(900, 'q')),
+    })
+    page.kind = 'page'
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [page],
+    })
+    expect(report.operations).toEqual([])
+    expect(report.skipped).toEqual([
+      { operationId: 'getQuestions', reason: 'no successful response was captured' },
+    ])
+  })
+})
+
+describe('probeOperations: challenge pages in the capture', () => {
+  it('does not replay a page whose only successful samples were challenge pages', async () => {
+    const page = op('getRoot', 'GET', '/', {
+      url: 'https://x.test/',
+      resourceType: 'document',
+      responseBody: textBody('<html><title>Just a moment...</title></html>'),
+    })
+    page.kind = 'page'
+    page.exchanges = page.exchanges.map(item => ({ ...item, kind: 'bot-protection' }))
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [page],
+    })
+    expect(report.operations).toEqual([])
+    expect(report.skipped).toEqual([
+      { operationId: 'getRoot', reason: 'no successful response was captured' },
+    ])
   })
 })
 

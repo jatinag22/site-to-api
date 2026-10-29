@@ -19,6 +19,7 @@ import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { EventWriter } from './events'
+import { harOmissionNote } from './har'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
 import { createStopper, DEFAULT_TIMEOUTS, saveSession, waitBounded, writeJsonAtomic } from './save'
@@ -230,11 +231,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
         error: errorMessage(error),
       }
     }
-    if (incomplete !== null && incomplete.reason !== 'interrupted') {
-      log(`Capture ${incomplete.reason === 'script-failed'
-        ? 'script '
-        : ''}failed: ${incomplete.error ?? 'unknown error'}. Saving what was recorded.`)
-    }
+    logFailure(incomplete, log)
     const saved = await saveSession({
       context,
       pending,
@@ -248,6 +245,9 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     closed = true
     const finalIncomplete = incomplete ?? saved.incomplete
     warnings.push(...saved.warnings)
+    const omitted = saved.har && harOmissionNote(saved.har, { websockets: capture.websockets, saveScripts: capture.saveScripts, eventsFile: EVENTS_FILE })
+    if (omitted)
+      log(omitted)
     warnings.push(...collector.warnings, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
 
     const meta = SessionMetaSchema.parse({
@@ -257,7 +257,8 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       startUrl: options.url,
       startedAt,
       completedAt: new Date().toISOString(),
-      browser: { channel: browser.channel, headless: browser.headless, userAgent },
+      // `null` in the config means Playwright's bundled Chromium; say so instead of leaving it blank.
+      browser: { channel: browser.channel ?? 'bundled', headless: browser.headless, userAgent },
       har: HAR_FILE,
       events: EVENTS_FILE,
       scripts: collector.scripts.toSorted((a, b) => a.url.localeCompare(b.url)),
@@ -353,6 +354,15 @@ async function prepare({ context, capture, options, events, ignoredFrames, warni
       track(binding.attach(other, false))
   }
   return page
+}
+
+function logFailure(incomplete: Incomplete | null, log: (message: string) => void): void {
+  if (incomplete === null || incomplete.reason === 'interrupted')
+    return
+  const what = incomplete.reason === 'script-failed'
+    ? 'Capture script'
+    : 'Capture'
+  log(`${what} failed: ${incomplete.error ?? 'unknown error'}. Saving what was recorded.`)
 }
 
 function incompleteField(incomplete: Incomplete | null): Pick<SessionMeta, 'incomplete'> {

@@ -48,7 +48,40 @@ function loadTrigger(startUrl: string | null, exchanges: readonly Exchange[]): T
   }
 }
 
-function boundaries(events: readonly CaptureEvent[]): Array<{ ts: number, trigger: Trigger }> {
+/** How long before a `navigate` event its document request may have started. */
+const DOCUMENT_LEADS_NAVIGATION_MS = 30_000
+
+function withoutHash(url: string): string {
+  return url.split('#')[0] ?? url
+}
+
+/**
+ * When the navigation to `pageUrl` began. The `navigate` event is recorded once the new page's
+ * scripts run, after its document request, so a navigation of its own (a typed URL, a script's
+ * `page.goto`) would lose its document to the action before it. The first document request for
+ * the URL since the previous action (and not too long ago) marks the start. A document that
+ * started right after a click or submit is that action's result and stays with it; the first
+ * page of the session is the initial load.
+ */
+function navigationStart(ts: number, pageUrl: string, previous: { ts: number, trigger: Trigger } | undefined, exchanges: readonly Exchange[]): number {
+  if (!previous)
+    return ts
+  const url = withoutHash(pageUrl)
+  const caused = previous.trigger.kind === 'click' || previous.trigger.kind === 'submit'
+  let start = ts
+  for (const exchange of exchanges) {
+    const isDocument = exchange.resourceType === 'document' || exchange.kind === 'page'
+    const { startedAt } = exchange
+    if (!isDocument || startedAt <= previous.ts || startedAt > ts || ts - startedAt > DOCUMENT_LEADS_NAVIGATION_MS || withoutHash(exchange.request.url) !== url)
+      continue
+    if (caused && startedAt - previous.ts <= NAVIGATION_FOLLOWS_MS)
+      return ts
+    start = Math.min(start, startedAt)
+  }
+  return start
+}
+
+function boundaries(events: readonly CaptureEvent[], exchanges: readonly Exchange[]): Array<{ ts: number, trigger: Trigger }> {
   const result: Array<{ ts: number, trigger: Trigger }> = []
   const actions = events
     .flatMap(event => (event.t === 'action' && event.kind !== 'change'
@@ -62,7 +95,9 @@ function boundaries(events: readonly CaptureEvent[]): Array<{ ts: number, trigge
     if (action.kind === 'navigate' && previous && previous.trigger.kind !== 'navigate' && action.ts - previous.ts <= NAVIGATION_FOLLOWS_MS)
       continue
     result.push({
-      ts: action.ts,
+      ts: action.kind === 'navigate'
+        ? navigationStart(action.ts, action.pageUrl, previous, exchanges)
+        : action.ts,
       trigger: {
         kind: action.kind,
         label: action.label.replace(/\s+/g, ' ').trim(),
@@ -100,7 +135,7 @@ export function splitSession(input: {
       ts: Number.NEGATIVE_INFINITY,
       trigger: loadTrigger(input.startUrl, input.exchanges),
     },
-    ...boundaries(input.events),
+    ...boundaries(input.events, input.exchanges),
   ]
   const segments: Array<Segment & { seen: Map<string, DraftStep> }> = starts.map(start => ({
     sessionId: input.sessionId,

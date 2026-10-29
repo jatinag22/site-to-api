@@ -6,6 +6,7 @@
 import type { ResolvedConfig } from '../config/schema'
 import type { Exchange, Operation } from '../model'
 import type { OperationProbe, ProbeOutcome, ProbeReport } from '../model/probe'
+import { challengePageMarker, hasChallengeHeader } from '../analyze/classify'
 import { PROBE_FORMAT_VERSION } from '../model/probe'
 import { detectBlock } from './blocked'
 
@@ -51,8 +52,15 @@ interface Variant {
   cookies: Array<[string, string]>
 }
 
+/**
+ * The last successful exchange with real content: a challenge page answered 200 is not one, and
+ * neither is a request carrying a challenge token.
+ */
 function representative(operation: Operation): Exchange | null {
-  const successful = operation.exchanges.filter(exchange => exchange.response.status >= 200 && exchange.response.status < 300)
+  // A URL holding a Cloudflare challenge token (`?__cf_chl_tk=`) would replay the challenge answer.
+  const successful = operation.exchanges.filter(exchange => exchange.response.status >= 200 && exchange.response.status < 300
+    && exchange.kind !== 'bot-protection'
+    && !exchange.request.query.some(item => /^__cf_chl_/i.test(item.name)))
   return successful.at(-1) ?? null
 }
 
@@ -103,6 +111,13 @@ function topLevelKeys(value: unknown): string[] | null {
     : null
 }
 
+/** An HTML response that is a bot challenge or block page; the marker that says so, or null. */
+function challengeResponse(contentType: string | null, body: string): string | null {
+  return mediaType(contentType).includes('html')
+    ? challengePageMarker(body)
+    : null
+}
+
 function kilobytes(length: number): string {
   return `${Math.max(1, Math.round(length / 1024))} KB`
 }
@@ -132,9 +147,15 @@ function jsonDifference(exchange: Exchange, body: string): string | null {
  * How a live response differs from the captured one, or null when it looks the same. Guards
  * against challenge and login pages, which often answer 200 with HTML where the capture had JSON.
  */
-function differenceFromCapture(exchange: Exchange, status: number, contentType: string | null, body: string): string | null {
+function differenceFromCapture(exchange: Exchange, status: number, contentType: string | null, body: string, headers: ReadonlyArray<{ name: string, value: string }> = []): string | null {
   if (status < 200 || status >= 300)
     return `status ${status}, captured ${exchange.response.status}`
+  // AWS WAF answers a challenge with 202 and `x-amzn-waf-action: challenge`.
+  if (hasChallengeHeader(headers))
+    return 'a bot challenge (challenge header)'
+  // An interstitial answered 200 (Reddit's JavaScript challenge) is never the API working.
+  if (challengeResponse(contentType, body) !== null)
+    return 'a bot challenge page'
   const expected = exchange.response.body?.mimeType ?? ''
   const actual = mediaType(contentType)
   if (expected && actual && expected !== actual)
@@ -151,8 +172,8 @@ function differenceFromCapture(exchange: Exchange, status: number, contentType: 
 }
 
 /** Whether a live response looks like the captured one (see {@link differenceFromCapture}). */
-export function resemblesCapture(exchange: Exchange, status: number, contentType: string | null, body: string): boolean {
-  return differenceFromCapture(exchange, status, contentType, body) === null
+export function resemblesCapture(exchange: Exchange, status: number, contentType: string | null, body: string, headers: ReadonlyArray<{ name: string, value: string }> = []): boolean {
+  return differenceFromCapture(exchange, status, contentType, body, headers) === null
 }
 
 class RateLimiter {
@@ -226,16 +247,26 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
           signal: AbortSignal.timeout(options.config.timeoutMs),
         })
         const text = await response.text()
-        const difference = differenceFromCapture(exchange, response.status, response.headers.get('content-type'), text)
+        const contentType = response.headers.get('content-type')
+        const answered = [...response.headers].map(([name, value]) => ({ name, value }))
+        const difference = differenceFromCapture(exchange, response.status, contentType, text, answered)
+        const marker = challengeResponse(contentType, text)
         return {
           outcome: difference === null
             ? 'ok'
             : 'rejected',
           status: response.status,
           error: null,
+          // A vendor's denial page, a challenge header (AWS WAF) or a challenge page answered 200.
           blocked: difference === null
             ? null
-            : detectBlock(response.status, response.headers, text),
+            : detectBlock(response.status, response.headers, text)
+              ?? (hasChallengeHeader(answered)
+                ? `challenge header, status ${response.status}`
+                : null)
+              ?? (marker === null
+                ? null
+                : `challenge page (${marker}), status ${response.status}`),
           difference,
           auth: difference === null
             ? null

@@ -1,6 +1,6 @@
 import type { Lookup } from './network'
 import { describe, expect, it } from 'vitest'
-import { isPublicAddress, nonPublicReason, sourceMapRefusal } from './network'
+import { cachedLookup, isPublicAddress, localPageOf, nonPublicReason, sourceMapRefusal } from './network'
 
 /** A fake resolver: no test touches real DNS. */
 function fakeLookup(table: Record<string, string[]>): Lookup {
@@ -23,6 +23,13 @@ const lookup = fakeLookup({
   'other.corp.example': ['10.2.0.1'],
   'static.corp.example': ['10.2.0.2'],
   'printer.lan.example': ['10.3.0.1'],
+  'int.evil.example': ['169.254.169.254'],
+  // Mixed answers: a public and a private address for one name.
+  'www.evil.com': ['93.184.216.34', '10.0.0.5'],
+  'meta.evil.com': ['169.254.169.254'],
+  'evil.corp': ['93.184.216.35', '10.0.0.6'],
+  'meta.corp': ['169.254.169.254'],
+  'app.intranet.example': ['10.4.0.1'],
 })
 
 describe('isPublicAddress', () => {
@@ -181,6 +188,12 @@ describe('sourceMapRefusal', () => {
     expect(await sourceMapRefusal(new URL('http://10.0.0.8/app.js.map'), internalScript, null, lookup)).toMatch(/page is on a public host/)
   })
 
+  it('says a host Node could not resolve is unresolved, not that it is private', async () => {
+    const refusal = await sourceMapRefusal(new URL('https://missing.example.com/app.js.map'), new URL('https://missing.example.com/app.js'), null, lookup)
+    expect(refusal).toMatch(/could not be resolved from Node/)
+    expect(refusal).not.toMatch(/public host|own origin/)
+  })
+
   it('allows an intranet page to load maps from another private host of its own site', async () => {
     const intranetScript = new URL('http://app.corp/static/app.js')
     const intranetPage = new URL('http://app.corp/home')
@@ -210,5 +223,100 @@ describe('sourceMapRefusal', () => {
 
   it('refuses non-HTTP URLs', async () => {
     expect(await sourceMapRefusal(new URL('file:///etc/passwd'), publicScript, localPage, lookup)).toMatch(/never fetched/)
+  })
+})
+
+describe('cachedLookup', () => {
+  it('asks once per host and retries a failure once', async () => {
+    const calls: string[] = []
+    let failures = 1
+    const flaky: Lookup = async (hostname) => {
+      calls.push(hostname)
+      if (hostname === 'cdn.example.com' && failures-- > 0)
+        throw new Error('EAI_AGAIN')
+      return ['93.184.216.34']
+    }
+    const cached = cachedLookup(flaky)
+    expect(await Promise.all([
+      cached('cdn.example.com'),
+      cached('CDN.example.com'),
+      cached('cdn.example.com'),
+    ])).toEqual([
+      ['93.184.216.34'],
+      ['93.184.216.34'],
+      ['93.184.216.34'],
+    ])
+    expect(calls).toEqual(['cdn.example.com', 'cdn.example.com'])
+  })
+
+  it('gives up after the retry, waiting before it, and asks again on the next call', async () => {
+    const times: number[] = []
+    let up = false
+    const lookup: Lookup = async () => {
+      times.push(Date.now())
+      if (!up)
+        throw new Error('ENOTFOUND')
+      return ['93.184.216.34']
+    }
+    const cached = cachedLookup(lookup, 40)
+    await expect(cached('gone.example.com')).rejects.toThrow('ENOTFOUND')
+    expect(times).toHaveLength(2)
+    expect((times[1] ?? 0) - (times[0] ?? 0)).toBeGreaterThanOrEqual(35)
+    // The failure is not kept: once the resolver answers, the host resolves.
+    up = true
+    expect(await cached('gone.example.com')).toEqual(['93.184.216.34'])
+    expect(times).toHaveLength(3)
+  })
+})
+
+describe('localPageOf', () => {
+  it('treats only a page on a non-public host as local; an unresolvable page is public', async () => {
+    expect(await localPageOf('http://app.corp/home', lookup)).toEqual(new URL('http://app.corp/home'))
+    expect(await localPageOf('https://example.com/', lookup)).toBeNull()
+    expect(await localPageOf('https://www.evil.example/', lookup)).toBeNull()
+    expect(await localPageOf(null, lookup)).toBeNull()
+    expect(await localPageOf('not a url', lookup)).toBeNull()
+  })
+
+  it('never lets an unresolvable page reach a private sibling host', async () => {
+    // `www.evil.example` does not resolve; its sourcemap points at a sibling on the metadata address.
+    const page = await localPageOf('https://www.evil.example/', lookup)
+    const refusal = await sourceMapRefusal(new URL('http://int.evil.example/latest/meta-data/'), new URL('https://www.evil.example/app.js'), page, lookup)
+    expect(refusal).toMatch(/169\.254\.169\.254/)
+  })
+
+  it('does not count every host under one public suffix as one intranet site', async () => {
+    // A private page under `intranet.example` and a target under `evil.example` share only `.example`.
+    const page = await localPageOf('http://app.intranet.example/', lookup)
+    expect(page).not.toBeNull()
+    expect(await sourceMapRefusal(new URL('http://int.evil.example/x.map'), new URL('http://app.intranet.example/a.js'), page, lookup)).toMatch(/not the script's own origin or a host of the page's own site/)
+  })
+})
+
+describe('localPageOf with a mixed DNS answer', () => {
+  const metadata = /169\.254\.169\.254|not the script's own origin|page is on a public host/
+
+  it('counts a page whose name also resolves to a private address as public', async () => {
+    const page = await localPageOf('https://www.evil.com/', lookup)
+    expect(page).toBeNull()
+    expect(await sourceMapRefusal(new URL('http://meta.evil.com/latest/meta-data/'), new URL('https://www.evil.com/app.js'), page, lookup)).toMatch(metadata)
+  })
+
+  it('does the same for a two-label host', async () => {
+    const page = await localPageOf('http://evil.corp/', lookup)
+    expect(page).toBeNull()
+    expect(await sourceMapRefusal(new URL('http://meta.corp/x.map'), new URL('http://evil.corp/app.js'), page, lookup)).toMatch(metadata)
+  })
+
+  it('refuses a same-origin map on a mixed host when the page is public', async () => {
+    const page = await localPageOf('https://www.evil.com/', lookup)
+    expect(await sourceMapRefusal(new URL('https://www.evil.com/app.js.map'), new URL('https://www.evil.com/app.js'), page, lookup)).toMatch(/page is on a public host/)
+  })
+
+  it('goes by the address the browser loaded the page from when it is known', async () => {
+    expect(await localPageOf('https://www.evil.com/', lookup, '93.184.216.34')).toBeNull()
+    expect(await localPageOf('http://app.corp/home', lookup, '10.1.0.10')).toEqual(new URL('http://app.corp/home'))
+    // A private name served from a public address is a public page.
+    expect(await localPageOf('http://app.corp/home', lookup, '93.184.216.34')).toBeNull()
   })
 })

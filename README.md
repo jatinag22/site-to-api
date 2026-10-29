@@ -41,8 +41,8 @@ and hands the result to you or your coding agent in a form that is easy to act o
 - **Secrets stay local.** Raw captures live in a gitignored folder. The handoff folder is redacted
   by default: cookie values, tokens and personal data are replaced by a description of their
   shape and origin.
-- **Honest about sessions.** Bot protection (Akamai, Cloudflare, PerimeterX, DataDome, Imperva,
-  Kasada, captchas) is detected and recorded as "needs a real browser", never bypassed. `probe`
+- **Honest about sessions.** Bot protection (Akamai, AWS WAF, Cloudflare, PerimeterX, DataDome,
+  Imperva, Kasada, captchas) is detected and recorded as "needs a real browser", never bypassed. `probe`
   measures what actually works with plain HTTP.
 
 ## Install

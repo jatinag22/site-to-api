@@ -28,6 +28,9 @@ function route(pathTemplate: string, init: Partial<SourceRoute> = {}): SourceRou
       original: true,
       excerpt: null,
     },
+    evidence: 'call',
+    scriptHosts: ['shop.test'],
+    onlyInBotProtectionScripts: false,
     ...init,
   }
 }
@@ -119,6 +122,28 @@ describe('buildOperations: path parameters', () => {
     })
   })
 
+  it('does not let a source template made only of parameters turn a plain word into one', () => {
+    // A bundle's `${base}/${token}` gives `/{token}` with no host: it says nothing about which
+    // single-segment path on which host it was built for.
+    const operations = build([
+      get('/stream'),
+      exchange({ url: 'https://other.test/nats-fe' }),
+    ], [
+      route('/{token}'),
+    ]).filter(operation => !operation.sourceOnly)
+    expect(paths(operations).sort()).toEqual(['GET /nats-fe', 'GET /stream'])
+    expect(operations.every(operation => operation.pathParams.length === 0)).toBe(true)
+  })
+
+  it('still lets a parameter-only source template name an identifier segment', () => {
+    const operations = build([
+      get('/a1b2c3d4e5f6a7b8c9d0'),
+    ], [
+      route('/{token}'),
+    ]).filter(operation => !operation.sourceOnly)
+    expect(paths(operations)).toEqual(['GET /{token}'])
+  })
+
   it('shares parameter names across methods on the same path', () => {
     const operations = build([
       get('/api/items/12'),
@@ -149,6 +174,95 @@ describe('buildOperations: grouping, ids and summaries', () => {
       ['getRoot', 'page', 'Page home.'],
       ['postSensor', 'bot-protection', 'Bot protection (Akamai), browser only.'],
     ])
+  })
+
+  it('turns every non-word segment of a vendor challenge path into a parameter', () => {
+    const vendor = (path: string): Exchange => ({
+      ...get(path, { kind: 'bot-protection', method: 'POST' }),
+      kindReason: 'Cloudflare: request to shop.test/cdn-cgi/challenge-platform/…',
+    })
+    const operations = build([
+      vendor('/cdn-cgi/challenge-platform/h/g/fo/0.4182736455:1700000000:Hq7ZpL2x_Vb9KmR4tWc-8NyD3fJs6GaE1u/9f8e7d6c5b4a'),
+      vendor('/cdn-cgi/challenge-platform/h/g/fo/0.9918273645:1700000100:Zx9Qw8Er_7Ty6Ui5Op-4AsDf3Gh2Jk1Lm/0a1b2c3d4e5f'),
+    ])
+    expect(operations.map(item => item.path)).toEqual(['/cdn-cgi/challenge-platform/h/g/fo/{foId}/{param2}'])
+    expect(operations[0]!.operationId).not.toMatch(/Hq7Z|Zx9Q/)
+  })
+
+  it('keeps a page that was challenged once a page', () => {
+    const operations = build([
+      {
+        ...get('/trade', {
+          kind: 'bot-protection',
+          resourceType: 'document',
+          status: 202,
+          responseBody: textBody('<html>'),
+        }),
+        kindReason: 'AWS WAF: response header x-amzn-waf-action',
+      },
+      get('/trade', {
+        kind: 'page',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+    ])
+    expect(operations.map(operation => [operation.operationId, operation.kind, operation.summary])).toEqual([
+      ['getTrade', 'page', 'Page trade.'],
+    ])
+  })
+
+  it('makes code-only operations only from request calls, on the pages that loaded the script', () => {
+    const pageOn = (host: string): Exchange => exchange({
+      url: `https://${host}/`,
+      kind: 'page',
+      resourceType: 'document',
+      responseBody: textBody('<html>'),
+    })
+    const script = {
+      ...exchange({ url: 'https://cdn.shop.test/app.js', kind: 'asset', resourceType: 'script' }),
+      pageUrl: 'https://www.shop.test/',
+    }
+    const operations = build([
+      pageOn('www.shop.test'),
+      pageOn('sgtm.shop.test'),
+      script,
+    ], [
+      route('/api/cart', {
+        method: 'PUT',
+        scriptHosts: ['cdn.shop.test'],
+      }),
+      route('/api/plans', {
+        evidence: 'string',
+        scriptHosts: ['cdn.shop.test'],
+      }),
+      route('/api/elsewhere', {
+        scriptHosts: ['other.test'],
+      }),
+    ])
+    expect(operations.filter(item => item.sourceOnly).map(item => `${item.method} ${item.host}${item.path}`)).toEqual([
+      'GET sgtm.shop.test/api/elsewhere',
+      'PUT www.shop.test/api/cart',
+      'GET www.shop.test/api/elsewhere',
+    ])
+  })
+
+  it('puts relative code routes on a site whose pages were all challenge pages', () => {
+    const challenged = {
+      ...get('/', {
+        kind: 'bot-protection',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+      kindReason: 'Challenge page: challenge page (block page)',
+    }
+    const vendor = {
+      ...exchange({ url: 'https://captcha.vendor.test/anchor', kind: 'bot-protection', resourceType: 'document' }),
+      kindReason: 'reCAPTCHA: request to captcha.vendor.test',
+    }
+    const operations = build([challenged, vendor], [
+      route('/api/feed'),
+    ])
+    expect(operations.filter(item => item.sourceOnly).map(item => `${item.host} ${item.path}`)).toEqual(['shop.test /api/feed'])
   })
 
   it('separates hosts and makes colliding ids unique deterministically', () => {

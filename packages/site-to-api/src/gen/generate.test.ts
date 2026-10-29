@@ -453,6 +453,50 @@ describe('generateClient', () => {
   }, 60_000)
 })
 
+describe('generateClient and bot-protection steps', () => {
+  it('generates no client method or folder for bot-protection steps', async () => {
+    const dir = await workspace()
+    try {
+      const specs = path.join(dir, 'handoff', 'specs')
+      const fixtureText = await readFile(fixture, 'utf8')
+      await writeFile(path.join(specs, 'shop.example.com.yaml'), fixtureText.replace('paths:\n', `paths:
+  /a1b2/c3d4/mfc:
+    get:
+      operationId: getA1b2C3d4Mfc
+      x-site-to-api-kind: bot-protection
+      responses:
+        '200':
+          description: OK
+`))
+      await writeFile(path.join(specs, 'abc.token.awswaf.com.yaml'), `openapi: 3.1.0
+info: { title: t, version: '1' }
+servers: [{ url: 'https://abc.token.awswaf.com' }]
+paths:
+  /a/b/c/inputs:
+    get:
+      operationId: getABCInputs
+      x-site-to-api-kind: bot-protection
+      responses:
+        '200':
+          description: OK
+`)
+      const result = await generateClient({
+        handoffDir: path.join(dir, 'handoff'),
+        flows,
+      })
+      expect(result.files.some(file => file.includes('awswaf'))).toBe(false)
+      const sdk = await readFile(path.join(dir, 'handoff', 'client', 'shop_example_com', 'sdk.gen.ts'), 'utf8')
+      expect(sdk).toContain('postApiSession')
+      expect(sdk).not.toContain('Mfc')
+      const index = await readFile(path.join(dir, 'handoff', 'client', 'index.ts'), 'utf8')
+      expect(index).not.toContain('awswaf')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+})
+
 describe('generateClient errors', () => {
   it('asks for build when there are no specs', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'site-to-api-gen-'))
@@ -604,7 +648,7 @@ describe('generateClient with WebSocket channels', () => {
       expect(result.files.filter(file => file.includes('asyncapi'))).toEqual([])
       const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
       expect(readme).toContain('## Real-time channels')
-      expect(readme).toContain('- `ws://shop.example.com/ws/ticker` (channel `wsTicker` in `../specs/shop.example.com.asyncapi.yaml`): after connecting, send `subscribe` (`{"type":"subscribe","productId":1007}`).')
+      expect(readme).toContain('- `ws://shop.example.com/ws/ticker` (channel `wsTicker` in `../specs/shop.example.com.asyncapi.yaml`): after connecting, send `subscribe` to subscribe (`{"type":"subscribe","productId":1007}`).')
     }
     finally {
       await rm(dir, { recursive: true, force: true })
@@ -618,7 +662,7 @@ describe('generateClient with WebSocket channels', () => {
         host: 'shop.example.com',
         path: `/ws/${HOSTILE}`,
         handshake: [
-          { message: 'sendSubscribe', example: HOSTILE },
+          { message: 'sendSubscribe', role: 'subscribe', example: HOSTILE },
         ],
       })
       await writeFile(path.join(dir, 'handoff', 'specs', 'shop.example.com.asyncapi.yaml'), asyncApi(channel))
