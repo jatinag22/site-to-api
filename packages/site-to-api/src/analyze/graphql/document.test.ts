@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeDocument, readOperations, selectOperation } from './document'
+import { normalizeDocument, readOperations, readVariables, selectOperation } from './document'
 
 describe('readOperations', () => {
   it('reads named and anonymous operations and skips fragments', () => {
@@ -79,5 +79,36 @@ describe('normalizeDocument', () => {
     expect(normalizeDocument('query Q {\n  a # note\n  b(x: "a  b")\n}')).toBe('query Q { a b ( x : "a  b" ) }')
     expect(normalizeDocument('query Q{a b(x:"a  b")}')).toBe(normalizeDocument('query Q {\n  a\n  b(x: "a  b")\n}'))
     expect(normalizeDocument('%')).toBeNull()
+  })
+})
+
+describe('readVariables', () => {
+  it('says which variables are declared non-null at the top level, without a default', () => {
+    const variables = readVariables('query Q($id: Int!, $note: String, $ids: [ID!], $tags: [String]! = [], $at: Date @deprecated) { a }', null)
+    expect(Object.fromEntries(variables ?? [])).toEqual({
+      id: true,
+      note: false,
+      ids: false,
+      tags: false,
+      at: false,
+    })
+  })
+
+  it('does not require a non-null variable with a default', () => {
+    const variables = readVariables('query Q($first: Int! = 20, $after: String = "x", $id: ID!, $ids: [ID!]! = []) { a }', null)
+    expect(Object.fromEntries(variables ?? [])).toEqual({
+      first: false,
+      after: false,
+      id: true,
+      ids: false,
+    })
+  })
+
+  it('reads the operation the request names, and nothing for an operation without variables', () => {
+    const document = 'query A($a: Int!) { a } mutation B($b: Int) { b } query C { c }'
+    expect(Object.fromEntries(readVariables(document, 'B') ?? [])).toEqual({ b: false })
+    expect(readVariables(document, 'C')?.size).toBe(0)
+    expect(readVariables(document, null)).toBeNull()
+    expect(readVariables('{"id":1}', null)).toBeNull()
   })
 })

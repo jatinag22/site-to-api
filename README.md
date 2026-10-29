@@ -114,7 +114,7 @@ api-handoff/
   flows.json          source of truth for flows (schema: flows.schema.json)
   flows.md            the same, readable
   specs/<host>.yaml   OpenAPI 3.1 with x-site-to-api-* extensions
-  source/             excerpts of the site's own code referenced above
+  source/             excerpts of the site's own code referenced above (Markdown)
   client/             typed client: hey-api SDK + Zod schemas, wired to @site-to-api/runtime
   probe.json          after `probe`: what each request needs (names only)
   build.json          the options of the last build, which `probe` reuses
@@ -226,8 +226,9 @@ A `tsconfig.json` that type-checks the whole folder, `api-handoff/` included:
 ```
 
 `"module": "esnext"` with `"moduleResolution": "bundler"` works too. Run files with `tsx`, or drop
-`noEmit`, compile with `tsc` and run with `node`. Code excerpts in `source/` start with
-`// @ts-nocheck`: they are fragments of the site's code, for reading.
+`noEmit`, compile with `tsc` and run with `node`. Code excerpts in `source/` are Markdown files
+(`crypto.L18-28.ts.md`) with the code in a fence: they are fragments of the site's code, for
+reading, so the compiler never sees them.
 
 ### Example: log in and list orders on the fixture shop
 
@@ -240,7 +241,7 @@ and prints `200 3 orders`:
 import { chromium } from 'playwright'
 import { browserSession, CookieJar, createSiteClient, extractCsrfTokenFromGetLogin } from './api-handoff/client/index.js'
 
-// Ported from the site's own code: api-handoff/source/src/auth/crypto.L18-28.ts
+// Ported from the site's own code: api-handoff/source/src/auth/crypto.L18-28.ts.md
 async function encryptPassword(password: string, publicKeySpki: string): Promise<string> {
   const spki = Uint8Array.from(atob(publicKeySpki), char => char.charCodeAt(0))
   const key = await crypto.subtle.importKey('spki', spki, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt'])

@@ -74,6 +74,7 @@ function host(overrides: Partial<HostSpec> = {}): HostSpec {
     auth: [],
     securedOperationIds: [],
     probedRequires: [],
+    sentContentTypes: {},
     graphql: [],
     ...overrides,
   }
@@ -245,6 +246,18 @@ describe('renderIndexModule', () => {
 })
 
 describe('renderReadme', () => {
+  it('lists JSON bodies sent under the site\'s own content type', () => {
+    const readme = renderReadme([
+      host({
+        sentContentTypes: { 'POST /1/indexes/x/query': 'application/x-www-form-urlencoded' },
+      }),
+    ], [], [])
+    expect(readme).toContain('- JSON bodies sent under the site\'s own content type (the client does this for you): `POST /1/indexes/x/query` as `application/x-www-form-urlencoded`.')
+    expect(renderReadme([
+      host(),
+    ], [], [])).not.toContain('own content type')
+  })
+
   it('explains cookie hosts with the cookies they need', () => {
     const readme = renderReadme([
       host(),

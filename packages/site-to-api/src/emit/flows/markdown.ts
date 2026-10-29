@@ -2,6 +2,7 @@
 import type { ComputedValue, Flow, FlowsDocument, FlowStep, Operation, SourceRef, ValueOrigin } from '../../model'
 import type { StepResolver } from '../steps'
 import { anchor, cellCode, code, text } from '../escape'
+import { NO_SOURCE } from '../handoff/source-ref'
 import { responseSchemaName, sdkFunctionName } from '../naming'
 import { createStepResolver } from '../steps'
 
@@ -72,6 +73,14 @@ function operationLine(step: FlowStep, operation: Operation | undefined): string
   return `**${code(step.operationId)}**${endpoint}${host}`
 }
 
+function sentFromText(step: FlowStep, operation: Operation | undefined): string {
+  if (step.sentFrom)
+    return sourceRef(step.sentFrom)
+  return operation?.sourceUnavailable === true
+    ? NO_SOURCE
+    : 'unknown (no initiator stack)'
+}
+
 function renderStep(step: FlowStep, index: number, flow: Flow, resolver: StepResolver): string[] {
   const operation = resolver.operation(step) ?? undefined
   const lines = [`${index + 1}. ${operationLine(step, operation)} (step ${code(step.id)}, ${step.kind})`]
@@ -83,9 +92,7 @@ function renderStep(step: FlowStep, index: number, flow: Flow, resolver: StepRes
     item('Browser only: a real browser must run this step; it is not a client function.')
   else
     item(`SDK function ${code(`${sdkFunctionName(step.operationId)}()`)}, response schema ${code(responseSchemaName(step.operationId))}`)
-  item(`Sent from: ${step.sentFrom
-    ? sourceRef(step.sentFrom)
-    : 'unknown (no initiator stack)'}`)
+  item(`Sent from: ${sentFromText(step, operation)}`)
   const inputs = Object.entries(step.inputs)
   if (inputs.length === 0) {
     item('Inputs: none traced')

@@ -738,6 +738,15 @@ describe('graphQL operations (decision 0027)', () => {
       variables: { uri: 'spotify:artist:1', limit: 10 },
       hash: HASH,
     }),
+    // A second sample with other values, so `uri` and `limit` are required; `id` below has one
+    // sample but is declared `Int!`, so it is required too.
+    graphqlPost({
+      path: '/pathfinder/v2/query',
+      operationName: 'queryArtistOverview',
+      variables: { uri: 'spotify:artist:2', limit: 20 },
+      hash: HASH,
+      sessionId: 's2',
+    }),
     graphqlPost({
       path: '/pathfinder/v2/query',
       query: 'mutation AddToWishlist($id: Int!) { addToWishlist(id: $id) { count } }',

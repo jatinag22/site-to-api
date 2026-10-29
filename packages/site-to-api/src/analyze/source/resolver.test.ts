@@ -225,6 +225,30 @@ describe('callSite', () => {
     })
   })
 
+  it('reports no call site when the site\'s first frame is evaluated or anonymous code', async () => {
+    const resolver = await createSourceResolver([session])
+    // Algolia's search page: webpack `eval` devtool modules, no file to point at.
+    expect(resolver.callSite([
+      frame('webpack-internal:///5467', 55, 31, 'eval'),
+      frame('webpack-internal:///5467', 8, 20, 'Object.send'),
+      frame('https://shop.test/static/js/app.js', 1, 12, 'a'),
+    ], 's1')).toBeNull()
+    expect(resolver.callSite([
+      frame('webpack-internal:///832', 2, 4269, 'p'),
+    ], 's1')).toBeNull()
+    // Wikipedia's ResourceLoader: the frame is the `eval()` call in load.php, not the sender.
+    expect(resolver.callSite([
+      frame('https://shop.test/w/load.php?modules=x', 1, 900, 'eval'),
+    ], 's1')).toBeNull()
+    expect(resolver.callSite([
+      frame('VM123', 4, 1, 'send'),
+    ], 's1')).toBeNull()
+    // A module path is a real file name: still a reference.
+    expect(resolver.callSite([
+      frame('webpack-internal:///./src/api.js', 3, 1, 'load'),
+    ], 's1')).toMatchObject({ file: '/src/api.js', line: 3 })
+  })
+
   it('returns null when every frame is library or browser code', async () => {
     const resolver = await createSourceResolver([session])
     expect(resolver.callSite([

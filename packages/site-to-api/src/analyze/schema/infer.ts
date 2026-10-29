@@ -2,11 +2,17 @@
  * JSON Schema inference merged across samples.
  */
 import type { JsonSchema, JsonSchemaType } from '../../model'
+import { z } from 'zod'
 
 /** One observed value and the session it came from (constants need two or more sessions). */
 export interface Sample {
   value: unknown
   sessionId: string
+  /**
+   * Identity of the request this value answers (its redacted path, query and body), for
+   * `required: 'distinct-requests'`. Samples without one count as one request.
+   */
+  request?: string
 }
 
 export interface InferOptions {
@@ -21,6 +27,16 @@ export interface InferOptions {
    * code-like values, so the name matters.
    */
   name?: string | null
+  /**
+   * `present` (the default): an object key is required when every sample has it, which is what a
+   * response promises. `varies`: it must also take more than one value across the samples, which
+   * is the evidence that a request needs the caller to supply it. Algolia sends
+   * `analyticsTags: ['web']` in every search, yet a search without it works.
+   * `distinct-requests`: present in every object at that level, and those objects answered at
+   * least two different requests. A field seen only in answers to the same request may depend on
+   * it: IKEA returns `displayLocations` only when `expand` asks for them.
+   */
+  required?: 'present' | 'varies' | 'distinct-requests'
 }
 
 /** Nesting deeper than this becomes an untyped schema. */
@@ -98,12 +114,39 @@ function isCodeToken(value: string): boolean {
   return CODE_TOKEN.some(pattern => pattern.test(value))
 }
 
-const FORMATS: ReadonlyArray<[string, RegExp]> = [
-  ['uuid', /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i],
-  ['date-time', /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/],
-  ['date', /^\d{4}-\d{2}-\d{2}$/],
-  ['email', /^[^\s@]+@[^\s@][^\s.@]*\.[^\s@]+$/],
-  ['uri', /^https?:\/\/\S+$/],
+/**
+ * Formats and the Zod check the generated client runs for each (hey-api's zod plugin, configured
+ * in gen/generate.ts: `date-time` → `z.iso.datetime({ offset: true, local: true })`, `uri` →
+ * `z.url()`, ...). A format is a promise the client enforces on live data, so it is inferred only
+ * when every sample passes that same check, not just the looser shape test in front of it. The
+ * shape test keeps ordinary strings away from the Zod call and keeps `uri` to web addresses.
+ */
+const FORMATS: ReadonlyArray<[string, RegExp, z.ZodType<string>]> = [
+  [
+    'uuid',
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    z.uuid(),
+  ],
+  [
+    'date-time',
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/,
+    z.iso.datetime({ offset: true, local: true }),
+  ],
+  [
+    'date',
+    /^\d{4}-\d{2}-\d{2}$/,
+    z.iso.date(),
+  ],
+  [
+    'email',
+    /^[^\s@]+@[^\s@][^\s.@]*\.[^\s@]+$/,
+    z.email(),
+  ],
+  [
+    'uri',
+    /^https?:\/\/\S+$/,
+    z.url(),
+  ],
 ]
 
 interface Node {
@@ -123,6 +166,10 @@ interface Node {
   keyCounts: Map<string, number>
   items: Node | null
   tooDeep: boolean
+  /** Up to two distinct JSON encodings of the values seen here, kept only for `required: 'varies'`. */
+  distinct: Set<string>
+  /** Up to two distinct requests whose answers had an object here (`required: 'distinct-requests'`). */
+  requests: Set<string>
 }
 
 function newNode(): Node {
@@ -141,6 +188,8 @@ function newNode(): Node {
     keyCounts: new Map(),
     items: null,
     tooDeep: false,
+    distinct: new Set(),
+    requests: new Set(),
   }
 }
 
@@ -152,7 +201,12 @@ function addString(node: Node, value: string): void {
     if (node.strings.size > ENUM_MAX_VALUES)
       node.stringOverflow = true
   }
-  const matching = FORMATS.filter(([, regex]) => regex.test(value)).map(([name]) => name)
+  const candidates = node.formats === null
+    ? FORMATS
+    : FORMATS.filter(([name]) => node.formats?.has(name))
+  const matching = candidates
+    .filter(([, regex, check]) => regex.test(value) && check.safeParse(value).success)
+    .map(([name]) => name)
   node.formats = node.formats === null
     ? new Set(matching)
     : new Set([...node.formats].filter(format => matching.includes(format)))
@@ -177,8 +231,10 @@ function addScalar(node: Node, value: string | number | boolean | null): void {
   }
 }
 
-function addObject(node: Node, value: object, sessionId: string, depth: number): void {
+function addObject(node: Node, value: object, sample: Visit, depth: number): void {
   node.types.add('object')
+  if (node.requests.size < 2)
+    node.requests.add(sample.request)
   node.hasContainer = true
   node.objectCount++
   for (const [key, item] of Object.entries(value)) {
@@ -190,15 +246,25 @@ function addObject(node: Node, value: object, sessionId: string, depth: number):
       child = newNode()
       node.properties.set(key, child)
     }
-    add(child, item, sessionId, depth + 1)
+    add(child, item, sample, depth + 1)
   }
 }
 
-function add(node: Node, value: unknown, sessionId: string, depth: number): void {
+/** What every node visited for one sample needs to know about it. */
+interface Visit {
+  sessionId: string
+  request: string
+  /** Record distinct values (`required: 'varies'`). */
+  track: boolean
+}
+
+function add(node: Node, value: unknown, sample: Visit, depth: number): void {
   if (value === undefined)
     return
   node.count++
-  node.sessions.add(sessionId)
+  if (sample.track && node.distinct.size < 2)
+    node.distinct.add(JSON.stringify(value))
+  node.sessions.add(sample.sessionId)
   if (depth > MAX_SCHEMA_DEPTH) {
     node.tooDeep = true
   }
@@ -210,10 +276,10 @@ function add(node: Node, value: unknown, sessionId: string, depth: number): void
     node.hasContainer = true
     node.items ??= newNode()
     for (const item of value)
-      add(node.items, item, sessionId, depth + 1)
+      add(node.items, item, sample, depth + 1)
   }
   else if (typeof value === 'object') {
-    addObject(node, value, sessionId, depth)
+    addObject(node, value, sample, depth)
   }
 }
 
@@ -230,6 +296,9 @@ function isEnumWorthy(node: Node, values: string[], name: string | null, options
   if (node.stringCount < ENUM_MIN_SAMPLES || node.stringCount < values.length * ENUM_MIN_SAMPLES_PER_VALUE)
     return false
   if (!values.every(value => value.length > 0 && value.length <= ENUM_MAX_LENGTH && !/\s/.test(value)))
+    return false
+  // Digit codes (`storeCode`, `postalCode`) are open-ended: the next store has another number.
+  if (values.every(value => /^\d+$/.test(value)))
     return false
   if (!isCodeName(name) && (isIdentityName(name) || !values.every(isCodeToken)))
     return false
@@ -312,9 +381,12 @@ function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, opti
     const properties: Record<string, JsonSchema> = {}
     for (const [key, child] of node.properties)
       properties[key] = finalize(child, key, options, totalSessions)
-    const required = [...node.keyCounts]
-      .filter(([, count]) => count === node.objectCount)
-      .map(([key]) => key)
+    const required = node.requests.size < 2 && options.required === 'distinct-requests'
+      ? []
+      : [...node.keyCounts]
+          .filter(([key, count]) => count === node.objectCount
+            && (options.required !== 'varies' || (node.properties.get(key)?.distinct.size ?? 0) > 1))
+          .map(([key]) => key)
     return required.length > 0
       ? { properties, required }
       : { properties }
@@ -332,7 +404,7 @@ function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, opti
 export function inferSchema(samples: Sample[], options: InferOptions = {}): JsonSchema {
   const root = newNode()
   for (const sample of samples)
-    add(root, sample.value, sample.sessionId, 0)
+    add(root, sample.value, { sessionId: sample.sessionId, request: sample.request ?? '', track: options.required === 'varies' }, 0)
   const totalSessions = new Set(samples.map(sample => sample.sessionId)).size
   return finalize(root, options.name ?? null, options, totalSessions)
 }
@@ -341,11 +413,73 @@ const INTEGER = /^-?(?:0|[1-9]\d{0,14})$/
 const DECIMAL = /^-?(?:0|[1-9]\d{0,14})\.\d+$/
 
 /**
- * Typed versions of string values (query, form, path): all integers → numbers, all booleans →
- * booleans, otherwise the strings unchanged. Leading zeros (`007`) stay strings: they are ids.
+ * Name words of codes written in digits, matched as whole words (singular or plural: `itemNos`,
+ * `userIds`, `zip_code`, `phoneNumber`), plus compounds written as one word. `encode` and
+ * `decode` are not codes, so `code` is never matched as a suffix.
  */
-export function coerceStrings(values: string[]): Array<string | number | boolean> {
-  if (values.length > 0 && values.every(value => INTEGER.test(value) || DECIMAL.test(value)))
+const DIGIT_CODE_WORDS: ReadonlySet<string> = new Set([
+  'id',
+  'no',
+  'code',
+  'sku',
+  'number',
+  'zip',
+  'pin',
+  'otp',
+  'totp',
+  'zipcode',
+  'pincode',
+  'postcode',
+  'barcode',
+])
+/** Digit strings of one length this long or longer are codes (a TOTP, an item number), not amounts. */
+const MIN_CODE_DIGITS = 6
+/** Unix time in seconds or milliseconds (2001 to 2033): a moment, not a code. */
+const EPOCH = /^1\d{9}(?:\d{3})?$/
+
+function singular(word: string): string {
+  return word.endsWith('s') && word.length > 2
+    ? word.slice(0, -1)
+    : word
+}
+
+function isDigitCodeName(name: string | null): boolean {
+  if (name === null)
+    return false
+  const words = nameWords(name).map(singular)
+  // `pageNumber`, `pageNo` and `numberOfItems` count things.
+  if (words.includes('page') || (words[0] === 'number' && words[1] === 'of'))
+    return false
+  return words.some(word => DIGIT_CODE_WORDS.has(word))
+}
+
+/**
+ * Whether integer-looking text is a code that must stay a string: IKEA item numbers and Spotify's
+ * `totp` are digits, but typed as `number` they lose leading zeros and invite arithmetic. Codes
+ * are values under a code-like name (`itemNos`, `userId`, `zip`), or at least two different digit
+ * strings that all have the same length of six or more and are not Unix times. One sample of
+ * `amount=250000` says nothing about the length of the next. Leading zeros already keep a value a
+ * string.
+ */
+function isDigitCode(values: string[], name: string | null): boolean {
+  if (!values.every(value => INTEGER.test(value)))
+    return false
+  if (isDigitCodeName(name))
+    return true
+  if (new Set(values).size < 2 || values.some(value => EPOCH.test(value)))
+    return false
+  const lengths = new Set(values.map(value => value.replace(/^-/, '').length))
+  const [length] = lengths
+  return lengths.size === 1 && length !== undefined && length >= MIN_CODE_DIGITS
+}
+
+/**
+ * Typed versions of string values (query, form, path): all integers → numbers, all booleans →
+ * booleans, otherwise the strings unchanged. Leading zeros (`007`) and digit codes (see
+ * {@link isDigitCode}; `name` is the parameter or field name) stay strings: they are ids.
+ */
+export function coerceStrings(values: string[], name: string | null = null): Array<string | number | boolean> {
+  if (values.length > 0 && values.every(value => INTEGER.test(value) || DECIMAL.test(value)) && !isDigitCode(values, name))
     return values.map(Number)
   if (values.length > 0 && values.every(value => value === 'true' || value === 'false'))
     return values.map(value => value === 'true')
@@ -354,6 +488,6 @@ export function coerceStrings(values: string[]): Array<string | number | boolean
 
 /** {@link inferSchema} over string values after {@link coerceStrings}. */
 export function inferStringSchema(samples: Array<{ value: string, sessionId: string }>, options: InferOptions = {}): JsonSchema {
-  const coerced = coerceStrings(samples.map(sample => sample.value))
+  const coerced = coerceStrings(samples.map(sample => sample.value), options.name ?? null)
   return inferSchema(samples.map((sample, index) => ({ value: coerced[index], sessionId: sample.sessionId })), options)
 }

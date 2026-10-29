@@ -143,4 +143,63 @@ describe('graphQL request schemas', () => {
     })
     expect(operation?.query[0]?.json).toBeUndefined()
   })
+
+  describe('variables', () => {
+    const mutation = 'mutation AddToWishlist($id: Int!, $note: String) { addToWishlist(id: $id, note: $note) { count } }'
+
+    it('requires a variable declared non-null even from one sample', () => {
+      const [operation] = analyse([
+        graphqlPost({
+          query: mutation,
+          variables: { id: 1, note: 'gift' },
+        }),
+      ])
+      expect(operation?.requestBody?.schema.properties?.variables?.required).toEqual(['id'])
+    })
+
+    it('leaves a non-null variable with a default optional', () => {
+      const [operation] = analyse([
+        graphqlPost({
+          query: 'query Feed($first: Int! = 20, $tag: String!) { feed(first: $first, tag: $tag) { id } }',
+          variables: { first: 10, tag: 'a' },
+        }),
+      ])
+      expect(operation?.requestBody?.schema.properties?.variables?.required).toEqual(['tag'])
+    })
+
+    it('leaves a variable declared nullable optional even when it varies', () => {
+      const [operation] = analyse([
+        graphqlPost({
+          query: mutation,
+          variables: { id: 1, note: 'gift' },
+        }),
+        graphqlPost({
+          query: mutation,
+          variables: { id: 2, note: 'birthday' },
+          sessionId: 's2',
+        }),
+      ])
+      expect(operation?.requestBody?.schema.properties?.variables?.required).toEqual(['id'])
+    })
+
+    it('keeps the evidence rule for a persisted query sent without a document', () => {
+      const one = graphqlPost({
+        operationName: 'queryArtistOverview',
+        variables: { uri: 'spotify:artist:1', limit: 10 },
+        hash: HASH,
+      })
+      const [single] = analyse([one])
+      expect(single?.requestBody?.schema.properties?.variables?.required).toBeUndefined()
+      const [varied] = analyse([
+        one,
+        graphqlPost({
+          operationName: 'queryArtistOverview',
+          variables: { uri: 'spotify:artist:2', limit: 10 },
+          hash: HASH,
+          sessionId: 's2',
+        }),
+      ])
+      expect(varied?.requestBody?.schema.properties?.variables?.required).toEqual(['uri'])
+    })
+  })
 })

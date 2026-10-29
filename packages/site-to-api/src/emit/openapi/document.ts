@@ -3,6 +3,7 @@
  * Objects are built with a fixed key order so the YAML is byte-identical for the same analysis.
  */
 import type { Analysis, GraphqlOperation, JsonSchema, Operation, ParamInfo, ResponseInfo, SourceRef, ValueOrigin } from '../../model'
+import { isTelemetryHeader } from '../../analyze/schema'
 import { createStepResolver, operationKey } from '../steps'
 
 const OPENAPI_VERSION = '3.1.0'
@@ -151,17 +152,27 @@ function hasDefault(header: Operation['headers'][number]): boolean {
   return header.constant && header.schema.default !== undefined
 }
 
+/**
+ * A header is required only when probe proved the request fails without it (`header:<name>` in
+ * `x-site-to-api-requires`). A constant with a default is sent by the client itself, and tracing
+ * headers are never needed by the server.
+ */
+function headerRequired(operation: Operation, header: Operation['headers'][number]): boolean {
+  if (hasDefault(header) || isTelemetryHeader(header.name))
+    return false
+  return header.required || (operation.requires?.includes(`header:${header.name.toLowerCase()}`) ?? false)
+}
+
 function parameters(operation: Operation, origins: Map<string, ValueOrigin>): Json[] {
   return [
     ...operation.pathParams.map(param => parameter('path', { name: param.name, required: true, schema: param.schema }, origins)),
     ...operation.query.map(param => parameter('query', param, origins)),
     ...operation.headers
       .filter(header => !NOT_PARAMETERS.has(header.name))
-      // A constant header with a known value is sent by the generated client itself, so callers
-      // must not be forced to pass it: required in the capture, optional in the spec.
-      .map(header => parameter('header', hasDefault(header)
-        ? { ...header, required: false }
-        : header, origins, header.constant
+      .map(header => parameter('header', {
+        ...header,
+        required: headerRequired(operation, header),
+      }, origins, header.constant
         ? { 'x-site-to-api-constant': true }
         : {})),
     // Cookie values never appear in the spec: the schema is a bare string.
@@ -236,6 +247,10 @@ function requestBody(operation: Operation, origins: Map<string, ValueOrigin>): J
         [body.mimeType || 'application/octet-stream']: {
           schema: annotateBody(schemaObject(body.schema), origins),
           ...examplesObject(body.examples),
+          // JSON text the site labels as another type; gen makes the client send that header.
+          ...(body.sentContentType === undefined
+            ? {}
+            : { 'x-site-to-api-content-type': body.sentContentType }),
         },
       },
     },
