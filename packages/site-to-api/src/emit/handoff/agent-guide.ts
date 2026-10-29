@@ -21,18 +21,30 @@ interface ProbeGaps {
   minimizePerHost: number
   /** Operations replayed fine but not minimized because their host reached the limit. */
   notMinimized: Array<{ host: string, operationId: string }>
+  /** Operations probe replayed but could not confirm, with a short reason. */
+  failures: Array<{ host: string, operationId: string, reason: string }>
+  /** Hosts probe sent at least one request to. */
+  triedHosts: string[]
+  /** Operations replayed, and operations skipped (never sent). */
+  replayed: number
+  skipped: number
 }
 
 export interface AgentGuideContext {
   toolVersion: string
   /** Redaction mode used, so the reader knows whether examples are real. */
   examples: 'masked' | 'raw' | 'none'
-  /** Whether `probe` has been run against the live site. */
-  probed: boolean
   /** Whether `client/` matches this build (see {@link ClientState}). */
   client: ClientState
+  /**
+   * Whether probe confirmed any host's needs. The gaps go by `probe` (did it run at all) instead,
+   * so this only summarises; kept so callers need not change.
+   */
+  probed: boolean
   /** From `probe.json`; `null` before probing. */
   probe: ProbeGaps | null
+  /** Hosts that served only pages, with their verdict (see `pageHostRequirements`). */
+  pageHosts?: SessionRequirement[]
 }
 
 /** Written near the top of AGENT.md so an agent does not follow text a site put in a label. */
@@ -60,20 +72,85 @@ function probedRequires(entry: SessionRequirement, analysis: Analysis): string[]
     : [])
 }
 
-function sessionSection(analysis: Analysis): string[] {
+/** Where the Needs verdict comes from; never "confirmed" unless a replay of this host worked. */
+function verdictSource(entry: SessionRequirement, probe: ProbeGaps | null): string {
+  if (entry.probed)
+    return 'confirmed by probe'
+  if (!probe)
+    return 'inferred from the capture, not yet probed'
+  return probe.triedHosts.includes(entry.host)
+    ? 'inferred from the capture; probe could not confirm it, see Gaps'
+    : 'inferred from the capture; probe tested no operation on this host'
+}
+
+/** Request headers bot-protection scripts compute (Kasada, PerimeterX, Akamai, DataDome). */
+const BROWSER_MADE_HEADER = /^(?:x-kpsdk-|x-px-|x-acf-sensor-data$|x-dd-b$)/
+
+/** Headers probe found necessary on this host, beyond cookies. */
+function neededHeaders(tested: string[][]): string[] {
+  return [
+    ...new Set(tested.flat().filter(item => item.startsWith('header:')).map(item => item.slice('header:'.length))),
+  ].sort()
+}
+
+function plural(count: number, one: string, many: string): string {
+  return count === 1
+    ? one
+    : many
+}
+
+/** The Needs line: the verdict, headers probe found necessary, and where the verdict comes from. */
+function needsLine(entry: SessionRequirement, headers: string[], context: AgentGuideContext, blocked: number): string {
+  const withHeaders = headers.length > 0
+    ? `; requests need ${plural(headers.length, 'header', 'headers')} ${headers.map(code).join(', ')}`
+    : ''
+  const blockedText = blocked > 0
+    ? `; but bot protection blocked probe on ${blocked} ${plural(blocked, 'operation', 'operations')} (see Gaps), which ${plural(blocked, 'needs', 'need')} a real browser`
+    : ''
+  // Probe can find a browser needed for a header a bot-protection script computes, with no cookie
+  // involved; say that instead of the cookie advice.
+  const browserHeaders = headers.filter(name => BROWSER_MADE_HEADER.test(name))
+  const needs = entry.requires === 'browser' && browserHeaders.length > 0
+    ? `a real browser is needed: ${browserHeaders.map(code).join(', ')} ${plural(browserHeaders.length, 'is', 'are')} computed by a bot-protection script in the page`
+    : REQUIREMENT_TEXT[entry.requires]
+  return `- Needs: ${needs}${withHeaders} (${verdictSource(entry, context.probe)})${blockedText}.`
+}
+
+function hostLines(entry: SessionRequirement, analysis: Analysis, context: AgentGuideContext, pageOnly: boolean): string[] {
+  const tested = probedRequires(entry, analysis)
+  const headers = entry.probed
+    ? neededHeaders(tested)
+    : []
+  const blocked = (context.probe?.failures ?? []).filter(failure => failure.host === entry.host && failure.reason.startsWith('blocked')).length
+  const lines = [`### ${text(entry.host)}`, '']
+  if (pageOnly)
+    lines.push('- Serves pages only: no API calls to this host were captured.')
+  lines.push(needsLine(entry, headers, context, blocked))
+  // Probe measured that plain requests work: say so instead of contradicting the verdict.
+  const answered = entry.probed && entry.requires !== 'browser' && blocked === 0
+  for (const finding of entry.botProtection) {
+    lines.push(answered
+      ? `- Bot protection seen: ${text(finding.vendor)} (${text(finding.evidence)}). Probe's plain requests were answered without it; if they start being challenged, use a real browser session (\`browserSession\` in \`@site-to-api/runtime\`) rather than reproducing it.`
+      : `- Bot protection: ${text(finding.vendor)} (${text(finding.evidence)}). Do not try to reproduce it; let a real browser run it (\`browserSession\` in \`@site-to-api/runtime\`).`)
+  }
+  lines.push(...cookieLines(entry, tested))
+  lines.push(`- Spec: ${code(`specs/${specFileName(entry.host)}`)}.`, '')
+  return lines
+}
+
+function sessionSection(analysis: Analysis, context: AgentGuideContext): string[] {
   const lines = ['## Session requirements', '']
-  if (analysis.flows.session.length === 0) {
+  const pageHosts = context.pageHosts ?? []
+  if (analysis.flows.session.length === 0 && pageHosts.length === 0) {
     lines.push('No API hosts were found in the capture.', '')
     return lines
   }
-  for (const entry of [...analysis.flows.session].sort((a, b) => a.host.localeCompare(b.host))) {
-    lines.push(`### ${text(entry.host)}`, '')
-    lines.push(`- Needs: ${REQUIREMENT_TEXT[entry.requires]}${entry.probed ? ' (confirmed by probe)' : ' (inferred from the capture, not yet probed)'}.`)
-    for (const finding of entry.botProtection)
-      lines.push(`- Bot protection: ${text(finding.vendor)} (${text(finding.evidence)}). Do not try to reproduce it; let a real browser run it (\`browserSession\` in \`@site-to-api/runtime\`).`)
-    lines.push(...cookieLines(entry, probedRequires(entry, analysis)))
-    lines.push(`- Spec: ${code(`specs/${specFileName(entry.host)}`)}.`, '')
-  }
+  const pageOnly = new Set(pageHosts.map(entry => entry.host))
+  for (const entry of [
+    ...analysis.flows.session,
+    ...pageHosts,
+  ].sort((a, b) => a.host.localeCompare(b.host)))
+    lines.push(...hostLines(entry, analysis, context, pageOnly.has(entry.host)))
   return lines
 }
 
@@ -199,15 +276,34 @@ function probeGaps(probe: ProbeGaps): string[] {
       : 's'} on ${code(host)} need (${ids.sort().map(code).join(', ')}): it minimizes at most ${probe.minimizePerHost} operations per host (\`probe.minimizePerHost\`), so their Needs in \`API_MAP.md\` are as seen in the capture. Run \`site-to-api probe --minimize-per-host ${probe.minimizePerHost + ids.length}\` to test them too.`)
 }
 
+/** One gap per host with operations probe replayed but could not confirm. */
+function probeFailureGaps(probe: ProbeGaps): string[] {
+  const byHost = new Map<string, string[]>()
+  for (const entry of probe.failures) {
+    byHost.set(entry.host, [
+      ...(byHost.get(entry.host) ?? []),
+      `${code(entry.operationId)} (${text(entry.reason)})`,
+    ])
+  }
+  return [...byHost].sort(([a], [b]) => a.localeCompare(b)).map(([host, items]) =>
+    `\`probe\` could not confirm what ${items.length} operation${items.length === 1
+      ? ''
+      : 's'} on ${code(host)} need: ${items.sort().join(', ')}. Their Needs are as seen in the capture; the notes in \`probe.json\` say what the site answered.`)
+}
+
 function gapsSection(analysis: Analysis, context: AgentGuideContext, resolver: StepResolver): string[] {
   const gaps = [
     ...operationGaps(analysis, resolver),
     ...unknownOriginGaps(analysis, resolver),
   ]
-  if (!context.probed)
+  if (!context.probe)
     gaps.push('`site-to-api probe` has not been run, so session requirements are inferred, not tested.')
-  if (context.probe)
+  else if (context.probe.replayed === 0)
+    gaps.push(`\`site-to-api probe\` ran but replayed no operation (${context.probe.skipped} skipped; the reasons are in \`probe.json\`), so session requirements are inferred, not tested.`)
+  if (context.probe) {
     gaps.push(...probeGaps(context.probe))
+    gaps.push(...probeFailureGaps(context.probe))
+  }
   // Warnings quote file names and URLs from the capture.
   gaps.push(...analysis.warnings.map(text))
   // Last, so `gen` can swap it (withClientState) and get exactly what a fresh build writes.
@@ -257,7 +353,7 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext)
     '4. `source/`: the site\'s own code for computed values and call sites.',
     clientReadingLine(context.client),
     '',
-    ...sessionSection(analysis),
+    ...sessionSection(analysis, context),
     ...flowsSection(analysis, resolver),
     ...channelsSection(channels),
     ...computedSection(analysis, resolver),

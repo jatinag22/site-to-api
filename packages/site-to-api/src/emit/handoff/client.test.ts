@@ -17,7 +17,14 @@ function guide(client: ClientState, warnings: string[] = []): string {
     examples: 'masked',
     probed: true,
     client,
-    probe: null,
+    probe: {
+      minimizePerHost: 5,
+      notMinimized: [],
+      failures: [],
+      triedHosts: [],
+      replayed: 2,
+      skipped: 0,
+    },
   }
   return renderAgentGuide({
     ...twoHostAnalysis(),

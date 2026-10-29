@@ -1,7 +1,7 @@
 import type { SessionRequirement } from '../model'
 import type { OperationProbe, ProbeReport } from '../model/probe'
 import { describe, expect, it } from 'vitest'
-import { applyProbeReport, requirementsByOperation } from './apply'
+import { applyProbeReport, pageHostRequirements, requirementsByOperation } from './apply'
 
 function report(operations: Array<Partial<OperationProbe>>): ProbeReport {
   return {
@@ -109,5 +109,86 @@ describe('requirementsByOperation', () => {
         ['cookie:sid'],
       ],
     ])
+  })
+})
+
+describe('host verdicts follow probe', () => {
+  const guarded: SessionRequirement = {
+    ...base,
+    requires: 'browser',
+    botProtection: [
+      { vendor: 'Akamai', evidence: 'cookie _abck' },
+    ],
+  }
+
+  it('is plain HTTP when probe found only a plain header necessary, despite bot protection seen in the capture', () => {
+    expect(applyProbeReport([guarded], report([
+      {
+        requires: ['header:x-client-id'],
+      },
+      { bare: 'ok' },
+    ]))[0]).toMatchObject({ requires: 'none', probed: true })
+  })
+
+  it('needs a browser when a request needs a header that a bot-protection script computes', () => {
+    expect(applyProbeReport([base], report([
+      {
+        requires: ['header:x-kpsdk-h', 'header:x-kpsdk-v'],
+      },
+    ]))[0]?.requires).toBe('browser')
+  })
+
+  it('keeps the inferred verdict while tested requests were not all minimized', () => {
+    expect(applyProbeReport([guarded], report([
+      {
+        requires: ['header:x-client-id'],
+      },
+      { requires: null },
+    ]))[0]?.requires).toBe('browser')
+  })
+})
+
+describe('pageHostRequirements', () => {
+  const page = (host: string, cookies: number): Parameters<typeof pageHostRequirements>[0][number] => ({
+    operationId: `get${host}`,
+    host,
+    method: 'GET',
+    path: '/',
+    kind: 'page',
+    pathParams: [],
+    query: [],
+    headers: [],
+    cookies: Array.from({ length: cookies }, (_, index) => ({
+      name: `c${index}`,
+      required: false,
+      schema: { type: 'string' },
+    })),
+    requestBody: null,
+    responses: [],
+    sentFrom: [],
+    sourceOnly: false,
+    summary: '',
+    exchanges: [],
+  })
+
+  it('adds hosts that only served pages, with probe applied', () => {
+    const entries = pageHostRequirements([
+      page('news.example', 1),
+      page('shop.example', 0),
+    ], [base], report([
+      { host: 'news.example', bare: 'ok' },
+    ]))
+    expect(entries).toEqual([
+      {
+        host: 'news.example',
+        requires: 'none',
+        cookies: [],
+        botProtection: [],
+        probed: true,
+      },
+    ])
+    expect(pageHostRequirements([
+      page('news.example', 1),
+    ], [], null)[0]).toMatchObject({ requires: 'cookies', probed: false })
   })
 })

@@ -7,10 +7,10 @@ import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 import { ProbeReportSchema } from '../model/probe'
 
-export { applyProbeReport, requirementsByOperation } from './apply'
+export { applyProbeReport, pageHostRequirements, requirementsByOperation } from './apply'
 export { probeOperations } from './probe'
 export type { ProbeOptions } from './probe'
-export { minimizeLimit, notMinimized, summarizeProbe } from './summary'
+export { minimizeLimit, notMinimized, probeFailures, summarizeProbe } from './summary'
 
 const PROBE_FILE = 'probe.json'
 

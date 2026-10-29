@@ -25,7 +25,7 @@ import { clientGap, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
 import { loadSessions } from '../load'
-import { applyProbeReport, minimizeLimit, notMinimized, readProbeReport, requirementsByOperation } from '../probe'
+import { applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation } from '../probe'
 import { VERSION } from '../version'
 import { alignWithRuntime } from './extract-check'
 import { inHostFilter, unmatchedHostPatterns } from './hosts'
@@ -351,8 +351,15 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
         ? {
             minimizePerHost: minimizeLimit(probe),
             notMinimized: notMinimized(probe, analysis.operations),
+            failures: probeFailures(probe, analysis.operations),
+            triedHosts: [
+              ...new Set(probe.operations.map(entry => entry.host)),
+            ].sort(),
+            replayed: probe.operations.length,
+            skipped: probe.skipped.length,
           }
         : null,
+      pageHosts: pageHostRequirements(analysis.operations, analysis.flows.session, probe),
     }),
     await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION)),
   )
