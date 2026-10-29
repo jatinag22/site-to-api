@@ -41,6 +41,20 @@ const CALL_TYPES = new Set([
 const FIRE_AND_FORGET_TYPES = new Set(['beacon', 'ping'])
 const ASSET_MEDIA = /^(?:image|font|audio|video)\/|^text\/css$|javascript|ecmascript|font/
 
+/**
+ * Files a front-end build emits: Next.js `/_next/static/`, Create React App and similar
+ * `/static/js/` and `/static/css/`, and content-hashed bundles (`4283-560d7691b8e141c0.js`,
+ * `main.3f9a2c1e.css`). Frameworks prefetch them with `fetch` or `<link rel=prefetch>`, which a
+ * capture records without a body, so their resource type alone would make them API calls.
+ */
+const BUILD_ASSET_DIR = /^\/(?:_next\/static|static\/(?:js|css|chunks|media))\//
+const HASHED_BUNDLE = /[.-][0-9a-f]{8,}(?:\.chunk)?\.(?:m?js|css)(?:\.map)?$/i
+
+/** True for a path a front-end build serves as a static file, never an API. */
+export function isBuildAsset(path: string): boolean {
+  return BUILD_ASSET_DIR.test(path) || (HASHED_BUNDLE.test(path) && /\d/.test(path.slice(path.lastIndexOf('/'))))
+}
+
 /** JSON, XML, text, HTML or CSV: what an API call returns as data. */
 function isDataBody(body: Body | null): boolean {
   if (!body)
@@ -95,6 +109,8 @@ function classifyByType(exchange: Exchange): { kind: ExchangeKind, reason: strin
     return { kind: 'noise', reason: 'CORS preflight' }
   if (ASSET_TYPES.has(resourceType))
     return { kind: 'asset', reason: `resource type ${resourceType}` }
+  if (isBuildAsset(request.path))
+    return { kind: 'asset', reason: 'front-end build file' }
   if (resourceType === 'document')
     return { kind: 'page', reason: 'document' }
   if (resourceType === 'websocket')

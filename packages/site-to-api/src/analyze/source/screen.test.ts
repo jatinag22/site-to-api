@@ -101,6 +101,14 @@ describe('screenSourceRoutes', () => {
     ])).toEqual(['www.google.com/maps/api/js'])
   })
 
+  it('drops front-end build files', () => {
+    expect(kept([
+      route(null, '/_next/static/chunks/{chunkId}'),
+      route(null, '/static/js/main.3f9a2c1e.chunk.js'),
+      route(null, '/api/items'),
+    ])).toEqual(['/api/items'])
+  })
+
   it('keeps real route templates', () => {
     expect(kept([
       route(null, '/api/products/{productId}'),
