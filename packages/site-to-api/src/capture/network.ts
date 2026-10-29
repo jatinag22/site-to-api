@@ -29,13 +29,16 @@ async function systemLookup(hostname: string): Promise<string[]> {
 
 /** Lookups tried per host before it counts as unresolvable: one failure under load is common. */
 const LOOKUP_ATTEMPTS = 2
+/** Wait before retrying a failed lookup, so a resolver that is busy has time to recover. */
+const LOOKUP_RETRY_DELAY_MS = 250
 
 /**
- * A lookup that asks once per host and retries a failure. A page loads dozens of scripts from one
- * host at once; a lookup per script floods the resolver, and one that times out made a host the
- * browser had just loaded from look unresolvable.
+ * A lookup that shares one answer per host and retries a failure once after a short wait. A page
+ * loads dozens of scripts from one host at once; a lookup per script floods the resolver, and one
+ * that timed out made a host the browser had just loaded from look unresolvable. Only answers are
+ * kept: a host that failed is asked again by the next caller.
  */
-export function cachedLookup(lookup: Lookup = systemLookup): Lookup {
+export function cachedLookup(lookup: Lookup = systemLookup, retryDelayMs = LOOKUP_RETRY_DELAY_MS): Lookup {
   const cache = new Map<string, Promise<string[]>>()
   const attempt = async (hostname: string, left: number): Promise<string[]> => {
     try {
@@ -44,6 +47,7 @@ export function cachedLookup(lookup: Lookup = systemLookup): Lookup {
     catch (error) {
       if (left <= 1)
         throw error
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs))
       return await attempt(hostname, left - 1)
     }
   }
@@ -53,6 +57,8 @@ export function cachedLookup(lookup: Lookup = systemLookup): Lookup {
     if (!pending) {
       pending = attempt(hostname, LOOKUP_ATTEMPTS)
       cache.set(key, pending)
+      // Callers already waiting share this failure; later ones try again.
+      pending.catch(() => cache.delete(key))
     }
     return await pending
   }

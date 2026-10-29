@@ -244,11 +244,23 @@ describe('cachedLookup', () => {
     expect(calls).toEqual(['cdn.example.com', 'cdn.example.com'])
   })
 
-  it('gives up after the retry', async () => {
-    const down: Lookup = async () => {
-      throw new Error('ENOTFOUND')
+  it('gives up after the retry, waiting before it, and asks again on the next call', async () => {
+    const times: number[] = []
+    let up = false
+    const lookup: Lookup = async () => {
+      times.push(Date.now())
+      if (!up)
+        throw new Error('ENOTFOUND')
+      return ['93.184.216.34']
     }
-    await expect(cachedLookup(down)('gone.example.com')).rejects.toThrow('ENOTFOUND')
+    const cached = cachedLookup(lookup, 40)
+    await expect(cached('gone.example.com')).rejects.toThrow('ENOTFOUND')
+    expect(times).toHaveLength(2)
+    expect((times[1] ?? 0) - (times[0] ?? 0)).toBeGreaterThanOrEqual(35)
+    // The failure is not kept: once the resolver answers, the host resolves.
+    up = true
+    expect(await cached('gone.example.com')).toEqual(['93.184.216.34'])
+    expect(times).toHaveLength(3)
   })
 })
 
