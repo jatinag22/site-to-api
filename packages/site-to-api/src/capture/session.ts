@@ -309,7 +309,8 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       startUrl: options.url,
       startedAt,
       completedAt: new Date().toISOString(),
-      browser: { channel: browser.channel, headless: browser.headless, userAgent },
+      // `null` in the config means Playwright's bundled Chromium; say so instead of leaving it blank.
+      browser: { channel: browser.channel ?? 'bundled', headless: browser.headless, userAgent },
       har: HAR_FILE,
       events: EVENTS_FILE,
       scripts: collector.scripts.toSorted((a, b) => a.url.localeCompare(b.url)),

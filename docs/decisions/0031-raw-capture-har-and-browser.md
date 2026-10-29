@@ -1,4 +1,4 @@
-# 0031 Compact the raw HAR: no asset bodies, no WebSocket frames
+# 0031 Raw capture: compact the HAR, name the bundled browser
 
 Status: Accepted (2026-10-29). Refines 0016 and 0023.
 
@@ -22,8 +22,12 @@ the HAR only by URL, not by type.
 - Bodies of documents, fetch and XHR calls stay, whatever their media type: classification reads
   the media type and body of calls (a video segment fetched by XHR is an asset because of it),
   and analysis reads their content.
-- The raw format version is unchanged: the result is still a HAR 1.2 file, and older captures
-  with full bodies load as before.
+- `meta.json` records `browser.channel: "bundled"` when the capture used Playwright's own
+  Chromium (`--channel bundled`, `capture.browser.channel: null`); it was `null`, which read as
+  "not recorded". The field stays `string | null`, so older captures with `null` still load.
+- The raw format version is unchanged: the HAR is still a HAR 1.2 file, older captures with full
+  bodies load as before, and nothing reads the browser channel (both changes are additive, as in
+  0023).
 
 ## Consequences
 On the real captures the HARs shrank from 31 MB to 16 MB (Binance) and from 67 MB and 52 MB to

@@ -35,4 +35,4 @@ or `Proposed`.
 | [0025](0025-sticky-build-options-and-client-state.md) | Sticky build options in `build.json`; `gen` rewrites the client state in place | Accepted |
 | [0026](0026-fitting-and-credential-rules.md) | Fit output to the site, not the samples; credentials are never constants (refines 0015) | Accepted |
 | [0029](0029-websocket-setup-messages-and-grouping.md) | WebSocket setup messages by role; discriminators chosen by how well they group (refines 0023) | Accepted |
-| [0031](0031-compact-har.md) | Compact the raw HAR: no asset bodies, no WebSocket frames | Accepted |
+| [0031](0031-raw-capture-har-and-browser.md) | Raw capture: compact the HAR, name the bundled browser | Accepted |

@@ -26,6 +26,10 @@ export const SessionMetaSchema = z.object({
   startedAt: z.string(),
   completedAt: z.string(),
   browser: z.object({
+    /**
+     * Playwright channel (`chrome`, `msedge`), or `bundled` for Playwright's own Chromium.
+     * Captures written before decision 0031 have `null` for the bundled browser.
+     */
     channel: z.string().nullable(),
     headless: z.boolean(),
     userAgent: z.string(),

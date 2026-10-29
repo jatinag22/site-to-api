@@ -341,7 +341,7 @@ describe('runCapture in script mode', () => {
     const onDisk = SessionMetaSchema.parse(JSON.parse(await readFile(path.join(sessionDir, 'meta.json'), 'utf8')))
     expect(onDisk).toEqual(meta)
     expect(meta.startUrl).toBe(site.url)
-    expect(meta.browser).toMatchObject({ channel: null, headless: true })
+    expect(meta.browser).toMatchObject({ channel: 'bundled', headless: true })
     expect(meta.browser.userAgent).toContain('Chrome')
   })
 
