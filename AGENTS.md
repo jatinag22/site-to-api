@@ -96,8 +96,10 @@ pnpm exec vitest --run --project site-to-api packages/site-to-api/src/analyze/
 pnpm run ci           # everything CI runs
 ```
 
-Run `pnpm run lint:fix` and `pnpm run ci` before every commit. Fix root causes; do not add ignores.
-A pre-push hook runs `pnpm run ci` automatically; do not bypass it with `--no-verify`.
+While working, run only the affected tests. A pre-push hook runs `pnpm run ci:push` (lint, build,
+typecheck and the tests affected by your changes against `origin/main`); do not bypass it with
+`--no-verify`. GitHub CI runs the full `pnpm run ci` on every pull request, and nothing merges until
+it passes. Fix root causes; do not add ignores.
 
 ## Git
 
