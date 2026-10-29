@@ -41,13 +41,16 @@ records in `docs/decisions/` that touch your module, and every file in
 The lead opens the pull request and asks a reviewer who did not write the change to read the
 diff (a security-focused reviewer for redaction, capture trust, decoders of site data, or anything
 that runs code or sends credentials). Findings come back to you: fix each with a test, re-run only
-the affected tests while working, then the full `ci` once and any browser loop once on the final
-state, merged with the latest `main`. The same reviewer re-checks only your new commits; the lead
+the affected tests while working; push (the hook checks lint, types and affected tests) and let
+GitHub CI run the full suite. Run the 10-run browser loop once, on the final state, only if capture,
+browser or e2e code changed. Merge the latest `main` once, just before the final push. The same reviewer re-checks only your new commits; the lead
 merges after CI. See `docs/testing.md` for the testing layers.
 
 ## Finishing
 
-1. `pnpm run lint:fix`, then `pnpm run ci` from the worktree root must pass. Fix root causes; do
+1. `pnpm run lint:fix`, then the affected tests. Do not run the full `pnpm run ci` yourself before
+   pushing: the pre-push hook runs lint, build, typecheck and the affected tests, and GitHub CI runs
+   the full suite on the pull request. Fix root causes; do
    not add lint ignores or skip tests. If `knip` reports an export only used by a module another
    agent is building, keep it and say so in the report.
 2. Commit on your branch in small logical commits. Conventional Commit subject with your module
@@ -57,7 +60,7 @@ merges after CI. See `docs/testing.md` for the testing layers.
    Claude-Session: https://claude.ai/code/session_016PsDqjY9ijiJANk2gcbYGS
    ```
    and sign off with `git commit -s`. Push your branch (`git push -u origin <branch>`; the
-   pre-push hook runs `pnpm run ci`, never bypass it). Do **not** open or merge a pull request;
+   pre-push hook runs `pnpm run ci:push`, never bypass it). Do **not** open or merge a pull request;
    the lead does, after review.
 3. Final report (your last message), concise:
    - What you built, file by file (one line each)
@@ -66,4 +69,4 @@ merges after CI. See `docs/testing.md` for the testing layers.
    - Contract changes (or "none")
    - Known limitations and anything left undone, honestly. Do not claim something works unless a
      test you ran shows it.
-   - The output of the final `pnpm run ci` run (last lines).
+   - The test results from the pre-push hook (last lines).

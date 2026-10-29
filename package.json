@@ -19,6 +19,7 @@
     "test": "vitest",
     "test:e2e": "pnpm run build && vitest --project e2e",
     "ci": "pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run knip && vitest --run",
+    "ci:push": "pnpm run lint && pnpm run build && pnpm run typecheck && vitest --run --changed origin/main --passWithNoTests",
     "release": "bumpp -r",
     "prepare": "simple-git-hooks"
   },
@@ -40,7 +41,7 @@
   "simple-git-hooks": {
     "pre-commit": "pnpm exec nano-staged",
     "commit-msg": "node scripts/check-commit-msg.mjs \"$1\"",
-    "pre-push": "pnpm run ci"
+    "pre-push": "pnpm run ci:push"
   },
   "nano-staged": {
     "*": "eslint --fix --no-warn-ignored"
