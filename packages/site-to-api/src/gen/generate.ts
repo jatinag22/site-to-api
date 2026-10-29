@@ -16,6 +16,7 @@ import { dispatchFunctions, renderDispatchModule } from './dispatch'
 import { graphqlFunctions, renderGraphqlModule } from './graphql'
 import { nameHtmlValues } from './html-values'
 import { mcpTools, renderMcpReadme, renderMcpServer, zodExports } from './mcp'
+import { checkGeneratedCode, withSafePatterns } from './patterns'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
 import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema, withoutBrowserOnlySteps } from './spec'
 
@@ -68,7 +69,11 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
   await mkdir(clientDir, { recursive: true })
   const hosts: HostSpec[] = []
   for (const { host, document } of loaded) {
-    await runHeyApi(document, path.join(clientDir, host.identifier), host.file)
+    // hey-api writes `pattern`s into regex literals unescaped: unsafe ones are dropped first, and
+    // the output is parsed afterwards, so a spec cannot change the code (decision 0043).
+    const safe = withSafePatterns(document, `specs/${host.file}`, warnings)
+    await runHeyApi(OpenApiDocumentSchema.parse(safe.document), path.join(clientDir, host.identifier), host.file)
+    await checkGeneratedCode(path.join(clientDir, host.identifier), safe.patterns)
     // GraphQL operations get a `{ variables }` function beside hey-api's (decision 0027).
     const graphql = graphqlFunctions(host, warnings)
     if (graphql.length > 0)
