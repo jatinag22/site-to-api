@@ -46,8 +46,9 @@ one) wants to call the site's operations as tools, which needs a server that kno
   kept from `process.env`, so the per-host credential names prevent sending a cookie to the wrong
   site but do nothing against a tampered client. The protection is a hash gate: `gen` (and
   `build`) records a SHA-256 of every file in `client/` in
-  `$XDG_CONFIG_HOME/site-to-api/trusted-clients.json` (`~/.config/...` without it, mode 0600),
-  keyed by the folder's real path. Not in the project, gitignored or not: a repository controls
+  `$XDG_CONFIG_HOME/site-to-api/trusted-clients/` (`~/.config/...` without it), one file
+  (mode 0600) per folder, named by the hash of its real path, so concurrent `gen` runs never
+  overwrite each other's entries. Not in the project, gitignored or not: a repository controls
   its own files and `.gitignore`, so it could commit a matching entry. Before loading a client,
   `call_operation` and `mcp --generated` compare its hash and refuse a mismatch with "this client
   wasn't generated on this machine; run `site-to-api gen` to regenerate it, or pass

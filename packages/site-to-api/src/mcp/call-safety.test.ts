@@ -127,7 +127,7 @@ describe('call_operation through the generated client', () => {
   it('refuses a client this machine did not generate, unless --trust-client', async () => {
     const elsewhere = await mkdtemp(path.join(os.tmpdir(), 'site-to-api-other-store-'))
     try {
-      const store = path.join(elsewhere, 'trusted-clients.json')
+      const store = path.join(elsewhere, 'trusted-clients')
       site.length = 0
       const refused = await call(await connect({ trustStore: store }), {
         operationId: 'getApiProductsByProductId',

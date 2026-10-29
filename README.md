@@ -420,7 +420,7 @@ credentials stay on the site.
 **Only clients you generated run.** `call_operation` and the per-site server execute the code in
 `client/`, and a cloned repository can put any code there, which would run with your whole
 environment. So `gen` (and `build`) records a hash of `client/` in
-`~/.config/site-to-api/trusted-clients.json` (or under `$XDG_CONFIG_HOME`), outside every
+`~/.config/site-to-api/trusted-clients/` (or under `$XDG_CONFIG_HOME`), outside every
 project, and both refuse a client whose files do not match: "this client wasn't generated on this
 machine; run `site-to-api gen` to regenerate it, or pass `--trust-client` if you reviewed it".
 This check is the protection; the per-host variable names are not, since code in the process can
