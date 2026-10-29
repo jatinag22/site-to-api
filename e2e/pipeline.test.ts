@@ -952,6 +952,127 @@ describe('probe', () => {
   }, 180_000)
 })
 
+describe('check', () => {
+  const checkOut = (): string => join(work, 'check-handoff')
+  /** Runs `site-to-api check` and returns its exit code and the stdout it printed. */
+  const check = async (...args: string[]): Promise<{ code: number, stdout: string }> => {
+    const written: string[] = []
+    const write = process.stdout.write.bind(process.stdout)
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      written.push(String(chunk))
+      return true
+    }) as typeof process.stdout.write
+    process.exitCode = undefined
+    try {
+      await runCli([
+        'node',
+        'site-to-api',
+        '--cwd',
+        work,
+        '--raw-dir',
+        join(work, 'raw'),
+        '--out-dir',
+        checkOut(),
+        'check',
+        '--max-rps',
+        '10',
+        ...args,
+      ], pipelineCommands)
+      return {
+        code: Number(process.exitCode ?? 0),
+        stdout: written.join(''),
+      }
+    }
+    finally {
+      process.stdout.write = write
+      process.exitCode = undefined
+    }
+  }
+  const detail = (): string => operation('GET', '/api/products/{productId}').operationId
+
+  it('finds no drift on an unchanged site, then reports an added and a removed field with exit code 1', async () => {
+    await rm(checkOut(), { recursive: true, force: true })
+    await runCli([
+      'node',
+      'site-to-api',
+      '--cwd',
+      work,
+      '--raw-dir',
+      join(work, 'raw'),
+      '--out-dir',
+      checkOut(),
+      'build',
+      '--no-client',
+    ], pipelineCommands)
+    process.exitCode = undefined
+
+    site.setDrift(false)
+    const same = await check('--operations', detail())
+    expect(same.code).toBe(0)
+    expect(same.stdout).toContain('Checked 1 operations: 1 ok, 0 drifted')
+
+    site.setDrift(true)
+    try {
+      const drifted = await check('--operations', detail(), '--json')
+      expect(drifted.code).toBe(1)
+      const printed = JSON.parse(drifted.stdout)
+      expect(printed).toMatchObject({ exitCode: 1 })
+      const written = JSON.parse(await readFile(join(checkOut(), 'check.json'), 'utf8'))
+      expect(written).toEqual(printed)
+      expect(written.operations).toEqual([
+        expect.objectContaining({
+          operationId: detail(),
+          verdict: 'drift',
+          status: { expected: 200, actual: 200 },
+          added: ['$.badge'],
+          removed: ['$.mrpInr'],
+          typeChanged: [],
+        }),
+      ])
+      // Field paths only: no product name, price or other value from the live answer.
+      expect(await readFile(join(checkOut(), 'check.json'), 'utf8')).not.toMatch(/"new"|description/)
+
+      const summary = await check('--operations', detail())
+      expect(summary.code).toBe(1)
+      expect(summary.stdout).toContain('DRIFT GET')
+      expect(summary.stdout).toContain('added: $.badge')
+      expect(summary.stdout).toContain('removed: $.mrpInr')
+    }
+    finally {
+      site.setDrift(false)
+    }
+  }, 120_000)
+
+  it('keeps probe\'s safety: nothing that can change data is sent, and the host filter applies', async () => {
+    const all = await check('--json')
+    const report = JSON.parse(all.stdout)
+    expect(report.skipped.some((entry: { reason: string }) => entry.reason.includes('--unsafe-methods'))).toBe(true)
+    const login = operation('POST', '/api/auth/login').operationId
+    expect(report.skipped.map((entry: { operationId: string }) => entry.operationId)).toContain(login)
+    expect(report.operations.map((entry: { operationId: string }) => entry.operationId)).not.toContain(login)
+    expect(report.operations.find((entry: { operationId: string }) => entry.operationId === detail())).toMatchObject({ verdict: 'ok' })
+    const none = await check('--include', 'nowhere.test')
+    expect(none.code).toBe(2)
+  }, 180_000)
+
+  it('exits 2 when the site cannot be reached', async () => {
+    const origin = site.origin
+    await site.close()
+    try {
+      const down = await check('--operations', detail(), '--json')
+      expect(down.code).toBe(2)
+      expect(JSON.parse(down.stdout).operations[0]).toMatchObject({ verdict: 'unreachable' })
+    }
+    finally {
+      site = await startFixtureSite({
+        port: Number(new URL(origin).port),
+        livePriceIntervalMs: 500,
+        tickIntervalMs: 300,
+      })
+    }
+  }, 120_000)
+})
+
 describe('first-time use through the CLI: build options stick and the docs agree', () => {
   const cliOut = (): string => join(work, 'cli-handoff')
   const cli = async (...args: string[]): Promise<void> => {

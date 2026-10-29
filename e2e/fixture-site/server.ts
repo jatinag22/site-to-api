@@ -54,6 +54,11 @@ export interface FixtureSiteOptions {
 }
 
 export interface FixtureSite {
+  /**
+   * Makes `GET /api/products/{id}` answer as a site would after an unannounced change: every
+   * category gains a `featured` field and loses `productCount`. For testing `site-to-api check`.
+   */
+  setDrift: (on: boolean) => void
   /** Main origin, e.g. `http://localhost:51234`. */
   origin: string
   /** Analytics origin on a different host, e.g. `http://127.0.0.1:51235`. */
@@ -132,6 +137,7 @@ function createRoutes(deps: {
   shield: ReturnType<typeof createShield>
   now: () => number
   livePriceIntervalMs: number
+  drift: { on: boolean }
 }): Route[] {
   const { catalog, assets, auth, shield, now } = deps
   const graphql = createGraphql(catalog)
@@ -278,11 +284,14 @@ function createRoutes(deps: {
           sendJson(res, 404, { error: 'not_found', message: `no product ${id ?? ''}` })
         }
         else {
-          sendJson(res, 200, {
+          const { mrpInr, ...kept } = {
             ...productSummary(product),
             mrpInr: product.mrpInr,
             description: product.description,
-          })
+          }
+          sendJson(res, 200, deps.drift.on
+            ? { ...kept, badge: 'new' }
+            : { ...kept, mrpInr })
         }
       },
     },
@@ -547,7 +556,9 @@ export async function startFixtureSite(options: FixtureSiteOptions = {}): Promis
     ...bundle.files,
   ])
   const live = createLiveEndpoints(catalog, createRng(seed ^ 0x11FE), { intervalMs: options.tickIntervalMs ?? 1000 })
+  const drift = { on: false }
   const routes = createRoutes({
+    drift,
     live,
     catalog,
     assets,
@@ -585,6 +596,9 @@ export async function startFixtureSite(options: FixtureSiteOptions = {}): Promis
   }
 
   return {
+    setDrift: (on) => {
+      drift.on = on
+    },
     origin: `http://localhost:${port}`,
     secondaryOrigin,
     close: async () => {
