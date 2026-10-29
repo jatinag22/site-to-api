@@ -160,13 +160,15 @@ function describeUse(origin: ValueOrigin, analysis: Analysis, resolver: StepReso
     : null
 }
 
-function computedSection(analysis: Analysis, resolver: StepResolver): string[] {
+function computedSection(analysis: Analysis, resolver: StepResolver, hasSource: boolean): string[] {
   if (analysis.flows.computedValues.length === 0)
     return []
   const lines = [
     '## Values computed in the browser',
     '',
-    'The wrapper must reproduce these. Port the function named here; the excerpt is in `source/`.',
+    hasSource
+      ? 'The wrapper must reproduce these. Port the function named here; the excerpt is in `source/`.'
+      : 'The wrapper must reproduce these. Port the function named here.',
     '',
   ]
   for (const value of analysis.flows.computedValues) {
@@ -259,6 +261,7 @@ function gapsSection(analysis: Analysis, context: AgentGuideContext, resolver: S
 export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext): string {
   const resolver = createStepResolver(analysis.operations, analysis.flows)
   const channels = analysis.channels ?? []
+  const hasSource = analysis.excerpts.size > 0
   const exampleNote = {
     masked: 'Example values are masked: secrets and personal data are replaced, formats are kept.',
     raw: 'Example values are copied from the capture (`redact.examples: raw`). Treat this folder as sensitive.',
@@ -291,14 +294,17 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext)
     ...(channels.length > 0
       ? ['   `specs/<host>.asyncapi.yaml`: AsyncAPI 3.0 detail for the WebSocket channels (see "Real-time channels").']
       : []),
-    '4. `source/`: the site\'s own code for computed values and call sites.',
-    clientReadingLine(context.client),
+    // HN's code sends its requests from inline scripts: no excerpt, no folder, no line for it.
+    ...(hasSource
+      ? ['4. `source/`: the site\'s own code for computed values and call sites (Markdown excerpts).']
+      : []),
+    clientReadingLine(context.client, hasSource ? 5 : 4),
     '',
     ...sessionSection(analysis),
     ...flowsSection(analysis, resolver),
     ...graphqlSection(analysis),
     ...channelsSection(channels),
-    ...computedSection(analysis, resolver),
+    ...computedSection(analysis, resolver, hasSource),
     ...gapsSection(analysis, context, resolver),
   ]
   return `${lines.join('\n').trimEnd()}\n`

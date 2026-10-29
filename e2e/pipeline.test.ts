@@ -98,10 +98,12 @@ function loginDriver(): string {
     `  if (csrf === null)`,
     `    throw new Error('no CSRF token on the login page')`,
     `  const key = await sdk.getApiAuthKey({})`,
-    `  if (key.data === undefined)`,
+    `  // One capture of each: response fields are not promised (decision 0034), so check them.`,
+    `  const publicKey = key.data?.publicKey`,
+    `  if (publicKey === undefined)`,
     `    throw new Error(\`no login key: \${String(key.error)}\`)`,
     `  const login = await sdk.postApiAuthLogin({`,
-    `    body: { username: 'demo', password: await encryptPassword('demo-password', key.data.publicKey) },`,
+    `    body: { username: 'demo', password: await encryptPassword('demo-password', publicKey) },`,
     `    headers: { 'x-csrf-token': csrf },`,
     `  })`,
     `  if (login.data === undefined)`,
@@ -120,9 +122,9 @@ function loginDriver(): string {
     `    beforeStatus: before.response?.status ?? 0,`,
     `    loginStatus: login.response?.status ?? 0,`,
     `    ordersStatus: orders.response?.status ?? 0,`,
-    `    orders: orders.data?.orders.length ?? 0,`,
+    `    orders: orders.data?.orders?.length ?? 0,`,
     `    combinedStatus: again.response?.status ?? 0,`,
-    `    combinedOrders: again.data?.orders.length ?? 0,`,
+    `    combinedOrders: again.data?.orders?.length ?? 0,`,
     `    cookies: jar.all().map(cookie => cookie.name).sort(),`,
     `  }`,
     `}`,
@@ -394,6 +396,22 @@ describe('fitted to the site, not to the captured samples', () => {
       for (const personal of ['Demo Shopper', 'usr_demo_0001'])
         expect(content.includes(personal), `${name} contains ${personal}`).toBe(false)
     }
+  })
+
+  it('points flows.json only at Markdown excerpts that were written', () => {
+    const flows = files.get('flows.json') ?? ''
+    const referenced = [
+      ...new Set(flows.match(/source\/[^"]+/g) ?? []),
+    ]
+    expect(referenced.length).toBeGreaterThan(0)
+    for (const path of referenced) {
+      expect(path, path).toMatch(/\.L\d+(?:-\d+|C\d+)\.[a-z]+\.md$/)
+      expect(files.has(path), `${path} was written`).toBe(true)
+    }
+    const written = [
+      ...files.keys(),
+    ].filter(name => name.startsWith('source/'))
+    expect(written.every(name => name.endsWith('.md'))).toBe(true)
   })
 
   it('writes no excerpt of the bot-protection sensor script, only of the site\'s own code', () => {

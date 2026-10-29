@@ -3,10 +3,13 @@
  * GraphQL operation the operation name, the persisted-query hash and the document never change,
  * so they become constants with a default the generated client sends itself; `variables` stays
  * the caller's input. Fields a site adds next to them are left optional, so the client only
- * ever has to fill in the variables.
+ * ever has to fill in the variables. When the document was captured, its variable definitions
+ * decide which variables are required (`$id: Int!` is, `$id: Int` is not); persisted queries
+ * keep the evidence rule of the samples.
  */
 import type { GraphqlOperation, JsonSchema, Operation, ParamInfo, ValueRedactor } from '../../model'
 import { GRAPHQL_FIELDS } from './detect'
+import { readVariables } from './document'
 
 function constant(value: string | number, type: 'string' | 'integer'): JsonSchema {
   return { type, const: value, default: value }
@@ -56,7 +59,32 @@ function clientSends(field: string, graphql: GraphqlOperation, sent: string[]): 
   return field === 'variables' || pinned(field, undefined, graphql) !== null
 }
 
-function pinBody(schema: JsonSchema, graphql: GraphqlOperation): JsonSchema {
+/** The declared non-null-ness of each variable, or null when no document says. */
+function declaredVariables(graphql: GraphqlOperation): Map<string, boolean> | null {
+  return graphql.document === null
+    ? null
+    : readVariables(graphql.document, graphql.operationName)
+}
+
+/**
+ * `variables` with `required` taken from the document: every declared non-null variable the
+ * samples show, and none declared nullable. Variables the document does not declare keep what
+ * the samples said.
+ */
+function requireDeclared(schema: JsonSchema | undefined, declared: Map<string, boolean> | null): JsonSchema | undefined {
+  if (schema?.properties === undefined || declared === null || declared.size === 0)
+    return schema
+  const inferred = new Set(schema.required ?? [])
+  const required = Object.keys(schema.properties)
+    .filter(name => declared.get(name) ?? inferred.has(name))
+  const result: JsonSchema = { ...schema }
+  delete result.required
+  if (required.length > 0)
+    result.required = required
+  return result
+}
+
+function pinBody(schema: JsonSchema, graphql: GraphqlOperation, declared: Map<string, boolean> | null): JsonSchema {
   const properties: Record<string, JsonSchema> = { ...schema.properties }
   for (const field of GRAPHQL_FIELDS) {
     if (!graphql.sent.body.includes(field))
@@ -65,7 +93,13 @@ function pinBody(schema: JsonSchema, graphql: GraphqlOperation): JsonSchema {
     if (replacement)
       properties[field] = replacement
   }
-  const required = (schema.required ?? []).filter(field => clientSends(field, graphql, graphql.sent.body))
+  const variables = requireDeclared(properties.variables, declared)
+  if (variables !== undefined)
+    properties.variables = variables
+  // Required means "the client sends it": the pinned constants (which it fills in itself) and
+  // `variables`, whenever every sample carried them. This does not depend on the inferred
+  // `required`, which only lists fields with more than one value across samples (see analyze/schema).
+  const required = Object.keys(properties).filter(field => clientSends(field, graphql, graphql.sent.body))
   const result: JsonSchema = { ...schema, properties }
   delete result.required
   if (required.length > 0)
@@ -73,11 +107,13 @@ function pinBody(schema: JsonSchema, graphql: GraphqlOperation): JsonSchema {
   return result
 }
 
-function pinQuery(params: ParamInfo[], graphql: GraphqlOperation): ParamInfo[] {
+function pinQuery(params: ParamInfo[], graphql: GraphqlOperation, declared: Map<string, boolean> | null): ParamInfo[] {
   return params.map((param) => {
     if (!graphql.sent.query.includes(param.name))
       return param
-    const replacement = pinned(param.name, param.schema, graphql)
+    const replacement = param.name === 'variables'
+      ? requireDeclared(param.schema, declared) ?? null
+      : pinned(param.name, param.schema, graphql)
     return {
       ...param,
       required: param.required && clientSends(param.name, graphql, graphql.sent.query),
@@ -101,15 +137,17 @@ export function pinGraphqlSchemas(operation: Operation, redactor: ValueRedactor)
       ? null
       : redactor.value(operation.graphql.document, { in: 'body', name: 'query' }),
   }
+  // Read before redaction: masking a value inline must not hide a variable definition.
+  const declared = declaredVariables(operation.graphql)
   const body = operation.requestBody
   return {
     ...operation,
     graphql,
-    query: pinQuery(operation.query, graphql),
+    query: pinQuery(operation.query, graphql, declared),
     requestBody: body && body.schema.type === 'object'
       ? {
           ...body,
-          schema: pinBody(body.schema, graphql),
+          schema: pinBody(body.schema, graphql, declared),
         }
       : body,
   }

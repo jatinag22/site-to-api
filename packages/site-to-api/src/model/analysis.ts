@@ -66,6 +66,20 @@ export interface ResponseInfo {
   examples: unknown[]
 }
 
+/** The request body of an operation, typed by what the body is, not by what its header claims. */
+export interface RequestBodyInfo {
+  /** Media type of the body syntax: `application/json` whenever every captured body parsed as JSON. */
+  mimeType: string
+  /**
+   * The `Content-Type` the site sent when it differs from `mimeType`: JSON text sent as
+   * `application/x-www-form-urlencoded` or `text/plain` (common to avoid a CORS preflight).
+   * Servers that do this often reject the same body under another type, so clients send it as is.
+   */
+  sentContentType?: string
+  schema: JsonSchema
+  examples: unknown[]
+}
+
 /** What makes an operation a GraphQL operation (decision 0027). */
 export interface GraphqlOperation {
   /** The real path the requests go to, e.g. `/graphql`; `Operation.path` may add `#<name>`. */
@@ -103,10 +117,16 @@ export interface Operation {
   headers: HeaderInfo[]
   /** Cookies this operation was seen with. Names only. */
   cookies: ParamInfo[]
-  requestBody: { mimeType: string, schema: JsonSchema, examples: unknown[] } | null
+  requestBody: RequestBodyInfo | null
   responses: ResponseInfo[]
   /** Where the page's code sends this request from. */
   sentFrom: SourceRef[]
+  /**
+   * True when the page did send it, but only from code no capture can show: evaluated code
+   * (`eval`, webpack's `webpack-internal:///5467` modules) or anonymous scripts. `sentFrom` is
+   * then empty, and the output says "no source available" instead of a reference that leads nowhere.
+   */
+  sourceUnavailable?: boolean
   /** True when the operation appears in source code but was never called during capture. */
   sourceOnly: boolean
   /**

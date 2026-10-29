@@ -145,6 +145,9 @@ async function runHeyApi(document: OpenApiDocument, output: string, file: string
           name: 'zod',
           // Pinned so the output does not depend on the zod version found in the user's project.
           compatibilityVersion: 4,
+          // Sites send date-times with offsets (`-05:00`) and without a zone; Zod's default
+          // accepts only `Z`, so valid live data failed response validation.
+          dates: { offset: true, local: true },
           $resolvers: {
             validator: {
               // hey-api validates the resolved request options, whose `headers` is a `Headers`

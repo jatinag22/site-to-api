@@ -115,6 +115,20 @@ function isInstrumentation(url: string): boolean {
   return withoutHash(url).split('?')[0]?.endsWith(INSTRUMENT_SCRIPT) ?? false
 }
 
+/**
+ * Frames whose location is not code anyone can read. `eval` frames point at the `eval()` call (or
+ * into evaluated text no capture saved), `webpack-internal:///5467` is a module evaluated from a
+ * string under a numeric id, and `VM123` is an anonymous script. Presented as `/5467:55 eval`
+ * they look like references but lead nowhere, so the call site is reported as unavailable.
+ */
+export function isOpaqueFrame(frame: StackFrame): boolean {
+  if (frame.functionName !== null && /^eval(?:\s|$)/.test(frame.functionName))
+    return true
+  return /^webpack-internal:\/\/\/\d+(?:[?#]|$)/.test(frame.url)
+    || /^VM\d+\b/.test(frame.url)
+    || frame.url === 'debugger eval code'
+}
+
 function isHttpClientFunction(name: string | null): boolean {
   if (name === null)
     return false
@@ -177,6 +191,9 @@ export async function createSourceResolver(sessions: LoadedSession[]): Promise<L
     for (const frame of stack) {
       if (isInstrumentation(frame.url) || isBrowserInternal(frame.url))
         continue
+      // The callers of evaluated code are the evaluator (a module loader), not the call site.
+      if (isOpaqueFrame(frame))
+        return null
       const ref = resolve(frame, sessionId)
       if (ref.original
         ? isLibraryPath(ref.file)

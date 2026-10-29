@@ -120,6 +120,10 @@ export async function run(baseUrl: string) {
   // A second configuration for the same host replaces the first one, \`auth\` included.
   createSiteClient({ host: 'shop.example.com', jar, baseUrl, retry: false })
   const meWithoutAuth = await site.sdk.getApiMe()
+  // JSON text under the site's form content type, also after the host was configured again.
+  const search = await site.sdk.postApiSearch({ body: { query: 'alpha' } })
+  // A content type the caller passes is sent as is (the server here answers 415 to anything but the form type).
+  const ownType = await site.sdk.postApiSearch({ body: { query: 'beta' }, headers: { 'content-type': 'text/plain' } })
   return {
     beforeStatus: before.response?.status ?? 0,
     csrf,
@@ -128,6 +132,8 @@ export async function run(baseUrl: string) {
     item: item.data ?? null,
     me: me.data ?? null,
     meWithoutAuthStatus: meWithoutAuth.response?.status ?? 0,
+    search: search.data ?? null,
+    ownTypeStatus: ownType.response?.status ?? 0,
     invalid,
     records,
     cookies: jar.all().map(cookie => cookie.name),
@@ -211,6 +217,33 @@ function handleSignIn(request: IncomingMessage, response: ServerResponse, json: 
   return false
 }
 
+/** Like Algolia: JSON text labelled as a form, and a 400 for anything that is not JSON. */
+function handleSearch(request: IncomingMessage, json: SendJson): void {
+  let text = ''
+  request.setEncoding('utf8')
+  request.on('data', (chunk: string) => {
+    text += chunk
+  })
+  request.on('end', () => {
+    let body: unknown
+    try {
+      body = JSON.parse(text)
+    }
+    catch {
+      json(400, { message: 'Expecting object or array' })
+      return
+    }
+    const form = request.headers['content-type'] === 'application/x-www-form-urlencoded'
+    json(form && typeof body === 'object' && body !== null
+      ? 200
+      : 415, {
+      hits: [
+        JSON.stringify(body),
+      ],
+    })
+  })
+}
+
 function handle(seen: Seen[]) {
   return (request: IncomingMessage, response: ServerResponse): void => {
     const cookie = request.headers.cookie ?? null
@@ -241,7 +274,12 @@ function handle(seen: Seen[]) {
             name: 'Alpha',
             price: 1250,
             tags: ['new'],
+            updatedAt: '2026-10-23T16:21:08.000-05:00',
           })
+      return
+    }
+    if (request.method === 'POST' && request.url === '/api/search') {
+      handleSearch(request, json)
       return
     }
     if (request.url === '/prices') {
@@ -261,6 +299,8 @@ const DriverResultSchema = z.object({
   item: z.unknown(),
   me: z.unknown(),
   meWithoutAuthStatus: z.number(),
+  search: z.unknown(),
+  ownTypeStatus: z.number(),
   invalid: z.string(),
   records: z.array(z.record(z.string(), z.unknown())),
   cookies: z.array(z.string()),
@@ -367,11 +407,17 @@ describe('generateClient', () => {
     expect(output.login).toEqual({ ok: true })
     expect(output.me).toEqual({ name: 'demo' })
     expect(output.meWithoutAuthStatus).toBe(401)
+    expect(output.search).toEqual({
+      hits: ['{"query":"alpha"}'],
+    })
+    expect(output.ownTypeStatus).toBe(415)
     expect(output.item).toEqual({
       id: 'a1',
       name: 'Alpha',
       price: 1250,
       tags: ['new'],
+      // An offset, not `Z`: response validation must accept it.
+      updatedAt: '2026-10-23T16:21:08.000-05:00',
     })
     expect(output.invalid).toBe('ZodError')
     expect(output.cookies).toEqual(['session'])
@@ -716,9 +762,10 @@ export async function run(baseUrl: string) {
   const header = await sdk.header({ variables: {} })
   return {
     artist: artist.data?.data.artistUnion.name ?? null,
-    hours: hours.data?.data.storeHours.opens ?? null,
-    added: added.data?.data.addToWishlist.count ?? null,
-    header: header.data?.data.header.title ?? null,
+    // One sample each: their response fields are not promised (decision 0034).
+    hours: hours.data?.data?.storeHours?.opens ?? null,
+    added: added.data?.data?.addToWishlist?.count ?? null,
+    header: header.data?.data?.header?.title ?? null,
   }
 }
 `

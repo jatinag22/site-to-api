@@ -144,7 +144,7 @@ describe('inferOperationSchemas', () => {
     ])
     const [app, csrf, referer, extra] = result.headers
     expect(app).toMatchObject({
-      required: true,
+      required: false,
       constant: true,
       schema: { type: 'string', default: 'web' },
     })
@@ -155,6 +155,56 @@ describe('inferOperationSchemas', () => {
     expect(extra).toMatchObject({ required: false, constant: false })
     expect(isBrowserManagedHeader('sec-fetch-site')).toBe(true)
     expect(isBrowserManagedHeader('x-sec-fetch')).toBe(false)
+  })
+
+  it('never makes tracing headers constants or defaults', () => {
+    const headers = {
+      'baggage': 'sentry-environment=production',
+      'sentry-trace': 'abc-def',
+      'x-datadog-origin': 'rum',
+      'traceparent': '00-1-2-01',
+      'x-newrelic-id': 'VQEGUlZRGwIBVVRWAQ==',
+    }
+    const result = infer([
+      exchange({ url: 'https://shop.test/api/x', requestHeaders: headers, sessionId: 's1' }),
+      exchange({ url: 'https://shop.test/api/x', requestHeaders: headers, sessionId: 's2' }),
+    ])
+    expect(result.headers.map(header => header.name).sort()).toEqual(Object.keys(headers).sort())
+    for (const header of result.headers) {
+      expect(header, header.name).toMatchObject({ required: false, constant: false })
+      expect(header.schema.default, header.name).toBeUndefined()
+      expect(header.schema['x-constant'], header.name).toBeUndefined()
+    }
+  })
+
+  it('takes constants from the whole host when the operation was seen in one session', () => {
+    const redactor = createRedactor({
+      exchanges: [],
+      config: {
+        examples: 'masked',
+        maxExamples: 3,
+        patterns: [],
+        fields: [],
+      },
+    })
+    const pages = ['s1', 's2'].map(sessionId => exchange({
+      url: 'https://shop.test/api/list',
+      requestHeaders: { 'x-requested-with': 'XMLHttpRequest' },
+      sessionId,
+    }))
+    const once = exchange({
+      url: 'https://shop.test/api/latest',
+      requestHeaders: { 'x-requested-with': 'XMLHttpRequest', 'x-nonce': 'n-1' },
+      sessionId: 's1',
+    })
+    const [, latest] = inferOperationSchemas([
+      operation(pages, { operationId: 'getList', path: '/api/list' }),
+      operation([once], { operationId: 'getLatest', path: '/api/latest' }),
+    ], redactor)
+    expect(latest!.headers.map(header => [header.name, header.constant, header.schema.default])).toEqual([
+      ['x-requested-with', true, 'XMLHttpRequest'],
+      ['x-nonce', false, undefined],
+    ])
   })
 
   it('treats a header as constant only when two or more sessions agree', () => {
@@ -194,7 +244,7 @@ describe('inferOperationSchemas', () => {
     })
   })
 
-  it('never requires the page context headers a browser adds, even when sent every time', () => {
+  it('never requires a header because the capture sent it every time', () => {
     const result = infer([
       exchange({
         url: 'https://shop.test/api/x',
@@ -208,7 +258,7 @@ describe('inferOperationSchemas', () => {
     expect(result.headers.map(header => [header.name, header.required, header.constant])).toEqual([
       ['origin', false, false],
       ['referer', false, false],
-      ['x-app', true, false],
+      ['x-app', false, false],
     ])
     expect(result.headers.find(header => header.name === 'referer')?.schema.examples).toEqual(['https://shop.test/login'])
   })
@@ -308,6 +358,43 @@ describe('inferOperationSchemas', () => {
     })
   })
 
+  it('requires a request body field only when every sample has it with more than one value', () => {
+    const search = (sessionId: string, query: string) => exchange({
+      method: 'POST',
+      url: 'https://shop.test/api/x',
+      sessionId,
+      requestBody: jsonBody({
+        query,
+        analyticsTags: ['web'],
+        clickAnalytics: true,
+        filter: { page: 0, sort: query },
+      }),
+    })
+    const result = infer([
+      search('s1', 'sqlite'),
+      search('s2', 'rust'),
+    ])
+    expect(result.requestBody?.schema.required).toEqual(['query', 'filter'])
+    expect(result.requestBody?.schema.properties?.filter?.required).toEqual(['sort'])
+    // One sample proves nothing about what a caller must send.
+    expect(infer([
+      search('s1', 'sqlite'),
+    ]).requestBody?.schema.required).toBeUndefined()
+    const forms = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: formBody({ q: 'a', lang: 'en' }),
+      }),
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: formBody({ q: 'b', lang: 'en' }),
+      }),
+    ])
+    expect(forms.requestBody?.schema.required).toEqual(['q'])
+  })
+
   it('infers form bodies, picking the most common media type', () => {
     const result = infer([
       exchange({
@@ -374,6 +461,163 @@ describe('inferOperationSchemas', () => {
       })
   })
 
+  it('types a JSON body by its syntax and keeps the content type the site sent', () => {
+    const jsonText = (value: unknown, mimeType: string) => ({
+      mimeType,
+      text: JSON.stringify(value),
+      base64: null,
+      json: value,
+      // A form parser reads JSON text as one field named after the whole body.
+      form: mimeType === 'application/x-www-form-urlencoded'
+        ? [
+            {
+              name: JSON.stringify(value),
+              value: '',
+            },
+          ]
+        : null,
+    })
+    const algolia = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: jsonText({ query: 'a', page: 0 }, 'application/x-www-form-urlencoded'),
+      }),
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: jsonText({ query: 'b', page: 1 }, 'application/x-www-form-urlencoded'),
+      }),
+    ]).requestBody
+    expect(algolia?.mimeType).toBe('application/json')
+    expect(algolia?.sentContentType).toBe('application/x-www-form-urlencoded')
+    expect(algolia?.schema.properties?.page).toEqual({ type: 'integer' })
+    expect(infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: jsonText({ a: 1 }, 'text/plain'),
+      }),
+    ]).requestBody?.sentContentType).toBe('text/plain')
+    const vendor = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: jsonText({ a: 1 }, 'application/vnd.api+json'),
+      }),
+    ]).requestBody
+    expect(vendor?.mimeType).toBe('application/vnd.api+json')
+    expect(vendor).not.toHaveProperty('sentContentType')
+  })
+
+  it('requires a response field only when answers to two different requests all had it', () => {
+    const answer = (url: string, body: unknown, sessionId = 's1') => exchange({
+      url,
+      responseBody: jsonBody(body),
+      sessionId,
+    })
+    const same = infer([
+      answer('https://shop.test/api/stock?expand=all', {
+        items: [
+          { id: 1, where: [] },
+        ],
+        at: 'now',
+      }),
+      answer('https://shop.test/api/stock?expand=all', {
+        items: [
+          { id: 1, where: [] },
+        ],
+        at: 'now',
+      }, 's2'),
+    ]).responses[0]?.schema
+    expect(same?.required).toBeUndefined()
+    expect(same?.properties?.items?.items?.required).toBeUndefined()
+
+    const different = infer([
+      answer('https://shop.test/api/stock?expand=all', {
+        items: [
+          { id: 1, where: [] },
+        ],
+        at: 'now',
+      }),
+      answer('https://shop.test/api/stock?expand=none', {
+        items: [
+          { id: 2 },
+        ],
+        at: 'later',
+      }),
+    ]).responses[0]?.schema
+    expect(different?.required).toEqual(['items', 'at'])
+    // Per level: `where` was missing from one item, `id` was in all of them.
+    expect(different?.properties?.items?.items?.required).toEqual(['id'])
+
+    const sameBody = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/stock',
+        requestBody: jsonBody({ q: 'a' }),
+        responseBody: jsonBody({ n: 1 }),
+      }),
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/stock',
+        requestBody: jsonBody({ q: 'b' }),
+        responseBody: jsonBody({ n: 2 }),
+      }),
+    ]).responses[0]?.schema
+    expect(sameBody?.required).toEqual(['n'])
+  })
+
+  it('does not count a cache-buster as a different request, but does count a real parameter', () => {
+    const answer = (url: string, body: unknown) => exchange({
+      url,
+      responseBody: jsonBody(body),
+    })
+    const full = { availabilities: [], displayLocations: [], salesLocations: [] }
+    const busted = infer([
+      answer('https://api.test/availabilities?itemNos=90529469&expand=StoresList&_=1730000000001', full),
+      answer('https://api.test/availabilities?itemNos=90529469&expand=StoresList&_=1730000000002', full),
+    ]).responses[0]?.schema
+    expect(busted?.required).toBeUndefined()
+    const timeBuster = infer([
+      answer('https://api.test/availabilities?itemNos=90529469&t=1730000000', full),
+      answer('https://api.test/availabilities?itemNos=90529469&t=1730000500', full),
+    ]).responses[0]?.schema
+    expect(timeBuster?.required).toBeUndefined()
+    // Varying with meaning: a time filter, a selector under a time-like name, a 10-digit id.
+    for (const [first, second] of [
+      ['since=1730000000', 'since=1730000500'],
+      ['t=search', 't=product'],
+      ['itemNo=1234567890', 'itemNo=2234567890'],
+    ]) {
+      const real = infer([
+        answer(`https://api.test/availabilities?${first}`, full),
+        answer(`https://api.test/availabilities?${second}`, full),
+      ]).responses[0]?.schema
+      expect(real?.required).toEqual(['availabilities', 'displayLocations', 'salesLocations'])
+    }
+    const items = infer([
+      answer('https://api.test/availabilities?itemNos=90529469&_=1730000000001', full),
+      answer('https://api.test/availabilities?itemNos=89471407&_=1730000000002', full),
+    ]).responses[0]?.schema
+    expect(items?.required).toEqual(['availabilities', 'displayLocations', 'salesLocations'])
+    const bodyBuster = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://api.test/q',
+        requestBody: jsonBody({ q: 'a', ts: 1730000000001 }),
+        responseBody: jsonBody({ n: 1 }),
+      }),
+      exchange({
+        method: 'POST',
+        url: 'https://api.test/q',
+        requestBody: jsonBody({ q: 'a', ts: 1730000000002 }),
+        responseBody: jsonBody({ n: 1 }),
+      }),
+    ]).responses[0]?.schema
+    expect(bodyBuster?.required).toBeUndefined()
+  })
+
   it('groups responses by status and media type; HTML gets no schema', () => {
     const result = infer([
       exchange({
@@ -386,7 +630,7 @@ describe('inferOperationSchemas', () => {
         responseBody: textBody('<h1>no</h1>'),
       }),
       exchange({
-        url: 'https://shop.test/api/x',
+        url: 'https://shop.test/api/x?page=2',
         responseBody: jsonBody({ ok: false }),
       }),
       exchange({ url: 'https://shop.test/api/x', status: 204 }),
@@ -441,8 +685,26 @@ describe('inferOperationSchemas', () => {
       ],
     })
     expect(result.pathParams[0]!.schema).toEqual({
+      type: 'string',
+      examples: ['12', '13'],
+    })
+    const page = infer([
+      exchange({ url: 'https://shop.test/api/pages/2' }),
+      exchange({ url: 'https://shop.test/api/pages/3' }),
+    ], {
+      path: '/api/pages/{page}',
+      pathParams: [
+        {
+          name: 'page',
+          index: 2,
+          schema: { type: 'string' },
+          evidence: ['varies'],
+        },
+      ],
+    })
+    expect(page.pathParams[0]!.schema).toEqual({
       type: 'integer',
-      examples: [12, 13],
+      examples: [2, 3],
     })
   })
 
