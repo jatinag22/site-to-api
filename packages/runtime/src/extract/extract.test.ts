@@ -125,6 +125,27 @@ describe('extract (html)', () => {
     ])
   })
 
+  it('builds records without a prototype, so field names like constructor and __proto__ are plain keys', () => {
+    const records = extract('<ul><li><b>A</b><i>x</i></li><li><b>B</b></li></ul>', {
+      kind: 'html',
+      records: 'li',
+      many: true,
+      fields: {
+        constructor: field('i', { optional: true }),
+        // A computed key: a literal `__proto__:` would set the object's prototype instead.
+        ['__proto__']: field('b'),
+      },
+    })
+    expect(Array.isArray(records) && records.map(record => [
+      Object.hasOwn(record, 'constructor'),
+      record.constructor,
+      Object.hasOwn(record, '__proto__'),
+    ])).toEqual([
+      [true, 'x', true],
+      [false, undefined, true],
+    ])
+  })
+
   it('returns an empty array when no record matches', () => {
     expect(extract('<p>none</p>', spec)).toEqual([])
   })
