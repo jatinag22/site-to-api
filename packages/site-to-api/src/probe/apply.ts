@@ -51,8 +51,11 @@ function requirementFor(entry: SessionRequirement, probes: OperationProbe[], gua
     return 'token'
   if ([...needed].some(item => item.startsWith('cookie:')))
     return 'cookies'
-  // Tested calls needed headers (a CSRF token, a caller id) that no verdict word names: the
-  // inferred verdict stands, and each operation's `x-site-to-api-requires` lists them.
+  // Every tested call was worked out and needed only plain headers: plain HTTP with those
+  // headers, listed in `x-site-to-api-requires` (decision 0036). An untested call sending vendor
+  // traces keeps the inferred verdict; failures are handled in applyProbeReport.
+  if (!open && !guardedUntested)
+    return 'none'
   return entry.requires
 }
 

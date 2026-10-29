@@ -924,7 +924,7 @@ describe('host sections follow the probe results', () => {
       analysis.flows.session[0]!.probed = true
       analysis.operations[1]!.requires = ['header:x-client-id']
     })
-    expect(guide).toContain('- Needs: plain HTTP works; no session needed; requests need header `x-client-id` (confirmed by probe).')
+    expect(guide).toContain('- Needs: plain HTTP works; requests need header `x-client-id` (confirmed by probe).')
     expect(guide).toContain('- Bot protection seen: Akamai')
     expect(guide).not.toContain('let a real browser run it')
   })

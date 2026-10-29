@@ -126,7 +126,10 @@ function needsLine(entry: SessionRequirement, headers: string[], context: AgentG
   const browserHeaders = headers.filter(name => isBotProtectionHeader(name))
   const needs = entry.requires === 'browser' && browserHeaders.length > 0
     ? `a real browser is needed: ${browserHeaders.map(code).join(', ')} ${plural(browserHeaders.length, 'is', 'are')} computed by a bot-protection script in the page`
-    : REQUIREMENT_TEXT[entry.requires]
+    : entry.requires === 'none' && headers.length > 0
+      // Headers are a need of their own: "no session needed" would undersell them.
+      ? 'plain HTTP works'
+      : REQUIREMENT_TEXT[entry.requires]
   return `- Needs: ${needs}${withHeaders} (${verdictSource(entry, context.probe)}).`
 }
 

@@ -41,6 +41,16 @@ same note, without saying what differed.
   seen on its pages. When every tested request was minimized and none needed a cookie or token,
   it is plain HTTP.
 
+- A host whose probed calls all succeeded and were all worked out, where none needed a cookie,
+  a token or a bot-protection vendor header and some needed only plain headers (a caller id,
+  `x-client-id`), is plain HTTP with those headers. It is represented as `none` plus the
+  required-header list each operation already carries in `x-site-to-api-requires`, rather
+  than a new requirement level, so `flows.json` and the client keep their four verdicts. AGENT.md
+  and the client README say "plain HTTP works; requests need header `x-client-id`" instead of
+  "no session needed". The guards of the bot-protection rules still apply: a vendor cookie or
+  header, an untested call that sends vendor traces, or any failed probe on the host keeps the
+  inferred verdict.
+
 ## Consequences
 Detection of block pages is by signature and can miss a vendor; a missed one is reported as
 `other`, never as an expired session. Probe stays rate limited and safe-method only (0012).

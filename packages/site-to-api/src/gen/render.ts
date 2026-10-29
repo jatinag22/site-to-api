@@ -523,7 +523,7 @@ function renderHostSection(host: HostSpec, session: SessionRequirement | null): 
     `- Namespace ${code(host.identifier)}, base URL ${code(host.baseUrl)}, ${host.operationIds.length} operation${host.operationIds.length === 1
       ? ''
       : 's'}.`,
-    `- Session: ${describeSession(session)}`,
+    `- Session: ${describeSession(session, probedHeaders(host.probedRequires))}`,
   ]
   if (session)
     lines.push(...cookieLines(session, host.probedRequires))
@@ -607,13 +607,24 @@ function authExample(host: HostSpec): string | null {
     : '  auth: () => token,'
 }
 
-function describeSession(session: SessionRequirement | null): string {
+/** Plain headers probe found necessary on a host (`header:x-client-id`), sorted. */
+function probedHeaders(probedRequires: string[][]): string[] {
+  return [
+    ...new Set(probedRequires.flat().filter(item => item.startsWith('header:')).map(item => item.slice('header:'.length))),
+  ].sort()
+}
+
+function describeSession(session: SessionRequirement | null, headers: string[]): string {
   if (!session)
     return 'not described in flows.json; start with cookies and run `site-to-api probe` to find out.'
   const probed = session.probed ? 'confirmed by `probe`' : 'inferred from captured traffic, not probed'
   switch (session.requires) {
     case 'none':
-      return `none, plain HTTP works (${probed}).`
+      return headers.length > 0
+        ? `plain HTTP works; requests need ${headers.length === 1
+          ? 'header'
+          : 'headers'} ${headers.map(code).join(', ')} (${probed}).`
+        : `none, plain HTTP works (${probed}).`
     case 'cookies':
       return `cookies set by the site's own responses (${probed}). Call the operation that sets them first; the jar keeps them.`
     case 'token':

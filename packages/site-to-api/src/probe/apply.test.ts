@@ -146,13 +146,14 @@ describe('applyProbeReport: bot protection', () => {
   })
 
   it('lets bot protection decide only when a real call needs its traces or was left unresolved', () => {
+    // A plain header (a caller id) is plain HTTP with that header, not a browser (decision 0036).
     expect(applyProbeReport([guarded], report([
       { bare: 'ok' },
       {
         bare: 'rejected',
         requires: ['header:x-api-caller-id'],
       },
-    ]), OPS)[0]?.requires).toBe('browser')
+    ]), OPS)[0]?.requires).toBe('none')
     expect(applyProbeReport([guarded], report([
       {
         bare: 'rejected',
@@ -239,13 +240,37 @@ describe('applyProbeReport: vendor cookies and redacted names', () => {
     ]), ops)[0]?.requires).toBe('browser')
   })
 
-  it('keeps the inferred verdict when tested calls needed only plain headers', () => {
+  it('is plain HTTP with the headers when every tested call needed only plain headers (IKEA)', () => {
     expect(applyProbeReport([akamai], report([
       {
         bare: 'rejected',
-        requires: ['header:x-csrf-token'],
+        requires: ['header:x-client-id'],
+      },
+    ]), OPS)[0]).toMatchObject({ requires: 'none', probed: true })
+  })
+
+  it('stays on a browser when a plain header comes with a vendor header', () => {
+    expect(applyProbeReport([akamai], report([
+      {
+        bare: 'rejected',
+        requires: ['header:x-client-id', 'header:x-kpsdk-ct'],
       },
     ]), OPS)[0]?.requires).toBe('browser')
+  })
+
+  it('is neither plain nor confirmed when a plain-header host also has a failed call', () => {
+    expect(applyProbeReport([akamai], report([
+      {
+        bare: 'rejected',
+        requires: ['header:x-client-id'],
+      },
+      {
+        replay: 'rejected',
+        bare: 'rejected',
+        requires: null,
+        rejection: 'other',
+      },
+    ]), OPS)[0]).toMatchObject({ requires: 'browser', probed: false })
   })
 
   it('matches a redacted cookie name in probe.json against the raw name in the model', () => {
