@@ -27,14 +27,33 @@ run on a schedule to notice a field disappearing.
 - **Verdicts per operation**: `ok`; `drift` (status changed, fields added, required fields
   removed, types changed, a body that is no longer JSON, a changed media type); `blocked`
   (bot protection or a refused session, using probe's classification, so it says nothing about
-  the API); `unreachable`.
-- **Exit codes**: 0 nothing drifted and every selected operation was checked; 1 any drift
-  (a finding beats a gap); 2 an error, or nothing could be checked (every operation skipped,
-  blocked or unreachable). Scheduled runs can tell "the API changed" from "the check did not run".
+  the API); `unreachable`; `unchecked` (the site answered with the captured status, but the capture
+  documents no response for it, so there is nothing to compare with).
+- **Refusal is looked for only in an answer that would otherwise differ** (another status or media
+  type, a challenge header or page, JSON that no longer parses), as probe's `send` does. A normal
+  JSON 200 whose text happens to hold a login form is not a refused session.
+- **Exit codes**: 1 when any operation drifted. Otherwise 2 when something selected could not be
+  checked: an operation that is `blocked`, `unreachable` or `unchecked`, or one skipped because no
+  successful response was captured (`skipped[].cause` is `no-sample`); or when nothing was
+  replayed at all, because "no drift" would then claim more than was looked at. Otherwise 0.
+  An operation skipped by probe's safety rules (`cause` is `safety`: data-changing methods,
+  bot-protection steps, state-changing paths, endpoints seen only in code) is expected and does
+  not change the code. A finding beats a gap, so drift wins over every 2 condition. Any error, and
+  any usage error (`--max-rps abc`, an unknown flag, which commander would otherwise exit 1 on),
+  exits 2, so 1 always means drift.
+- **Keys in reports.** A key the capture never listed is printed only when it reads like a field
+  name (letters, digits, `_`, `-`, up to 48 characters, at most 3 digits). Anything else (a session
+  id, an email, a token, a numeric id) is written as its shape, `<32 hex chars>` or `<20 chars>`,
+  as 0042 does for examples, so check.json, the summary and `--json` never carry a value. When the
+  schema's own property names are data, the object is keyed by data: extra keys are entries of a
+  map, validated as `.*` against the known members and never reported as added, so an object keyed
+  by ids does not drift on every run.
 - **`check.json`** in the handoff folder (`CheckReportSchema`, `src/model/check.ts`). It holds
-  operation ids, statuses and field paths only (`$.items[].price`), never values. Paths pass
-  through the redactor like names in `probe.json`, because some sites put identifiers in keys.
-  `build` neither reads nor deletes it.
+  operation ids, statuses and field paths only (`$.items[].price`), never values. Paths, notes and
+  skip reasons pass through the redactor like names in `probe.json` (some sites put identifiers in
+  keys), and paths are redacted before they are deduplicated and sorted. Lists are sorted by code
+  unit, not locale. The file is not byte-identical between runs: `checkedAt` changes every time;
+  everything else is the same for the same site and captures. `build` neither reads nor deletes it.
 - **Schemas come from the last build's options** (`build.json`, as `probe` does), so the schema
   is the one the handoff folder shows. `--include`/`--exclude` select hosts to check; they do not
   change the analysis.

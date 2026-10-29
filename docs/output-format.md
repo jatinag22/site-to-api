@@ -375,9 +375,9 @@ and names only, never values, so it is safe to commit. `build` does not read or 
 ```
 
 - `verdict`: `ok`, `drift`, `blocked` (bot protection or a refused session; `rejection` says
-  which, with probe's classification from decision 0036) or `unreachable` (`status.actual` is
-  `null`). Only `drift` is a finding; `blocked` and `unreachable` mean the operation was not
-  checked.
+  which, with probe's classification from decision 0036), `unreachable` (`status.actual` is
+  `null`) or `unchecked` (the capture documents no response for the status the site returned).
+  Only `drift` is a finding; the other three mean the operation was not checked.
 - Paths: `$` is the body, `.name` a field, `[]` any array element, `.*` any value of a map.
   `added` fields are those the schema does not list; `removed` are required fields the answer
   lacks; `typeChanged` holds a JSON type change (`integer` to `string`), a value outside an
@@ -385,11 +385,17 @@ and names only, never values, so it is safe to commit. `build` does not read or 
   (`expected: "JSON"`). A status that differs from the captured one is `drift` with both statuses
   and a note.
 - `exitCode` is what the command exits with: `0` no drift and every selected operation checked,
-  `1` any drift, `2` something could not be checked (blocked, unreachable, or nothing replayed).
+  `1` any drift, `2` something selected could not be checked (blocked, unreachable, unchecked, an
+  operation with no captured sample, or nothing replayed). Operations skipped by the safety rules
+  do not count. A usage error also exits 2.
   An error before the check ran (no captures, an unknown `--operations` id) also exits 2 and
   writes no file.
-- `skipped` lists operations that were not replayed and why, by the rules of `probe` (data-changing
-  methods, bot-protection steps, endpoints seen only in code, no successful sample).
+- `skipped` lists operations that were not replayed and why, by the rules of `probe`. `cause` is
+  `safety` (data-changing methods, bot-protection steps, endpoints seen only in code: expected) or
+  `no-sample` (no successful response was captured, so it could not be checked).
+- A field the capture never listed is named only when it reads like a field name; a data-like key
+  is written as its shape (`$.<32 hex chars>`). Lists are sorted by code unit. `checkedAt` is the
+  only part that differs between two runs on an unchanged site.
 
 ## `build.json`
 

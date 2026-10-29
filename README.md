@@ -233,7 +233,7 @@ It sends the same polite requests as `probe` (1 request per second, safe methods
 queries only, the tool's own user agent, bot-protection steps skipped) and has no
 `--unsafe-methods`. Per operation it reports `ok`, a status change, fields **added**, required
 fields **removed**, **type changes**, or that the site was **blocked** or **unreachable**. The
-exit code is 0 for no drift, 1 for drift and 2 for an error or when nothing could be checked, so
+exit code is 0 for no drift, 1 for drift and 2 for an error (including a usage error) or when something selected could not be checked, so
 it fits in CI or cron. `check.json` in the handoff folder lists field paths only, never values
 ([format](docs/output-format.md#checkjson)).
 
