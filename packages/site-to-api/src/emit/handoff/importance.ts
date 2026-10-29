@@ -3,7 +3,7 @@
  * before third parties, and flows that log in or set up a session before the rest. Deterministic:
  * every order ends in a comparison of names or of the original position.
  */
-import type { Analysis, Flow, SessionRequirement } from '../../model'
+import type { Analysis, ComputedValue, Flow, SessionRequirement } from '../../model'
 import type { StepResolver } from '../steps'
 import { registrableHost } from '../../hosts'
 
@@ -105,4 +105,28 @@ export function rankFlows(analysis: Analysis, resolver: StepResolver): Flow[] {
     }))
     .sort((a, b) => a.tier - b.tier || b.flow.seenInSessions - a.flow.seenInSessions || a.index - b.index)
     .map(({ flow }) => flow)
+}
+
+/** Endpoints that report on the page rather than serve it: event, log, metric and tracking sinks. */
+const TELEMETRY_WORDS = /(?:^|[^a-z])(?:events?|telemetry|analytics|metrics?|logs?|logging|collect(?:or)?|track(?:ing|er)?|beacons?|pixel|rum|ping|stats|heartbeat)(?:[^a-z]|$)/i
+
+/** Request fields that carry a credential or a code a server checks. */
+const CREDENTIAL_INPUT = /(?:^|[^a-z])(?:authorization|token|password|passwd|otp|totp|mfa|signature|sig|nonce|csrf|xsrf|captcha|secret)(?:[^a-z]|$)/i
+
+/**
+ * 0 for a value a login, token or session call needs (its path, name or the input says so:
+ * `query.totp` of `GET /api/token`, `body./password` of `POST /login`), 2 for a value sent to a
+ * telemetry or analytics sink (`body./events/0/sequence_id` of `POST /v3/events`), 1 for the rest:
+ * the site's own API. A wrapper must port the first kind, rarely the last.
+ */
+export function computedTier(value: ComputedValue, analysis: Analysis, resolver: StepResolver): number {
+  const host = resolver.computedHost(value)
+  const operation = analysis.operations.find(candidate => candidate.operationId === value.operationId && (host === null || candidate.host === host))
+  const path = operation?.path ?? ''
+  const words = value.input.replace(/([a-z\d])([A-Z])/g, '$1 $2')
+  if ([path, value.operationId].some(text => LOGIN_WORDS.test(text) || SETUP_WORDS.test(text)) || CREDENTIAL_INPUT.test(words))
+    return 0
+  return TELEMETRY_WORDS.test(path)
+    ? 2
+    : 1
 }

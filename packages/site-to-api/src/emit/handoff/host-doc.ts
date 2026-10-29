@@ -71,7 +71,7 @@ function flowsSection(host: string, analysis: Analysis, resolver: StepResolver):
 }
 
 function computedSection(host: string, analysis: Analysis, resolver: StepResolver): string[] {
-  const values = rankedComputedValues(analysis.flows.computedValues).filter(value => resolver.computedHost(value) === host)
+  const values = rankedComputedValues(analysis.flows.computedValues, analysis, resolver).filter(value => resolver.computedHost(value) === host)
   if (values.length === 0)
     return []
   return [

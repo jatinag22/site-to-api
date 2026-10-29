@@ -171,7 +171,7 @@ function computedHome(group: readonly ComputedValue[], resolver: StepResolver, l
 }
 
 function computedSection(analysis: Analysis, resolver: StepResolver, hasSource: boolean, link: HostLinker): string[] {
-  const values = rankedComputedValues(analysis.flows.computedValues)
+  const values = rankedComputedValues(analysis.flows.computedValues, analysis, resolver)
   if (values.length === 0)
     return []
   const groups = groupComputedValues(values, analysis, resolver)
