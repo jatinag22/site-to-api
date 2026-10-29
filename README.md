@@ -119,6 +119,7 @@ api-handoff/
   source/             excerpts of the site's own code referenced above (Markdown)
   client/             typed client: hey-api SDK + Zod schemas, wired to @site-to-api/runtime
   probe.json          after `probe`: what each request needs (names only)
+  check.json          after `check`: how the live API differs from the specs (field paths only)
   build.json          the options of the last build, which `probe` reuses
 ```
 
@@ -174,6 +175,7 @@ The full format is specified in [docs/output-format.md](docs/output-format.md).
 | `capture [url]` | Opens a browser and records everything until you close it. `--script <file>` drives it from code instead (a failing script or Ctrl+C still saves the session, marked incomplete, and exits 1); `--headless`; `--channel chrome\|msedge\|bundled`; `--user-data-dir` keeps logins |
 | `build` | Analyses every capture and writes the handoff folder, including the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client`, `--mcp [read\|write]` |
 | `probe` | Replays captured requests against the live site, rate limited, safe methods (and GraphQL queries) only unless `--unsafe-methods`; works out the needed cookies and headers for up to `--minimize-per-host <n>` operations per host (default 5); rebuilds the handoff folder with the flags of the last `build` (from `build.json`) and prints a summary |
+| `check` | Replays safe requests (same runner and limits as `probe`, never unsafe methods) and compares each live answer with the operation's response schema: status changes, added fields, missing required fields, type changes. Writes `check.json`, prints a summary. Exit code 0 no drift, 1 drift, 2 error or nothing could be checked. `--include/--exclude <host>`, `--operations <ids>`, `--json` |
 | `gen` | Regenerates only `client/` from an existing handoff folder (no raw captures needed) and updates the client lines of `AGENT.md` and `API_MAP.md`. `--mcp [read\|write]` also writes `client/mcp/`, an MCP server for the site |
 | `mcp [dir]` | Serves the handoff folder to an AI agent as an MCP server over stdio (read-only tools; see [Use with AI agents](#use-with-ai-agents-mcp)). `--allow-calls` adds `call_operation`, `--unsafe-methods`, `--max-rps <n>` |
 | `config` | Prints the resolved config and where each value came from; `--json` for machine-readable output |
@@ -215,6 +217,63 @@ Environment variables name a config key in upper snake case, with `__` between n
 
 The flags and variables a `build` ran with (`--examples`, `--include`, `--exclude`,
 `--no-client`, `--mcp`) are recorded in `build.json` and reused by `probe`, so probing does not undo them; flags and variables given to `probe` win.
+
+## Detecting API drift with `check`
+
+Sites change undocumented APIs without notice. `site-to-api check` replays the safe operations of
+your capture and reports where the live answers no longer match the specs:
+
+```sh
+site-to-api check                       # every safe operation
+site-to-api check --include 'api.*'     # only some hosts
+site-to-api check --operations getApiProducts,getApiCategories
+site-to-api check --json                # check.json on stdout, for scripts
+```
+
+It sends the same polite requests as `probe` (1 request per second, safe methods and GraphQL
+queries only, the tool's own user agent, bot-protection steps skipped) and has no
+`--unsafe-methods`. Per operation it reports `ok`, a status change, fields **added**, required
+fields **removed**, **type changes**, or that the site was **blocked** or **unreachable**. The
+exit code is 0 for no drift, 1 for drift and 2 for an error (including a usage error) or when something selected could not be checked, so
+it fits in CI or cron. `check.json` in the handoff folder lists field paths only, never values
+([format](docs/output-format.md#checkjson)).
+
+`check` needs the raw captures (it replays the captured requests and session), which are never
+committed. For a weekly run, keep them in a **private** repository (they hold cookies) and check
+them out next to your project:
+
+```yaml
+# .github/workflows/api-drift.yml
+name: API drift
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: your-name/site-captures # private: contains cookies
+          token: ${{ secrets.CAPTURES_TOKEN }}
+          path: .site-to-api/raw
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec site-to-api build --no-client
+      - run: pnpm exec site-to-api check
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: check, path: api-handoff/check.json}
+```
+
+A failing run means exit code 1 (drift) or 2 (the check could not run, for example an expired
+session or a site that blocks plain HTTP). Pin the actions to commit SHAs as in this repository's
+own workflows.
 
 ## Using the generated client
 
@@ -373,7 +432,7 @@ claude mcp add pinewood -e SITE_API_COOKIE='…' -- npx tsx ./api-handoff/client
 
 The repository is also a Claude Code plugin marketplace. The plugin adds the `site-to-api` MCP
 server above (on the project's `api-handoff/`), the commands `/site-to-api:capture` (a normal
-Chrome window; minimized only with `--script`), `/site-to-api:build`, `/site-to-api:probe` and `/site-to-api:check`, and a skill
+Chrome window; minimized only with `--script`), `/site-to-api:build`, `/site-to-api:probe` and `/site-to-api:check` (drift against the specs), and a skill
 that walks an agent through capture, reading the handoff folder, writing the wrapper and the
 safety rules. Nothing is published yet, so install it from a clone (the `site-to-api` CLI must be
 on your `PATH`, see [Install](#install)):

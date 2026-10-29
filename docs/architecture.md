@@ -16,6 +16,7 @@
 | `capture [url]` | config | `<rawDir>/<session>/` | the target site, through a real browser |
 | `build` | all raw sessions, `probe.json` | `<outDir>/` including `client/` and `build.json` | none |
 | `probe` | raw sessions, `build.json` | `probe.json`, then rebuilds `<outDir>/` with the last build's options | the target site, rate limited |
+| `check` | raw sessions, `build.json` | `check.json` in `<outDir>/` | the target site, rate limited (probe's runner, safe requests only) |
 | `gen` | `<outDir>/specs`, `flows.json` | `<outDir>/client/`, client lines of `AGENT.md` and `API_MAP.md`, `build.json` | none |
 | `mcp [dir]` | `<outDir>/specs`, `flows.json`, `build.json`, `source/` (never raw captures) | nothing (stdio MCP server) | none, unless `--allow-calls` (the target site, rate limited, safe methods only by default) |
 | `config` | config sources | stdout | none |
@@ -95,6 +96,7 @@ See `docs/output-format.md` for the full specification.
   source/           code excerpts referenced by flows and specs
   client/           generated TypeScript client (gen); client/mcp/ with gen.mcp
   probe.json        probe results (names only)
+  check.json        check results: drift per operation (field paths only)
   build.json        options of the last build, reused by probe (gen updates its client entry)
 ```
 

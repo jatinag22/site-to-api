@@ -8,8 +8,8 @@ import { SiteToApiError } from '../errors'
 import { ProbeReportSchema } from '../model/probe'
 
 export { applyProbeReport, pageHostRequirements, requirementsByOperation } from './apply'
-export { probeOperations } from './probe'
-export type { ProbeOptions } from './probe'
+export { createReplayer, probeOperations } from './probe'
+export type { LiveReplay, ProbeOptions } from './probe'
 export { minimizeLimit, notMinimized, probeFailures, summarizeProbe } from './summary'
 
 const PROBE_FILE = 'probe.json'

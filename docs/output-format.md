@@ -390,6 +390,59 @@ a function sent with POST is skipped unless `--unsafe-methods`, whatever its nam
 whose value has a write word in it (`addToCart`, `wc_empty_cart`, `subscribe`...) is never
 replayed (decision 0039).
 
+## `check.json`
+
+Written by `check`; schema `CheckReportSchema` in `src/model/check.ts` (decision 0044). Field paths
+and names only, never values, so it is safe to commit. `build` does not read or delete it.
+
+```json
+{
+  "formatVersion": 1,
+  "generatedBy": "site-to-api 0.1.0",
+  "checkedAt": "2026-10-30T06:00:00.000Z",
+  "maxRps": 1,
+  "exitCode": 1,
+  "operations": [
+    {
+      "operationId": "getApiProductsByProductId",
+      "host": "shop.example.com",
+      "method": "GET",
+      "path": "/api/products/{productId}",
+      "verdict": "drift",
+      "status": { "expected": 200, "actual": 200 },
+      "added": ["$.badge"],
+      "removed": ["$.mrpInr"],
+      "typeChanged": [{ "path": "$.rating", "expected": "number", "actual": "string" }],
+      "note": null
+    }
+  ],
+  "skipped": [{ "operationId": "postApiAuthLogin", "reason": "POST can change data; pass --unsafe-methods to include it" }]
+}
+```
+
+- `verdict`: `ok`, `drift`, `blocked` (bot protection or a refused session; `rejection` says
+  which, with probe's classification from decision 0036), `unreachable` (`status.actual` is
+  `null`) or `unchecked` (the capture documents no response for the status the site returned).
+  Only `drift` is a finding; the other three mean the operation was not checked.
+- Paths: `$` is the body, `.name` a field, `[]` any array element, `.*` any value of a map.
+  `added` fields are those the schema does not list; `removed` are required fields the answer
+  lacks; `typeChanged` holds a JSON type change (`integer` to `string`), a value outside an
+  `enum` (`expected: "enum"`, the value is never written), or a body that is no longer JSON
+  (`expected: "JSON"`). A status that differs from the captured one is `drift` with both statuses
+  and a note.
+- `exitCode` is what the command exits with: `0` no drift and every selected operation checked,
+  `1` any drift, `2` something selected could not be checked (blocked, unreachable, unchecked, an
+  operation with no captured sample, or nothing replayed). Operations skipped by the safety rules
+  do not count. A usage error also exits 2.
+  An error before the check ran (no captures, an unknown `--operations` id) also exits 2 and
+  writes no file.
+- `skipped` lists operations that were not replayed and why, by the rules of `probe`. `cause` is
+  `safety` (data-changing methods, bot-protection steps, endpoints seen only in code: expected) or
+  `no-sample` (no successful response was captured, so it could not be checked).
+- A field the capture never listed is named only when it reads like a field name; a data-like key
+  is written as its shape (`$.<32 hex chars>`). Lists are sorted by code unit. `checkedAt` is the
+  only part that differs between two runs on an unchanged site.
+
 ## `build.json`
 
 Written by every `build` (and the rebuild `probe` runs): the options it ran with. Names only.

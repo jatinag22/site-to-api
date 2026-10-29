@@ -400,12 +400,13 @@ export async function analyzeCaptures(options: BuildOptions): Promise<Analysis> 
  * The analysis plus the name redaction the handoff folder uses, so `probe` writes `probe.json`
  * with redacted names itself, even when the rebuild after it fails.
  */
-export async function analyzeForProbe(options: BuildOptions): Promise<{ analysis: Analysis, redactProbeReport: (report: ProbeReport) => ProbeReport }> {
+export async function analyzeForProbe(options: BuildOptions): Promise<{ analysis: Analysis, redactProbeReport: (report: ProbeReport) => ProbeReport, redactText: (text: string) => string }> {
   const rawDir = resolve(options.cwd, options.config.rawDir)
   const outDir = resolve(options.cwd, options.config.outDir)
   const { analysis, redactor } = await analyze(options.config, rawDir, outDir, options.log ?? (() => {}))
   return {
     analysis,
     redactProbeReport: report => probeReportWithRedactedNames(report, redactor.text),
+    redactText: redactor.text,
   }
 }
