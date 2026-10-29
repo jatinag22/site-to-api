@@ -125,6 +125,50 @@ function words(name: string): string[] {
     .filter(word => word !== '')
 }
 
+/**
+ * Whole names (separators removed) of per-person tracking identifiers: Google Analytics `cid`,
+ * `uid` and `_ga`, Adobe `ecid`/`mcid`. Too short to match as word endings (`acid`, `guid`).
+ */
+const TRACKING_NAMES: ReadonlySet<string> = new Set([
+  'cid',
+  'uid',
+  'ga',
+  'ecid',
+  'mcid',
+])
+
+/**
+ * Last words of tracking identifier names, separators removed: `x-nike-visitorid`,
+ * `visitor_id`, `deviceId`, `anonymousId`, `adobeMarketingCloudId`.
+ */
+const TRACKING_NAME_ENDINGS: readonly string[] = [
+  'visitorid',
+  'deviceid',
+  'anonymousid',
+  'anonid',
+  'clientid',
+  'browserid',
+  'trackingid',
+  'marketingcloudid',
+  'experiencecloudid',
+]
+
+/**
+ * Names of identifiers that follow one visitor, browser or device across requests (decision
+ * 0045): `visitorId`, `x-nike-visitorid`, `deviceId`, `anonymousId`, `clientId`, `cid`, `uid`.
+ * Their values are per-person, so they are masked unless identical in every session, where they
+ * are the site's own constant (an OAuth client id), as publishable keys are. Session ids are
+ * secrets by name already ({@link isSecretName}).
+ */
+export function isTrackingIdName(name: string | null | undefined): boolean {
+  if (name === null || name === undefined || name === '')
+    return false
+  if (TRACKING_NAMES.has(compactName(name)))
+    return true
+  const parts = words(name)
+  return parts.map((_, index) => parts.slice(index).join('')).some(tail => TRACKING_NAME_ENDINGS.includes(tail))
+}
+
 /** Whole names (separators removed) of fields that identify a person or their account. */
 const PERSONAL_NAMES: ReadonlySet<string> = new Set([
   'login',

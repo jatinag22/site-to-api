@@ -14,6 +14,9 @@
  *    Path segments that are credentials (`/magic/<jwt>`, `/reset/<token>`, see `path-tokens.ts`)
  *    count as rule 1; opaque random segments with no credential word (a signed download link)
  *    count as rule 2. Other random ids in paths (ObjectIds, SHAs) are public, like UUIDs.
+ *    Per-person tracking identifiers (`visitorId`, `x-nike-visitorid`, `deviceId`, `anonymousId`,
+ *    `clientId`, `cid`, `uid`, see `isTrackingIdName`) count as rule 2 too, in headers, query,
+ *    forms and bodies: kept only when identical in every session (decision 0045).
  * 3. Every value found by rules 1 and 2 is also removed wherever else it appears (echoed in a
  *    response, inside a URL), as are JWTs embedded in text.
  * 4. Long opaque blobs (random base64 of 32+ characters, any base64 of 256+, see `blobs.ts`) are
@@ -42,7 +45,7 @@ import { isBotProtectionHeader } from '../classify'
 import { describeShape, inspectJwt } from '../shape'
 import { isOpaqueBlob } from './blobs'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
-import { isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
+import { isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { CREDENTIAL_HEADERS, isAuthScheme, isPublishableKeyName, isSecretName } from './secret-names'
 
 interface RedactorInput {
@@ -302,7 +305,7 @@ function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isA
       ? learnt.unlessConstant
       : learnt.always).add(form))
   }
-  else if (item.pathOpaque === true) {
+  else if (item.pathOpaque === true || isTrackingIdName(item.name)) {
     forms.forEach(form => learnt.unlessConstant.add(form))
   }
 }
@@ -478,6 +481,9 @@ export function createRedactor(input: RedactorInput): Redactor {
     // `tokenType: "Bearer"` names the auth scheme; hiding it hides how to authenticate.
     if (isSecretName(context.name, isQueryLike(context.in)) && !isAuthScheme(text) && !keptAsPublicKey(text, context))
       return placeholder(text)
+    // A visitor, device or client id follows one person; only the site's own constant stays.
+    if (isTrackingIdName(context.name) && !isConstant(text))
+      return placeholder(text)
     const byName = maskByName(text, context.name, personRecord)
     if (byName !== null)
       return byName
@@ -495,6 +501,8 @@ export function createRedactor(input: RedactorInput): Redactor {
   function redactNumber(value: number, context: RedactContext, personRecord: boolean): number | string {
     const text = String(value)
     if (isAlwaysSecret(context.in, context.name) || (isSecretName(context.name) && !keptAsPublicKey(text, context)))
+      return placeholder(text)
+    if (isTrackingIdName(context.name) && !isConstant(text))
       return placeholder(text)
     if (isPhoneField(context.name) && maskPhoneField(text) !== null)
       return maskKeepingFormat(text)
