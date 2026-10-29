@@ -10,7 +10,7 @@ import { Buffer } from 'node:buffer'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import { cachedLookup, nonPublicReason, sourceMapRefusal } from './network'
+import { cachedLookup, localPageOf, sourceMapRefusal } from './network'
 import { hostDir, safeJoin, scriptFilePath, sourceFilePath, sourceMapFilePath } from './paths'
 import { WarningLog } from './warnings'
 
@@ -269,22 +269,9 @@ export class ScriptCollector {
     }
   }
 
-  /** The page URL when the page is on a non-public host; unknown pages count as public, the safe side. */
+  /** The page URL when the page is on a non-public host (see {@link localPageOf}). */
   private async localPage(pageUrl: string | null): Promise<URL | null> {
-    if (pageUrl === null)
-      return null
-    let parsed: URL
-    try {
-      parsed = new URL(pageUrl)
-    }
-    catch {
-      return null
-    }
-    if (!/^https?:$/.test(parsed.protocol))
-      return null
-    return await nonPublicReason(parsed.hostname, this.lookup) === null
-      ? null
-      : parsed
+    return await localPageOf(pageUrl, this.lookup)
   }
 
   private async findSourceMap(script: ScriptOrigin, headers: Record<string, string>, body: string): Promise<FoundMap | null> {

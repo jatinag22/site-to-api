@@ -1,6 +1,6 @@
 import type { Lookup } from './network'
 import { describe, expect, it } from 'vitest'
-import { cachedLookup, isPublicAddress, nonPublicReason, sourceMapRefusal } from './network'
+import { cachedLookup, isPublicAddress, localPageOf, nonPublicReason, sourceMapRefusal } from './network'
 
 /** A fake resolver: no test touches real DNS. */
 function fakeLookup(table: Record<string, string[]>): Lookup {
@@ -23,6 +23,8 @@ const lookup = fakeLookup({
   'other.corp.example': ['10.2.0.1'],
   'static.corp.example': ['10.2.0.2'],
   'printer.lan.example': ['10.3.0.1'],
+  'int.evil.example': ['169.254.169.254'],
+  'app.intranet.example': ['10.4.0.1'],
 })
 
 describe('isPublicAddress', () => {
@@ -247,5 +249,29 @@ describe('cachedLookup', () => {
       throw new Error('ENOTFOUND')
     }
     await expect(cachedLookup(down)('gone.example.com')).rejects.toThrow('ENOTFOUND')
+  })
+})
+
+describe('localPageOf', () => {
+  it('treats only a page on a non-public host as local; an unresolvable page is public', async () => {
+    expect(await localPageOf('http://app.corp/home', lookup)).toEqual(new URL('http://app.corp/home'))
+    expect(await localPageOf('https://example.com/', lookup)).toBeNull()
+    expect(await localPageOf('https://www.evil.example/', lookup)).toBeNull()
+    expect(await localPageOf(null, lookup)).toBeNull()
+    expect(await localPageOf('not a url', lookup)).toBeNull()
+  })
+
+  it('never lets an unresolvable page reach a private sibling host', async () => {
+    // `www.evil.example` does not resolve; its sourcemap points at a sibling on the metadata address.
+    const page = await localPageOf('https://www.evil.example/', lookup)
+    const refusal = await sourceMapRefusal(new URL('http://int.evil.example/latest/meta-data/'), new URL('https://www.evil.example/app.js'), page, lookup)
+    expect(refusal).toMatch(/169\.254\.169\.254/)
+  })
+
+  it('does not count every host under one public suffix as one intranet site', async () => {
+    // A private page under `intranet.example` and a target under `evil.example` share only `.example`.
+    const page = await localPageOf('http://app.intranet.example/', lookup)
+    expect(page).not.toBeNull()
+    expect(await sourceMapRefusal(new URL('http://int.evil.example/x.map'), new URL('http://app.intranet.example/a.js'), page, lookup)).toMatch(/not the script's own origin or a host of the page's own site/)
   })
 })

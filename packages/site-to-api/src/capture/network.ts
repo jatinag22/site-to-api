@@ -211,11 +211,34 @@ async function hostStatus(hostname: string, lookup: Lookup): Promise<HostStatus>
 }
 
 /**
+ * The page URL when the page is on a non-public host, which earns it the intranet allowances of
+ * {@link sourceMapRefusal}; otherwise null. A page whose host does not resolve is not known to be
+ * private, so it counts as public: the safe side (decision 0019).
+ */
+export async function localPageOf(pageUrl: string | null, lookup: Lookup = systemLookup): Promise<URL | null> {
+  if (pageUrl === null)
+    return null
+  let parsed: URL
+  try {
+    parsed = new URL(pageUrl)
+  }
+  catch {
+    return null
+  }
+  if (!/^https?:$/.test(parsed.protocol))
+    return null
+  return (await hostStatus(parsed.hostname, lookup)).kind === 'non-public'
+    ? parsed
+    : null
+}
+
+/**
  * The site a non-public host name belongs to, for letting an intranet page reach its own other
  * hosts, or `null` when the name never vouches for another host: IP addresses (`10.0.0.5` says
  * nothing about `10.0.0.6`), single labels and `localhost` names, which reach this machine.
- * Otherwise it is the {@link registrableHost}, except that a two-label name such as `app.corp`
- * belongs to its last label (`corp`), since a private top-level name has no public suffix to keep.
+ * Otherwise it is the {@link registrableHost}, except that a host of two labels such as
+ * `app.corp` belongs to its last label (`corp`), since a private top-level name has no public
+ * suffix to keep.
  * Shared local suffixes (`.local`, `.lan`, `.internal`) do not collapse: `printer.local` is not
  * part of `app.local`.
  */
@@ -225,7 +248,9 @@ function intranetSite(hostname: string): string | null {
     return null
   const registrable = registrableHost(host)
   const labels = registrable.split('.')
-  return labels.length === 2 && !LOCAL_NAME.test(registrable)
+  // Only a host that is itself two labels (`app.corp`) collapses to its last label: for
+  // `int.evil.example` that would make every `*.example` host the same site.
+  return labels.length === 2 && host === registrable && !LOCAL_NAME.test(registrable)
     ? labels[1] ?? registrable
     : registrable
 }
