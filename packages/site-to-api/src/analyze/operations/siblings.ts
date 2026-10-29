@@ -140,6 +140,33 @@ function innerShape(shape: Set<string>): Set<string> {
   return new Set([...shape].filter(path => path.slice(1).includes('/')))
 }
 
+/** Keys of a body that reports an outcome rather than a resource. */
+const OUTCOME_KEYS = new Set([
+  'code',
+  'detail',
+  'error',
+  'errors',
+  'message',
+  'ok',
+  'status',
+  'success',
+])
+
+/**
+ * The top-level keys of a flat object (`{ name, price, sku }`, a detail record), which has no
+ * deeper paths to compare. Never for an envelope with an empty list, nor for an outcome body
+ * such as `{ error, message }`.
+ */
+function flatShape(value: object): Set<string> {
+  if (Array.isArray(value))
+    return new Set()
+  const entries = Object.entries(value)
+  const flat = entries.length > 0 && entries.every(([, item]) => item === null || typeof item !== 'object')
+  if (!flat || entries.every(([key]) => OUTCOME_KEYS.has(key.toLowerCase())))
+    return new Set()
+  return new Set(entries.map(([key]) => `/${key}`))
+}
+
 /**
  * A response's structure: nested JSON key paths below the envelope, or HTML element names with
  * their classes. Only 2xx responses with content count; errors, 204s, empty bodies, plain text
@@ -152,7 +179,9 @@ function structureOf(exchange: Exchange): Structure | null {
   if (body.json !== undefined && body.json !== null && typeof body.json === 'object') {
     const shape = new Set<string>()
     jsonShape(body.json, '', 0, shape)
-    const inner = innerShape(shape)
+    const inner = innerShape(shape).size > 0
+      ? innerShape(shape)
+      : flatShape(body.json)
     return inner.size === 0
       ? null
       : { kind: 'json', shape: inner, text: body.text ?? '' }

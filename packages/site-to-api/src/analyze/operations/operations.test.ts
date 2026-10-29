@@ -702,6 +702,24 @@ describe('buildOperations: sibling paths (decision 0035)', () => {
     expect(paths(operations)).toContain('GET /api/v1/{param1}')
   })
 
+  it('templates flat detail records, but not flat outcome bodies', () => {
+    const names = [
+      'hammer',
+      'wrench',
+      'pliers',
+      'chisel',
+      'mallet',
+      'saw',
+    ]
+    expect(paths(build(names.map((name, i) => get(`/api/products/${name}`, {
+      responseBody: jsonBody({ name, price: i, sku: `S${i}` }),
+    }))))).toEqual(['GET /api/products/{product}'])
+    expect(build(names.map(name => get(`/api/jobs/${name}`, {
+      responseBody: jsonBody({ ok: true, message: name }),
+    })))
+      .every(operation => operation.pathParams.length === 0)).toBe(true)
+  })
+
   it('keeps two different words in one session literal', () => {
     expect(paths(build([
       get('/help/contact', article('a')),

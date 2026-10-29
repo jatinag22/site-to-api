@@ -20,9 +20,11 @@ for pairs such as `owner/repo`). A group becomes one template when all of these 
 - the position leaves at least one literal segment, so root pages (`/about-us`) never merge;
 - the responses come from one template: the group is narrowed to the response most others
   resemble and those that resemble it (Jaccard similarity ≥ 0.6 of JSON key paths below the
-  envelope, inside array items when there are any, or ≥ 0.5 of the page's `tag.class` set). Only
+  envelope, inside array items when there are any, or the top-level keys of a flat record such
+  as `{ name, price, sku }`, or ≥ 0.5 of the page's `tag.class` set). Only
   2xx responses with content are readable: errors, 204s, empty bodies, plain text and JSON with
-  no inner structure (`{ items: [], total: 0 }`) are unknown. Unknown members cannot contradict,
+  no inner structure (`{ items: [], total: 0 }`) or only outcome keys (`{ ok, message }`) are
+  unknown. Unknown members cannot contradict,
   and they are never evidence of likeness either;
 - the values are not section names: when two or more values have paths below them, at least one
   sub-path must be shared (`expressjs/express/issues` and `koajs/koa/issues`), unlike
