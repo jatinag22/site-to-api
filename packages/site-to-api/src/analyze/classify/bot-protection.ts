@@ -342,6 +342,15 @@ function challengePageEvidence(exchange: Exchange): Found[] {
       ]
 }
 
+/**
+ * True when `host` is one of a vendor's own hosts (`www.google.com` for reCAPTCHA,
+ * `challenges.cloudflare.com` for Turnstile): a challenge frame there protects the page that
+ * embeds it, not the vendor.
+ */
+export function isVendorHost(host: string): boolean {
+  return BOT_PROTECTION_SIGNATURES.some(signature => signature.endpoints.some(endpoint => endpoint.domain !== undefined && hostMatchesDomain(host, endpoint.domain)))
+}
+
 /** Every signature that matches one exchange. */
 export function detectBotProtection(exchange: Exchange, akamaiHosts: ReadonlySet<string>): BotEvidence[] {
   const body = bodyText(exchange)

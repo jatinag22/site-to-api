@@ -452,6 +452,33 @@ describe('probe evidence, qualified references and unknown methods', () => {
     const section = guide.slice(guide.indexOf('### blocked.example'), guide.indexOf('### shop.example'))
     expect(section).toContain('- No real content: every response this host gave the capture was a bot challenge or block page')
     expect(guide.slice(guide.indexOf('### shop.example'))).not.toContain('No real content')
+    expect(guide.split('\n')[2]).toBe('**The capture holds no real content for `blocked.example`**: every page and call it answered was a bot challenge or block page. Its specs describe the interstitial, not the site; capture again with a browser session the site lets through.')
+  })
+
+  it('does not present a captcha vendor\'s host as an API the folder documents', () => {
+    const analysis = fixture()
+    const frame = {
+      ...exchange({ url: 'https://captcha.example/recaptcha/api2/anchor', resourceType: 'document' }),
+      kind: 'bot-protection' as const,
+      kindReason: 'reCAPTCHA: request to captcha.example/recaptcha/…',
+    }
+    analysis.hosts = ['captcha.example', 'shop.example']
+    analysis.operations.push(operation({
+      operationId: 'getAnchor',
+      method: 'GET',
+      path: '/recaptcha/api2/anchor',
+      host: 'captcha.example',
+      kind: 'bot-protection',
+      exchanges: [frame],
+    }))
+    const guide = renderAgentGuide(analysis, {
+      toolVersion: '0.1.0',
+      examples: 'masked',
+      probed: false,
+      client: 'current',
+      probe: null,
+    })
+    expect(guide).toContain('This folder documents the internal API behind `shop.example`, generated')
   })
 
   it('says "method unknown" instead of presenting the placeholder method', () => {

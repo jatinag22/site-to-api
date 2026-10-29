@@ -3,7 +3,7 @@
  */
 import type { Body, BotProtectionFinding, Exchange, ExchangeKind } from '../../model'
 import type { BotEvidence } from './bot-protection'
-import { detectBotProtection, findAkamaiHosts } from './bot-protection'
+import { detectBotProtection, findAkamaiHosts, isVendorHost } from './bot-protection'
 import { compileHostGlobs } from './host-glob'
 import { findNoise, mirrorOf } from './noise-hosts'
 
@@ -165,6 +165,11 @@ export function classifyExchanges(exchanges: Exchange[], options: ClassifyOption
       const protectedHost = item.thirdParty
         ? (hostOf(exchange.pageUrl) ?? host)
         : host
+      // A challenge frame's own requests (`bframe` loaded inside the `anchor` frame) have the
+      // vendor's page as their page; the site that embeds the frame reports the finding.
+      const pageHost = hostOf(exchange.pageUrl)
+      if (isVendorHost(protectedHost) && (pageHost === null || isVendorHost(pageHost)))
+        continue
       addFinding(findings, protectedHost, item, exchange.id)
     }
 

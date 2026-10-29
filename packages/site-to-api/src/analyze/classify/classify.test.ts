@@ -487,6 +487,37 @@ describe('classifyExchanges: bot protection', () => {
   })
 })
 
+describe('classifyExchanges: challenge frames', () => {
+  it('reports captcha frames for the site that embeds them, never for the vendor host', () => {
+    const anchor = 'https://www.google.com/recaptcha/api2/anchor?k=key'
+    const result = classify([
+      page(),
+      on({ url: 'https://www.gstatic.com/recaptcha/releases/x/recaptcha__en.js', resourceType: 'script' }),
+      on({
+        url: anchor,
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+      on({
+        url: 'https://www.google.com/recaptcha/api2/bframe?k=key',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+        pageUrl: anchor,
+      }),
+      on({
+        url: 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/if/ov2',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+        pageUrl: 'https://challenges.cloudflare.com/x',
+      }),
+    ])
+    expect(result.exchanges.slice(2).map(item => item.kind)).toEqual(['bot-protection', 'bot-protection', 'bot-protection'])
+    expect([
+      ...new Set(result.botProtection.map(finding => finding.host)),
+    ]).toEqual(['shop.test'])
+  })
+})
+
 describe('classifyExchanges: telemetry and mirrors', () => {
   it('drops telemetry, RUM and health checks, and folds search mirrors into their main host', () => {
     const call = (url: string): Exchange => on({
