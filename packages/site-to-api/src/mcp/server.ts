@@ -89,6 +89,29 @@ function lookup(handoff: Handoff, operationId: string, host: string | undefined)
     : found
 }
 
+/**
+ * The options the operation's client function takes, and nothing else: a GraphQL function gets
+ * only `variables` (it sends its own document), a dispatcher function only its own fields (it
+ * sends the dispatcher value itself), so an agent cannot swap either through `body` or `query`.
+ */
+function callArguments(entry: OperationEntry, input: z.infer<typeof CallSchema>): CallArguments {
+  const shape = entry.client
+  const pick = (keys: ReadonlyArray<keyof CallArguments>): CallArguments =>
+    Object.fromEntries(keys.flatMap(key => input[key] === undefined
+      ? []
+      : [
+          [key, input[key]],
+        ]))
+  if (shape.kind === 'graphql')
+    return pick(['variables', 'headers'])
+  if (shape.kind === 'dispatch') {
+    return pick(shape.argument === null
+      ? ['path', 'headers']
+      : ['path', 'headers', shape.argument])
+  }
+  return pick(['path', 'query', 'body', 'headers'])
+}
+
 function isEntry(value: OperationEntry | CallToolResult): value is OperationEntry {
   return 'operationId' in value
 }
@@ -247,9 +270,8 @@ export function createExplorationServer(options: ExplorationServerOptions): McpS
       const verdict = callVerdict(handoff, entry, policy)
       if (!verdict.allowed)
         return failure(`Not sent: ${verdict.reason ?? 'not allowed'}.`)
-      const { operationId: _id, host: _host, ...args } = input
       try {
-        const outcome = await call(handoff, entry, args)
+        const outcome = await call(handoff, entry, callArguments(entry, input))
         return {
           ...result(outcome),
           ...(outcome.ok

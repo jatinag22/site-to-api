@@ -1,8 +1,10 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import process from 'node:process'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mcpCommand } from './mcp'
 import { run } from './program'
 
 let dir: string
@@ -85,6 +87,30 @@ describe('cli', () => {
     finally {
       delete process.env.SITE_TO_API_PROBE__MAX_RPS
     }
+    expect(process.exitCode).toBe(1)
+  })
+})
+
+describe('mcp', () => {
+  it('never runs a .ts config file, which a project can fill with any code', async () => {
+    const marker = join(dir, 'ran.txt')
+    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\nexport default {}\n`)
+    const stderr: string[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk))
+      return true
+    })
+    // --generated with no generated server ends right after the config is read, before serving.
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      dir,
+      'mcp',
+      '--generated',
+    ], [mcpCommand])
+    expect(existsSync(marker)).toBe(false)
+    expect(stderr.join('')).toContain(`Not running ${join(dir, 'site-to-api.config.ts')}`)
     expect(process.exitCode).toBe(1)
   })
 })

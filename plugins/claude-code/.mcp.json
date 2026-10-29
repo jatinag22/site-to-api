@@ -2,7 +2,7 @@
   "mcpServers": {
     "site-to-api": {
       "command": "site-to-api",
-      "args": ["--cwd", "${CLAUDE_PROJECT_DIR}", "mcp"]
+      "args": ["--cwd", "${CLAUDE_PROJECT_DIR}", "mcp", "./api-handoff"]
     }
   }
 }

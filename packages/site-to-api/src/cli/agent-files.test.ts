@@ -7,6 +7,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'pathe'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { pipelineCommands } from './commands'
 import { mcpCommand } from './mcp'
 import { createProgram } from './program'
@@ -61,6 +62,26 @@ describe('agent skill and plugin commands', () => {
   it('ship the same skill to Claude Code and to other agents', async () => {
     expect(await readFile(join(plugin, 'skills', 'site-to-api', 'SKILL.md'), 'utf8'))
       .toBe(await readFile(join(root, 'skills', 'site-to-api', 'SKILL.md'), 'utf8'))
+  })
+
+  it('start the plugin\'s server on ./api-handoff, read-only, trusting no client', async () => {
+    const config = z.object({
+      mcpServers: z.record(z.string(), z.object({
+        command: z.string(),
+        args: z.array(z.string()),
+      })),
+    })
+      .parse(JSON.parse(await readFile(join(plugin, '.mcp.json'), 'utf8')))
+    expect(config.mcpServers['site-to-api']).toEqual({
+      command: 'site-to-api',
+      args: [
+        '--cwd',
+        // Claude Code substitutes the variable; the file holds it literally.
+        ['$', '{CLAUDE_PROJECT_DIR}'].join(''),
+        'mcp',
+        './api-handoff',
+      ],
+    })
   })
 
   it('name only commands and flags the CLI has', async () => {

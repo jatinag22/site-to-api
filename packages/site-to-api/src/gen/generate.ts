@@ -11,6 +11,7 @@ import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 import { catalogOperations } from '../mcp/catalog'
+import { trustClient } from '../trust'
 import { dispatchFunctions, renderDispatchModule } from './dispatch'
 import { graphqlFunctions, renderGraphqlModule } from './graphql'
 import { nameHtmlValues } from './html-values'
@@ -28,6 +29,8 @@ export interface GenerateClientInput {
    * reads data (`read`) or per operation (`write`); `off` (the default) does not (decision 0043).
    */
   mcp?: McpMode
+  /** Trust store to record the new client in (decision 0043); defaults to the person's config directory. */
+  trustStore?: string
 }
 
 /** What {@link generateClient} wrote. */
@@ -85,6 +88,8 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
   if (input.mcp !== undefined && input.mcp !== 'off')
     await writeMcpServer(clientDir, loaded, input.flows, input.mcp, warnings)
 
+  // Generated here, so this machine may run it (call_operation, the generated MCP server).
+  await trustClient(clientDir, input.trustStore)
   const files = (await listFiles(clientDir)).map(file => path.posix.join('client', file))
   return { files, warnings }
 }

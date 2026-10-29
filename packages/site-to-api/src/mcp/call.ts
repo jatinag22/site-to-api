@@ -14,6 +14,7 @@ import { z } from 'zod'
 import { sdkFunctionName } from '../emit/naming'
 import { SiteToApiError } from '../errors'
 import { RateLimiter } from '../probe/rate-limit'
+import { untrustedReason } from '../trust'
 
 /** Prefix of the environment variables `call_operation` reads credentials from. */
 const CREDENTIAL_ENV_PREFIX = 'SITE_API_'
@@ -25,6 +26,13 @@ export interface CallerOptions {
   timeoutMs: number
   /** Where credentials are read from; `process.env` in the CLI. */
   env: Record<string, string | undefined>
+  /**
+   * `--trust-client`: run `client/` even when this machine did not generate it (decision 0043).
+   * Off by default: the client is code from the folder, and a cloned repository controls it.
+   */
+  trustClient?: boolean
+  /** Trust store to check against; defaults to the person's config directory. */
+  trustStore?: string
   fetch?: typeof fetch
   now?: () => number
   sleep?: (ms: number) => Promise<void>
@@ -140,7 +148,15 @@ export function createCaller(options: CallerOptions): (entry: OperationEntry, ar
   const limiter = new RateLimiter(1000 / options.maxRps, options.now ?? Date.now, options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms))))
   const baseFetch = options.fetch ?? globalThis.fetch
   // Every request the runtime sends, redirects included, waits its turn and has a deadline.
-  const limitedFetch: typeof fetch = async (input, init) => {
+  // Every request the runtime sends, redirects included, waits its turn, has a deadline and stays
+  // on the host's origin: a redirect elsewhere is refused before anything is sent there.
+  const limitedFetch = (origin: string): typeof fetch => async (input, init) => {
+    const url = input instanceof Request
+      ? input.url
+      : String(input)
+    const target = URL.parse(url)
+    if (target === null || target.origin !== origin)
+      throw new SiteToApiError(`refused to follow a redirect to another origin (${target?.origin ?? 'an unparsable URL'}); nothing was sent there`)
     await limiter.wait()
     return baseFetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(options.timeoutMs) })
   }
@@ -149,6 +165,13 @@ export function createCaller(options: CallerOptions): (entry: OperationEntry, ar
 
   async function loadClient(): Promise<z.infer<typeof ClientModuleSchema>> {
     const path = join(options.handoff.dir, 'client', 'index.ts')
+    // The client is code, and the folder may come from anyone: run it only when this machine
+    // generated it, or the person said they reviewed it.
+    if (options.trustClient !== true) {
+      const reason = await untrustedReason(join(options.handoff.dir, 'client'), options.trustStore)
+      if (reason !== null)
+        throw new SiteToApiError(reason)
+    }
     const jiti = createJiti(import.meta.url, {
       moduleCache: false,
       alias: runtimeAliases(),
@@ -185,7 +208,7 @@ export function createCaller(options: CallerOptions): (entry: OperationEntry, ar
     const client = SiteClientSchema.parse(module.createSiteClient({
       host: host.host,
       jar,
-      fetch: limitedFetch,
+      fetch: limitedFetch(new URL(host.baseUrl).origin),
       // One request per call: retries would send more than the agent asked for.
       retry: false,
       ...(auth === undefined

@@ -264,10 +264,14 @@ export function mcpTools(entries: readonly OperationEntry[], exportsByHost: Read
     tools.push({
       name,
       title: describe(`${method} ${entry.path}`),
-      description: describe(`${method} ${entry.path} on ${entry.host}. ${entry.summary}`)
-        + (writes
-          ? ' Changes data on the site.'
-          : ' Reads data.'),
+      // The summary is left out: it names response fields, which the site controls. Method, path
+      // and kind say what the tool is for; the input schema says what it takes.
+      description: describe(`${method} ${entry.path} on ${entry.host} (${entry.kind === 'page'
+        ? 'HTML page'
+        : 'API operation'}).`)
+      + (writes
+        ? ' Changes data on the site.'
+        : ' Reads data.'),
       host: entry.host,
       sdkFunction: sdkFunctionName(entry.operationId),
       fields: toolFields(entry, exports, warnings),
@@ -317,7 +321,8 @@ export function renderMcpServer(hosts: readonly McpHost[], tools: readonly McpTo
     `/**`,
     ` * MCP server over stdio with one tool per ${mode === 'read'
       ? 'operation that reads data'
-      : 'operation, writes included'}. Run it with \`npx tsx client/mcp/server.ts\`; see README.md.`,
+      : 'operation, writes included'}. Run it with \`site-to-api mcp <handoff> --generated\`,`,
+    ` * which checks that this machine generated the client first; see README.md.`,
     ` * Credentials come only from the SITE_API_* environment variables of the process.`,
     ` */`,
     `import type { CallToolResult } from '@modelcontextprotocol/server'`,
@@ -349,8 +354,15 @@ export function renderMcpServer(hosts: readonly McpHost[], tools: readonly McpTo
     `const interval = 1000 / maxRps`,
     `let nextSlot = 0`,
     '',
-    `/** Every request, redirects included, waits its turn: at most SITE_API_MAX_RPS per second (default 1). */`,
-    `const politeFetch: typeof fetch = async (input, init) => {`,
+    `/**`,
+    ` * Every request, redirects included, waits its turn (at most SITE_API_MAX_RPS per second,`,
+    ` * default 1) and stays on the host's origin: a redirect elsewhere is refused before anything,`,
+    ` * credentials included, is sent there.`,
+    ` */`,
+    `const politeFetch = (origin: string): typeof fetch => async (input, init) => {`,
+    `  const target = URL.parse(input instanceof Request ? input.url : String(input))`,
+    `  if (target === null || target.origin !== origin)`,
+    `    throw new Error(\`refused to follow a redirect to another origin (\${target?.origin ?? 'an unparsable URL'}); nothing was sent there\`)`,
     `  const now = Date.now()`,
     `  const start = Math.max(now, nextSlot)`,
     `  nextSlot = start + interval`,
@@ -374,7 +386,7 @@ export function renderMcpServer(hosts: readonly McpHost[], tools: readonly McpTo
     `  return createSiteClient({`,
     `    host,`,
     `    jar: jarFor(identifier, baseUrl, defaultBaseUrl),`,
-    `    fetch: politeFetch,`,
+    `    fetch: politeFetch(new URL(baseUrl ?? defaultBaseUrl).origin),`,
     `    // One request per tool call: retries would send more than the agent asked for.`,
     `    retry: false,`,
     `    ...(baseUrl === undefined ? {} : { baseUrl }),`,
@@ -440,18 +452,25 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
     '',
     '## Run',
     '',
-    'The project needs these packages next to the client:',
+    '`site-to-api mcp --generated` brings the MCP SDK, zod and the runtime itself. To type-check the',
+    'file, or run it some other way, the project needs them next to the client:',
     '',
     '```sh',
     'npm install @modelcontextprotocol/server@2.4.0 zod @site-to-api/runtime',
-    'npm install -D tsx',
     '```',
     '',
-    'Register it with Claude Code (from the folder that holds the handoff folder):',
+    'Register it with Claude Code (from the folder that holds the handoff folder). `site-to-api mcp',
+    '--generated` runs this server only when this machine generated `client/` and nothing changed it',
+    'since; a client from someone else (a cloned repository) is refused until you run',
+    '`site-to-api gen`, or review it and add `--trust-client`:',
     '',
     '```sh',
-    `claude mcp add site-api -e ${env}='name=value; other=value' -- npx tsx ./api-handoff/client/mcp/server.ts`,
+    `claude mcp add site-api -e ${env}='name=value; other=value' -- site-to-api mcp ./api-handoff --generated`,
     '```',
+    '',
+    'Running the file directly (`npx tsx ./api-handoff/client/mcp/server.ts`) skips that check: it',
+    'runs whatever code the folder holds, with your environment. Do that only with a client you',
+    'generated or reviewed.',
     '',
     'Other clients (Cursor, Claude Desktop, VS Code) take the same command in their MCP configuration:',
     '',
@@ -459,8 +478,8 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
     JSON.stringify({
       mcpServers: {
         'site-api': {
-          command: 'npx',
-          args: ['tsx', './api-handoff/client/mcp/server.ts'],
+          command: 'site-to-api',
+          args: ['mcp', './api-handoff', '--generated'],
           env: { [env]: 'name=value' },
         },
       },

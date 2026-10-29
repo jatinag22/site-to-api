@@ -111,6 +111,17 @@ describe('generateClient with mcp', () => {
     expect(read).not.toMatch(/readOnlyHint: false/)
   })
 
+  it('keeps site-controlled summaries out of tool descriptions', () => {
+    expect(read).not.toContain('Returns id, name, examples')
+    expect(read).toContain('"GET /api/products/{productId} on shop.example.com (API operation). Reads data."')
+  })
+
+  it('refuses redirects to another origin before sending anything there', () => {
+    expect(read).toContain('const politeFetch = (origin: string): typeof fetch => async (input, init) => {')
+    expect(read).toContain('if (target === null || target.origin !== origin)')
+    expect(read).toContain('fetch: politeFetch(new URL(baseUrl ?? defaultBaseUrl).origin),')
+  })
+
   it('type-checks in strict mode', () => {
     const files = ['client/mcp/server.ts', 'client/index.ts'].map(file => path.join(dir, file))
     expect(typeCheck(files)).toBe('')
@@ -118,7 +129,10 @@ describe('generateClient with mcp', () => {
 
   it('documents how to run and register it, with credentials from the environment', () => {
     expect(readme).toContain('claude mcp add site-api -e SITE_API_COOKIE=')
-    expect(readme).toContain('npx tsx ./api-handoff/client/mcp/server.ts')
+    expect(readme).toContain('-- site-to-api mcp ./api-handoff --generated')
+    expect(readme).toContain('"args": [\n        "mcp",\n        "./api-handoff",\n        "--generated"\n      ]')
+    // Running the file directly is possible, and documented as skipping the trust check.
+    expect(readme).toContain('skips that check')
     expect(readme).toContain('"mcpServers"')
     expect(readme).toContain('`SITE_API_MAX_RPS`')
   })

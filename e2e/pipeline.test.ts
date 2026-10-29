@@ -1000,6 +1000,8 @@ describe('mCP servers (decision 0043)', () => {
       args,
       env: {
         ...getDefaultEnvironment(),
+        // The trust store the test's own gen wrote to (vitest.config.ts), so the CLI trusts that client.
+        XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME ?? '',
         ...env,
       },
       stderr: 'ignore',
@@ -1073,9 +1075,11 @@ describe('mCP servers (decision 0043)', () => {
     await cp(outDir, dir, { recursive: true })
     await generateClient({ handoffDir: dir, flows: analysis.flows, mcp: 'read' })
     const cookies = (await browserCookies()).map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
-    const tsx = join(here, 'node_modules', '.bin', 'tsx')
-    const client = await connect(tsx, [
-      join(dir, 'client', 'mcp', 'server.ts'),
+    const client = await connect(process.execPath, [
+      cli,
+      'mcp',
+      dir,
+      '--generated',
     ], { SITE_API_COOKIE: cookies, SITE_API_MAX_RPS: '10' })
     try {
       const tools = (await client.listTools()).tools.map(tool => tool.name)
@@ -1091,6 +1095,24 @@ describe('mCP servers (decision 0043)', () => {
     }
     finally {
       await client.close()
+    }
+    // A client changed after gen (as a cloned repository could ship it) is not run, by either server.
+    await writeFile(join(dir, 'client', 'index.ts'), `${await readFile(join(dir, 'client', 'index.ts'), 'utf8')}\nconsole.error('tampered')\n`)
+    await expect(connect(process.execPath, [cli, 'mcp', dir, '--generated'])).rejects.toThrow()
+    const explorer = await connect(process.execPath, [cli, 'mcp', dir, '--allow-calls'])
+    try {
+      const refused = await explorer.callTool({
+        name: 'call_operation',
+        arguments: {
+          operationId: 'getProductsByProductId',
+          path: { productId: '1007' },
+        },
+      })
+      expect(refused.isError).toBe(true)
+      expect(JSON.stringify(refused.content)).toContain('wasn\'t generated on this machine')
+    }
+    finally {
+      await explorer.close()
     }
   }, 120_000)
 })
