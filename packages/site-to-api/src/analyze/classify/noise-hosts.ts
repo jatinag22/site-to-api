@@ -97,6 +97,36 @@ const NOISE_DOMAINS: readonly string[] = [
   'raygun.io',
   'rollbar.com',
   'trackjs.com',
+  // Header bidding (Prebid partners and identity syncs) and supply-side platforms seen on
+  // Stack Overflow: ID5, Kargo, Media.net, Aditude, AppNexus/Xandr, TripleLift, Sharethrough,
+  // Index Exchange, 33Across, Amobee (turn.com), Moloco, Yahoo, Epsilon (dotomi), Simpli.fi
+  'id5-sync.com',
+  'eu-1-id5-sync.com',
+  'kargo.com',
+  'media.net',
+  'aditude.io',
+  'aditude.cloud',
+  'prebid.cloud',
+  'adnxs-simple.com',
+  '3lift.com',
+  'sharethrough.com',
+  'indexww.com',
+  '33across.com',
+  'turn.com',
+  'amspbs.com',
+  'brand-display.com',
+  'adtrafficquality.google',
+  'dsp-api.moloco.com',
+  'mxptint.net',
+  'ssp.wp.pl',
+  'ad-m.asia',
+  'blismedia.com',
+  'simpli.fi',
+  'analytics.yahoo.com',
+  'dotomi.com',
+  'lijit.com',
+  'gumgum.com',
+  'doubleverify.com',
   // Ad networks and measurement
   'adnxs.com',
   'criteo.com',
@@ -128,10 +158,8 @@ const NOISE_DOMAINS: readonly string[] = [
   // Experimentation and session analytics: Optimizely's event API (logx), Contentsquare
   'logx.optimizely.com',
   'contentsquare.com',
-  'contentsquare.net',
   // Ad retargeting and attribution: RTB House, Amazon Ads, Singular, Reddit and Pinterest pixels
   'creativecdn.com',
-  'amazon-adsystem.com',
   'singular.net',
   'pixel-config.reddit.com',
   'trk.pinterest.com',
@@ -193,6 +221,8 @@ const NOISE_ENDPOINTS: ReadonlyArray<{ domain: string, pathPrefix: string }> = [
   { domain: 'datadoghq.com', pathPrefix: '/rum/' },
   { domain: 'datadoghq.eu', pathPrefix: '/rum/' },
   { domain: 'algolia.net', pathPrefix: '/1/isalive' },
+  // Retail ad-exchange beacons on a shop's own host (Temu's cookie-matching pixels)
+  { domain: 'temu.com', pathPrefix: '/api/adx/' },
   { domain: 'algolianet.com', pathPrefix: '/1/isalive' },
 ]
 

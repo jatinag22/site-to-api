@@ -68,7 +68,8 @@ const BOT_PROTECTION_SIGNATURES: readonly BotProtectionSignature[] = [
     endpoints: [
       { path: /^\/cdn-cgi\/challenge-platform\//, label: '/cdn-cgi/challenge-platform/…' },
     ],
-    bodies: [],
+    // The managed challenge re-posts the page with a form whose field names are all hex digests.
+    bodies: [/\n(?:[0-9a-f]{32,128}(?:&|$))+$/],
     challengeHeaders: [
       { name: 'cf-mitigated', value: /challenge/i },
     ],

@@ -271,6 +271,16 @@ describe('classifyExchanges: bot protection', () => {
       }),
     ],
     [
+      'Cloudflare',
+      on({
+        method: 'POST',
+        url: 'https://shop.test/questions/tagged/typescript',
+        resourceType: 'document',
+        requestBody: formBody({ ['a1'.repeat(32)]: 'x', ['b2'.repeat(32)]: 'y' }),
+        responseBody: textBody('<html><title>Questions</title></html>'),
+      }),
+    ],
+    [
       'Cloudflare Turnstile',
       on({
         url: 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/if/ov2',
@@ -546,6 +556,26 @@ describe('classifyExchanges: telemetry and mirrors', () => {
       'api',
     ])
     expect(result.exchanges[6]!.kindReason).toBe('fallback mirror of app1-dsn.algolia.net, which the specs describe')
+  })
+
+  it('drops header-bidding, identity-sync and retail ad beacons', () => {
+    const urls = [
+      'https://lb.eu-1-id5-sync.com/lb/v1',
+      'https://krk2.kargo.com/api/v1/prebid',
+      'https://hbx.media.net/bidexchange.php',
+      'https://edge.aditude.io/v1/config',
+      'https://event-ingestor.judy.pnap.aditude.cloud/e',
+      'https://geo-location.prebid.cloud/',
+      'https://www.temu.com/api/adx/cm/pixel-pubmatic',
+    ]
+    expect(kinds([
+      page(),
+      ...urls.map(url => on({
+        method: 'POST',
+        url,
+        responseBody: jsonBody({}),
+      })),
+    ]).slice(1)).toEqual(urls.map(() => 'noise'))
   })
 
   it('drops ad, RUM and tag-manager hosts, including the ones named by convention', () => {
