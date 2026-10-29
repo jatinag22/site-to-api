@@ -97,13 +97,15 @@ export function renderProductShell(assets: PageAssets, product: Product, pollMs:
       'product-id': String(product.id),
       'poll-ms': String(pollMs),
     },
-    extraScripts: ['/assets/ticker.js'],
+    extraScripts: ['/assets/ticker.js', '/assets/live.js'],
     body: `<article id="product">
 <h1 id="product-name">Loading…</h1>
 <p id="product-description"></p>
 <p>Price: <strong id="product-price"></strong> <span id="live-price" aria-live="polite"></span></p>
 <p>Stock: <span id="product-stock" aria-live="polite"></span></p>
 <p>Ticker: <span id="ticker" aria-live="polite">connecting…</span></p>
+<p>Stock feed: <span id="stock-feed" aria-live="polite">connecting…</span></p>
+<p>Basket: <span id="basket" aria-live="polite">connecting…</span></p>
 <button type="button" id="reviews-button">Read reviews</button>
 <button type="button" id="related-button">Similar products</button>
 <button type="button" id="wishlist-button">Add to wishlist</button> <span id="wishlist-status" aria-live="polite"></span>

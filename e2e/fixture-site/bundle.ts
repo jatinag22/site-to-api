@@ -4,6 +4,7 @@
  * - `/assets/app.<hash>.js`: the main bundle, whitespace-minified (one long line, so column
  *   mapping matters) with an external sourcemap that embeds `sourcesContent`;
  * - `/assets/ticker.js`: the WebSocket widget with an inline `data:` sourcemap;
+ * - `/assets/live.js`: the Socket.IO stock feed and the MessagePack basket, inline sourcemap;
  * - `/shield/sensor.js`: the toy bot-protection script, fully minified with no sourcemap.
  * Nothing is written to disk.
  */
@@ -68,6 +69,13 @@ export async function buildFrontend(): Promise<FrontendBundle> {
     sourcemap: 'inline',
     sourcesContent: true,
   })
+  const live = await build({
+    ...common,
+    entryPoints: ['src/widgets/live.ts'],
+    entryNames: 'live',
+    sourcemap: 'inline',
+    sourcesContent: true,
+  })
   const sensor = await build({
     ...common,
     entryPoints: ['src/shield/sensor.ts'],
@@ -78,6 +86,10 @@ export async function buildFrontend(): Promise<FrontendBundle> {
   files.set('/assets/ticker.js', {
     contentType: JS,
     body: onlyOutput(ticker.outputFiles),
+  })
+  files.set('/assets/live.js', {
+    contentType: JS,
+    body: onlyOutput(live.outputFiles),
   })
   files.set('/shield/sensor.js', {
     contentType: JS,

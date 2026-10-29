@@ -10,6 +10,7 @@ import type { AddressInfo } from 'node:net'
 import type { User } from './auth'
 import type { Catalog, Product } from './catalog'
 import type { RequestContext } from './http'
+import type { LiveEndpoints } from './live'
 import type { PageAssets } from './pages'
 import type { StaticFile } from './static'
 import { createServer } from 'node:http'
@@ -19,6 +20,7 @@ import { buildFrontend } from './bundle'
 import { createCatalog, PRODUCTS_PAGE_SIZE } from './catalog'
 import { createGraphql } from './graphql'
 import { parseCookies, parseJson, readBody, send, sendHtml, sendJson, serializeCookie } from './http'
+import { createLiveEndpoints } from './live'
 import {
   renderAccount,
   renderDeals,
@@ -30,9 +32,10 @@ import {
   renderStore,
   renderStoreIndex,
 } from './pages'
+import { createRng } from './random'
 import { createShield } from './shield'
 import { PIXEL_GIF, STATIC_FILES } from './static'
-import { attachTicker, tickPrice } from './ticker'
+import { createTicker, tickPrice } from './ticker'
 
 export interface FixtureSiteOptions {
   /** Port of the main origin (`http://localhost:<port>`). 0 or omitted picks a free port. */
@@ -121,6 +124,7 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 function createRoutes(deps: {
+  live: LiveEndpoints
   catalog: Catalog
   assets: PageAssets
   auth: ReturnType<typeof createAuth>
@@ -306,6 +310,21 @@ function createRoutes(deps: {
           .map(productSummary)
         sendJson(res, 200, { productId: product.id, items })
       },
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/live-token$/,
+      handler: ctx => deps.live.token(ctx),
+    },
+    {
+      method: 'GET',
+      pattern: /^\/socket\.io\/$/,
+      handler: ctx => deps.live.polling(ctx),
+    },
+    {
+      method: 'POST',
+      pattern: /^\/socket\.io\/$/,
+      handler: ctx => deps.live.polling(ctx),
     },
     {
       method: 'GET',
@@ -511,7 +530,9 @@ export async function startFixtureSite(options: FixtureSiteOptions = {}): Promis
     ...STATIC_FILES,
     ...bundle.files,
   ])
+  const live = createLiveEndpoints(catalog, createRng(seed ^ 0x11FE), { intervalMs: options.tickIntervalMs ?? 1000 })
   const routes = createRoutes({
+    live,
     catalog,
     assets,
     auth,
@@ -533,7 +554,11 @@ export async function startFixtureSite(options: FixtureSiteOptions = {}): Promis
         sendJson(res, 500, { error: 'internal', message })
     })
   })
-  const ticker = attachTicker(main, catalog, { intervalMs: options.tickIntervalMs ?? 1000, now })
+  const ticker = createTicker(catalog, { intervalMs: options.tickIntervalMs ?? 1000, now })
+  main.on('upgrade', (req, socket, head) => {
+    if (!ticker.upgrade(req, socket, head) && !live.upgrade(req, socket, head))
+      socket.destroy()
+  })
   let port: number
   try {
     port = await listen(main, options.port ?? 0)
@@ -547,7 +572,10 @@ export async function startFixtureSite(options: FixtureSiteOptions = {}): Promis
     origin: `http://localhost:${port}`,
     secondaryOrigin,
     close: async () => {
-      await ticker.close()
+      await Promise.all([
+        ticker.close(),
+        live.close(),
+      ])
       await Promise.all([
         closeServer(main),
         closeServer(analytics),
