@@ -378,9 +378,12 @@ function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, opti
     }
   }
   if (type === 'object') {
-    const properties: Record<string, JsonSchema> = {}
-    for (const [key, child] of node.properties)
-      properties[key] = finalize(child, key, options, totalSessions)
+    // `Object.fromEntries` defines own properties, so a key named `__proto__` stays a key;
+    // assigning it would set the prototype and drop it from `properties`.
+    const properties: Record<string, JsonSchema> = Object.fromEntries([...node.properties].map(([key, child]) => [
+      key,
+      finalize(child, key, options, totalSessions),
+    ]))
     const required = node.requests.size < 2 && options.required === 'distinct-requests'
       ? []
       : [...node.keyCounts]

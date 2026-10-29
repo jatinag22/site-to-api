@@ -242,6 +242,30 @@ describe('inferSchema', () => {
       schema = schema.properties!.a!
     expect(schema.properties?.a).toEqual({ description: 'Not inferred: nested too deep' })
   })
+
+  it('keeps keys named like Object.prototype members as plain properties', () => {
+    const value = JSON.parse('{"__proto__":{"x":1},"constructor":"c","toString":2}') as unknown
+    const schema = inferSchema(s1(value))
+    expect(Object.keys(schema.properties ?? {})).toEqual([
+      '__proto__',
+      'constructor',
+      'toString',
+    ])
+    expect(Object.getPrototypeOf(schema.properties)).toBe(Object.prototype)
+    expect(Object.getOwnPropertyDescriptor(schema.properties, '__proto__')?.value).toEqual({
+      type: 'object',
+      properties: {
+        x: { type: 'integer' },
+      },
+      required: ['x'],
+    })
+    expect(schema.required).toEqual([
+      '__proto__',
+      'constructor',
+      'toString',
+    ])
+    expect(JSON.stringify(schema)).toContain('"__proto__":{"type":"object"')
+  })
 })
 
 describe('coerceStrings / inferStringSchema', () => {

@@ -259,13 +259,16 @@ function formObject(form: NameValue[]): Record<string, string> {
 
 function inferFormSchema(items: Array<{ form: NameValue[], sessionId: string }>, redactor: ValueRedactor): JsonSchema {
   const names = namesInOrder(items.map(item => item.form))
-  const properties: Record<string, JsonSchema> = {}
-  for (const name of names) {
+  // Defined, not assigned: a field named `__proto__` must stay a key (see `infer.ts`).
+  const properties: Record<string, JsonSchema> = Object.fromEntries(names.map((name) => {
     const samples = items.flatMap(item => item.form
       .filter(field => field.name === name)
       .map(field => ({ value: field.value, sessionId: item.sessionId })))
-    properties[name] = inferStringSchema(samples, enumGuard(redactor, { in: 'form', name }))
-  }
+    return [
+      name,
+      inferStringSchema(samples, enumGuard(redactor, { in: 'form', name })),
+    ]
+  }))
   // As for JSON bodies: present in every sample and taking more than one value.
   const required = names.filter(name => items.every(item => item.form.some(field => field.name === name))
     && new Set(items.flatMap(item => item.form.filter(field => field.name === name).map(field => field.value))).size > 1)

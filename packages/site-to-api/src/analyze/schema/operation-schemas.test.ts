@@ -431,6 +431,35 @@ describe('inferOperationSchemas', () => {
     })
   })
 
+  it('keeps a form field named __proto__ as a property', () => {
+    const fields = (value: string): Record<string, string> => Object.fromEntries([
+      ['__proto__', value],
+      ['q', value],
+    ])
+    const result = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: formBody(fields('a')),
+      }),
+      exchange({
+        method: 'POST',
+        url: 'https://shop.test/api/x',
+        requestBody: formBody(fields('b')),
+      }),
+    ])
+    const schema = result.requestBody?.schema
+    expect(Object.keys(schema?.properties ?? {})).toEqual([
+      '__proto__',
+      'q',
+    ])
+    expect(Object.getPrototypeOf(schema?.properties)).toBe(Object.prototype)
+    expect(schema?.required).toEqual([
+      '__proto__',
+      'q',
+    ])
+  })
+
   it('handles text and binary request bodies', () => {
     const binary = {
       mimeType: 'application/octet-stream',
