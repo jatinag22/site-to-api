@@ -301,6 +301,7 @@ const CHALLENGE_MARKERS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
   { pattern: /blocked by network security/i, label: 'block page' },
   { pattern: /captcha-delivery\.com/, label: 'DataDome captcha' },
   { pattern: /id=["']?px-captcha/, label: 'PerimeterX captcha' },
+  { pattern: /\bgokuProps\b|awswaf\.com\/[^"']*challenge\.js/, label: 'AWS WAF challenge' },
 ]
 /** Only the start of a page is read; interstitials put their title and script up front. */
 const MAX_CHALLENGE_SCAN = 300_000
@@ -341,6 +342,15 @@ function challengePageEvidence(exchange: Exchange): Found[] {
     : [
         { evidence: `challenge page (${marker})`, isTraffic: true, thirdParty: false },
       ]
+}
+
+/**
+ * True when response headers mark a challenge by any vendor's signature (`cf-mitigated:
+ * challenge`, `x-amzn-waf-action: challenge`). Names are compared in lower case.
+ */
+export function hasChallengeHeader(headers: ReadonlyArray<{ name: string, value: string }>): boolean {
+  return BOT_PROTECTION_SIGNATURES.some(signature => signature.challengeHeaders.some(challenge =>
+    headers.some(header => header.name.toLowerCase() === challenge.name && challenge.value.test(header.value))))
 }
 
 /**

@@ -6,7 +6,7 @@
 import type { ResolvedConfig } from '../config/schema'
 import type { Exchange, Operation } from '../model'
 import type { OperationProbe, ProbeOutcome, ProbeReport } from '../model/probe'
-import { challengePageMarker } from '../analyze/classify'
+import { challengePageMarker, hasChallengeHeader } from '../analyze/classify'
 import { PROBE_FORMAT_VERSION } from '../model/probe'
 import { CHALLENGED_NOTE } from './summary'
 
@@ -95,8 +95,11 @@ function isChallengeResponse(contentType: string | null, body: string): boolean 
  * which often answer 200 with HTML where the capture had JSON, and against challenge pages that
  * stand in for a page with a 200.
  */
-export function resemblesCapture(exchange: Exchange, status: number, contentType: string | null, body: string): boolean {
+export function resemblesCapture(exchange: Exchange, status: number, contentType: string | null, body: string, headers: ReadonlyArray<{ name: string, value: string }> = []): boolean {
   if (status < 200 || status >= 300)
+    return false
+  // AWS WAF answers a challenge with 202 and `x-amzn-waf-action: challenge`.
+  if (hasChallengeHeader(headers))
     return false
   // An interstitial answered 200 (Reddit's JavaScript challenge) is never the API working.
   if (isChallengeResponse(contentType, body))
@@ -195,10 +198,11 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
         })
         const text = await response.text()
         const contentType = response.headers.get('content-type')
-        const ok = resemblesCapture(exchange, response.status, contentType, text)
+        const answered = [...response.headers].map(([name, value]) => ({ name, value }))
+        const ok = resemblesCapture(exchange, response.status, contentType, text, answered)
         return {
           outcome: ok ? 'ok' : 'rejected',
-          challenged: !ok && isChallengeResponse(contentType, text),
+          challenged: !ok && (hasChallengeHeader(answered) || isChallengeResponse(contentType, text)),
           status: response.status,
           error: null,
         }

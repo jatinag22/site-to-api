@@ -232,6 +232,17 @@ describe('resemblesCapture', () => {
     expect(resemblesCapture(html, 302, 'text/html', '')).toBe(false)
   })
 
+  it('never takes an AWS WAF challenge for success, by header or by its interstitial', () => {
+    const goku = '<html><head><script>window.gokuProps = { "key": "k" }</script></head><body>'.padEnd(1000, 'z')
+    expect(resemblesCapture(html, 202, 'text/html', goku, [
+      { name: 'x-amzn-waf-action', value: 'challenge' },
+    ])).toBe(false)
+    expect(resemblesCapture(html, 200, 'text/html', '<html>'.padEnd(900, 'y'), [
+      { name: 'X-Amzn-Waf-Action', value: 'challenge' },
+    ])).toBe(false)
+    expect(resemblesCapture(html, 200, 'text/html', goku)).toBe(false)
+  })
+
   it('never takes a challenge page answered 200 for the page', () => {
     const challenge = '<html><head><title>Shop - Prove your humanity</title></head><body>'.padEnd(1000, 'z')
     expect(resemblesCapture(html, 200, 'text/html', challenge)).toBe(false)
