@@ -1,5 +1,5 @@
 /**
- * Sibling paths: one template for paths that differ only in one data position (decision 0031).
+ * Sibling paths: one template for paths that differ only in one data position (decision 0035).
  *
  * The identifier rules only template id-like segments, so titles (`/wiki/Alan_Turing`), tags
  * (`/questions/tagged/python`), owner/repo pairs and slugs after an id were listed once per value.

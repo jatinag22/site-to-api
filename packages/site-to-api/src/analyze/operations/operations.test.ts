@@ -364,7 +364,7 @@ describe('buildOperations: slugs', () => {
   })
 })
 
-describe('buildOperations: sibling paths (decision 0031)', () => {
+describe('buildOperations: sibling paths (decision 0035)', () => {
   const article = (title: string): Parameters<typeof get>[1] => ({
     kind: 'page',
     responseBody: textBody(`<header class="top"><nav class="menu"></nav></header><main class="article"><h1 class="title">${title}</h1><p class="lead">x</p></main><footer class="foot"></footer>`),

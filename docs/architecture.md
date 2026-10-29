@@ -37,7 +37,7 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    `src/analyze/graphql` first, become one operation per GraphQL operation instead (decision
    0027); the source stage reads the site's code for the type of persisted queries. Path parameters come from source route templates, value tracing, variation
    across samples, ID-like segments (UUID, hex, base58, numbers, upper-case slugs) and sibling
-   paths whose word values the capture shows are data (decision 0031).
+   paths whose word values the capture shows are data (decision 0035).
 4. **schema** (`src/analyze/schema`): infers JSON Schema for query, headers, request bodies and
    JSON responses from all samples: required vs optional, enums, formats, constants.
 5. **correlate** (`src/analyze/correlate`): indexes every response value (JSON leaves, Set-Cookie,

@@ -64,7 +64,7 @@ function bestSourceMatch(templates: ParsedTemplate[], segments: string[]): Parse
  *    identifier position is a parameter once two distinct values are seen there (or one, when a
  *    strong identifier already made it a parameter).
  * 4. With `siblings`, words that differ in one position of otherwise equal paths are a parameter
- *    when the capture shows they are data (decision 0031, `markSiblingPositions`).
+ *    when the capture shows they are data (decision 0035, `markSiblingPositions`).
  */
 export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set(), siblings: SiblingFacts | null = null): Map<string, Marks> {
   // A hyphenated slug (`pine-hill`) only counts when another response links to it: plain-word

@@ -1,4 +1,4 @@
-# 0031 Sibling paths with word values become one template, on evidence
+# 0035 Sibling paths with word values become one template, on evidence
 
 Status: Accepted (2026-10-29)
 
