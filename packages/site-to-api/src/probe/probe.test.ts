@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { exchange, jsonBody, textBody } from '../../test/helpers'
 import { applyGraphqlTypes } from '../analyze/graphql'
 import { probeOperations, resemblesCapture } from './probe'
+import { summarizeProbe } from './summary'
 
 let origin: string
 let requests = 0
@@ -22,6 +23,10 @@ const server = createServer((req, res) => {
   }
   if (req.url?.startsWith('/graphql')) {
     res.writeHead(200, { 'content-type': 'application/json' }).end('{"data":{"a":1}}')
+    return
+  }
+  if (req.url === '/humanity') {
+    res.writeHead(200, { 'content-type': 'text/html' }).end('<html><head><title>Shop - Prove your humanity</title></head><body>'.padEnd(1200, 'x'))
     return
   }
   if (req.url === '/api/challenge') {
@@ -120,6 +125,23 @@ describe('probeOperations', () => {
     })
     expect(report.operations[0]).toMatchObject({ replay: 'rejected', requires: null })
     expect(report.operations[0]?.note).toContain('not accepted')
+  })
+
+  it('says the site answered with a challenge page, not that the session expired', async () => {
+    const page = op('getHumanity', 'GET', '/humanity', {
+      url: `${origin}/humanity`,
+      resourceType: 'document',
+      responseBody: textBody('<html><head><title>Shop</title></head><body>'.padEnd(1200, 'y')),
+    })
+    page.kind = 'page'
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [page],
+    })
+    expect(report.operations[0]).toMatchObject({ replay: 'rejected', requires: null })
+    expect(report.operations[0]?.note).toContain('bot challenge page')
+    expect(summarizeProbe(report).join('\n')).toContain('the site answered with a bot challenge page: 1 (getHumanity)')
   })
 
   it('skips unsafe methods and bot-protection steps by default, without sending anything', async () => {

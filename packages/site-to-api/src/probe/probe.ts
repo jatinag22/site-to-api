@@ -8,6 +8,7 @@ import type { Exchange, Operation } from '../model'
 import type { OperationProbe, ProbeOutcome, ProbeReport } from '../model/probe'
 import { challengePageMarker } from '../analyze/classify'
 import { PROBE_FORMAT_VERSION } from '../model/probe'
+import { CHALLENGED_NOTE } from './summary'
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
@@ -84,6 +85,11 @@ function topLevelKeys(value: unknown): string[] | null {
     : null
 }
 
+/** An HTML response that is a bot challenge or block page. */
+function isChallengeResponse(contentType: string | null, body: string): boolean {
+  return mediaType(contentType).includes('html') && challengePageMarker(body) !== null
+}
+
 /**
  * Whether a live response looks like the captured one. Guards against challenge and login pages,
  * which often answer 200 with HTML where the capture had JSON, and against challenge pages that
@@ -93,7 +99,7 @@ export function resemblesCapture(exchange: Exchange, status: number, contentType
   if (status < 200 || status >= 300)
     return false
   // An interstitial answered 200 (Reddit's JavaScript challenge) is never the API working.
-  if (mediaType(contentType).includes('html') && challengePageMarker(body) !== null)
+  if (isChallengeResponse(contentType, body))
     return false
   const expected = exchange.response.body?.mimeType ?? ''
   const actual = mediaType(contentType)
@@ -141,6 +147,8 @@ class RateLimiter {
 
 interface SendResult {
   outcome: ProbeOutcome
+  /** True when the response was a bot challenge or block page. */
+  challenged: boolean
   status: number | null
   /** Why the request could not be sent (DNS, TLS, timeout, connection refused). */
   error: string | null
@@ -186,9 +194,11 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
           signal: AbortSignal.timeout(options.config.timeoutMs),
         })
         const text = await response.text()
-        const ok = resemblesCapture(exchange, response.status, response.headers.get('content-type'), text)
+        const contentType = response.headers.get('content-type')
+        const ok = resemblesCapture(exchange, response.status, contentType, text)
         return {
           outcome: ok ? 'ok' : 'rejected',
+          challenged: !ok && isChallengeResponse(contentType, text),
           status: response.status,
           error: null,
         }
@@ -196,6 +206,7 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
       catch (error) {
         return {
           outcome: 'failed',
+          challenged: false,
           status: null,
           error: failureReason(error),
         }
@@ -320,8 +331,11 @@ async function probeOne(operation: Operation, exchange: Exchange, context: Probe
   const plain = record(await context.runner.send(exchange, bare(full)))
   if (plain.outcome === 'ok')
     return result(plain.outcome, [], null)
-  if (replay.outcome !== 'ok')
-    return result(plain.outcome, null, 'The captured session was not accepted any more (expired cookies or token?). Capture again shortly before probing.')
+  if (replay.outcome !== 'ok') {
+    return result(plain.outcome, null, replay.challenged || plain.challenged
+      ? CHALLENGED_NOTE
+      : 'The captured session was not accepted any more (expired cookies or token?). Capture again shortly before probing.')
+  }
   if (!context.takeMinimizeSlot(operation.host))
     return result(plain.outcome, null, `Not minimized: limit of ${context.minimizePerHost} operations per host reached (probe.minimizePerHost, --minimize-per-host).`)
   return result(plain.outcome, await minimize(context.runner, exchange, full, context.maxVariants, statuses), null)
