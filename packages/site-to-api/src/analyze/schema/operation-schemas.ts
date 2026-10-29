@@ -335,17 +335,23 @@ function inferRequestBody(exchanges: Exchange[], redactor: Redactor): Operation[
   }
 }
 
+/** Names that only ever defeat caches, whatever their values look like. */
 const CACHE_BUSTER_NAMES: ReadonlySet<string> = new Set([
   '_',
-  't',
-  'ts',
   'cb',
   'nonce',
   'rand',
+  'cachebuster',
+])
+/** Names that are a cache-buster only when they carry the current time. */
+const TIME_NAMES: ReadonlySet<string> = new Set([
+  't',
+  'ts',
+  'time',
   'timestamp',
 ])
-/** Unix time in seconds or milliseconds. */
-const EPOCH_VALUE = /^\d{10}(?:\d{3})?$/
+/** Unix time in seconds or milliseconds, between 2001 and 2033. */
+const EPOCH_VALUE = /^1\d{9}(?:\d{3})?$/
 
 /** The values one request sent: query parameters and form or top-level JSON body fields. */
 function requestFields(exchange: Exchange): NameValue[] {
@@ -365,9 +371,10 @@ function requestFields(exchange: Exchange): NameValue[] {
 
 /**
  * Fields that only defeat caches: a different value in every sample, under a cache-buster name
- * (`_`, `t`, `ts`, `cb`, `nonce`, `rand`, `timestamp`) or with Unix-time values. They make
- * repeats of one request look like different requests. A field that varies with meaning
- * (`itemNos`) never matches both tests.
+ * (`_`, `cb`, `nonce`, `rand`), or under a time name (`t`, `ts`, `time`, `timestamp`) with
+ * Unix-time values. They make repeats of one request look like different requests. The name is
+ * always required: a 10- or 13-digit id (`itemNo`, a GTIN) or a time filter (`since`) varies
+ * with meaning, and `t=search` is a selector, so none of them is dropped.
  */
 function cacheBusters(exchanges: readonly Exchange[]): Set<string> {
   const values = new Map<string, string[]>()
@@ -383,7 +390,9 @@ function cacheBusters(exchanges: readonly Exchange[]): Set<string> {
   for (const [name, seen] of values) {
     const everyTimeDifferent = seen.length === exchanges.length && new Set(seen).size === seen.length
     const bare = name.slice(name.indexOf('.') + 1)
-    const looksLikeBuster = CACHE_BUSTER_NAMES.has(bare.toLowerCase()) || seen.every(value => EPOCH_VALUE.test(value.replace(/^"|"$/g, '')))
+    const lower = bare.toLowerCase()
+    const looksLikeBuster = CACHE_BUSTER_NAMES.has(lower)
+      || (TIME_NAMES.has(lower) && seen.every(value => EPOCH_VALUE.test(value.replace(/^"|"$/g, ''))))
     if (everyTimeDifferent && looksLikeBuster && exchanges.length > 1)
       busters.add(name)
   }

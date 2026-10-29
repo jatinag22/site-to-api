@@ -540,11 +540,23 @@ describe('inferOperationSchemas', () => {
       answer('https://api.test/availabilities?itemNos=90529469&expand=StoresList&_=1730000000002', full),
     ]).responses[0]?.schema
     expect(busted?.required).toBeUndefined()
-    const epoch = infer([
-      answer('https://api.test/availabilities?itemNos=90529469&since=1730000000', full),
-      answer('https://api.test/availabilities?itemNos=90529469&since=1730000500', full),
+    const timeBuster = infer([
+      answer('https://api.test/availabilities?itemNos=90529469&t=1730000000', full),
+      answer('https://api.test/availabilities?itemNos=90529469&t=1730000500', full),
     ]).responses[0]?.schema
-    expect(epoch?.required).toBeUndefined()
+    expect(timeBuster?.required).toBeUndefined()
+    // Varying with meaning: a time filter, a selector under a time-like name, a 10-digit id.
+    for (const [first, second] of [
+      ['since=1730000000', 'since=1730000500'],
+      ['t=search', 't=product'],
+      ['itemNo=1234567890', 'itemNo=2234567890'],
+    ]) {
+      const real = infer([
+        answer(`https://api.test/availabilities?${first}`, full),
+        answer(`https://api.test/availabilities?${second}`, full),
+      ]).responses[0]?.schema
+      expect(real?.required).toEqual(['availabilities', 'displayLocations', 'salesLocations'])
+    }
     const items = infer([
       answer('https://api.test/availabilities?itemNos=90529469&_=1730000000001', full),
       answer('https://api.test/availabilities?itemNos=89471407&_=1730000000002', full),

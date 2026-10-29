@@ -21,9 +21,10 @@ the captured document itself says the server rejects a call without it.
   object at that level and those objects answered at least two distinct requests. A request's
   identity is its redacted path, query and body; samples of the same request count once.
   Cache-busters are left out of the identity: a query parameter or body field whose value
-  differs in every sample and that is named `_`, `t`, `ts`, `cb`, `nonce`, `rand` or
-  `timestamp`, or whose values are all Unix times (10 or 13 digits). A field that varies with
-  meaning (`itemNos`) still makes requests distinct. The
+  differs in every sample and that is named `_`, `cb`, `nonce`, `rand` or `cachebuster`, or is
+  named `t`, `ts`, `time` or `timestamp` and carries Unix times (10 or 13 digits starting with
+  1). The name is always required: a 10- or 13-digit id (`itemNo`, a GTIN), a time filter
+  (`since`) or a selector (`t=search`) varies with meaning and still makes requests distinct. The
   rule applies per level, so items of an array are judged by the requests whose answers held
   them. It is deterministic: it depends only on the set of samples, not their order.
 - **GraphQL variables:** when the query document was captured, its variable definitions decide:
