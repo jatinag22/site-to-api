@@ -355,6 +355,7 @@ and names only, never values, so it is safe to commit. `build` does not read or 
   "generatedBy": "site-to-api 0.1.0",
   "checkedAt": "2026-10-30T06:00:00.000Z",
   "maxRps": 1,
+  "skippedHosts": ["accounts.google.com"],
   "exitCode": 1,
   "operations": [
     {
@@ -378,6 +379,10 @@ and names only, never values, so it is safe to commit. `build` does not read or 
   which, with probe's classification from decision 0036), `unreachable` (`status.actual` is
   `null`) or `unchecked` (the capture documents no response for the status the site returned).
   Only `drift` is a finding; the other three mean the operation was not checked.
+- `skippedHosts`: third-party hosts with operations that were not checked, because only the site's
+  own hosts are checked unless `--include` names others.
+- `unchecked` also covers a difference on an operation whose request carries a computed or
+  time-based input (a TOTP): the replayed value is stale, so the difference is not drift.
 - Paths: `$` is the body, `.name` a field, `[]` any array element, `.*` any value of a map.
   `added` fields are those the schema does not list; `removed` are required fields the answer
   lacks; `typeChanged` holds a JSON type change (`integer` to `string`), a value outside an

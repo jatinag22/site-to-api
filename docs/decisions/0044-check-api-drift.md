@@ -29,6 +29,17 @@ run on a schedule to notice a field disappearing.
   (bot protection or a refused session, using probe's classification, so it says nothing about
   the API); `unreachable`; `unchecked` (the site answered with the captured status, but the capture
   documents no response for it, so there is nothing to compare with).
+- **Only the site's own hosts by default.** A third party (Google sign-in, an ad network) changes
+  on its own schedule, and one of its operations must not decide the exit code. `check` takes the
+  hosts `AGENT.md` lists as first-party (the registrable domain of the pages the person browsed;
+  every host when the capture has no pages). Third-party hosts are opt-in with `--include`, or by
+  naming one of their operations with `--operations`. The summary and `check.json`
+  (`skippedHosts`) name the third-party hosts that were left out.
+- **A request input that goes stale makes drift `unchecked`.** When the operation's flow step has
+  an input whose origin is `computed` (the page's code makes it) or `unknown` with the shape of a
+  one-time code or timestamp (a 6 or 8 digit number, a 10 or 13 digit epoch), the captured value
+  is stale by design (Spotify's `totp`). The operation is still replayed; if it matches, it is
+  `ok`, but a difference becomes `unchecked` with the input named, never `drift`.
 - **Refusal is looked for only in an answer that would otherwise differ** (another status or media
   type, a challenge header or page, JSON that no longer parses), as probe's `send` does. A normal
   JSON 200 whose text happens to hold a login form is not a refused session.
@@ -63,5 +74,8 @@ run on a schedule to notice a field disappearing.
   session. A scheduled run must restore them from private storage. Expired sessions show up as
   `blocked`, not as drift.
 - Enums and required fields are inferred from few samples (0034), so a legitimate new enum value
-  is reported as drift. That is what a wrapper's Zod would reject too.
+  is reported as drift. That is what a wrapper's Zod would reject too. Inference no longer builds
+  enums that live data breaks: none from strings that sit next to numbers (an `enum` constrains
+  every value, so each number in a chart row would be outside it), none from numeric-looking
+  strings, and none from values that differ across most samples.
 - Array elements beyond the first 500 are not inspected.

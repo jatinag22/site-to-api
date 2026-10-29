@@ -15,9 +15,11 @@ import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 import { CHECK_FORMAT_VERSION, CheckReportSchema } from '../model/check'
 import { createReplayer } from '../probe'
-import { compareLive, unreachableCheck } from './compare'
+import { compareLive, unreachableCheck, withStaleInputs } from './compare'
 
+export { selectOperations } from './hosts'
 export { summarizeCheck } from './summary'
+export { volatileInputs } from './volatile'
 
 const CHECK_FILE = 'check.json'
 
@@ -27,6 +29,10 @@ export interface CheckOptions {
   toolVersion: string
   /** Only these operation ids; an id that matches nothing is an error. */
   operationIds?: string[]
+  /** Third-party hosts left out of `operations`, recorded in the report. */
+  skippedHosts?: string[]
+  /** Per operation id, request inputs that go stale (see `volatileInputs`); a drift verdict on them is `unchecked`. */
+  staleInputs?: ReadonlyMap<string, readonly string[]>
   /** Redacts text that may carry a value (field names are data on some sites). */
   redactText?: (text: string) => string
   fetch?: typeof fetch
@@ -95,7 +101,7 @@ export async function checkOperations(options: CheckOptions): Promise<CheckRepor
       operations.push(unreachableCheck(operation, expected, redact(live.error)))
     }
     else {
-      operations.push(compareLive(operation, live, redact))
+      operations.push(withStaleInputs(compareLive(operation, live, redact), (options.staleInputs?.get(operation.operationId) ?? []).map(redact)))
     }
   }
 
@@ -104,6 +110,9 @@ export async function checkOperations(options: CheckOptions): Promise<CheckRepor
     generatedBy: `site-to-api ${options.toolVersion}`,
     checkedAt: new Date(options.now?.() ?? Date.now()).toISOString(),
     maxRps: options.config.maxRps,
+    skippedHosts: [
+      ...options.skippedHosts ?? [],
+    ].sort(),
     exitCode: exitCodeFor(operations, skipped),
     operations,
     skipped,

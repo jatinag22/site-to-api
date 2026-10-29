@@ -229,7 +229,9 @@ site-to-api check --operations getApiProducts,getApiCategories
 site-to-api check --json                # check.json on stdout, for scripts
 ```
 
-It sends the same polite requests as `probe` (1 request per second, safe methods and GraphQL
+It checks the site's own hosts only; a third-party host (a sign-in or ad service) is checked only
+if you name it with `--include`, and the summary lists the ones it left out. It sends the same
+polite requests as `probe` (1 request per second, safe methods and GraphQL
 queries only, the tool's own user agent, bot-protection steps skipped) and has no
 `--unsafe-methods`. Per operation it reports `ok`, a status change, fields **added**, required
 fields **removed**, **type changes**, or that the site was **blocked** or **unreachable**. The

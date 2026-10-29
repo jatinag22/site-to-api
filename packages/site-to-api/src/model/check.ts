@@ -64,6 +64,8 @@ export const CheckReportSchema = z.object({
     z.literal(1),
     z.literal(2),
   ]),
+  /** Third-party hosts left out because only the site's own hosts are checked by default. */
+  skippedHosts: z.array(z.string()).default([]),
   operations: z.array(OperationCheckSchema),
   skipped: z.array(z.object({
     operationId: z.string(),

@@ -138,3 +138,20 @@ export function compareLive(operation: Operation, live: Answered, redactPath?: (
     note,
   }
 }
+
+/**
+ * A drift verdict on an operation whose request carries a value that goes stale becomes
+ * `unchecked`: the site may have refused the replayed code or timestamp, not changed.
+ */
+export function withStaleInputs(check: OperationCheck, inputs: readonly string[]): OperationCheck {
+  if (check.verdict !== 'drift' || inputs.length === 0)
+    return check
+  return {
+    ...check,
+    verdict: 'unchecked',
+    added: [],
+    removed: [],
+    typeChanged: [],
+    note: `The request carries ${inputs.join(', ')}, a value the page computes or a time-based code, and the captured one is stale, so the difference (${check.note ?? 'in the answer'}) proves nothing about the API. Check it by hand.`,
+  }
+}

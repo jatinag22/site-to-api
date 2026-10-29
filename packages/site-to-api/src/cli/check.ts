@@ -9,8 +9,7 @@ import { InvalidArgumentError } from 'commander'
 import { consola } from 'consola'
 import { resolve } from 'pathe'
 import { analyzeForProbe, readBuildRecord, stickyOptions } from '../build'
-import { inHostFilter } from '../build/hosts'
-import { checkOperations, summarizeCheck, writeCheckReport } from '../check'
+import { checkOperations, selectOperations, summarizeCheck, volatileInputs, writeCheckReport } from '../check'
 import { VERSION } from '../version'
 import { resolveConfig } from './program'
 
@@ -43,12 +42,16 @@ async function runCheck(flags: CheckFlags, command: Command): Promise<void> {
     probe: { maxRps: flags.maxRps },
   })
   const { analysis, redactText } = await analyzeForProbe({ config, cwd })
-  const wanted = inHostFilter({ include: flags.include ?? [], exclude: flags.exclude ?? [] })
+  const operationIds = flags.operations?.flatMap(value => value.split(',')).map(id => id.trim()).filter(id => id !== '')
+  // Only the site's own hosts by default; a third party is opted in with --include.
+  const { operations, skippedHosts } = selectOperations(analysis, { include: flags.include, exclude: flags.exclude, operationIds })
   const report = await checkOperations({
-    operations: analysis.operations.filter(operation => wanted(operation.host)),
+    operations,
+    skippedHosts,
+    staleInputs: volatileInputs(analysis),
     config: config.probe,
     toolVersion: VERSION,
-    operationIds: flags.operations?.flatMap(value => value.split(',')).map(id => id.trim()).filter(id => id !== ''),
+    operationIds,
     redactText,
     log: flags.json
       ? undefined
@@ -69,7 +72,7 @@ const checkCommand: CommandRegistrar = (program) => {
   program
     .command('check')
     .description('replay safe requests against the live site and compare each answer with its response schema, to detect API drift; writes check.json. Exit code 0 no drift, 1 drift, 2 error')
-    .option('--include <host>', 'only check this host (glob, repeatable)', collect)
+    .option('--include <host>', 'check these hosts, third-party ones too (glob, repeatable); by default only the site\'s own hosts are checked', collect)
     .option('--exclude <host>', 'skip this host (glob, repeatable)', collect)
     .option('--operations <ids>', 'only these operation ids (comma separated, repeatable)', collect)
     .option('--max-rps <n>', 'requests per second', parseRate)
