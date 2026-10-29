@@ -44,7 +44,8 @@ function valueAt(root: unknown, path: string): unknown {
 /** A command module adds itself to the program. */
 export type CommandRegistrar = (program: Command) => void
 
-function createProgram(registrars: CommandRegistrar[] = []): Command {
+/** The CLI with its built-in commands and `registrars`' commands; `run` parses argv with it. */
+export function createProgram(registrars: CommandRegistrar[] = []): Command {
   const program = new Command()
     .name('site-to-api')
     .description('Capture a website\'s traffic once and get OpenAPI specs, request flows and a typed client for coding agents.')

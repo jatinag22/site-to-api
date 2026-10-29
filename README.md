@@ -346,6 +346,25 @@ claude mcp add pinewood -e SITE_API_COOKIE='…' -- npx tsx ./api-handoff/client
 
 `api-handoff/client/mcp/README.md` lists its settings and a JSON configuration for other clients.
 
+### Claude Code plugin and agent skill
+
+The repository is also a Claude Code plugin marketplace. The plugin adds the `site-to-api` MCP
+server above (on the project's `api-handoff/`), the commands `/site-to-api:capture` (Chrome,
+window minimized), `/site-to-api:build`, `/site-to-api:probe` and `/site-to-api:check`, and a skill
+that walks an agent through capture, reading the handoff folder, writing the wrapper and the
+safety rules. Nothing is published yet, so install it from a clone (the `site-to-api` CLI must be
+on your `PATH`, see [Install](#install)):
+
+```sh
+claude plugin marketplace add ./site-to-api      # the path of your clone
+claude plugin install site-to-api@site-to-api
+```
+
+Inside Claude Code, `/plugin marketplace add ./site-to-api` and `/plugin install
+site-to-api@site-to-api` do the same. For other agents (Cursor, Codex, anything that reads Agent
+Skills), the same skill is a plain `skills/site-to-api/SKILL.md`; copy that folder into the
+agent's skills directory, or `npx skills add <path-or-repo> -s site-to-api`.
+
 ## How it compares
 
 Based on each project's README as of October 2026.
