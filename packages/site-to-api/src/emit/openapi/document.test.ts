@@ -644,6 +644,26 @@ describe('dispatcher functions (decision 0039)', () => {
     ])
   })
 
+  it('keeps a valid document for namespaced values', async () => {
+    const call = (route: string, response: unknown): Exchange => exchange({
+      url: `https://api.example.test/index.php?route=${encodeURIComponent(route)}`,
+      responseBody: jsonBody(response),
+    })
+    const namespaced = graphqlSpecYaml([
+      call('user/get', {
+        user: { name: 'a' },
+      }),
+      call('user:list', {
+        users: [
+          { name: 'a', email: 'b' },
+        ],
+      }),
+    ], 'api.example.test')
+    const result = await validate(namespaced)
+    expect(result.errors ?? []).toEqual([])
+    expect(Object.keys(parse(namespaced).paths)).toEqual(['/index.php#user:list', '/index.php#user/get'])
+  })
+
   it('describes the dispatcher in x-site-to-api-dispatch and pins its value', () => {
     const document = parse(yaml)
     const quote = document.paths['/api/quote#getSymbolData'].get

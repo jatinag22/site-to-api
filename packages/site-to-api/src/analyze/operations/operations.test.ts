@@ -1060,4 +1060,51 @@ describe('buildOperations: dispatcher endpoints (decision 0039)', () => {
     expect(paths(operations)).toEqual(['GET /api/quote'])
     expect(operations[0]?.dispatch).toBeUndefined()
   })
+
+  it('names no function after a strict-mode reserved word or a name the client declares', () => {
+    const values = [
+      'static',
+      'let',
+      'await',
+      'sdk',
+      'fetchWithoutFragment',
+      'options',
+      'getQuote',
+    ]
+    const operations = buildOperations(values.map((value, index) => quote({ action: value }, {
+      [`field${index}`]: { [`inner${index}`]: index },
+    })), { sourceRoutes: [] })
+    expect(operations.map(operation => operation.operationId).sort()).toEqual([
+      'getApiQuoteAwait',
+      'getApiQuoteFetchWithoutFragment',
+      'getApiQuoteLet',
+      'getApiQuoteOptions',
+      'getApiQuoteSdk',
+      'getApiQuoteStatic',
+      'getQuote',
+    ])
+  })
+
+  it('keeps the few requests without the parameter as a plain operation of the endpoint', () => {
+    const calls = ['a', 'b', 'c', 'd'].map((suffix, index) => quote({ functionName: `get${suffix.toUpperCase()}` }, {
+      [`f${suffix}`]: { [`g${suffix}`]: index },
+    }))
+    const operations = buildOperations([
+      ...calls,
+      get('/api/quote', {
+        responseBody: jsonBody({
+          status: { up: true },
+        }),
+      }),
+    ], { sourceRoutes: [] })
+    expect(paths(operations)).toEqual([
+      'GET /api/quote',
+      'GET /api/quote#getA',
+      'GET /api/quote#getB',
+      'GET /api/quote#getC',
+      'GET /api/quote#getD',
+    ])
+    expect(operations[0]?.dispatch).toBeUndefined()
+    expect(operations[0]?.exchanges).toHaveLength(1)
+  })
 })

@@ -20,22 +20,31 @@ those would list one endpoint several times with no gain.
 - **Detection by evidence** (`src/analyze/operations/dispatch`), per endpoint (host + method +
   path template), never on GraphQL requests or WebSocket stand-ins. A parameter is a dispatcher
   when all of these hold:
-  - its name is one of `functionName`, `function`, `fn`, `action`, `method`, `op`, `operation`,
-    `cmd`, `command`, `type`, `api`, `service` (case-insensitive), in the query string, a form
-    field or a top-level JSON field; candidates are tried in that order of location, then by name;
-  - every request of the endpoint sends it once, at that location, as a string;
-  - every value looks like a function name: camelCase, snake_case, dotted or hyphenated words
-    starting with a letter, at most 64 characters, with no run of four digits (ids, dates), not a
-    single upper-case word (`RELIANCE`, a symbol), not hex with a digit, and not a format or
-    order word (`json`, `xml`, `csv`, `html`, `asc`, `desc`...; one such value rules the
-    parameter out);
+  - its name is a strong candidate (`functionName`, `function`, `fn`, `action`, `wc-ajax`,
+    `method`, `op`, `operation`, `cmd`, `command`) or a weak one (`act`, `api`, `call`, `do`,
+    `route`, `service`, `task`, `type`), case-insensitive, in the query string, a form field or
+    a top-level JSON field; candidates are tried in that order of location, then by name. `mode`
+    is not one: it nearly always picks a view;
+  - at least 80% of the endpoint's requests send it once, at that location, as a string; the
+    requests without it stay one plain operation at the endpoint path;
+  - every value sent looks like a function name: camelCase, snake_case, dotted, hyphenated or
+    namespaced (`user/get`, `user:get`) words starting with a letter, at most 64 characters,
+    with no run of four digits (ids, dates), not hex with a digit, and not a format or order word
+    (`json`, `xml`, `csv`, `html`, `asc`, `desc`...; one such value rules the parameter out). A
+    single upper-case word (`RELIANCE`) is a symbol under a weak name, but a code
+    (`cmd=LIST`) under a strong one;
   - there are at least two values, and at least half of the value pairs (and at least one) differ:
-    they send different parameter names (at any location; for JSON-RPC the keys or the arity of
-    `params`, without the envelope fields), or their responses are both readable and do not come
-    from one template (0035's structure comparison: Jaccard similarity of key paths below the
-    envelope). Unreadable responses never count as a difference;
-  - `method` needs `jsonrpc` or `id` beside it at the same location in every request, so a
-    payment `method` or an HTTP method override is not one;
+    one function requires a parameter the other never sent (required: sent by every request of
+    the function; a function captured once has no required parameters, so optional parameters
+    such as `page` or `q` never split a filter: `action=active&page=2` and `action=archived`, or
+    `action=search&q=foo` and `action=trending`, stay one operation), or their responses are both
+    readable and do not come from one template (0035's structure comparison: Jaccard similarity
+    of key paths below the envelope). Unreadable responses never count as a difference. For
+    JSON-RPC the keys or the arity of `params` are the parameters, without the envelope fields;
+  - `method` is a dispatcher only in a JSON-RPC body: `jsonrpc` in every request, or (JSON-RPC
+    1.0) `id` and `params` with a `result` or `error` response. An `id` and a `method` alone are
+    a payment or a form, not a call. With `jsonrpc`, distinct method names are enough evidence,
+    so `eth_getBalance` and `eth_getCode` with the same `params` are two functions;
   - `type`, the most common filter name, needs three or more values with every pair of responses
     readable and unlike.
 - **One operation per value**, with its own parameters, schemas, examples and flows. The spec path
@@ -43,8 +52,13 @@ those would list one endpoint several times with no gain.
   never sent, the key is stable as captures add functions, and the runtime's
   `fetchWithoutFragment` already strips it (with the query string hey-api writes after it). The
   operation id is the camel-cased value (`getSymbolData`); when another operation of the host
-  would get the same id, or the value is a JavaScript reserved word, it is the endpoint's id with
-  the value appended (`getApiQuoteDelete`). Summaries read `Function getSymbolData of GET
+  would get the same id, or the value cannot name a function in a generated module (an
+  ECMAScript or strict-mode reserved word such as `delete`, `static`, `let` or `await`, `eval`,
+  `arguments`, or a name `graphql.ts` and `dispatch.ts` import or declare: `sdk`, `client`,
+  `Options`, `fetchWithoutFragment`, `graphqlQuerySerializer`, `options`, `rest`), it is the
+  endpoint's id with the value appended (`getApiQuoteDelete`, `getApiAjaxStatic`). One check
+  (`isUsableFunctionName` in `src/emit/naming.ts`) serves the operations stage and `gen`, which
+  gives such an operation from an older spec no wrapper and says so. Summaries read `Function getSymbolData of GET
   /api/... (functionName=getSymbolData). Returns ...`.
 - **Schemas**: within one function the dispatcher is a required `const` with a `default`; the
   other parameters keep their inferred schemas.
@@ -62,15 +76,21 @@ those would list one endpoint several times with no gain.
 - **Probe** keeps the method rule: a GET function is replayed like any GET, at the endpoint
   without the fragment. A function sent with any other method is skipped unless
   `--unsafe-methods`, whatever its name: as in 0027, a name such as `getQuote` is no evidence
-  that a call only reads. A name can only stop a replay: the state-changing words (`delete`,
-  `logout`...) apply to the spec path, which holds the value.
+  that a call only reads. A name can only stop a replay. Because every GET function is now
+  replayed on its own, its value is checked word by word (camelCase, `_`, `-`, `.`, `/` and `:`
+  split words) against write words: `add to cart`, `clear`, `empty`, `subscribe`,
+  `unsubscribe`, `trash`, `like`, `unlike`, `vote`, `follow`, `unfollow`, `purchase`,
+  `checkout`, `order`, `pay`, `send`, `submit`, `apply`, `logout`/`log out`, `signout`/`sign
+  out`, `reset`, plus probe's path words (`delete`, `remove`, `cancel`, `confirm`, `activate`,
+  `verify`, `revoke`). `addToCart`, `wc_empty_cart` and `post.like` are skipped; `getOrders` and
+  `likely` are not, since only whole words match (`getOrder` is skipped).
 
 ## Consequences
 Every captured function of a dispatcher endpoint is documented, typed and callable on its own,
 and the NSE quote call is in the output. Functions the capture never called are not listed
 (the site's code is not read for dispatcher values). The rule is a heuristic: a filter parameter
-with one of the candidate names whose values happen to need different parameters (`op=range`
-with `from`/`to` beside `op=all`) is split, and a dispatcher whose functions all take the same
+with one of the candidate names whose values each require their own parameters across several
+requests (`op=range` with `from`/`to` every time beside `op=all`) is split, and a dispatcher whose functions all take the same
 parameters and answer the same envelope (`{ ok, data }` with scalar data) is not. POST
 dispatchers such as `admin-ajax.php` are never probed by default, even for functions that only
 read.

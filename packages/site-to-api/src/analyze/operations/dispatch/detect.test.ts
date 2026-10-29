@@ -63,6 +63,15 @@ function nse(): Exchange[] {
   ]
 }
 
+/** A list response with one row: every value of a filter answers this shape. */
+function results(title: string): unknown {
+  return {
+    results: [
+      { id: 1, title },
+    ],
+  }
+}
+
 describe('detectDispatcher', () => {
   it('finds NSE\'s functionName dispatcher, one group per value', () => {
     expect(summary(detectDispatcher(nse()))).toEqual({
@@ -270,19 +279,169 @@ describe('detectDispatcher', () => {
       }),
     ]
     expect(detectDispatcher(pairOf('123', '456'))).toBeNull()
-    expect(detectDispatcher(pairOf('RELIANCE', 'TCS'))).toBeNull()
+    // Upper-case codes are symbols under a weak name such as `service`.
+    expect(detectDispatcher([
+      get({ service: 'RELIANCE', x: '1' }, {
+        first: { a: 1 },
+      }),
+      get({ service: 'TCS' }, {
+        second: { b: 2 },
+      }),
+    ])).toBeNull()
     expect(detectDispatcher(pairOf('550e8400-e29b-41d4-a716-446655440000', 'getX'))).toBeNull()
     expect(detectDispatcher(pairOf('deadbeef42', 'getX'))).toBeNull()
     expect(detectDispatcher(pairOf('order20240101', 'getX'))).toBeNull()
     expect(detectDispatcher(pairOf('buy milk today', 'getX'))).toBeNull()
   })
 
-  it('needs every request to send the parameter', () => {
+  it('leaves up to a fifth of the requests without the parameter to a plain operation', () => {
     const calls = nse()
-    calls.push(get({ symbol: 'RELIANCE' }, {
+    const stray = get({ symbol: 'RELIANCE' }, {
       other: { shape: 1 },
+    })
+    calls.push(stray)
+    const found = detectDispatcher(calls)
+    expect(found?.parameter).toBe('functionName')
+    expect(found?.rest).toEqual([stray])
+    calls.push(get({ symbol: 'TCS' }, {
+      other: { shape: 2 },
     }))
     expect(detectDispatcher(calls)).toBeNull()
+  })
+
+  it('does not split a filter whose values differ only in optional parameters', () => {
+    const orders = (rows: Array<{ id: number, total: number }>): unknown => ({ orders: rows })
+    expect(detectDispatcher([
+      get({ action: 'active', page: '2' }, orders([
+        { id: 1, total: 2 },
+      ])),
+      get({ action: 'archived' }, orders([
+        { id: 2, total: 3 },
+      ])),
+    ])).toBeNull()
+    expect(detectDispatcher([
+      get({ action: 'search', q: 'foo' }, results('a')),
+      get({ action: 'trending' }, results('c')),
+    ])).toBeNull()
+  })
+
+  it('splits on a parameter every request of one function sends and the other never does', () => {
+    expect(detectDispatcher([
+      get({ op: 'range', from: '1', to: '5' }, results('a')),
+      get({ op: 'range', from: '2', to: '9' }, results('b')),
+      get({ op: 'all' }, results('c')),
+    ])?.parameter).toBe('op')
+  })
+
+  it('does not take an id and a method without a JSON-RPC envelope for JSON-RPC', () => {
+    const pay = (id: number, method: string, body: Record<string, string>, response: unknown): Exchange => exchange({
+      method: 'POST',
+      url: 'https://shop.example.test/api/pay',
+      requestBody: jsonBody({ id, method, ...body }),
+      responseBody: jsonBody(response),
+    })
+    expect(detectDispatcher([
+      pay(1, 'card', { cardNumber: '4111' }, {
+        card: { authorised: true },
+      }),
+      pay(2, 'paypal', { email: 'a@b.test' }, {
+        paypal: { redirect: '/x' },
+      }),
+    ])).toBeNull()
+  })
+
+  it('takes JSON-RPC 1.0 by id, params and a result envelope', () => {
+    const rpc = (id: number, method: string, params: unknown[], result: unknown): Exchange => exchange({
+      method: 'POST',
+      url: 'https://node.example.test/',
+      requestBody: jsonBody({ id, method, params }),
+      responseBody: jsonBody({ id, result, error: null }),
+    })
+    expect(detectDispatcher([
+      rpc(1, 'getblockchaininfo', [], { blocks: 10, headers: 10 }),
+      rpc(2, 'getblock', ['abc'], { hash: 'abc', height: 10 }),
+    ])?.parameter).toBe('method')
+  })
+
+  it('splits versioned JSON-RPC methods with the same params on their names alone', () => {
+    const rpc = (id: number, method: string): Exchange => exchange({
+      method: 'POST',
+      url: 'https://node.example.test/rpc',
+      requestBody: jsonBody({
+        jsonrpc: '2.0',
+        id,
+        method,
+        params: ['0xabc', 'latest'],
+      }),
+      responseBody: jsonBody({ jsonrpc: '2.0', id, result: '0x0' }),
+    })
+    expect(summary(detectDispatcher([
+      rpc(1, 'eth_getBalance'),
+      rpc(2, 'eth_getCode'),
+    ]))).toEqual({
+      parameter: 'method',
+      in: 'json',
+      values: [
+        ['eth_getBalance', 1],
+        ['eth_getCode', 1],
+      ],
+    })
+  })
+
+  it('knows WooCommerce, task and route names, namespaced values and upper-case codes under strong names', () => {
+    const call = (query: Record<string, string>, response: unknown): Exchange => get(query, response)
+    for (const name of [
+      'wc-ajax',
+      'act',
+      'task',
+      'do',
+      'route',
+      'call',
+    ]) {
+      expect(detectDispatcher([
+        call({ [name]: 'get_refreshed_fragments' }, {
+          fragments: { mini: 'x' },
+        }),
+        call({ [name]: 'update_order_review', zip: '1' }, {
+          review: [
+            { line: 1, total: 2 },
+          ],
+        }),
+      ])?.parameter, name).toBe(name)
+    }
+    expect(summary(detectDispatcher([
+      call({ route: 'user/get', id: '1' }, {
+        user: { name: 'a' },
+      }),
+      call({ route: 'user:list' }, {
+        users: [
+          { name: 'a', email: 'b' },
+        ],
+      }),
+      call({ route: 'cart.get' }, {
+        cart: {
+          items: [
+            { sku: 'x' },
+          ],
+        },
+      }),
+    ]))).toMatchObject({
+      values: [
+        ['cart.get', 1],
+        ['user:list', 1],
+        ['user/get', 1],
+      ],
+    })
+    expect(detectDispatcher([
+      call({ cmd: 'GET_QUOTE', symbol: 'A' }, {
+        quote: { price: 1 },
+      }),
+      call({ cmd: 'LIST' }, {
+        items: [
+          { id: 1, name: 'x' },
+        ],
+      }),
+    ])?.parameter).toBe('cmd')
   })
 
   it('never looks at GraphQL requests or WebSocket stand-ins', () => {

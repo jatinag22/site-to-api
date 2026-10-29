@@ -5,6 +5,7 @@ import type { DispatchOperation, Exchange, Operation, PathParam, SourceRoute } f
 import type { GraphqlExchange } from '../graphql'
 import type { Dispatcher } from './dispatch'
 import type { Evidence, Marks } from './templates'
+import { isUsableFunctionName } from '../../emit/naming'
 import { isChallengeAnswer } from '../classify'
 import { graphqlGroupKey, graphqlOperationId, graphqlOperationOf, graphqlSpecPath, graphqlSummary, isGraphqlExchange } from '../graphql'
 import { inferStringSchema } from '../schema'
@@ -348,15 +349,24 @@ function vendorStepMarks(exchange: Exchange, segments: readonly string[], marks:
  * The operation of one host + method + template, or one per function when a parameter picks the
  * function (decision 0039).
  */
-function templateOperations(method: string, group: Classified[], names: Map<number, string>): Operation[] {
+function templateOperations(method: string, group: Classified[], names: Map<number, string>, dispatch = true): Operation[] {
   const path = templateFor(group[0]!.segments, names)
   const kind = kindOf(group)
-  const groupExchanges = group.map(member => member.exchange)
-  const dispatcher = kind === 'api'
-    ? detectDispatcher(groupExchanges)
+  const dispatcher = dispatch && kind === 'api'
+    ? detectDispatcher(group.map(member => member.exchange))
     : null
-  if (dispatcher)
-    return dispatchOperations(dispatcher, group, names, path)
+  if (dispatcher) {
+    // Requests without the dispatcher parameter stay one plain operation on the endpoint.
+    const stray = new Set(dispatcher.rest)
+    const rest = group.filter(member => stray.has(member.exchange))
+    return [
+      ...dispatchOperations(dispatcher, group, names, path),
+      ...(rest.length > 0
+        ? templateOperations(method, rest, names, false)
+        : []),
+    ]
+  }
+  const groupExchanges = group.map(member => member.exchange)
   return [
     emptyOperation({
       host: group[0]!.exchange.request.host,
@@ -591,57 +601,13 @@ function baseOperationId(operation: Operation): string {
   return operationIdFor(operation.method, operation.path)
 }
 
-/**
- * Words a dispatcher value cannot be named by on its own: JavaScript reserved words, which no SDK
- * function can be called, and names the client already uses.
- */
-const NOT_AN_ID = new Set([
-  'break',
-  'case',
-  'catch',
-  'class',
-  'client',
-  'const',
-  'continue',
-  'debugger',
-  'default',
-  'delete',
-  'do',
-  'else',
-  'enum',
-  'export',
-  'extends',
-  'false',
-  'finally',
-  'for',
-  'function',
-  'if',
-  'import',
-  'in',
-  'instanceof',
-  'new',
-  'null',
-  'return',
-  'super',
-  'switch',
-  'this',
-  'throw',
-  'true',
-  'try',
-  'typeof',
-  'var',
-  'void',
-  'while',
-  'with',
-  'yield',
-])
-
 /** `getSymbolData` for that value; empty when the value alone cannot name an operation. */
 function dispatchOperationId(dispatch: DispatchOperation): string {
   const id = camelCase(dispatch.value)
-  return NOT_AN_ID.has(id)
-    ? ''
-    : id
+  // A value such as `static`, `sdk` or `options` cannot name the client function on its own.
+  return isUsableFunctionName(id)
+    ? id
+    : ''
 }
 
 /** The endpoint's id with the value after it: `getApiNextApiApiClientGetQuoteApiGetSymbolData`. */

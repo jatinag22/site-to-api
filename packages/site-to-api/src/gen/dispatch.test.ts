@@ -139,6 +139,6 @@ describe('renderDispatchModule', () => {
         operation({ operationId: '1-2' }),
       ],
     }, warnings)).toEqual([])
-    expect(warnings[0]).toMatch(/has no plain SDK function name/)
+    expect(warnings[0]).toMatch(/has no SDK function name a wrapper can be declared with/)
   })
 })

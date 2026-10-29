@@ -260,7 +260,9 @@ and why (per-host limit, data-changing method, session no longer accepted, block
 skipped and why. GraphQL queries count as safe whatever the method; GraphQL mutations and
 operations of unknown type are skipped unless `--unsafe-methods` (then sent once), and
 subscriptions are never replayed (decision 0027). Dispatcher functions follow their HTTP method:
-a function sent with POST is skipped unless `--unsafe-methods`, whatever its name (decision 0039).
+a function sent with POST is skipped unless `--unsafe-methods`, whatever its name, and a function
+whose value has a write word in it (`addToCart`, `wc_empty_cart`, `subscribe`...) is never
+replayed (decision 0039).
 
 ## `build.json`
 
