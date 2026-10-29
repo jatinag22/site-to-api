@@ -65,6 +65,46 @@ describe('saveSession', () => {
     expect(result.warnings.some(warning => warning.includes('did not close within'))).toBe(true)
   })
 
+  it('checks the HAR Playwright writes once the ended browser lets the context close (Amazon)', async () => {
+    const late = path.join(dir, 'late.har')
+    let release = (): void => {}
+    const closing = new Promise<void>((resolve) => {
+      release = () => {
+        void writeFile(late, JSON.stringify({
+          log: {
+            entries: [
+              { request: {} },
+              { request: {} },
+            ],
+          },
+        })).then(resolve)
+      }
+    })
+    const save = input({
+      pages: () => [],
+      close: () => closing,
+    }, {
+      harPath: late,
+      kill: async () => {
+        release()
+      },
+    })
+    const result = await saveSession(save)
+    expect(result).toMatchObject({ closed: false, entries: 2 })
+    expect(result.warnings.some(warning => warning.includes('without writing'))).toBe(false)
+  })
+
+  it('says the HAR was not readable yet, not that it was never written, after a forced end', async () => {
+    const result = await saveSession(input({
+      pages: () => [],
+      close: never,
+    }, {
+      harPath: path.join(dir, 'missing.har'),
+    }))
+    expect(result.har).toBeNull()
+    expect(result.warnings.some(warning => warning.includes('was not readable when the session was saved, after the browser was ended'))).toBe(true)
+  })
+
   it('gives up waiting at once on a second stop signal', async () => {
     const first = new AbortController()
     const second = new AbortController()

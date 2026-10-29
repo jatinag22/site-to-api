@@ -152,18 +152,31 @@ async function settleAll(input: SaveInput, warnings: string[]): Promise<Incomple
   return incomplete
 }
 
+interface ClosedBrowser {
+  closed: boolean
+  incomplete: Incomplete | null
+}
+
 /** Closes pages, then the context; kills the browser when that times out or a second stop comes. */
-async function closeBrowser(input: SaveInput, warnings: string[]): Promise<{ closed: boolean, incomplete: Incomplete | null }> {
+async function closeBrowser(input: SaveInput, warnings: string[]): Promise<ClosedBrowser> {
   const { closeMs } = input.timeouts
   // Pages first, without beforeunload: closing the context waits forever on a page whose main
   // thread never yields, and the HAR is only written once the context has closed.
   const pages = await waitBounded(Promise.all(input.context.pages().map(page => page.close({ runBeforeUnload: false }))), closeMs, input.stopper.forced)
-  const closed = pages === 'stopped'
+  const closing = pages === 'stopped'
+    ? null
+    : input.context.close()
+  const closed = closing === null
     ? 'stopped'
-    : await waitBounded(input.context.close(), closeMs, input.stopper.forced)
+    : await waitBounded(closing, closeMs, input.stopper.forced)
   if (closed === 'done')
     return { closed: true, incomplete: null }
   await waitBounded(input.kill(), KILL_MS, null)
+  // Playwright writes the HAR when the context's close finishes, which ending the browser lets
+  // happen: wait for it (bounded) so the HAR is checked as it ends up, not before it is written.
+  // On Amazon the check ran first and reported "0 requests" for a 718-request HAR.
+  if (closing !== null)
+    await waitBounded(closing, closeMs, input.stopper.forced)
   if (closed === 'stopped') {
     warnings.push('Stopped waiting for the browser: a second stop signal arrived, so the browser was ended and the HAR may be missing.')
     return {
@@ -199,7 +212,10 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
     const reason = error instanceof Error
       ? error.message
       : String(error)
-    warnings.push(reason)
+    // After a forced end the browser may still be writing; say what is known, not more.
+    warnings.push(browser.closed
+      ? reason
+      : `${input.harPath} was not readable when the session was saved, after the browser was ended (${reason}). If the file is complete afterwards, build reads it; otherwise capture again and end the session by closing the browser window or pressing Ctrl+C.`)
     return {
       entries: 0,
       har: null,

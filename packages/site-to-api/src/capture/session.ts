@@ -266,7 +266,10 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     } satisfies SessionMeta)
     await writeJsonAtomic(path.join(sessionDir, META_FILE), meta)
     warnings.push(...incompleteWarning(sessionId, finalIncomplete))
-    log(`Saved session ${sessionId} to ${sessionDir} (${saved.entries} requests, ${events.count} events, ${meta.scripts.length} scripts).`)
+    const requests = saved.har === null
+      ? 'no readable HAR'
+      : `${saved.entries} requests`
+    log(`Saved session ${sessionId} to ${sessionDir} (${requests}, ${events.count} events, ${meta.scripts.length} scripts).`)
     return { sessionDir, meta, warnings }
   }
   finally {

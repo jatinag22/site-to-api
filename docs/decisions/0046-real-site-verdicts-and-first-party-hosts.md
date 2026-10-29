@@ -1,6 +1,6 @@
 # 0046 Verdicts follow tested calls; trailing slugs; first-party hosts and build assets
 
-Status: Accepted (2026-10-30). Refines 0033, 0035 and 0036.
+Status: Accepted (2026-10-30). Refines 0033, 0035, 0036 and 0037.
 
 ## Context
 A real-site pass found four ways the handoff folder told an agent something the evidence did
@@ -63,6 +63,14 @@ not say:
   `/static/js/`, `/static/css/`, `/static/chunks/`, `/static/media/`, and file names with a
   content hash before `.js`, `.mjs` or `.css`. Code-only routes to such paths are dropped like
   file-system paths.
+
+### The HAR after a forced end
+- Amazon's capture said "0 requests" and "the browser closed without writing traffic.har",
+  while Playwright wrote a 718-request HAR a moment later: it writes the file when the
+  context's close finishes, which ending the browser allows. After ending the browser, saving
+  now waits (bounded, as long as the close wait) for that close before checking the HAR. When
+  the file is still unreadable the warning says so ("was not readable when the session was
+  saved"), and the log says "no readable HAR" instead of "0 requests".
 
 ## Consequences
 - `flows.json` keeps its four verdicts: a host with a browser-only call is `none` and the call
