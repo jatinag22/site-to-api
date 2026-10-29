@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { tickerChannel } from '../../test/channels'
 import { fakeHash, graphqlGet, graphqlPost, graphqlSpecYaml } from '../../test/graphql'
+import { exchange, jsonBody } from '../../test/helpers'
 import { HOSTILE, injected, renderMarkdown } from '../../test/markdown'
 import { buildAsyncApiDocuments } from '../emit/asyncapi'
 import { toYaml } from '../emit/openapi'
@@ -880,4 +881,62 @@ export async function run(baseUrl: string) {
       await rm(dir, { recursive: true, force: true })
     }
   }, 120_000)
+})
+
+describe('generateClient with dispatcher functions (decision 0039)', () => {
+  const HOST = 'api.example.test'
+  // Values that are reserved words in strict mode or names dispatch.ts declares itself.
+  const VALUES = [
+    'sdk',
+    'fetchWithoutFragment',
+    'client',
+    'options',
+    'rest',
+    'static',
+    'let',
+    'await',
+    'eval',
+    'arguments',
+    'interface',
+    'package',
+    'private',
+    'protected',
+    'public',
+    'implements',
+    'getQuote',
+    'user/get',
+    'user:list',
+  ]
+
+  it('writes a dispatch.ts that type-checks whatever the values are called', async () => {
+    const dir = await workspace()
+    try {
+      await rm(path.join(dir, 'handoff', 'specs', 'shop.example.com.yaml'))
+      await writeFile(path.join(dir, 'handoff', 'specs', `${HOST}.yaml`), graphqlSpecYaml(VALUES.map((value, index) => exchange({
+        url: `https://${HOST}/api/ajax?action=${encodeURIComponent(value)}`,
+        responseBody: jsonBody({
+          [`field${index}`]: { [`inner${index}`]: index },
+        }),
+      })), HOST))
+      const result = await generateClient({
+        handoffDir: path.join(dir, 'handoff'),
+        flows,
+      })
+      expect(result.warnings).toEqual([])
+      const dispatch = await readFile(path.join(dir, 'handoff', 'client', 'api_example_test', 'dispatch.ts'), 'utf8')
+      expect(dispatch).toContain('export function getApiAjaxStatic<')
+      expect(dispatch).toContain('export function getApiAjaxSdk<')
+      expect(dispatch).toContain('export function getQuote<')
+      expect(dispatch).toContain('export function userGet<')
+      await writeFile(path.join(dir, 'driver.ts'), `import { createSiteClient } from './handoff/client/index.js'\nexport const call = () => createSiteClient({ host: '${HOST}' }).sdk.getApiAjaxStatic()\n`)
+      const files = [
+        path.join(dir, 'driver.ts'),
+        ...result.files.filter(file => file.endsWith('.ts')).map(file => path.join(dir, 'handoff', file)),
+      ]
+      expect(typeCheck(files)).toBe('')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
 })

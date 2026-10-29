@@ -292,6 +292,10 @@ the persisted-query hash or the document itself; you pass only the variables, ty
 capture: `await sdk.queryArtistOverview({ variables: { uri } })`. GET operations encode
 `variables` as JSON in the query string, as the site does.
 
+Endpoints where one parameter picks the function (`?functionName=getSymbolData`,
+`admin-ajax.php` with `action=`, JSON-RPC `method`) get one function per captured value, which
+sends that parameter itself: `await sdk.getSymbolData({ query: { symbol } })`.
+
 `createSiteClient` configures one shared client per host; calling it again for the same host
 replaces the configuration. Hosts that work with plain HTTP need no browser: leave out `session`, or
 use `tokenSession`. `api-handoff/client/README.md` says what each host needs, which operations are
@@ -309,6 +313,7 @@ Based on each project's README as of October 2026.
 | Output | specs, flows, docs, TS client | client code, many languages | MCP tools, OpenAPI | Python code | OpenAPI |
 | Secrets redacted by default | yes | not documented | not documented | not documented | not documented |
 | GraphQL, one operation per query or mutation | yes | not documented | not documented | not documented | no |
+| Dispatcher endpoints (`action=`, JSON-RPC), one operation per function | yes | not documented | not documented | not documented | no |
 
 ## Responsible use
 
@@ -326,6 +331,9 @@ access controls, and never hides that the browser is automated. See
   GET `variables` are traced only as the whole query value, and an operation whose type neither
   the capture nor the site's code shows stays `unknown` (probe skips it). GraphQL subscriptions
   over WebSockets are documented as channels, not split by operation.
+- Dispatcher endpoints are split only on evidence (different parameters or response shapes per
+  value); functions the capture never called are not listed, and POST functions are not probed
+  unless `--unsafe-methods`.
 - Interactive capture (closing the window to finish) is covered by an abort test but not by an
   automated headful test.
 

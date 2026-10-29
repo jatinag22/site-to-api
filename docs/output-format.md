@@ -22,6 +22,10 @@ The entry point for a coding agent. Generated from a template, no LLM. Sections,
    endpoint (`POST host/path`), one line per GraphQL operation with its type and the evidence for
    it, the persisted hash (or that it sends the document), its top-level variables, the client
    call (`sdk.queryArtistOverview({ variables })`) and its spec path.
+   **Dispatcher endpoints** (only when the capture has one, decision 0039): per endpoint
+   (`GET host/path`), the dispatcher parameter and where it is sent, then one line per function
+   with its own parameters, the client call (`sdk.getSymbolData({ query: { symbol } })`) and its
+   spec path.
    **Real-time channels** (only when the capture has WebSocket traffic): per channel, the URL,
    the AsyncAPI file and channel id, cookies on the upgrade request, the code that opened it, the
    field that names message types, what to send right after connecting (with a redacted example),
@@ -75,6 +79,11 @@ GraphQL operations have a row in their host table like any other operation, with
 `{ variables }` function in the Client column. When the capture has GraphQL requests, a
 **GraphQL operations** section follows the host tables: one table per endpoint with columns
 operation (the GraphQL name), type, persisted hash, variables and client call.
+
+Dispatcher functions (decision 0039) also have a row in their host table, with kind
+`api (function <value>)` and the wrapper call in the Client column. A **Dispatcher endpoints**
+section follows: one table per endpoint, headed with the dispatcher parameter and where it is
+sent, with columns function (the value), operation id, parameters and client call.
 
 When the capture has WebSocket traffic, a final **Real-time channels** table has one row per
 channel: channel id, URL, what to send after connecting, client and server message types, traced
@@ -136,8 +145,14 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
   document (`query`) are `const` with a `default`; `variables` has the operation's own schema.
   GET `variables` and `extensions` are query parameters with `content: application/json` instead
   of `schema`.
+- Dispatcher endpoints (decision 0039): one path item per function, at `<endpoint>#<value>`
+  (`/api/NextApi/apiClient/GetQuoteApi#getSymbolData`). The fragment is never sent. The
+  dispatcher parameter is a required `const` with a `default`; the function's other parameters
+  have its own schemas.
 - Extensions:
   - `x-site-to-api-kind`: `api` | `page` | `bot-protection`
+  - `x-site-to-api-dispatch`: on a dispatcher function, `{ endpoint, parameter, in (query | form
+    | json), value }`
   - `x-site-to-api-graphql`: on a GraphQL operation, `{ endpoint, operationName, operationType
     (query | mutation | subscription | unknown), operationTypeFrom (document | get | source |
     null), persistedQuery ({ version, sha256Hash } | null), hashes (only when more than one was
@@ -214,7 +229,10 @@ otherwise, plus
 `extract<Input>From<Operation>(html)` per value `flows.json` traces to an HTML page,
 `<host>/graphql.ts` when the host has GraphQL operations (one function per operation, named like
 its SDK function, that takes `{ variables }` and sends the operation's constants itself;
-`createSiteClient` puts them in `sdk` in place of hey-api's functions of the same name), and
+`createSiteClient` puts them in `sdk` in place of hey-api's functions of the same name),
+`<host>/dispatch.ts` when the host has dispatcher functions (one wrapper per function that takes
+the SDK options with `query` or `body` holding only the function's own fields and sends the
+dispatcher parameter itself; also in `sdk` in place of the raw functions), and
 `README.md` with setup, the session and auth each host needs (with the same cookie lines as
 `AGENT.md`, read from `x-site-to-api-requires` after `probe`) and, when there are AsyncAPI
 files, each WebSocket channel's URL and the message to send after connecting (the code itself is
@@ -241,7 +259,10 @@ rebuild, reads `probe.json` when it exists and folds it into `flows.json` sessio
 and why (per-host limit, data-changing method, session no longer accepted, blocked by bot protection, answered differently, host unreachable), and
 skipped and why. GraphQL queries count as safe whatever the method; GraphQL mutations and
 operations of unknown type are skipped unless `--unsafe-methods` (then sent once), and
-subscriptions are never replayed (decision 0027).
+subscriptions are never replayed (decision 0027). Dispatcher functions follow their HTTP method:
+a function sent with POST is skipped unless `--unsafe-methods`, whatever its name, and a function
+whose value has a write word in it (`addToCart`, `wc_empty_cart`, `subscribe`...) is never
+replayed (decision 0039).
 
 ## `build.json`
 

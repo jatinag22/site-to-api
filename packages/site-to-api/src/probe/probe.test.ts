@@ -636,3 +636,88 @@ describe('probeOperations: GraphQL (decision 0027)', () => {
     expect(report.operations[0]).toMatchObject({ operationId: 'Rename', bare: 'skipped' })
   })
 })
+
+describe('probeOperations: dispatcher functions (decision 0039)', () => {
+  function dispatchOp(value: string, method: string): Operation {
+    return {
+      ...op(value, method, `/rpc#${value}`, {
+        method,
+        url: `${origin}/rpc?fn=${value}`,
+        responseBody: jsonBody({ a: 1 }),
+      }),
+      dispatch: {
+        endpoint: '/rpc',
+        parameter: 'fn',
+        in: 'query',
+        value,
+        values: [value],
+      },
+    }
+  }
+
+  it('never replays a GET function whose name has a state-changing word in it', async () => {
+    const changing = [
+      'add_to_cart',
+      'add-to-cart',
+      'addToCart',
+      'wc_empty_cart',
+      'clearCache',
+      'post.like',
+      'unlike',
+      'vote',
+      'followUser',
+      'unfollow',
+      'purchase',
+      'checkout',
+      'placeOrder',
+      'pay',
+      'sendMessage',
+      'submitForm',
+      'applyCoupon',
+      'logout',
+      'log_out',
+      'signout',
+      'resetFilters',
+      'subscribe',
+      'unsubscribe',
+      'trash_post',
+    ]
+    const safe = [
+      'getOrders',
+      'getSymbolData',
+      'likely',
+      'getCart',
+    ]
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        ...changing,
+        ...safe,
+      ].map(value => dispatchOp(value, 'GET')),
+    })
+    expect(report.skipped.map(entry => entry.operationId).sort()).toEqual([...changing].sort())
+    expect(report.skipped.find(entry => entry.operationId === 'addToCart')?.reason).toBe('dispatcher function addToCart suggests it changes state (add to cart, subscribe, delete...), so it is never replayed')
+    expect(report.operations.map(result => result.operationId).sort()).toEqual([...safe].sort())
+  })
+
+  it('never replays a POST function on its name alone, nor a GET one whose name changes state', async () => {
+    const before = requests
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        dispatchOp('getQuote', 'POST'),
+        dispatchOp('deletePost', 'GET'),
+      ],
+    })
+    expect(requests).toBe(before)
+    expect(report.skipped).toEqual([
+      {
+        operationId: 'deletePost',
+        reason: expect.stringContaining('changes state'),
+      },
+      { operationId: 'getQuote', reason: 'POST dispatcher function getQuote can change data (its name is no evidence it only reads); pass --unsafe-methods to include it' },
+    ])
+  })
+})

@@ -32,6 +32,7 @@ import {
 } from './pages'
 import { createShield } from './shield'
 import { PIXEL_GIF, STATIC_FILES } from './static'
+import { createStoreApi } from './store-api'
 import { attachTicker, tickPrice } from './ticker'
 
 export interface FixtureSiteOptions {
@@ -130,6 +131,7 @@ function createRoutes(deps: {
 }): Route[] {
   const { catalog, assets, auth, shield, now } = deps
   const graphql = createGraphql(catalog)
+  const storeApi = createStoreApi(catalog)
   const productsById = new Map(catalog.products.map(product => [product.id, product]))
   const livePriceSeq = new Map<number, number>()
 
@@ -227,6 +229,11 @@ function createRoutes(deps: {
       method: 'GET',
       pattern: /^\/api\/graphql$/,
       handler: ctx => graphql.get(ctx),
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/store-api$/,
+      handler: ctx => storeApi(ctx),
     },
     {
       method: 'GET',

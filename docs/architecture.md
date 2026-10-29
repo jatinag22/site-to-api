@@ -36,7 +36,10 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
 3. **operations** (`src/analyze/operations`): groups exchanges into operations by host + method +
    path template. GraphQL requests, recognised by content and split out of batches by
    `src/analyze/graphql` first, become one operation per GraphQL operation instead (decision
-   0027); the source stage reads the site's code for the type of persisted queries. Path parameters come from source route templates, value tracing, variation
+   0027); the source stage reads the site's code for the type of persisted queries. An endpoint
+   where one parameter picks the function (`functionName`, `action`, JSON-RPC `method`), on the
+   evidence of differing parameters or response shapes, becomes one operation per value at
+   `<endpoint>#<value>` (decision 0039). Path parameters come from source route templates, value tracing, variation
    across samples, ID-like segments (UUID, hex, base58, numbers, upper-case slugs) and sibling
    paths whose word values the capture shows are data (decision 0035).
 4. **schema** (`src/analyze/schema`): infers JSON Schema for query, headers, request bodies and

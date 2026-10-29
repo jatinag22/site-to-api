@@ -76,6 +76,7 @@ function host(overrides: Partial<HostSpec> = {}): HostSpec {
     probedRequires: [],
     sentContentTypes: {},
     graphql: [],
+    dispatch: [],
     ...overrides,
   }
 }
@@ -242,6 +243,37 @@ describe('renderIndexModule', () => {
     // Every relative specifier carries an extension, so `nodenext` resolution accepts it.
     for (const [, specifier] of code.matchAll(/from '(\.[^']*)'/g))
       expect(specifier).toMatch(/\.js$/)
+  })
+})
+
+describe('dispatcher wrappers (decision 0039)', () => {
+  const dispatch = [
+    {
+      operationId: 'getSymbolData',
+      method: 'GET',
+      path: '/api/quote#getSymbolData',
+      endpoint: '/api/quote',
+      parameter: 'functionName',
+      in: 'query' as const,
+      value: 'getSymbolData',
+      argument: 'query' as const,
+      argumentRequired: true,
+      optionsRequired: true,
+    },
+  ]
+
+  it('puts the wrappers in `sdk` in place of the raw functions', () => {
+    const code = renderIndexModule([
+      host({ dispatch }),
+    ], [])
+    expect(code).toContain(`import * as a_example_comDispatch from './a_example_com/dispatch.js'`)
+    expect(code).toContain('    sdk: { ...a_example_com, ...a_example_comDispatch },')
+  })
+
+  it('lists the functions per endpoint in the README', () => {
+    expect(renderReadme([
+      host({ dispatch }),
+    ], [], [])).toContain('- Dispatcher `GET /api/quote` (`functionName` picks the function): `sdk.getSymbolData({ query })`. Each sends `functionName` itself.')
   })
 })
 

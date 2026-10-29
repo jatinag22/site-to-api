@@ -730,3 +730,34 @@ describe('inferOperationSchemas', () => {
     expect(inferOperationSchemas([sourceOnly], redactor)[0]).toBe(sourceOnly)
   })
 })
+
+describe('inferOperationSchemas: dispatcher functions (decision 0039)', () => {
+  it('pins a JSON-RPC method as a required constant and leaves the rest as inferred', () => {
+    const calls = [1, 2].map(id => exchange({
+      method: 'POST',
+      url: 'https://node.test/rpc',
+      requestBody: jsonBody({
+        jsonrpc: '2.0',
+        id,
+        method: 'eth_getBalance',
+        params: ['0xabc', 'latest'],
+      }),
+      responseBody: jsonBody({ jsonrpc: '2.0', id, result: '0x0' }),
+    }))
+    const result = infer(calls, {
+      method: 'POST',
+      path: '/rpc#eth_getBalance',
+      dispatch: {
+        endpoint: '/rpc',
+        parameter: 'method',
+        in: 'json',
+        value: 'eth_getBalance',
+        values: ['eth_blockNumber', 'eth_getBalance'],
+      },
+    })
+    const schema = result.requestBody?.schema
+    expect(schema?.properties?.method).toEqual({ type: 'string', const: 'eth_getBalance', default: 'eth_getBalance' })
+    expect(schema?.required).toContain('method')
+    expect(schema?.properties?.id?.type).toBe('integer')
+  })
+})

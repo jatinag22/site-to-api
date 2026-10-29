@@ -104,6 +104,24 @@ export interface GraphqlOperation {
   sent: { body: string[], query: string[] }
 }
 
+/**
+ * What makes an operation one function of a dispatcher endpoint (decision 0039): one URL where a
+ * parameter picks the function (`functionName=getSymbolData`, `action=heartbeat`, JSON-RPC
+ * `method`). Each value gets its own operation, with `path` set to `<endpoint>#<value>`.
+ */
+export interface DispatchOperation {
+  /** The real path the requests go to, e.g. `/api/NextApi/apiClient/GetQuoteApi`. */
+  endpoint: string
+  /** The dispatcher parameter, e.g. `functionName`. */
+  parameter: string
+  /** Where it is sent: the query string, a form field, or a top-level field of a JSON body. */
+  in: 'query' | 'form' | 'json'
+  /** The value this operation sends, e.g. `getSymbolData`. */
+  value: string
+  /** Every value the capture showed on the endpoint, sorted (the operation's siblings). */
+  values: string[]
+}
+
 export interface Operation {
   /** Stable, readable id, e.g. `getApiIpoDetail`. Unique per host. */
   operationId: string
@@ -141,6 +159,8 @@ export interface Operation {
   exchanges: Exchange[]
   /** Set when the operation is one GraphQL operation (decision 0027). */
   graphql?: GraphqlOperation
+  /** Set when the operation is one function of a dispatcher endpoint (decision 0039). */
+  dispatch?: DispatchOperation
 }
 
 /** Where a value that a WebSocket client sends came from (decision 0023). */

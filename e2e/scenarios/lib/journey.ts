@@ -60,6 +60,7 @@ export async function shoppingJourney(page: Page, baseUrl: string, choices: Jour
     await page.getByRole('link', { name: store }).click()
     await page.locator('#store-stock li').first().waitFor()
     await page.locator('#store-hours-live').filter({ hasText: 'Open now' }).waitFor()
+    await page.locator('#store-info-live').filter({ hasText: 'Manager:' }).waitFor()
   }
 
   const download = page.waitForEvent('download')
