@@ -193,6 +193,48 @@ export interface ChannelValueLink {
   samples: number
 }
 
+/**
+ * Framing protocols the channels stage decodes (decision 0038). `graphql-ws` covers both
+ * `graphql-transport-ws` and the older `subscriptions-transport-ws` (see the channel's `version`).
+ */
+export type ChannelProtocolId = 'socket.io' | 'signalr' | 'stomp' | 'graphql-ws' | 'phoenix' | 'centrifugo'
+
+/** How each protocol is called in prose. */
+export const CHANNEL_PROTOCOL_LABELS: Readonly<Record<ChannelProtocolId, string>> = {
+  'socket.io': 'Socket.IO',
+  'signalr': 'SignalR',
+  'stomp': 'STOMP',
+  'graphql-ws': 'GraphQL over WebSocket',
+  'phoenix': 'Phoenix',
+  'centrifugo': 'Centrifugo',
+}
+
+/**
+ * What a client message does, from its protocol frame or the words of its name (decision 0030):
+ * sets up the connection (`init`, `auth`, `subscribe`), tears it down (`unsubscribe`), keeps it
+ * alive (`keepalive`) or carries data.
+ */
+export type MessageRole = 'init' | 'auth' | 'subscribe' | 'unsubscribe' | 'keepalive' | 'data'
+
+/** How a message type was read from a framing protocol (decision 0038). */
+export interface ChannelMessageProtocol {
+  protocol: ChannelProtocolId
+  /**
+   * The protocol's frame type: `event`, `ack`, `connect`, `ping` (Socket.IO), `invocation`,
+   * `completion` (SignalR), `SEND`, `MESSAGE` (STOMP), `subscribe`, `next` (graphql-ws), `push`
+   * (Phoenix), `publication` (Centrifugo).
+   */
+  frame: string
+  /**
+   * The protocol-level name: the Socket.IO event, SignalR target, STOMP destination, GraphQL
+   * operation or Phoenix `topic:event`. Identifiers in it are `{id}`; it is redacted.
+   */
+  name: string
+  role: MessageRole
+  /** The frame as it goes on the wire, with `<payload>` where the payload goes. Redacted. */
+  wire: string
+}
+
 /** A group of WebSocket messages that share a direction and a discriminator value. */
 export interface ChannelMessage {
   /** Unique within the channel and usable as an AsyncAPI key: `sendSubscribe`, `receiveTick`. */
@@ -204,7 +246,14 @@ export interface ChannelMessage {
    * direction's JSON messages share no such field, and for text and binary frames.
    */
   discriminator: { field: string, value: string } | null
-  format: 'json' | 'text' | 'binary'
+  /** Set when the frames were read with a framing protocol; then it names the message, not `discriminator`. */
+  protocol: ChannelMessageProtocol | null
+  /**
+   * `json` for JSON text (or a protocol payload that is JSON), `text` for other text,
+   * `msgpack` and `protobuf` for binary frames that decoded fully (decision 0038), `binary` for
+   * the rest.
+   */
+  format: 'json' | 'text' | 'binary' | 'msgpack' | 'protobuf'
   /** Frames seen across all connections. */
   count: number
   /**
@@ -212,11 +261,11 @@ export interface ChannelMessage {
    * a field only later frames have can be missing. Null for text and binary frames.
    */
   schemaSamples: number | null
-  /** JSON Schema of the message, for JSON messages; null otherwise. */
+  /** JSON Schema of the message, for JSON, MessagePack and protobuf messages; null otherwise. */
   schema: JsonSchema | null
   /** For text frames: value-free shape descriptions of the frames, most common first. */
   shapes: string[]
-  /** Redacted examples, at most `config.redact.maxExamples`; empty for binary frames. */
+  /** Redacted examples, at most `config.redact.maxExamples`; empty for undecoded binary frames. */
   examples: unknown[]
   /** Values in this message traced to earlier HTTP responses or typing (client messages only). */
   links: ChannelValueLink[]
@@ -228,6 +277,45 @@ export interface ChannelMessage {
  * type was recognised and the first message the client sent is listed instead.
  */
 export type HandshakeRole = 'init' | 'auth' | 'subscribe' | 'other'
+
+/** The framing protocol of a channel and what showed it (decision 0038). */
+export interface ChannelProtocol {
+  id: ChannelProtocolId
+  /**
+   * `Engine.IO 3` / `Engine.IO 4` (Socket.IO), `graphql-transport-ws` / `subscriptions-transport-ws`
+   * (graphql-ws), `json 1` (SignalR), `1.2` (STOMP), `2.0.0` (Phoenix); null when not shown.
+   */
+  version: string | null
+  /** What showed it, e.g. `URL path ends in /socket.io/`, `subprotocol graphql-transport-ws`, `frames`. */
+  evidence: string[]
+  /** Set when the frames were wrapped in another framing, e.g. `sockjs`. */
+  wrapper: 'sockjs' | null
+}
+
+/**
+ * Facts about how connections to a channel were opened, from the upgrade request and the first
+ * messages (decision 0038). Names only for cookies and URL tokens; every value is redacted.
+ */
+export interface ChannelConnectionFacts {
+  /** `Origin` header values the browser sent on the upgrade request. */
+  origins: string[]
+  /** `Sec-WebSocket-Protocol` values the browser asked for and the server picked. */
+  subprotocols: { requested: string[], selected: string[] }
+  /** Query parameters of the connection URL that hold a secret or token (names only). */
+  urlTokens: string[]
+  /**
+   * How the server answered the upgrade: accepted (101, or frames came back), rejected (another
+   * status), unknown (no upgrade request in the HAR and no frame from the server).
+   */
+  upgrade: { accepted: number, rejected: number, unknown: number, statuses: number[] }
+  /**
+   * The first message that opened or authenticated the connection (the first `init` or `auth`
+   * message), and the server's next message after it; the most common pair across connections.
+   */
+  firstMessage: { message: string, role: HandshakeRole, reply: string | null } | null
+  /** `websocket`, and `polling` when Engine.IO long-polling carried the same channel. */
+  transports: Array<'websocket' | 'polling'>
+}
 
 /** A WebSocket endpoint seen during capture, with its messages grouped by direction and type. */
 export interface WebSocketChannel {
@@ -256,6 +344,10 @@ export interface WebSocketChannel {
   cookies: { status: 'sent' | 'none' | 'unknown', names: string[] }
   /** Path and query values of the connection URL traced to earlier responses. */
   links: ChannelValueLink[]
+  /** The framing protocol detected on the channel; null for plain JSON or text (decision 0038). */
+  protocol: ChannelProtocol | null
+  /** How connections were opened: origin, subprotocol, URL tokens, the server's answer. */
+  connection: ChannelConnectionFacts
   /**
    * Directions whose JSON messages come in several shapes but could not be grouped by type: no
    * field names the type, or the best one (`field`) has more `values` than a message type can.

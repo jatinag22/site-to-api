@@ -75,7 +75,8 @@ export function graphqlOperationOf(exchanges: readonly [GraphqlExchange, ...Grap
 }
 
 /** A short, stable label for an operation without a name: the start of its hash or key. */
-function anonymousLabel(key: string): string {
+/** `persisted-<hash>` or `document-<hash>`: what an operation without a name is called. */
+export function anonymousLabel(key: string): string {
   const [kind, hash = ''] = key.split(':')
   return `${kind === 'sha256'
     ? 'persisted'

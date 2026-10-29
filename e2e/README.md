@@ -13,6 +13,7 @@ e2e/
     shield.ts         toy bot protection shaped like Akamai (_abck, bm_sz, sensor_data)
     pages.ts          server-rendered HTML
     ticker.ts         /ws/ticker WebSocket
+    live.ts           /socket.io/ (Engine.IO v4 by hand) and /ws/basket (MessagePack)
     bundle.ts         esbuild bundling of app/src at start-up
     static.ts         CSS, image and font assets
     app/src/          the shop frontend (TypeScript)
@@ -86,10 +87,15 @@ Every `/api/*` call answers **403** unless it carries a valid `_abck` cookie fro
 | `GET /api/export.csv` | CSV with a header row, downloaded by the "Download price list" button | `text/csv` responses and their extraction spec |
 | `GET /api/stock.txt` | Pipe-delimited `id\|name\|status\|quantity` lines; needs the `pm_store` cookie, which only the store page's JavaScript sets (`document.cookie`) | `text/plain` extraction; cookie origin `script` (no response sets it, but its value traces to the store page, so a wrapper can set it) |
 | `GET /ws/ticker` | WebSocket; client sends `{"type":"subscribe","productId":N}`, server pushes `tick` messages | WebSocket capture in both directions; `build` writes it as an AsyncAPI channel |
+| `GET /api/live-token` | `{"token":"lt_<hex>"}` for the stock feed | a secret that must be redacted from a Socket.IO connect payload |
+| `GET`/`POST /socket.io/?EIO=4&transport=polling` | Engine.IO v4 long-polling: open packet, `40{"token":…}` posted, `40{"sid":…}` polled | Socket.IO detection, polling bodies, the auth message (decision 0038) |
+| `GET /socket.io/?EIO=4&transport=websocket&sid=…` | the upgraded session: `2probe`/`3probe`, `5`, `421["watch",{…}]` answered by `431[…]`, `stock` events, one server ping | Socket.IO event names, acks, keep-alives, both transports in one connection |
+| `GET /ws/basket` | binary MessagePack: client `{type:"hello",productId}`, server two `{type:"basket",…}` | MessagePack decoding and grouping |
 | `POST http://127.0.0.1:<port2>/collect`, `GET .../pixel.gif` | `navigator.sendBeacon` and a tracking pixel on a second host | `noise` classification, host filtering, `beacon` initiators |
 | `/assets/site.css`, `/assets/logo.png`, `/assets/fonts/pinewood-sans.woff2` | Static assets (the font is a placeholder the browser downloads but cannot decode) | `asset` classification |
 | `/assets/app.<hash>.js` | Main bundle: whitespace-minified, external sourcemap via `//# sourceMappingURL=` with `sourcesContent`, meaningful function names | sourcemap resolution, call sites in original `src/...` files |
 | `/assets/ticker.js` | Ticker widget with an inline `data:` sourcemap | inline sourcemaps |
+| `/assets/live.js` | Stock feed and basket widgets with an inline `data:` sourcemap | the code that opened each socket |
 
 ## Scenarios
 

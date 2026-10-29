@@ -2,11 +2,8 @@
  * What a client sends to set up a connection: authentication and subscriptions, told apart from
  * data, keep-alives and teardown by the message type's name (decision 0030).
  */
-import type { ChannelMessage, HandshakeRole, Redactor, WebSocketChannel } from '../../model'
+import type { ChannelMessage, HandshakeRole, MessageRole, Redactor, WebSocketChannel } from '../../model'
 import type { Connection } from './connections'
-
-/** Role of a client message type, from the words of its name. */
-export type MessageRole = Exclude<HandshakeRole, 'other'> | 'unsubscribe' | 'keepalive' | 'data'
 
 /** Client frames after the connection opens that can still be part of the setup. */
 const MAX_SETUP_SCAN = 10
@@ -106,6 +103,11 @@ export function messageRole(name: string): MessageRole {
   return 'data'
 }
 
+/** A message type's role: from its protocol frame when it has one (decision 0038), else its name. */
+export function roleOf(message: ChannelMessage): MessageRole {
+  return message.protocol?.role ?? messageRole(message.discriminator?.value ?? '')
+}
+
 function isSetupRole(role: MessageRole): role is Exclude<HandshakeRole, 'other'> {
   return role === 'init' || role === 'auth' || role === 'subscribe'
 }
@@ -129,7 +131,7 @@ function openingOf(connection: Connection, connectionMessages: ReadonlyMap<numbe
   for (const index of sent) {
     const message = connectionMessages.get(index)
     const role = message
-      ? messageRole(message.discriminator?.value ?? '')
+      ? roleOf(message)
       : 'data'
     if (role === 'unsubscribe')
       break
@@ -186,7 +188,7 @@ export function handshakeOf(connections: readonly Connection[], messages: readon
   const { connection, opening } = best
   return opening.indexes.map((index, position) => {
     const frame = connection.frames[index]
-    const example = frame === undefined || frame.binary
+    const example = frame === undefined || (frame.binary && frame.json === undefined)
       ? undefined
       : redactor.examples([frame.json ?? frame.data], { in: 'body' })[0]
     return {

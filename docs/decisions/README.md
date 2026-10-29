@@ -45,5 +45,6 @@ or `Proposed`.
 | [0035](0035-sibling-path-templates.md) | Sibling paths with word values become one template, on evidence | Accepted |
 | [0036](0036-probe-identity-and-outcomes.md) | Probe names itself and says why a request was refused (refines 0012) | Accepted |
 | [0037](0037-capture-always-saves.md) | Capture always saves the session, with bounded waits | Accepted |
+| [0038](0038-websocket-framing-protocols.md) | WebSocket framing protocols, MessagePack and protobuf frames, connection facts (refines 0023, 0030) | Accepted |
 | [0039](0039-dispatcher-operations.md) | One operation per dispatcher function: `<endpoint>#<value>` paths and `x-site-to-api-dispatch` | Accepted |
 | [0040](0040-page-locality-from-served-addresses.md) | Page locality from the addresses the browser used (refines 0019) | Accepted |

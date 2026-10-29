@@ -7,6 +7,7 @@
 import type { Exchange, GraphqlRequest, NameValue } from '../../model'
 import { createHash } from 'node:crypto'
 import { normalizeDocument, readOperations, selectOperation } from './document'
+import { anonymousLabel } from './operation'
 
 /** The request fields GraphQL over HTTP defines; anything else in a body is site-specific. */
 export const GRAPHQL_FIELDS = [
@@ -94,6 +95,19 @@ function keyOf(request: Pick<GraphqlRequest, 'operationName' | 'document' | 'per
     return `sha256:${request.persistedQuery.sha256Hash.toLowerCase()}`
   const normalized = normalizeDocument(request.document ?? '') ?? ''
   return `document:${createHash('sha256').update(normalized).digest('hex')}`
+}
+
+/**
+ * The name of the GraphQL operation a request payload (`operationName`, `query`, `variables`,
+ * `extensions`) runs, as the operations stage names it: the operation name, else
+ * `persisted-<hash>` or `document-<hash>`. Null when the payload is not a GraphQL request. Used
+ * for subscriptions sent over a WebSocket (decision 0038).
+ */
+export function graphqlOperationLabel(payload: Record<string, unknown>): string | null {
+  const request = readFields(payload)
+  return request === null
+    ? null
+    : request.operationName ?? anonymousLabel(keyOf(request))
 }
 
 /** `/<Name>/<sha256>` at the end of the path: the name and hash, or null. */

@@ -27,10 +27,13 @@ The entry point for a coding agent. Generated from a template, no LLM. Sections,
    with its own parameters, the client call (`sdk.getSymbolData({ query: { symbol } })`) and its
    spec path.
    **Real-time channels** (only when the capture has WebSocket traffic): per channel, the URL,
-   the AsyncAPI file and channel id, cookies on the upgrade request, the code that opened it, the
-   field that names message types, what to send right after connecting (with a redacted example),
-   the message types per direction with counts, and which HTTP operation each client value comes
-   from.
+   the AsyncAPI file and channel id, the framing protocol and what showed it (decision 0038),
+   cookies on the upgrade request, the upgrade facts (`Origin`, subprotocol, URL token names,
+   how many upgrades the server accepted or rejected, Engine.IO long-polling), the first
+   connect or authentication message and the server's answer, the code that opened it, the
+   field that names message types, what to send right after connecting (with its wire form for
+   a protocol message and a redacted example), the message types per direction with counts
+   (MessagePack and protobuf marked), and which HTTP operation each client value comes from.
 4. **Computed values**: one line each, with the file and function to port.
 5. **Reading order**: `API_MAP.md` → `flows.md` → the spec for the host → `source/` excerpts
    (only when an excerpt was written) →
@@ -86,8 +89,8 @@ section follows: one table per endpoint, headed with the dispatcher parameter an
 sent, with columns function (the value), operation id, parameters and client call.
 
 When the capture has WebSocket traffic, a final **Real-time channels** table has one row per
-channel: channel id, URL, what to send after connecting, client and server message types, traced
-inputs, cookies, and the AsyncAPI file.
+channel: channel id, URL, protocol (`JSON / text` when none was detected), what to send after
+connecting, client and server message types, traced inputs, cookies, and the AsyncAPI file.
 
 ## `flows.json` and `flows.md`
 
@@ -187,12 +190,28 @@ are written from the client's point of view: `send` is client → server, `recei
   redacted examples; its summary says when the schema came from the first 1000 frames only.
   Non-JSON text frames are one `text/plain`
   message with their shapes; binary frames are one `application/octet-stream` message, counted only.
+- When a framing protocol is detected (Socket.IO / Engine.IO 3 and 4, SignalR JSON, STOMP with
+  or without SockJS, graphql-transport-ws and subscriptions-transport-ws, Phoenix, Centrifugo;
+  decision 0038), its messages are grouped by protocol frame type and protocol-level name
+  instead: `name` is the Socket.IO event, SignalR target, STOMP destination, GraphQL operation,
+  Phoenix `topic:event` or Centrifugo channel (identifiers as `{id}`), and the payload schema
+  is that of the message's data (event arguments, STOMP `{headers, body}`, graphql-ws
+  `payload`). Engine.IO long-polling requests are part of the channel, not HTTP operations.
+- Binary frames that decode fully as MessagePack (`application/msgpack`) or as protobuf wire
+  format (`application/x-protobuf`, fields named `field <n> (<wire type>)`) get schemas and
+  examples like JSON messages, and MessagePack messages are grouped by discriminator.
 - Extensions:
   - `x-site-to-api-handshake` (channel): the messages that set up the connection, in order, each
     with its `role` (`init`, `auth`, `subscribe`, or `other` when no message type was recognised
     and the first message the client sent is listed) and a redacted example (decision 0030)
   - `x-site-to-api-cookies` (channel): `{ status: sent | none | unknown, names }` from the HTTP
     upgrade request; `unknown` when the HAR has none
+  - `x-site-to-api-protocol` (channel): `{ id, version, evidence, wrapper }` of the detected
+    framing protocol; (message): `{ protocol, frame, name, role, wire }`, `wire` being the frame
+    with `<payload>` in place of the data (decision 0038)
+  - `x-site-to-api-connection` (channel): `{ origins, cookies, urlTokens, subprotocols:
+    { requested, selected }, upgrade: { accepted, rejected, unknown, statuses }, firstMessage:
+    { message, role, reply } | null, transports }`; names only for cookies and URL tokens
   - `x-site-to-api-connections` (channel), `x-site-to-api-count` (message): how often each was seen
   - `x-site-to-api-origins` (channel or message): per input (`body./productId`, `query.room`,
     `path.roomId`), the HTTP operation and response location the value came from

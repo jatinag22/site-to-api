@@ -465,6 +465,101 @@ describe('real-time channels', () => {
   })
 })
 
+describe('framed WebSocket protocols (decision 0038)', () => {
+  function channelAt(path: string): NonNullable<Analysis['channels']>[number] {
+    const found = analysis.channels?.find(channel => channel.host === host && channel.path === path)
+    if (!found)
+      throw new Error(`no ${path} channel; have: ${(analysis.channels ?? []).map(channel => channel.path).join(', ')}`)
+    return found
+  }
+  const named = (channel: NonNullable<Analysis['channels']>[number], direction: 'send' | 'receive', name: string): NonNullable<Analysis['channels']>[number]['messages'][number] | undefined =>
+    channel.messages.find(message => message.direction === direction && message.protocol?.name === name)
+
+  it('names Socket.IO messages by event and gives each payload a schema', () => {
+    const channel = channelAt('/socket.io/')
+    expect(channel.protocol).toMatchObject({ id: 'socket.io', version: 'Engine.IO 4' })
+    expect(channel.protocol?.evidence).toContain('URL path ends in /socket.io/')
+    const stock = named(channel, 'receive', 'stock')
+    expect(stock?.protocol).toMatchObject({ frame: 'event', wire: '42["stock",<payload>]' })
+    expect(stock?.schema?.properties).toMatchObject({
+      productId: { type: 'integer' },
+      inStock: { type: 'integer' },
+      seq: { type: 'integer' },
+    })
+    expect(named(channel, 'send', 'watch')?.protocol?.frame).toBe('event')
+    expect(named(channel, 'receive', 'watch')?.protocol?.frame).toBe('ack')
+    expect(named(channel, 'receive', 'ping')?.protocol?.role).toBe('keepalive')
+    expect(channel.messages.every(message => message.discriminator === null)).toBe(true)
+    // The long-polling requests are the channel's transport, not HTTP operations.
+    expect(analysis.operations.some(op => op.path.startsWith('/socket.io'))).toBe(false)
+  })
+
+  it('summarises how the Socket.IO connection is opened and authenticated', () => {
+    const channel = channelAt('/socket.io/')
+    expect(channel.handshake.map(step => [step.message, step.role])).toEqual([
+      ['sendConnect', 'auth'],
+      ['sendUpgrade', 'init'],
+      ['sendWatch', 'subscribe'],
+    ])
+    expect(channel.connection).toMatchObject({
+      origins: [site.origin],
+      subprotocols: { requested: [], selected: [] },
+      firstMessage: { message: 'sendConnect', role: 'auth', reply: 'receiveConnect' },
+      transports: ['polling', 'websocket'],
+    })
+    expect(channel.connection.upgrade).toMatchObject({
+      rejected: 0,
+      unknown: 0,
+      statuses: [101],
+    })
+    expect(channel.connection.upgrade.accepted).toBeGreaterThanOrEqual(2)
+    expect(channel.connection.urlTokens).toEqual(['sid'])
+    const guide = files.get('AGENT.md') ?? ''
+    expect(guide).toContain('- Protocol: Socket.IO (Engine.IO 4), shown by URL path ends in /socket.io/, frames.')
+    expect(guide).toContain('- First authentication message: `connect`; the server\'s next message was `connect`.')
+    expect(guide).toMatch(/1\. `connect` \(authentication\), sent as `40<payload>`, e\.g\. `\{"token":"[^"]*redacted[^"]*"\}`/)
+    const spec = files.get(`specs/${host.replace(/[^\w.-]/g, '_')}.asyncapi.yaml`) ?? ''
+    expect(spec).toContain('x-site-to-api-protocol:')
+    expect(spec).toContain('x-site-to-api-connection:')
+    expect(spec).toContain('name: stock')
+  })
+
+  it('never writes the live token sent in the Socket.IO connect payload', async () => {
+    const raw = await readFile(join(work, 'raw', 'browse', 'traffic.har'), 'utf8')
+    const tokens = [
+      ...new Set(raw.match(/lt_[0-9a-f]{32}/g) ?? []),
+    ]
+    expect(tokens.length).toBeGreaterThan(0)
+    expect(raw).toMatch(/40\{\\"token\\":\\"lt_[0-9a-f]{32}\\"\}/)
+    for (const [name, content] of files) {
+      for (const token of tokens)
+        expect(content.includes(token), `${name} contains the live token`).toBe(false)
+    }
+  })
+
+  it('decodes the MessagePack basket and groups it by its type field', () => {
+    const channel = channelAt('/ws/basket')
+    expect(channel.protocol).toBeNull()
+    const hello = channel.messages.find(message => message.id === 'sendHello')
+    const basket = channel.messages.find(message => message.id === 'receiveBasket')
+    expect(hello).toMatchObject({
+      format: 'msgpack',
+      discriminator: { field: 'type', value: 'hello' },
+    })
+    expect(basket).toMatchObject({
+      format: 'msgpack',
+      discriminator: { field: 'type', value: 'basket' },
+    })
+    expect(basket?.schema?.properties).toMatchObject({
+      items: { type: 'integer' },
+      totalInr: { type: 'number' },
+    })
+    expect(hello?.links.find(link => link.input === 'body./productId')?.origin.kind).toMatch(/response|html/)
+    const spec = files.get(`specs/${host.replace(/[^\w.-]/g, '_')}.asyncapi.yaml`) ?? ''
+    expect(spec).toContain('contentType: application/msgpack')
+  })
+})
+
 describe('generated client', () => {
   it('type-checks in strict mode under moduleResolution bundler and nodenext', () => {
     expect(typeCheck(clientSources(), 'bundler')).toEqual([])

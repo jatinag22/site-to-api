@@ -4,6 +4,8 @@
  * byte-identical for the same analysis. Every value in it was redacted by the analysis.
  */
 import type { ChannelMessage, ChannelValueLink, ParamInfo, PathParam, WebSocketChannel } from '../../model'
+import { CHANNEL_PROTOCOL_LABELS } from '../../model'
+import { code, text } from '../escape'
 import { schemaObject } from '../openapi'
 
 const ASYNCAPI_VERSION = '3.0.0'
@@ -15,6 +17,13 @@ const CONTENT_TYPES: Record<ChannelMessage['format'], string> = {
   json: 'application/json',
   text: 'text/plain',
   binary: 'application/octet-stream',
+  msgpack: 'application/msgpack',
+  protobuf: 'application/x-protobuf',
+}
+
+/** The name of a message: its protocol-level name, its discriminator value, or its id. */
+function messageName(message: ChannelMessage): string {
+  return message.protocol?.name ?? message.discriminator?.value ?? message.id
 }
 
 function capitalize(word: string): string {
@@ -27,6 +36,11 @@ function originsExtension(links: readonly ChannelValueLink[]): Json {
   return {
     'x-site-to-api-origins': Object.fromEntries(links.map(link => [link.input, link.origin])),
   }
+}
+
+const DECODED: Partial<Record<ChannelMessage['format'], string>> = {
+  msgpack: 'Binary frames decoded as MessagePack.',
+  protobuf: 'Binary frames read as protobuf wire format without a schema: fields are named by number and wire type (`field 3 (varint)`), not by their real names.',
 }
 
 function payloadOf(message: ChannelMessage): Json {
@@ -45,7 +59,21 @@ function payloadOf(message: ChannelMessage): Json {
         : {}),
     }
   }
-  return schemaObject(message.schema)
+  const decoded = DECODED[message.format]
+  return decoded === undefined
+    ? schemaObject(message.schema)
+    : {
+        description: decoded,
+        ...schemaObject(message.schema),
+      }
+}
+
+/** The protocol framing of a message, for its summary: `Socket.IO event, sent as 42["chat",<payload>]`. */
+function protocolSentence(message: ChannelMessage): string {
+  const { protocol } = message
+  if (protocol === null)
+    return ''
+  return ` ${CHANNEL_PROTOCOL_LABELS[protocol.protocol]} ${text(protocol.frame)}, on the wire ${code(protocol.wire)}.`
 }
 
 function messageObject(message: ChannelMessage): Json {
@@ -53,13 +81,13 @@ function messageObject(message: ChannelMessage): Json {
     ? 'Sent by the client'
     : 'Sent by the server'
   return {
-    'name': message.discriminator?.value ?? message.id,
+    'name': messageName(message),
     'title': message.id,
     'summary': `${direction}; seen ${message.count} time${message.count === 1
       ? ''
       : 's'}${message.discriminator
       ? ` (${message.discriminator.field} = ${message.discriminator.value})`
-      : ''}.${message.schemaSamples !== null && message.schemaSamples < message.count
+      : ''}.${protocolSentence(message)}${message.schemaSamples !== null && message.schemaSamples < message.count
       ? ` The schema was inferred from the first ${message.schemaSamples}.`
       : ''}`,
     'contentType': CONTENT_TYPES[message.format],
@@ -70,6 +98,9 @@ function messageObject(message: ChannelMessage): Json {
         }
       : {}),
     'x-site-to-api-count': message.count,
+    ...(message.protocol === null
+      ? {}
+      : { 'x-site-to-api-protocol': message.protocol }),
     ...originsExtension(message.links),
   }
 }
@@ -149,6 +180,18 @@ function channelObject(channel: WebSocketChannel): Json {
     'x-site-to-api-connections': channel.connections,
     'x-site-to-api-handshake': channel.handshake,
     'x-site-to-api-cookies': channel.cookies,
+    ...(channel.protocol === null
+      ? {}
+      : { 'x-site-to-api-protocol': channel.protocol }),
+    'x-site-to-api-connection': {
+      origins: channel.connection.origins,
+      cookies: channel.cookies.names,
+      urlTokens: channel.connection.urlTokens,
+      subprotocols: channel.connection.subprotocols,
+      upgrade: channel.connection.upgrade,
+      firstMessage: channel.connection.firstMessage,
+      transports: channel.connection.transports,
+    },
     ...(channel.sentFrom
       ? {
           'x-site-to-api-source': [
@@ -188,7 +231,7 @@ function hostDocument(host: string, channels: readonly WebSocketChannel[], sessi
       version: '0.0.0',
       description: `WebSocket channels of ${host} as observed in ${sessions} capture session${sessions === 1
         ? ''
-        : 's'} by site-to-api. Operations are written from the client's point of view: \`send\` is what a client sends, \`receive\` what the server pushes. \`x-site-to-api-handshake\` lists what to send right after connecting. Example values are redacted.`,
+        : 's'} by site-to-api. Operations are written from the client's point of view: \`send\` is what a client sends, \`receive\` what the server pushes. \`x-site-to-api-handshake\` lists what to send right after connecting, \`x-site-to-api-connection\` how connections were opened, and \`x-site-to-api-protocol\` the framing protocol when one was detected. Example values are redacted.`,
     },
     servers: Object.fromEntries(schemes.map(scheme => [
       scheme,

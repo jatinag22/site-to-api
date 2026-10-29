@@ -1,11 +1,14 @@
 /**
  * Groups the frames of one channel direction into message types and infers a schema for each.
  */
-import type { ChannelMessage, JsonSchema, RedactContext, Redactor, WebSocketChannel } from '../../model'
+import type { ChannelMessage, ChannelMessageProtocol, ChannelProtocolId, JsonSchema, RedactContext, Redactor, WebSocketChannel } from '../../model'
 import type { Frame } from './connections'
+import type { DecodedMessage } from './protocols'
 import { camelCase } from '../operations'
 import { inferSchema } from '../schema'
 import { describeShape } from '../shape'
+import { messageRole } from './handshake'
+import { safeName } from './protocols'
 
 /** A frame with the session it was captured in and a key unique per build. */
 export interface KeyedFrame {
@@ -13,7 +16,15 @@ export interface KeyedFrame {
   key: string
   sessionId: string
   frame: Frame
+  /** The framing protocol of the frame's connection, when one was detected. */
+  protocol: ChannelProtocolId | null
 }
+
+/**
+ * More protocol names than this in one direction means names carry data (a room per message);
+ * the messages are then grouped by protocol frame type alone.
+ */
+const MAX_PROTOCOL_NAMES = 64
 
 /**
  * Field names sites use to say what a message is, in order of preference. One of them wins over
@@ -228,19 +239,165 @@ export interface GroupedMessages {
 interface Group {
   id: string
   discriminator: ChannelMessage['discriminator']
+  protocol: ChannelMessageProtocol | null
   format: ChannelMessage['format']
   frames: KeyedFrame[]
 }
 
+/** A protocol message's name parts, each templated and redacted, joined as the protocol joins them. */
+function protocolNameParts(decoded: DecodedMessage, redactor: Redactor): string[] {
+  return decoded.name.map(part => safeName(part, redactor))
+}
+
 /**
- * Groups one direction's frames: JSON messages by their discriminator value (one group without
- * one), all non-JSON text frames together, all binary frames together. Groups keep the order in
- * which their first frame was captured. Examples and enum values go through the redactor; binary
- * frames are only counted.
+ * The wire template with the name parts in place of `{0}`, `{1}` (or `<name>` when grouped by
+ * frame type) and the redacted key names in place of `{k0}`, `{k1}`.
+ */
+function wireWith(decoded: DecodedMessage, parts: readonly string[] | null, redactor: Redactor): string {
+  return decoded.wire
+    .replace(/\{k(\d+)\}/g, (slot: string, index: string) => {
+      const key = decoded.wireKeys[Number(index)]
+      return key === undefined
+        ? slot
+        : safeName(key, redactor)
+    })
+    .replace(/\{(\d)\}/g, (slot: string, index: string) => parts === null
+      ? '<name>'
+      : parts[Number(index)] ?? slot)
+}
+
+interface ProtocolKey {
+  key: string
+  name: string
+  init: Omit<Group, 'frames' | 'id'> & { id: string }
+}
+
+/**
+ * The group of a protocol message: its frame type and protocol-level name, or the frame type
+ * alone when the direction has too many names.
+ */
+function protocolGroup(direction: ChannelMessage['direction'], item: KeyedFrame, decoded: DecodedMessage, protocol: ChannelProtocolId, redactor: Redactor, byFrameOnly: boolean): ProtocolKey {
+  const parts = protocolNameParts(decoded, redactor)
+  // Frame types are the decoders' own words, but go through the redactor like any name.
+  const name = byFrameOnly
+    ? safeName(decoded.frame, redactor)
+    : parts.join(decoded.separator)
+  const frame = safeName(decoded.frame, redactor)
+  const format: ChannelMessage['format'] = item.frame.binary
+    ? 'binary'
+    : item.frame.json === undefined
+      ? 'text'
+      : 'json'
+  return {
+    key: `protocol:${frame}\u0000${name}`,
+    name,
+    init: {
+      id: messageId(direction, name, 'Message'),
+      discriminator: null,
+      protocol: {
+        protocol,
+        frame,
+        name,
+        role: decoded.role ?? messageRole(name),
+        wire: wireWith(decoded, byFrameOnly
+          ? null
+          : parts, redactor),
+      },
+      format,
+    },
+  }
+}
+
+const ENCODING_IDS: Record<'json' | 'msgpack' | 'protobuf', string> = {
+  json: 'Message',
+  msgpack: 'Msgpack',
+  protobuf: 'Protobuf',
+}
+
+/** The group of a frame without a protocol reading: by discriminator, or by format. */
+function plainGroup(direction: ChannelMessage['direction'], frame: Frame, field: string | null): { key: string, init: Omit<Group, 'frames'> } {
+  const path = field?.split('.') ?? []
+  if (frame.json === undefined || frame.encoding === null) {
+    return frame.binary
+      ? {
+          key: 'binary',
+          init: {
+            id: `${direction}Binary`,
+            discriminator: null,
+            protocol: null,
+            format: 'binary',
+          },
+        }
+      : {
+          key: 'text',
+          init: {
+            id: `${direction}Text`,
+            discriminator: null,
+            protocol: null,
+            format: 'text',
+          },
+        }
+  }
+  const encoding = frame.encoding
+  const value = field === null
+    ? undefined
+    : stringAt(frame.json, path)
+  if (field !== null && value !== undefined) {
+    return {
+      key: `${encoding}:${value}`,
+      init: {
+        id: messageId(direction, value, ENCODING_IDS[encoding]),
+        discriminator: { field, value },
+        protocol: null,
+        format: encoding,
+      },
+    }
+  }
+  return {
+    key: encoding,
+    init: {
+      id: `${direction}${ENCODING_IDS[encoding]}`,
+      discriminator: null,
+      protocol: null,
+      format: encoding,
+    },
+  }
+}
+
+function protocolNameCount(frames: readonly KeyedFrame[], redactor: Redactor): number {
+  const names = new Set<string>()
+  for (const item of frames) {
+    const decoded = item.frame.protocol
+    if (decoded !== null && item.protocol !== null)
+      names.add(`${decoded.frame}\u0000${protocolNameParts(decoded, redactor).join(decoded.separator)}`)
+  }
+  return names.size
+}
+
+/**
+ * A group's role: `auth` when any of its frames authenticates (a connect with and without a
+ * token is one message type), otherwise the first frame's.
+ */
+function groupProtocol(group: Group): ChannelMessageProtocol | null {
+  if (group.protocol === null)
+    return null
+  const auth = group.frames.some(item => item.frame.protocol?.role === 'auth')
+  return auth
+    ? { ...group.protocol, role: 'auth' }
+    : group.protocol
+}
+
+/**
+ * Groups one direction's frames. Frames read with a framing protocol are grouped by the
+ * protocol's frame type and name (decision 0038); the others as before: JSON (and decoded
+ * MessagePack or protobuf) messages by their discriminator value (one group without one), all
+ * other text frames together, all undecoded binary frames together. Groups keep the order in
+ * which their first frame was captured. Examples, enum values and names go through the
+ * redactor; undecoded binary frames are only counted.
  *
  * @param direction which side sent the frames
  * @param frames the frames of that direction, in capture order
- * @param redactor applied to examples, enum values and discriminator values
+ * @param redactor applied to examples, enum values, discriminator values and protocol names
  * @param usedIds message ids already taken in this channel; new ids are added to it
  */
 export function groupMessages(direction: ChannelMessage['direction'], frames: readonly KeyedFrame[], redactor: Redactor, usedIds: Set<string>): GroupedMessages {
@@ -249,10 +406,18 @@ export function groupMessages(direction: ChannelMessage['direction'], frames: re
       ? 'body'
       : 'response-body',
   }
-  const json = frames.filter(item => item.frame.json !== undefined)
-  const choice = chooseDiscriminator(json.map(item => item.frame.json), (name, value) => redactor.value(value, { ...context, name }) === value)
-  const field = choice.field
-  const path = field?.split('.') ?? []
+  const isProtocol = (item: KeyedFrame): boolean => item.frame.protocol !== null && item.protocol !== null
+  const json = frames.filter(item => !isProtocol(item) && item.frame.json !== undefined)
+  // JSON text, MessagePack and protobuf messages of one direction are told apart separately.
+  const choices = new Map<Frame['encoding'], DiscriminatorChoice>()
+  for (const encoding of ['json', 'msgpack', 'protobuf'] as const) {
+    const ofEncoding = json.filter(item => item.frame.encoding === encoding)
+    if (ofEncoding.length > 0)
+      choices.set(encoding, chooseDiscriminator(ofEncoding.map(item => item.frame.json), (name, value) => redactor.value(value, { ...context, name }) === value))
+  }
+  const choice = choices.get('json') ?? choices.get('msgpack') ?? { field: null, tooMany: null }
+  const names = protocolNameCount(frames, redactor)
+  const byFrameOnly = names > MAX_PROTOCOL_NAMES
 
   const groups = new Map<string, Group>()
   const unique = (id: string): string => {
@@ -263,30 +428,10 @@ export function groupMessages(direction: ChannelMessage['direction'], frames: re
     return candidate
   }
   for (const item of frames) {
-    const { frame } = item
-    let key: string
-    let init: Omit<Group, 'frames'>
-    if (frame.binary) {
-      key = 'binary'
-      init = { id: `${direction}Binary`, discriminator: null, format: 'binary' }
-    }
-    else if (frame.json === undefined) {
-      key = 'text'
-      init = { id: `${direction}Text`, discriminator: null, format: 'text' }
-    }
-    else if (field !== null && stringAt(frame.json, path) !== undefined) {
-      const value = stringAt(frame.json, path) ?? ''
-      key = `json:${value}`
-      init = {
-        id: messageId(direction, value, 'Message'),
-        discriminator: { field, value },
-        format: 'json',
-      }
-    }
-    else {
-      key = 'json'
-      init = { id: `${direction}Message`, discriminator: null, format: 'json' }
-    }
+    const decoded = item.frame.protocol
+    const { key, init } = decoded !== null && item.protocol !== null
+      ? protocolGroup(direction, item, decoded, item.protocol, redactor, byFrameOnly)
+      : plainGroup(direction, item.frame, choices.get(item.frame.encoding)?.field ?? null)
     let group = groups.get(key)
     if (!group) {
       group = {
@@ -295,6 +440,10 @@ export function groupMessages(direction: ChannelMessage['direction'], frames: re
         frames: [],
       }
       groups.set(key, group)
+    }
+    else if (group.format === 'text' && init.format === 'json') {
+      // A protocol message type with and without a payload (`40` and `40{"token":…}`) has a schema.
+      group.format = 'json'
     }
     group.frames.push(item)
   }
@@ -309,6 +458,7 @@ export function groupMessages(direction: ChannelMessage['direction'], frames: re
       id: group.id,
       direction,
       discriminator: group.discriminator,
+      protocol: groupProtocol(group),
       format: group.format,
       count: group.frames.length,
       schemaSamples: null,
@@ -331,22 +481,30 @@ export function groupMessages(direction: ChannelMessage['direction'], frames: re
         examples: redactor.examples(texts.filter(text => text.length <= MAX_TEXT_EXAMPLE_LENGTH), context),
       }
     }
-    const samples = group.frames.slice(0, MAX_SCHEMA_SAMPLES).map(item => ({ value: item.frame.json, sessionId: item.sessionId }))
+    const withJson = group.frames.filter(item => item.frame.json !== undefined)
+    const samples = withJson.slice(0, MAX_SCHEMA_SAMPLES).map(item => ({ value: item.frame.json, sessionId: item.sessionId }))
     const inferred = inferSchema(samples, enumGuard(redactor, context))
     return {
       ...base,
-      schemaSamples: samples.length,
+      // Frames of a protocol message type without a payload (a bare `40`) count as seen.
+      schemaSamples: withJson.length > MAX_SCHEMA_SAMPLES
+        ? MAX_SCHEMA_SAMPLES
+        : group.frames.length,
       schema: group.discriminator
         ? pinDiscriminator(inferred, group.discriminator.field.split('.'), group.discriminator.value)
         : inferred,
       shapes: [],
-      examples: redactor.examples(group.frames.map(item => item.frame.json), context),
+      examples: redactor.examples(withJson.map(item => item.frame.json), context),
     }
   })
   return {
     messages,
     messageOf,
-    ungrouped: ungroupedOf(direction, json, choice),
+    ungrouped: byFrameOnly
+      ? { direction, field: 'protocol name', values: names }
+      : ungroupedOf(direction, json.filter(item => item.frame.encoding === (choices.has('json')
+          ? 'json'
+          : 'msgpack')), choice),
   }
 }
 

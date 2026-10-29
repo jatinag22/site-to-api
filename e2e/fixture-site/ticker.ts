@@ -2,12 +2,16 @@
  * `ws://<host>/ws/ticker`: pushes price ticks for the product a client subscribes to, so the
  * capture contains WebSocket frames in both directions.
  */
-import type { Server } from 'node:http'
+import type { Buffer } from 'node:buffer'
+import type { IncomingMessage } from 'node:http'
+import type { Duplex } from 'node:stream'
 import type { Catalog } from './catalog'
 import { WebSocketServer } from 'ws'
 import { parseJson } from './http'
 
 export interface Ticker {
+  /** Handles an upgrade for `/ws/ticker`; false for any other path. */
+  upgrade: (req: IncomingMessage, socket: Duplex, head: Buffer) => boolean
   close: () => Promise<void>
 }
 
@@ -26,18 +30,10 @@ function subscribedProductId(raw: string): number | null {
     : null
 }
 
-/** Attaches the ticker to `server`'s upgrade requests for `/ws/ticker`. */
-export function attachTicker(server: Server, catalog: Catalog, options: { intervalMs: number, now: () => number }): Ticker {
+/** The ticker; the server passes it upgrade requests (see {@link Ticker.upgrade}). */
+export function createTicker(catalog: Catalog, options: { intervalMs: number, now: () => number }): Ticker {
   const wss = new WebSocketServer({ noServer: true })
   const prices = new Map(catalog.products.map(product => [product.id, product.priceInr]))
-
-  server.on('upgrade', (req, socket, head) => {
-    if (new URL(req.url ?? '/', 'http://localhost').pathname !== '/ws/ticker') {
-      socket.destroy()
-      return
-    }
-    wss.handleUpgrade(req, socket, head, client => wss.emit('connection', client))
-  })
 
   wss.on('connection', (client) => {
     let timer: NodeJS.Timeout | undefined
@@ -68,6 +64,12 @@ export function attachTicker(server: Server, catalog: Catalog, options: { interv
   })
 
   return {
+    upgrade: (req, socket, head) => {
+      if (new URL(req.url ?? '/', 'http://localhost').pathname !== '/ws/ticker')
+        return false
+      wss.handleUpgrade(req, socket, head, client => wss.emit('connection', client))
+      return true
+    },
     close: async () => {
       for (const client of wss.clients)
         client.terminate()

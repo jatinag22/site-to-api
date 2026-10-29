@@ -19,6 +19,7 @@
         "scenarios/*.ts",
         "fixture-site/app/src/main.ts",
         "fixture-site/app/src/widgets/ticker.ts",
+        "fixture-site/app/src/widgets/live.ts",
         "fixture-site/app/src/shield/sensor.ts"
       ]
     }

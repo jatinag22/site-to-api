@@ -10,7 +10,7 @@ import type { ProbeReport } from '../model/probe'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'pathe'
-import { buildChannels, channelExchanges, collectConnections } from '../analyze/channels'
+import { buildChannels, channelExchanges, collectConnections, isEnginePolling } from '../analyze/channels'
 import { classifyExchanges, createChannelScope } from '../analyze/classify'
 import { traceValues } from '../analyze/correlate'
 import { buildFlows } from '../analyze/flows'
@@ -190,7 +190,11 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   log(`Loaded ${loaded.sessions.length} session(s), ${loaded.exchanges.length} requests`)
   const classified = classifyExchanges(loaded.exchanges, config.hosts)
   // GraphQL requests are marked and batches split before anything groups or traces them (0027).
-  const exchanges = annotateGraphql(classified.exchanges)
+  // Engine.IO long-polling requests are one channel's transport, documented with the channel
+  // rather than as HTTP operations (0038).
+  const exchanges = annotateGraphql(classified.exchanges).map(exchange => isEnginePolling(exchange)
+    ? { ...exchange, kind: 'noise' as const, kindReason: 'Engine.IO long-polling: documented as a WebSocket channel' }
+    : exchange)
   const resolver = await createSourceResolver(loaded.sessions)
   const screened = screenSourceRoutes(
     await findSourceEndpoints(loaded.sessions),
@@ -202,7 +206,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 
   // WebSocket frames stand in as exchanges, so the redactor learns secrets sent over a socket and
   // tracing finds where the client's frame values came from (decision 0023).
-  const sockets = channelExchanges(collectConnections(loaded.sessions))
+  const sockets = channelExchanges(collectConnections(loaded.sessions, loaded.exchanges))
   const redactor = createRedactor({
     exchanges: [
       ...exchanges,
@@ -211,8 +215,10 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     config: config.redact,
   })
   const wanted = inHostFilter(config.hosts)
+  // The page's own calls to a long-polling path are the channel's transport, not unused endpoints.
+  const pollingPaths = new Set(exchanges.filter(isEnginePolling).map(exchange => `${exchange.request.host} ${exchange.request.path}`))
   let operations = buildOperations(exchanges, { sourceRoutes })
-    .filter(operation => !operation.sourceOnly || wanted(operation.host))
+    .filter(operation => !operation.sourceOnly || (wanted(operation.host) && !pollingPaths.has(`${operation.host} ${operation.path}`)))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
   operations = inferOperationSchemas(operations, redactor)
   const blocked = failedNavigationsWarning(loaded.navigations)
