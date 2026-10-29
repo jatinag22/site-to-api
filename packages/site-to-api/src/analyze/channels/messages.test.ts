@@ -37,33 +37,73 @@ function frames(data: Array<string | Uint8Array>, direction: 'sent' | 'received'
 }
 
 describe('chooseDiscriminator', () => {
+  const field = (messages: readonly unknown[], isSafe: (name: string, value: string) => boolean = safe): string | null => chooseDiscriminator(messages, isSafe).field
+
   it('prefers well-known names in order, even with a single value', () => {
-    expect(chooseDiscriminator([
+    expect(field([
       { type: 'tick', event: 'a' },
       { type: 'tick', event: 'b' },
-    ], safe)).toBe('type')
-    expect(chooseDiscriminator([
+    ])).toBe('type')
+    expect(field([
       { event: 'join', room: 'a' },
       { event: 'leave', room: 'a' },
-    ], safe)).toBe('event')
-    expect(chooseDiscriminator([
+    ])).toBe('event')
+    expect(field([
       { jsonrpc: '2.0', method: 'subscribe', id: '1' },
-    ], safe)).toBe('method')
+    ])).toBe('method')
   })
 
-  it('needs the field in every message, as a non-empty string', () => {
-    expect(chooseDiscriminator([
+  it('needs the field, as a non-empty string, in most messages', () => {
+    expect(field([
       { type: 'a' },
       { kind: 'b' },
-    ], safe)).toBeNull()
-    expect(chooseDiscriminator([
+    ])).toBeNull()
+    expect(field([
       { type: 'a' },
       { type: 3 },
-    ], safe)).toBeNull()
-    expect(chooseDiscriminator([
+    ])).toBeNull()
+    expect(field([
       { type: 'a' },
       { type: '' },
-    ], safe)).toBeNull()
+    ])).toBeNull()
+  })
+
+  it('groups by a field most messages have, leaving acknowledgements out', () => {
+    // A stream feed: data messages name their stream; the replies to subscriptions do not.
+    const messages = [
+      ...Array.from({ length: 6 }, () => ({
+        stream: 'btc@trade',
+        data: { e: 'trade', p: '1' },
+      })),
+      ...Array.from({ length: 3 }, () => ({
+        stream: 'btc@depth',
+        data: { e: 'depthUpdate' },
+      })),
+      // A ticker array: `data.e` is not on every data message, `stream` is.
+      ...Array.from({ length: 2 }, () => ({
+        stream: '!mini@arr',
+        data: [
+          { e: '24hrMiniTicker' },
+        ],
+      })),
+      { result: null, id: 1 },
+    ]
+    expect(field(messages)).toBe('stream')
+  })
+
+  it('looks one object down when no top-level field names the type', () => {
+    const messages = [
+      {
+        data: { e: 'trade', p: '1' },
+      },
+      {
+        data: { e: 'trade', p: '2' },
+      },
+      {
+        data: { e: 'kline', k: {} },
+      },
+    ]
+    expect(field(messages)).toBe('data.e')
   })
 
   it('falls back to the shared field with the fewest distinct values that repeat', () => {
@@ -72,36 +112,46 @@ describe('chooseDiscriminator', () => {
       { channel: 'prices', at: '2026-01-01T00:00:02Z' },
       { channel: 'orders', at: '2026-01-01T00:00:03Z' },
     ]
-    expect(chooseDiscriminator(messages, safe)).toBe('channel')
+    expect(field(messages)).toBe('channel')
   })
 
   it('rejects fields that are ids or constants unless their name says otherwise', () => {
-    expect(chooseDiscriminator([
+    expect(field([
       { id: 'a1' },
       { id: 'b2' },
       { id: 'c3' },
-    ], safe)).toBeNull()
-    expect(chooseDiscriminator([
+    ])).toBeNull()
+    expect(field([
       { version: '2.0' },
       { version: '2.0' },
-    ], safe)).toBeNull()
+    ])).toBeNull()
   })
 
-  it('rejects fields with too many values and values the redactor would change', () => {
-    const many = Array.from({ length: 40 }, (_, index) => ({ type: `t${index % 20}` }))
-    expect(chooseDiscriminator(many, safe)).toBeNull()
-    expect(chooseDiscriminator([
+  it('accepts a few dozen message types, and says which field had too many', () => {
+    const feed = Array.from({ length: 60 }, (_, index) => ({
+      op: index < 40
+        ? 'tick'
+        : `evt${index % 20}`,
+      seq: index,
+    }))
+    expect(field(feed)).toBe('op')
+    const many = Array.from({ length: 80 }, (_, index) => ({ type: `t${index % 40}` }))
+    expect(chooseDiscriminator(many, safe)).toEqual({
+      field: null,
+      tooMany: { field: 'type', values: 40 },
+    })
+    expect(field([
       { type: 'a' },
       { type: 'jane@example.org' },
     ], (_, value) => !value.includes('@'))).toBeNull()
   })
 
-  it('needs every message to be a JSON object', () => {
-    expect(chooseDiscriminator([
+  it('needs most messages to be JSON objects', () => {
+    expect(field([
       { type: 'a' },
       ['type', 'b'],
-    ], safe)).toBeNull()
-    expect(chooseDiscriminator([], safe)).toBeNull()
+    ])).toBeNull()
+    expect(field([])).toBeNull()
   })
 })
 
@@ -152,6 +202,28 @@ describe('groupMessages', () => {
       examples: ['ping'],
     })
     expect(messages[2]).toMatchObject({ schema: null, shapes: [], examples: [] })
+  })
+
+  it('groups by a nested field, pins it in the schema, and says when grouping was impossible', () => {
+    const grouped = groupMessages('receive', frames([
+      '{"data":{"e":"trade","p":"1"}}',
+      '{"data":{"e":"trade","p":"2"}}',
+      '{"data":{"e":"kline","k":"x"}}',
+    ]), redactor, new Set())
+    expect(grouped.messages.map(message => message.id)).toEqual(['receiveTrade', 'receiveKline'])
+    expect(grouped.messages[0]?.schema?.properties?.data?.properties?.e).toEqual({ type: 'string', const: 'trade' })
+    expect(grouped.ungrouped).toBeNull()
+    const mixed = groupMessages('receive', frames([
+      '{"a":1}',
+      '{"b":2}',
+      '{"a":3}',
+    ]), redactor, new Set())
+    expect(mixed.ungrouped).toEqual({ direction: 'receive', field: null, values: null })
+  })
+
+  it('records how many frames the schema was inferred from', () => {
+    const { messages } = groupMessages('receive', frames(Array.from({ length: 1005 }, (_, seq) => `{"type":"tick","seq":${seq}}`)), redactor, new Set())
+    expect(messages[0]).toMatchObject({ count: 1005, schemaSamples: 1000 })
   })
 
   it('gives every group an id that is a usable key, unique within the channel', () => {

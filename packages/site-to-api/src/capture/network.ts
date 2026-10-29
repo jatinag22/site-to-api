@@ -17,7 +17,7 @@
  */
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { BlockList, isIP } from 'node:net'
-import { registrableHost } from './frames'
+import { registrableHost } from '../hosts'
 
 /** Resolves a host name to its IP addresses. Injected in tests so they need no DNS. */
 export type Lookup = (hostname: string) => Promise<string[]>
@@ -25,6 +25,43 @@ export type Lookup = (hostname: string) => Promise<string[]>
 async function systemLookup(hostname: string): Promise<string[]> {
   const addresses = await dnsLookup(hostname, { all: true, verbatim: true })
   return addresses.map(entry => entry.address)
+}
+
+/** Lookups tried per host before it counts as unresolvable: one failure under load is common. */
+const LOOKUP_ATTEMPTS = 2
+/** Wait before retrying a failed lookup, so a resolver that is busy has time to recover. */
+const LOOKUP_RETRY_DELAY_MS = 250
+
+/**
+ * A lookup that shares one answer per host and retries a failure once after a short wait. A page
+ * loads dozens of scripts from one host at once; a lookup per script floods the resolver, and one
+ * that timed out made a host the browser had just loaded from look unresolvable. Only answers are
+ * kept: a host that failed is asked again by the next caller.
+ */
+export function cachedLookup(lookup: Lookup = systemLookup, retryDelayMs = LOOKUP_RETRY_DELAY_MS): Lookup {
+  const cache = new Map<string, Promise<string[]>>()
+  const attempt = async (hostname: string, left: number): Promise<string[]> => {
+    try {
+      return await lookup(hostname)
+    }
+    catch (error) {
+      if (left <= 1)
+        throw error
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs))
+      return await attempt(hostname, left - 1)
+    }
+  }
+  return async (hostname) => {
+    const key = hostname.toLowerCase()
+    let pending = cache.get(key)
+    if (!pending) {
+      pending = attempt(hostname, LOOKUP_ATTEMPTS)
+      cache.set(key, pending)
+      // Callers already waiting share this failure; later ones try again.
+      pending.catch(() => cache.delete(key))
+    }
+    return await pending
+  }
 }
 
 /** Addresses that are not on the public internet (IANA special-purpose registries). */
@@ -147,35 +184,90 @@ export function isPublicAddress(address: string): boolean {
  * refused without a lookup; other names are public only when every address they resolve to is.
  */
 export async function nonPublicReason(hostname: string, lookup: Lookup = systemLookup): Promise<string | null> {
+  const status = await hostStatus(hostname, lookup)
+  return status.kind === 'public'
+    ? null
+    : status.reason
+}
+
+type HostStatus = { kind: 'public' } | { kind: 'non-public' | 'unresolved', reason: string }
+
+async function hostStatus(hostname: string, lookup: Lookup): Promise<HostStatus> {
   const host = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '')
   if (isIP(host) !== 0) {
     return isPublicAddress(host)
-      ? null
-      : `${host} is a private, loopback or reserved address`
+      ? { kind: 'public' }
+      : { kind: 'non-public', reason: `${host} is a private, loopback or reserved address` }
   }
   if (LOCAL_NAME.test(host) || !host.includes('.'))
-    return `${host} is a local host name`
-  let addresses: string[]
+    return { kind: 'non-public', reason: `${host} is a local host name` }
+  let addresses: string[] = []
   try {
     addresses = await lookup(host)
   }
   catch {
-    return `${host} could not be resolved`
+    // Handled below like an empty answer.
   }
   if (addresses.length === 0)
-    return `${host} could not be resolved`
+    return { kind: 'unresolved', reason: `${host} could not be resolved from Node (the browser may use its own DNS or a proxy; capture again if this was a passing DNS failure)` }
   const inside = addresses.find(address => !isPublicAddress(address))
   return inside === undefined
-    ? null
-    : `${host} resolves to the non-public address ${inside}`
+    ? { kind: 'public' }
+    : { kind: 'non-public', reason: `${host} resolves to the non-public address ${inside}` }
+}
+
+/**
+ * The page URL when the page is on a non-public host, which earns it the intranet allowances of
+ * {@link sourceMapRefusal}; otherwise null, the safe side (decision 0019).
+ *
+ * The page is judged by `connectedAddress`, the address the browser loaded the document from,
+ * when it is known: a name can resolve to public and private addresses at once, and only the one
+ * used tells which network the page came from. Without it, the page is local only when its name
+ * is a local one or every address it resolves to is non-public; a mixed answer, no answer or a
+ * failed lookup make it public.
+ */
+export async function localPageOf(pageUrl: string | null, lookup: Lookup = systemLookup, connectedAddress: string | null = null): Promise<URL | null> {
+  if (pageUrl === null)
+    return null
+  let parsed: URL
+  try {
+    parsed = new URL(pageUrl)
+  }
+  catch {
+    return null
+  }
+  if (!/^https?:$/.test(parsed.protocol))
+    return null
+  return await isPrivatePage(parsed.hostname, lookup, connectedAddress)
+    ? parsed
+    : null
+}
+
+async function isPrivatePage(hostname: string, lookup: Lookup, connectedAddress: string | null): Promise<boolean> {
+  if (connectedAddress !== null && isIP(connectedAddress) !== 0)
+    return !isPublicAddress(connectedAddress)
+  const host = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '')
+  if (isIP(host) !== 0)
+    return !isPublicAddress(host)
+  if (LOCAL_NAME.test(host) || !host.includes('.'))
+    return true
+  let addresses: string[] = []
+  try {
+    addresses = await lookup(host)
+  }
+  catch {
+    return false
+  }
+  return addresses.length > 0 && addresses.every(address => !isPublicAddress(address))
 }
 
 /**
  * The site a non-public host name belongs to, for letting an intranet page reach its own other
  * hosts, or `null` when the name never vouches for another host: IP addresses (`10.0.0.5` says
  * nothing about `10.0.0.6`), single labels and `localhost` names, which reach this machine.
- * Otherwise it is the {@link registrableHost}, except that a two-label name such as `app.corp`
- * belongs to its last label (`corp`), since a private top-level name has no public suffix to keep.
+ * Otherwise it is the {@link registrableHost}, except that a host of two labels such as
+ * `app.corp` belongs to its last label (`corp`), since a private top-level name has no public
+ * suffix to keep.
  * Shared local suffixes (`.local`, `.lan`, `.internal`) do not collapse: `printer.local` is not
  * part of `app.local`.
  */
@@ -185,7 +277,9 @@ function intranetSite(hostname: string): string | null {
     return null
   const registrable = registrableHost(host)
   const labels = registrable.split('.')
-  return labels.length === 2 && !LOCAL_NAME.test(registrable)
+  // Only a host that is itself two labels (`app.corp`) collapses to its last label: for
+  // `int.evil.example` that would make every `*.example` host the same site.
+  return labels.length === 2 && host === registrable && !LOCAL_NAME.test(registrable)
     ? labels[1] ?? registrable
     : registrable
 }
@@ -199,9 +293,13 @@ function intranetSite(hostname: string): string | null {
 export async function sourceMapRefusal(target: URL, scriptUrl: URL, localPage: URL | null, lookup: Lookup = systemLookup): Promise<string | null> {
   if (!/^https?:$/.test(target.protocol))
     return `${target.protocol} URLs are never fetched`
-  const reason = await nonPublicReason(target.hostname, lookup)
-  if (reason === null)
+  const status = await hostStatus(target.hostname, lookup)
+  if (status.kind === 'public')
     return null
+  // Not knowing the address is not knowing it is private: say only that.
+  if (status.kind === 'unresolved')
+    return status.reason
+  const { reason } = status
   const ownOrigin = target.origin === scriptUrl.origin
   if (localPage === null) {
     return ownOrigin

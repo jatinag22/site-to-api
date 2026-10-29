@@ -44,9 +44,15 @@ export function templateMatches(template: ParsedTemplate, segments: string[]): b
       : part.literal === segments[index])
 }
 
-function bestSourceMatch(templates: ParsedTemplate[], segments: string[]): ParsedTemplate | null {
+/**
+ * The most specific source template for a path. A template with no literal segment (`/{token}`,
+ * from `${base}/${token}`) is anchored to nothing, so it only applies where every parameter falls
+ * on a segment that could be one: otherwise it would turn `/stream` on any host into `/{token}`.
+ */
+function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCandidate: (segment: string) => boolean): ParsedTemplate | null {
   const matching = templates
-    .filter(template => templateMatches(template, segments))
+    .filter(template => templateMatches(template, segments)
+      && (template.literals > 0 || segments.every(isCandidate)))
     .sort((a, b) => b.literals - a.literals || a.route.pathTemplate.localeCompare(b.route.pathTemplate))
   return matching[0] ?? null
 }
@@ -54,7 +60,8 @@ function bestSourceMatch(templates: ParsedTemplate[], segments: string[]): Parse
 /**
  * Finds parameter positions for the distinct paths of one host + method.
  *
- * 1. A source route template that matches the path wins and names its parameters.
+ * 1. A source route template that matches the path wins and names its parameters (one made only
+ *    of parameters needs every segment to be a candidate, see {@link bestSourceMatch}).
  * 2. Strong identifiers (UUIDs, long numbers, long hex or random tokens, JWTs and other secrets
  *    in the path) are parameters on sight.
  * 3. Paths that agree on every segment that is not identifier-like (or a slug some other
@@ -73,7 +80,7 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
   for (const path of paths) {
     const segments = segmentsOf(path)
     const marks: Marks = new Map()
-    const source = bestSourceMatch(templates, segments)
+    const source = bestSourceMatch(templates, segments, isCandidate)
     if (source) {
       source.segments.forEach((part, index) => {
         if ('param' in part) {

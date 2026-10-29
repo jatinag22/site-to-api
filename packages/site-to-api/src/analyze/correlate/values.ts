@@ -38,7 +38,11 @@ const BROWSER_REQUEST_HEADERS = new Set([
   'user-agent',
 ])
 
-/** Response headers that describe the transfer, not data a later request could reuse. */
+/**
+ * Response headers that describe the transfer, not data a later request could reuse. `cookie`
+ * is a request header: in a response (some bot-protection pages reflect it) it holds what the
+ * browser sent, never a value the server produced.
+ */
 const TRANSPORT_RESPONSE_HEADERS = new Set([
   'accept-ranges',
   'age',
@@ -49,6 +53,7 @@ const TRANSPORT_RESPONSE_HEADERS = new Set([
   'content-length',
   'content-security-policy',
   'content-type',
+  'cookie',
   'date',
   'expires',
   'keep-alive',

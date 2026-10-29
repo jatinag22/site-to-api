@@ -19,6 +19,27 @@ import { describeSource, NO_SOURCE } from './source-ref'
 export type StepLabel = (reference: string) => string
 
 /**
+ * Where in a page an HTML origin reads the value. An empty selector is the whole text document; a
+ * value that is only somewhere in a page gets no HTML origin at all.
+ */
+function describeHtmlPlace(origin: Extract<ValueOrigin, { kind: 'html' }>): string {
+  const place = origin.selector === ''
+    ? 'the whole text response'
+    : `html ${origin.repeated === true
+      ? 'one of the elements matching '
+      : ''}${cellCode(origin.selector)}${origin.attr
+      ? ` @${cellCode(origin.attr)}`
+      : ''}`
+  const pattern = origin.pattern === null
+    ? ''
+    : ` matching ${cellCode(origin.pattern)}`
+  const confidence = origin.confidence === 'low'
+    ? ' (low confidence)'
+    : ''
+  return `${place}${pattern}${confidence}`
+}
+
+/**
  * Short, readable form of where an input comes from, as Markdown that is safe in a table cell.
  * `step` renders step references; by default they are shown as written in `flows.json`.
  */
@@ -39,11 +60,7 @@ export function describeOrigin(origin: ValueOrigin, step: StepLabel = cellCode):
         : ''}`
     }
     case 'html':
-      return `${step(origin.step)} → html ${origin.repeated === true
-        ? 'one of the elements matching '
-        : ''}${cellCode(origin.selector)}${origin.attr
-        ? ` @${cellCode(origin.attr)}`
-        : ''}`
+      return `${step(origin.step)} → ${describeHtmlPlace(origin)}`
     case 'user-input':
       return `typed into ${cellCode(origin.field)}`
     case 'computed':

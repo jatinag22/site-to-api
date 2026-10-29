@@ -187,6 +187,11 @@ export interface ChannelMessage {
   format: 'json' | 'text' | 'binary'
   /** Frames seen across all connections. */
   count: number
+  /**
+   * Frames the JSON schema was inferred from: the first 1000 when there were more (`count`), so
+   * a field only later frames have can be missing. Null for text and binary frames.
+   */
+  schemaSamples: number | null
   /** JSON Schema of the message, for JSON messages; null otherwise. */
   schema: JsonSchema | null
   /** For text frames: value-free shape descriptions of the frames, most common first. */
@@ -196,6 +201,13 @@ export interface ChannelMessage {
   /** Values in this message traced to earlier HTTP responses or typing (client messages only). */
   links: ChannelValueLink[]
 }
+
+/**
+ * Why a message is part of a channel's setup, from its type's name: `init` (`connection_init`,
+ * `hello`), `auth` (`auth`, `login`), `subscribe` (`subscribe`, `join`); `other` when no message
+ * type was recognised and the first message the client sent is listed instead.
+ */
+export type HandshakeRole = 'init' | 'auth' | 'subscribe' | 'other'
 
 /** A WebSocket endpoint seen during capture, with its messages grouped by direction and type. */
 export interface WebSocketChannel {
@@ -213,10 +225,10 @@ export interface WebSocketChannel {
   sentFrom: SourceRef | null
   messages: ChannelMessage[]
   /**
-   * What the client sends right after connecting (subscription, authentication), in order: the
-   * most common opening sequence across connections, with a redacted example of each message.
+   * What the client sends to set up the connection (decision 0030), in order: the most common
+   * setup sequence across connections, with the role of each message and a redacted example.
    */
-  handshake: Array<{ message: string, example: unknown }>
+  handshake: Array<{ message: string, role: HandshakeRole, example: unknown }>
   /**
    * Cookies on the HTTP upgrade request: `sent` (names listed), `none`, or `unknown` when the
    * HAR has no upgrade request for the channel.
@@ -224,6 +236,11 @@ export interface WebSocketChannel {
   cookies: { status: 'sent' | 'none' | 'unknown', names: string[] }
   /** Path and query values of the connection URL traced to earlier responses. */
   links: ChannelValueLink[]
+  /**
+   * Directions whose JSON messages come in several shapes but could not be grouped by type: no
+   * field names the type, or the best one (`field`) has more `values` than a message type can.
+   */
+  ungrouped: Array<{ direction: ChannelMessage['direction'], field: string | null, values: number | null }>
   /** One-line description built from the path and the message names, without an LLM. */
   summary: string
 }

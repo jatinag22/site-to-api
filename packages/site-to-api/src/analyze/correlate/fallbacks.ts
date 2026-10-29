@@ -87,24 +87,63 @@ function selectorNames(selector: string): string[] {
   return names
 }
 
+/** Request field names sites use for a search box's text, normalised. */
+const SEARCH_PARAMETERS = new Set([
+  'q',
+  'query',
+  'search',
+  'searchterm',
+  'searchquery',
+  'term',
+  'keyword',
+  'keywords',
+  'text',
+])
+const SEARCH_WORDS = /search|query|find/i
+
+type ActionEvent = Extract<CaptureEvent, { t: 'action' }>
+
+/** The changed field is the request field: same name, or a search box for a search parameter. */
+function isFieldFor(event: ActionEvent, wanted: string, searchParameter: boolean): boolean {
+  const candidates = [
+    event.field ?? '',
+    ...selectorNames(event.selector),
+  ]
+  return candidates.some(candidate => normalizeField(candidate) === wanted)
+    || (searchParameter && [...candidates, event.label].some(text => SEARCH_WORDS.test(text)))
+}
+
 /**
  * The form field the person typed this value into: the latest `change` action before the
  * request whose field name, or the name or id in its selector, matches the request field name.
+ * A search box is the exception, because its name rarely matches what the site sends (`search`
+ * typed, `q` sent; a nameless box, `query` sent): a well-known search parameter matches a field
+ * whose name, selector or label says search. The capture records no typed values, so names are
+ * all there is to go on. With `stillTyping` (the request is one of several sending ever longer
+ * values of the field), the first `change` after the request counts too.
  */
-export function findUserInputField(events: readonly CaptureEvent[], name: string, before: number): string | null {
+export function findUserInputField(events: readonly CaptureEvent[], name: string, before: number, options: { stillTyping?: boolean } = {}): string | null {
   const wanted = normalizeField(name)
   if (!wanted)
     return null
+  const searchParameter = SEARCH_PARAMETERS.has(wanted)
+  const actions = events.filter((event): event is ActionEvent => event.t === 'action')
   let field: string | null = null
-  for (const event of events) {
-    if (event.t !== 'action' || event.kind !== 'change' || event.ts > before)
-      continue
-    const candidates = [
-      event.field ?? '',
-      ...selectorNames(event.selector),
-    ]
-    if (candidates.some(candidate => normalizeField(candidate) === wanted))
+  for (const event of actions) {
+    if (event.ts <= before && event.kind === 'change' && isFieldFor(event, wanted, searchParameter))
       field = event.field ?? name
   }
-  return field
+  if (field !== null || !options.stillTyping)
+    return field
+  // `change` fires when the field loses focus, after the requests sent on each keystroke. A value
+  // still being typed belongs to the next `change`, unless the person clicked or submitted first.
+  for (const event of actions) {
+    if (event.ts <= before)
+      continue
+    if (event.kind === 'click' || event.kind === 'submit')
+      return null
+    if (event.kind === 'change' && isFieldFor(event, wanted, searchParameter))
+      return event.field ?? name
+  }
+  return null
 }

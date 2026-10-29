@@ -401,6 +401,7 @@ function renderStringRecord(record: Record<string, string>, indent: string): str
 
 /** Inline examples longer than this are left to the AsyncAPI file. */
 const MAX_README_EXAMPLE = 400
+const README_ROLES = { init: 'start the protocol', auth: 'authenticate', subscribe: 'subscribe' } as const
 
 function channelLine(channel: ChannelSummary): string {
   const steps = channel.handshake.map((step) => {
@@ -409,13 +410,18 @@ function channelLine(channel: ChannelSummary): string {
       : typeof step.example === 'string'
         ? step.example
         : JSON.stringify(step.example)
+    const role = step.role === null || step.role === 'other'
+      ? ''
+      : ` to ${README_ROLES[step.role]}`
     return json !== null && json !== undefined && json.length <= MAX_README_EXAMPLE
-      ? `${code(step.name)} (${code(json)})`
-      : code(step.name)
+      ? `${code(step.name)}${role} (${code(json)})`
+      : `${code(step.name)}${role}`
   })
-  const after = steps.length > 0
-    ? `after connecting, send ${steps.join(', then ')}`
-    : 'the server pushes without a subscription message'
+  let after = 'the client sent nothing during capture; the server pushes on its own'
+  if (steps.length > 0)
+    after = `after connecting, send ${steps.join(', then ')}`
+  else if (channel.messageTypes === 0)
+    after = 'no messages were seen during capture'
   return `- ${code(channel.url)} (channel ${code(channel.id)} in ${code(`../specs/${channel.file}`)}): ${after}.`
 }
 

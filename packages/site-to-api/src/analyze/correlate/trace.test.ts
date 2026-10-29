@@ -203,6 +203,77 @@ describe('traceValues: response producers', () => {
     })
   })
 
+  it('does not match a plain word inside a longer response text as a substring', () => {
+    const copy = exchange({
+      url: 'https://api.example.test/i18n',
+      startedAt: 1,
+      responseBody: jsonBody({ desc: 'Prices from both markets, combined into one feed' }),
+    })
+    const call = exchange({ url: 'https://api.example.test/feed?view=combined', startedAt: 2 })
+    expect(originAt(trace([copy, call]), call, '{"in":"query","name":"view"}')).toMatchObject({ kind: 'unknown' })
+  })
+
+  it('matches a number in a slug, a prefixed id or a file name, but not in a dotted run of numbers', () => {
+    const list = exchange({
+      url: 'https://api.example.test/products',
+      startedAt: 1,
+      responseBody: jsonBody({
+        items: [
+          { id: '48213377' },
+        ],
+      }),
+    })
+    const call = (query: string): ValueTrace['origin'] | undefined => {
+      const consumer = exchange({ url: `https://api.example.test/x?v=${query}`, startedAt: 2 })
+      return originAt(trace([list, consumer]), consumer, '{"in":"query","name":"v"}')
+    }
+    for (const value of [
+      '48213377-running-shoe',
+      'order-48213377',
+      'item_48213377',
+      '48213377.jpg',
+      '/products/48213377-running-shoe',
+    ])
+      expect(call(encodeURIComponent(value)), value).toMatchObject({ kind: 'response', transform: 'substring' })
+    for (const value of ['1.1.48213377.1793209581', '48213377.5', 'x9-48213377'])
+      expect(call(encodeURIComponent(value)), value).toMatchObject({ kind: 'unknown' })
+  })
+
+  it('never takes a value from a cookie header a response reflects', () => {
+    // A bot-protection page echoes the request's cookies back in a `cookie` response header.
+    const blocked = exchange({
+      url: 'https://api.example.test/cart',
+      startedAt: 1,
+      status: 403,
+      responseHeaders: { cookie: '_fbp=fb.1.1793209580.4471; session=x' },
+    })
+    const call = exchange({
+      url: 'https://api.example.test/next',
+      startedAt: 2,
+      cookies: { _fbp: 'fb.1.1793209580.4471' },
+    })
+    expect(originAt(trace([blocked, call]), call, '{"in":"cookie","name":"_fbp"}')).not.toMatchObject({ kind: 'response' })
+  })
+
+  it('matches a number inside a longer value only where separators set it off', () => {
+    const clock = exchange({
+      url: 'https://api.example.test/tags',
+      startedAt: 1,
+      responseBody: jsonBody({
+        ts: '1793209580',
+        ids: ['55512345'],
+      }),
+    })
+    const call = exchange({ url: 'https://api.example.test/x?gcl=1.1.1793209580.1793209581&ids=4,55512345,9', startedAt: 2 })
+    const traces = trace([clock, call])
+    expect(originAt(traces, call, '{"in":"query","name":"gcl"}')).toMatchObject({ kind: 'unknown' })
+    expect(originAt(traces, call, '{"in":"query","name":"ids"}')).toMatchObject({
+      kind: 'response',
+      transform: 'substring',
+      location: { pointer: '/ids/0' },
+    })
+  })
+
   it('finds values in HTML through the locator, also as part of a longer value', () => {
     const page = exchange({
       url: 'https://www.example.test/',
@@ -234,7 +305,7 @@ describe('traceValues: response producers', () => {
     })
   })
 
-  it('records an HTML hit with an empty selector when the locator cannot place it', () => {
+  it('records no HTML origin when the locator cannot place the value', () => {
     const page = exchange({
       url: 'https://www.example.test/',
       startedAt: 1,
@@ -242,13 +313,183 @@ describe('traceValues: response producers', () => {
       responseBody: textBody('<script>window.k="inline-key-998877"</script>'),
     })
     const call = exchange({ url: 'https://www.example.test/api?k=inline-key-998877', startedAt: 2 })
-    expect(originAt(trace([page, call]), call, '{"in":"query","name":"k"}')).toMatchObject({
-      location: {
-        in: 'html',
-        selector: '',
-        attr: null,
-        pattern: null,
-      },
+    expect(originAt(trace([page, call]), call, '{"in":"query","name":"k"}')).toMatchObject({ kind: 'unknown' })
+  })
+
+  it('does not trace a plain word to a page that only contains it somewhere', () => {
+    const page = exchange({
+      url: 'https://www.example.test/',
+      startedAt: 1,
+      kind: 'page',
+      responseBody: textBody('<html><body><script>var mode="combined";</script><div class="bar-horizontal">Live ticks</div></body></html>'),
+    })
+    const call = exchange({ url: 'https://www.example.test/api?view=combined&op=tick&dir=horizontal', startedAt: 2 })
+    for (const htmlLocator of [
+      noLocator,
+      createHtmlLocator(),
+    ]) {
+      const traces = trace([page, call], { htmlLocator })
+      for (const name of ['view', 'op', 'dir'])
+        expect(originAt(traces, call, `{"in":"query","name":"${name}"}`)).toMatchObject({ kind: 'unknown' })
+    }
+  })
+
+  it('still traces a plain word to the page element that holds exactly it', () => {
+    const page = exchange({
+      url: 'https://www.example.test/',
+      startedAt: 1,
+      kind: 'page',
+      responseBody: textBody('<html><body><select><option value="combined" selected>Combined</option></select></body></html>'),
+    })
+    const call = exchange({ url: 'https://www.example.test/api?view=combined', startedAt: 2 })
+    expect(originAt(trace([page, call], {
+      htmlLocator: createHtmlLocator(),
+    }), call, '{"in":"query","name":"view"}')).toMatchObject({
+      kind: 'response',
+      location: { in: 'html', attr: 'value' },
+    })
+  })
+
+  it('traces a plain word only to a page of the same site, never to a class name or another site\'s link', () => {
+    const html = '<html><body><input name="tags" value="story"><table><tr><td class="title">x</td></tr></table><a href="https://news.other.test/newest">new</a><a href="https://www.news.test/basket">Bag</a></body></html>'
+    const page = (url: string): Exchange => exchange({
+      url,
+      startedAt: 1,
+      kind: 'page',
+      responseBody: textBody(html),
+    })
+    const traced = (pageUrl: string, query: string): ValueTrace['origin'] | undefined => {
+      const source = page(pageUrl)
+      const call = exchange({ url: `https://api.news.test/search?${query}`, startedAt: 2 })
+      return originAt(trace([source, call], {
+        htmlLocator: createHtmlLocator(),
+      }), call, `{"in":"query","name":"${query.split('=')[0]}"}`)
+    }
+    expect(traced('https://www.news.test/', 'tag=story')).toMatchObject({
+      kind: 'response',
+      location: { in: 'html', attr: 'value' },
+    })
+    expect(traced('https://www.elsewhere.test/', 'tag=story')).toMatchObject({ kind: 'unknown' })
+    expect(traced('https://www.news.test/', 'restrict=title')).toMatchObject({ kind: 'unknown' })
+    expect(traced('https://www.news.test/', 'kind=newest')).toMatchObject({ kind: 'unknown' })
+    // The first path segment of a link names a page: `/basket`, not a value.
+    expect(traced('https://www.news.test/', 'resource=basket')).toMatchObject({ kind: 'unknown' })
+  })
+
+  it('prefers a constant to a page or a plain word a response happens to hold', () => {
+    const sessionData = (sessionId: string): Exchange[] => [
+      exchange({
+        sessionId,
+        url: 'https://www.market.test/',
+        startedAt: 1,
+        kind: 'page',
+        responseBody: textBody('<html><body><nav><a href="/indices">Indices</a></nav></body></html>'),
+      }),
+      exchange({
+        sessionId,
+        url: 'https://www.market.test/api/summary',
+        startedAt: 2,
+        responseBody: jsonBody({
+          gift: { symbol: 'NIFTY' },
+          token: `tk-${sessionId}-77a1b2c3`,
+        }),
+      }),
+      exchange({ sessionId, url: 'https://www.market.test/api/chain?type=Indices&symbol=NIFTY', startedAt: 3 }),
+    ]
+    const exchanges = [
+      ...sessionData('a'),
+      ...sessionData('b'),
+    ]
+    const traced = (staticStrings: string[]): ValueTrace[] => traceValues({
+      exchanges,
+      sessions: [
+        session('a'),
+        session('b'),
+      ],
+      htmlLocator: createHtmlLocator(),
+      staticStrings: new Set(staticStrings),
+      minValueLength: 4,
+    })
+    const chain = exchanges[2]!
+    // The site's code holds `NIFTY` as a literal, as NSE's option-chain bundle does.
+    const traces = traced(['NIFTY'])
+    expect(originAt(traces, chain, '{"in":"query","name":"type"}')).toEqual({ kind: 'constant' })
+    expect(originAt(traces, chain, '{"in":"query","name":"symbol"}')).toEqual({ kind: 'constant' })
+    // Only equal across sessions, a plain word in a JSON response keeps that response.
+    expect(originAt(traced([]), chain, '{"in":"query","name":"symbol"}')).toMatchObject({ kind: 'response' })
+    // In one session only, with no literal in the code, the response is still the best answer.
+    const one = sessionData('a')
+    const single = trace(one, {
+      sessions: [
+        session('a'),
+      ],
+      htmlLocator: createHtmlLocator(),
+    })
+    expect(originAt(single, one[2]!, '{"in":"query","name":"symbol"}')).toMatchObject({ kind: 'response' })
+    // A literal in the site's code is a constant even in one session.
+    const literal = trace(one, {
+      sessions: [
+        session('a'),
+      ],
+      htmlLocator: createHtmlLocator(),
+      staticStrings: ['Indices'],
+    })
+    expect(originAt(literal, one[2]!, '{"in":"query","name":"type"}')).toEqual({ kind: 'constant' })
+  })
+
+  it('keeps exact producers of deploy-bound ids and same values across sessions', () => {
+    // Two captures of one deploy agree on the build id and on who is signed in.
+    const sessionData = (sessionId: string): Exchange[] => [
+      exchange({
+        sessionId,
+        url: 'https://shop.test/',
+        startedAt: 1,
+        kind: 'page',
+        responseBody: textBody('<html><body><script id="__NEXT_DATA__" type="application/json">{"buildId":"b7Xk2pQ9vL4mN8rT1sW6z","page":"/"}</script></body></html>'),
+      }),
+      exchange({
+        sessionId,
+        url: 'https://shop.test/_next/data/b7Xk2pQ9vL4mN8rT1sW6z/products.json',
+        startedAt: 2,
+        responseBody: jsonBody({ items: [] }),
+      }),
+      exchange({
+        sessionId,
+        url: 'https://shop.test/api/me',
+        startedAt: 3,
+        responseBody: jsonBody({ username: 'jatin' }),
+      }),
+      // A lower-case word in a path is a route literal and never traced; in a query it is a value.
+      exchange({
+        sessionId,
+        url: 'https://shop.test/api/repos?owner=jatin',
+        startedAt: 4,
+        responseBody: jsonBody([]),
+      }),
+    ]
+    const a = sessionData('a')
+    const traces = traceValues({
+      exchanges: [
+        ...a,
+        ...sessionData('b'),
+      ],
+      sessions: [
+        session('a'),
+        session('b'),
+      ],
+      htmlLocator: createHtmlLocator(),
+      staticStrings: new Set(),
+      minValueLength: 4,
+    })
+    expect(originAt(traces, a[1]!, '{"in":"path","index":2}')).toMatchObject({
+      kind: 'response',
+      exchangeId: a[0]!.id,
+      location: { in: 'html' },
+    })
+    expect(originAt(traces, a[3]!, '{"in":"query","name":"owner"}')).toMatchObject({
+      kind: 'response',
+      exchangeId: a[2]!.id,
+      location: { in: 'body', pointer: '/username' },
     })
   })
 
@@ -421,6 +662,74 @@ describe('traceValues: values no response produced', () => {
         session('s1', events),
       ],
     })[0]?.origin).toEqual({ kind: 'user-input', field: 'query' })
+  })
+
+  it('marks a search parameter as typed into a search box with another name', () => {
+    const change = (field: string | null, selector: string, label: string): CaptureEvent => ({
+      t: 'action',
+      ts: 10,
+      pageUrl: 'https://x.example.test/',
+      kind: 'change',
+      label,
+      selector,
+      field,
+    })
+    const typed = (event: CaptureEvent, url: string, init: Partial<Parameters<typeof exchange>[0]> = {}): ValueTrace['origin'] | undefined =>
+      trace([
+        exchange({ url, startedAt: 20, ...init }),
+      ], {
+        sessions: [
+          session('s1', [event]),
+        ],
+      })[0]?.origin
+    // Suggestions as the person types: `q` from a field named `search`.
+    expect(typed(change('search', '#searchInput', 'Search the encyclopedia'), 'https://x.example.test/rest/search/title?q=cipher')).toEqual({ kind: 'user-input', field: 'search' })
+    // A nameless box whose label says search, sending a JSON body.
+    expect(typed(change(null, 'header > div > input', 'Search stories by title'), 'https://api.example.test/indexes/query', {
+      method: 'POST',
+      requestBody: jsonBody({ query: 'cipher', page: 0 }),
+    })).toEqual({ kind: 'user-input', field: 'query' })
+    // Not a search box: a search parameter is not credited to it.
+    expect(typed(change('email', '#email', 'Email address'), 'https://x.example.test/rest/search/title?q=cipher')).toMatchObject({ kind: 'unknown' })
+  })
+
+  it('credits the values sent on each keystroke to the change that ends the typing', () => {
+    const action = (ts: number, kind: 'change' | 'click'): CaptureEvent => ({
+      t: 'action',
+      ts,
+      pageUrl: 'https://x.example.test/',
+      kind,
+      label: 'Search stories',
+      selector: kind === 'change'
+        ? 'header > input'
+        : 'li > button',
+      field: null,
+    })
+    // Each answer echoes the query, so `ciphe` also contains the earlier answer's `ciph`.
+    const keystrokes = ['ciph', 'ciphe', 'cipher'].map((query, position) => exchange({
+      method: 'POST',
+      url: 'https://api.example.test/indexes/query',
+      startedAt: 20 + position,
+      requestBody: jsonBody({ query }),
+      responseBody: jsonBody({ query, hits: [] }),
+    }))
+    const origins = (events: CaptureEvent[]): Array<string | undefined> => {
+      const traces = trace(keystrokes, {
+        sessions: [
+          session('s1', events),
+        ],
+      })
+      return keystrokes.map(sent => originAt(traces, sent, '{"in":"body","pointer":"/query"}')?.kind)
+    }
+    expect(origins([
+      action(40, 'change'),
+      action(40, 'click'),
+    ])).toEqual(['user-input', 'user-input', 'user-input'])
+    // A click before the change: the typing that change ends began after these requests.
+    expect(origins([
+      action(30, 'click'),
+      action(40, 'change'),
+    ])).toEqual(['unknown', 'unknown', 'unknown'])
   })
 
   it('does not credit typing that happened after the request', () => {

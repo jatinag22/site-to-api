@@ -320,6 +320,58 @@ describe('buildFlows: segments and merging', () => {
     expect(doc.flows[0]?.steps[0]?.summary).toBe('After clicking "Go!": GET /one.')
   })
 
+  it('starts a navigation at its document request, which comes before the navigate event', () => {
+    const newest = exchange({
+      url: 'https://news.example.test/newest',
+      resourceType: 'document',
+      kind: 'page',
+      startedAt: 1_100,
+    })
+    const search = exchange({
+      url: 'https://search.example.test/',
+      resourceType: 'document',
+      kind: 'page',
+      startedAt: 4_000,
+    })
+    const query = exchange({ url: 'https://api.search.example.test/query', startedAt: 4_600 })
+    const action = (ts: number, kind: 'click' | 'navigate', pageUrl: string, label: string): CaptureEvent => ({
+      t: 'action',
+      ts,
+      pageUrl,
+      kind,
+      label,
+      selector: kind === 'click'
+        ? 'a'
+        : '',
+      field: null,
+    })
+    const doc = build([newest, search, query], [
+      op('getNewest', [newest], { kind: 'page' }),
+      op('getRoot', [search], { kind: 'page' }),
+      op('getQuery', [query]),
+    ], [
+      loaded('s1', [
+        action(1_000, 'click', 'https://news.example.test/', 'new'),
+        action(1_500, 'navigate', 'https://news.example.test/newest', 'Newest'),
+        // A script's `page.goto`: the event arrives once the page runs, after its document.
+        action(4_400, 'navigate', 'https://search.example.test/', 'Search'),
+      ]),
+    ])
+    expect(doc.flows.map(entry => [
+      entry.trigger.kind,
+      entry.steps.map(step => step.operationId),
+    ])).toEqual([
+      [
+        'click',
+        ['getNewest'],
+      ],
+      [
+        'navigate',
+        ['getRoot', 'getQuery'],
+      ],
+    ])
+  })
+
   it('drops segments without steps and skips exchanges without an operation or of other kinds', () => {
     const asset = exchange({ url: 'https://cdn.example.test/app.js', startedAt: 1, kind: 'asset' })
     const orphan = exchange({ url: 'https://api.example.test/orphan', startedAt: 2 })
@@ -394,6 +446,74 @@ describe('buildFlows: segments and merging', () => {
       'header.authorization': { kind: 'unknown', shape: '26 chars, separators " "' },
       'query.release': { kind: 'unknown', shape: '11 chars' },
     })
+  })
+
+  it('writes an HTML origin only when it reads the value sent, and rates a regex over prose low', () => {
+    const page = exchange({ url: 'https://www.example.test/', startedAt: 1, kind: 'page' })
+    const call = exchange({
+      url: 'https://www.example.test/api?a=1&b=2&c=3',
+      startedAt: 5,
+      requestHeaders: { 'x-auth': 'Token k-77a1b2c3d4' },
+    })
+    const html = (selector: string, pattern: string | null): ValueTrace['origin'] => ({
+      kind: 'response',
+      exchangeId: page.id,
+      location: {
+        in: 'html',
+        selector,
+        attr: null,
+        pattern,
+      },
+      transform: 'none',
+    })
+    const traces: ValueTrace[] = [
+      // The header holds the page value inside a longer string: the origin would read only a part.
+      {
+        exchangeId: call.id,
+        location: { in: 'header', name: 'x-auth' },
+        value: 'Token k-77a1b2c3d4',
+        origin: {
+          kind: 'response',
+          exchangeId: page.id,
+          location: {
+            in: 'html',
+            selector: 'meta',
+            attr: 'content',
+            pattern: null,
+          },
+          transform: 'substring',
+        },
+      },
+      {
+        exchangeId: call.id,
+        location: { in: 'query', name: 'a' },
+        value: 'k-77a1b2c3d4',
+        origin: html('body > script:nth-of-type(2)', 'key:"([^"]*)'),
+      },
+      {
+        exchangeId: call.id,
+        location: { in: 'query', name: 'b' },
+        value: 'k-77a1b2c3d4',
+        origin: html('h1', 'for ([\\w-]+)'),
+      },
+      {
+        exchangeId: call.id,
+        location: { in: 'query', name: 'c' },
+        value: 'k-77a1b2c3d4',
+        origin: html('', 'id=([\\w-]+)'),
+      },
+    ]
+    const doc = build([page, call], [
+      op('getRoot', [page]),
+      op('getApi', [call]),
+    ], [
+      loaded('s1', []),
+    ], traces)
+    const inputs = doc.flows[0]?.steps.find(entry => entry.operationId === 'getApi')?.inputs
+    expect(inputs?.['header.x-auth']).toMatchObject({ kind: 'unknown' })
+    expect(inputs?.['query.a']).toMatchObject({ kind: 'html', confidence: 'high' })
+    expect(inputs?.['query.b']).toMatchObject({ kind: 'html', confidence: 'low' })
+    expect(inputs?.['query.c']).toMatchObject({ kind: 'html', confidence: 'low' })
   })
 
   it('needs a token when an API sends Authorization, cookies when it sends cookies, nothing otherwise', () => {

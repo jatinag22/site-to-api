@@ -9,17 +9,17 @@ import type { ResolvedConfig } from '../config/schema'
 import type { CaptureEvent, SessionMeta } from '../model'
 import type { EventLimits } from './events'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import { createJiti } from 'jiti'
 import { chromium } from 'playwright'
-import { z } from 'zod'
 import pkg from '../../package.json' with { type: 'json' }
 import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { EventWriter } from './events'
+import { finishHar, harOmissionNote } from './har'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
 import { ScriptCollector } from './scripts'
@@ -62,12 +62,6 @@ const HAR_FILE = 'traffic.har'
 const EVENTS_FILE = 'events.jsonl'
 const META_FILE = 'meta.json'
 
-const HarSchema = z.object({
-  log: z.object({
-    entries: z.array(z.unknown()),
-  }),
-})
-
 function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
@@ -109,22 +103,6 @@ function onStop(signal: AbortSignal | undefined, stop: () => void): () => void {
     signal?.removeEventListener('abort', handler)
     process.removeListener('SIGINT', handler)
   }
-}
-
-async function validateHar(file: string): Promise<number> {
-  let size = 0
-  try {
-    size = (await stat(file)).size
-  }
-  catch {
-    throw new SiteToApiError(`The browser closed without writing ${file}. Capture again and end the session by closing the browser window or pressing Ctrl+C, not by killing the process.`)
-  }
-  if (size === 0)
-    throw new SiteToApiError(`${file} is empty. Capture again and end the session by closing the browser window or pressing Ctrl+C.`)
-  const parsed = HarSchema.safeParse(JSON.parse(await readFile(file, 'utf8')))
-  if (!parsed.success)
-    throw new SiteToApiError(`${file} is not a valid HAR file. Capture again.`)
-  return parsed.data.log.entries.length
 }
 
 type BrowserConfig = ResolvedConfig['capture']['browser']
@@ -292,7 +270,12 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     await collector.settle()
     await context.close()
 
-    const entries = await validateHar(harPath)
+    const har = await finishHar(harPath)
+    const { entries } = har
+    const omitted = harOmissionNote(har, { websockets: capture.websockets, saveScripts: capture.saveScripts, eventsFile: EVENTS_FILE })
+    if (omitted !== null)
+      log(omitted)
+    warnings.push(...har.warnings)
     if (entries === 0)
       warnings.push('The HAR has no requests. Did the page load?')
     warnings.push(...collector.warnings, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
@@ -304,7 +287,8 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       startUrl: options.url,
       startedAt,
       completedAt: new Date().toISOString(),
-      browser: { channel: browser.channel, headless: browser.headless, userAgent },
+      // `null` in the config means Playwright's bundled Chromium; say so instead of leaving it blank.
+      browser: { channel: browser.channel ?? 'bundled', headless: browser.headless, userAgent },
       har: HAR_FILE,
       events: EVENTS_FILE,
       scripts: collector.scripts.toSorted((a, b) => a.url.localeCompare(b.url)),

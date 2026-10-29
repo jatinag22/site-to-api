@@ -648,7 +648,7 @@ describe('generateClient with WebSocket channels', () => {
       expect(result.files.filter(file => file.includes('asyncapi'))).toEqual([])
       const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
       expect(readme).toContain('## Real-time channels')
-      expect(readme).toContain('- `ws://shop.example.com/ws/ticker` (channel `wsTicker` in `../specs/shop.example.com.asyncapi.yaml`): after connecting, send `subscribe` (`{"type":"subscribe","productId":1007}`).')
+      expect(readme).toContain('- `ws://shop.example.com/ws/ticker` (channel `wsTicker` in `../specs/shop.example.com.asyncapi.yaml`): after connecting, send `subscribe` to subscribe (`{"type":"subscribe","productId":1007}`).')
     }
     finally {
       await rm(dir, { recursive: true, force: true })
@@ -662,7 +662,7 @@ describe('generateClient with WebSocket channels', () => {
         host: 'shop.example.com',
         path: `/ws/${HOSTILE}`,
         handshake: [
-          { message: 'sendSubscribe', example: HOSTILE },
+          { message: 'sendSubscribe', role: 'subscribe', example: HOSTILE },
         ],
       })
       await writeFile(path.join(dir, 'handoff', 'specs', 'shop.example.com.asyncapi.yaml'), asyncApi(channel))
