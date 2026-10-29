@@ -1,13 +1,16 @@
 import type { CallArguments, CallOutcome } from './call'
 import type { OperationEntry } from './catalog'
 import type { Handoff } from './handoff'
-import { rm } from 'node:fs/promises'
+import { cp, mkdtemp, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport } from '@modelcontextprotocol/server'
 import { afterEach, describe, expect, it } from 'vitest'
 import { writeShopHandoff } from '../../test/handoff'
 import { loadHandoff } from './handoff'
 import { createExplorationServer } from './server'
+import { createHandoffSource } from './source'
 
 const dirs: string[] = []
 
@@ -28,7 +31,7 @@ async function open(options: { examples?: 'masked' | 'raw' | 'none' | null, allo
   // The calls are recorded instead of sent; call.test.ts covers the real client.
   const handoff = { ...loaded, clientGenerated: options.client ?? true }
   const calls: Session['calls'] = []
-  const call = async (entry: OperationEntry, args: CallArguments): Promise<CallOutcome> => {
+  const call = async (_handoff: Handoff, entry: OperationEntry, args: CallArguments): Promise<CallOutcome> => {
     calls.push({ operationId: entry.operationId, args })
     return {
       status: 200,
@@ -38,7 +41,7 @@ async function open(options: { examples?: 'masked' | 'raw' | 'none' | null, allo
     }
   }
   const server = createExplorationServer({
-    handoff,
+    load: async () => handoff,
     allowCalls: options.allowCalls ?? false,
     unsafeMethods: options.unsafeMethods ?? false,
     maxRps: 1,
@@ -302,5 +305,58 @@ describe('call_operation', () => {
       error: true,
       text: expect.stringContaining('site-to-api gen'),
     })
+  })
+})
+
+describe('without a handoff folder', () => {
+  it('starts, answers every tool with what to run, and picks the folder up once build wrote it', async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), 'site-to-api-mcp-empty-'))
+    dirs.push(parent)
+    const dir = path.join(parent, 'api-handoff')
+    const server = createExplorationServer({
+      load: createHandoffSource(dir),
+      allowCalls: true,
+      unsafeMethods: false,
+      maxRps: 1,
+      call: async () => ({ status: 200, ok: true, contentType: null }),
+    })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverTransport)
+    const client = new Client({ name: 'test', version: '0.0.0' })
+    await client.connect(clientTransport)
+    const tools = (await client.listTools()).tools.map(tool => tool.name)
+    expect(tools).toHaveLength(7)
+    for (const [name, args] of [
+      ['list_hosts', {}],
+      ['search_operations', {}],
+      [
+        'get_operation',
+        { operationId: 'getLogin' },
+      ],
+      [
+        'get_flow',
+        { flowId: 'sign-in' },
+      ],
+      [
+        'get_examples',
+        { operationId: 'getLogin' },
+      ],
+      [
+        'get_source',
+        { operationId: 'getLogin' },
+      ],
+      [
+        'call_operation',
+        { operationId: 'getLogin' },
+      ],
+    ] as const) {
+      expect(await callText(client, name, args), name).toEqual({
+        error: true,
+        text: expect.stringMatching(/^No handoff folder at .*api-handoff: run `site-to-api capture` \(browse the site\), then `site-to-api build`/),
+      })
+    }
+    // build writes the folder later; the same server serves it.
+    await cp(await writeShopHandoff(), dir, { recursive: true })
+    expect(await callJson(client, 'search_operations', { query: 'session' })).toMatchObject({ total: 1 })
   })
 })

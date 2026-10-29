@@ -329,6 +329,8 @@ Two MCP servers, both over stdio (decision 0043).
 
 **Explore the handoff folder.** `site-to-api mcp` lets an agent look up one operation at a time
 instead of reading every spec. It reads only the redacted handoff files, never the raw captures.
+It also starts before the folder exists; its tools then say to run `capture` and `build`, and pick
+the folder up once it is written.
 
 ```sh
 claude mcp add site-api -- site-to-api mcp ./api-handoff
@@ -370,8 +372,8 @@ claude mcp add pinewood -e SITE_API_COOKIE='…' -- npx tsx ./api-handoff/client
 ### Claude Code plugin and agent skill
 
 The repository is also a Claude Code plugin marketplace. The plugin adds the `site-to-api` MCP
-server above (on the project's `api-handoff/`), the commands `/site-to-api:capture` (Chrome,
-window minimized), `/site-to-api:build`, `/site-to-api:probe` and `/site-to-api:check`, and a skill
+server above (on the project's `api-handoff/`), the commands `/site-to-api:capture` (a normal
+Chrome window; minimized only with `--script`), `/site-to-api:build`, `/site-to-api:probe` and `/site-to-api:check`, and a skill
 that walks an agent through capture, reading the handoff folder, writing the wrapper and the
 safety rules. Nothing is published yet, so install it from a clone (the `site-to-api` CLI must be
 on your `PATH`, see [Install](#install)):

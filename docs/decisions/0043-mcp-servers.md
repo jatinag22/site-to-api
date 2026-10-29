@@ -22,6 +22,11 @@ one) wants to call the site's operations as tools, which needs a server that kno
   `get_operation` (spec slice without examples, each input with its origin, session needs, the
   client call), `get_flow`, `get_examples`, `get_source`. All are annotated read-only and
   closed-world.
+- **No folder yet.** The server starts without a handoff folder (the Claude Code plugin enables
+  it in every project): every tool then answers with an error that names the path and says to
+  run `capture`, then `build`. The folder is read on the first call that finds `flows.json`, and
+  read again when `flows.json`, `build.json` or `client/index.ts` change, so a later `build`,
+  `probe` or `gen` is picked up without a restart.
 - **Examples** are served only by `get_examples`, and only when `build.json` says they were
   `masked` (or `none`). A folder built with `--examples raw`, or one without `build.json`, gets a
   refusal that says how to rebuild. `get_operation` strips `example`/`examples` keywords from its

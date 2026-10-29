@@ -1,8 +1,11 @@
+import type { CallArguments, CallOutcome } from './call'
+import type { OperationEntry } from './catalog'
+import type { Handoff } from './handoff'
 import type { ExplorationServerOptions } from './server'
 import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { createCaller } from './call'
-import { loadHandoff } from './handoff'
 import { createExplorationServer } from './server'
+import { createHandoffSource } from './source'
 
 /** Options for {@link serveHandoff}. */
 export interface ServeHandoffOptions {
@@ -17,31 +20,38 @@ export interface ServeHandoffOptions {
 }
 
 /**
- * Serves the handoff folder over stdio until the client closes the connection. Resolves once the
- * folder is loaded and the server is listening; the returned function stops it.
+ * Serves the handoff folder over stdio until the client closes the connection. The folder need
+ * not exist yet: tools say how to make it and pick it up once `build` has written it. Resolves
+ * once the server is listening; the returned function stops it.
  */
 export async function serveHandoff(options: ServeHandoffOptions): Promise<() => Promise<void>> {
-  const handoff = await loadHandoff(options.handoffDir)
-  for (const warning of handoff.warnings)
-    options.log(warning)
+  const load = createHandoffSource(options.handoffDir, options.log)
+  // One caller per loaded folder: a rebuild may change the hosts, specs and generated client.
+  const callers = new WeakMap<Handoff, ReturnType<typeof createCaller>>()
+  const call = (handoff: Handoff, entry: OperationEntry, args: CallArguments): Promise<CallOutcome> => {
+    const caller = callers.get(handoff) ?? createCaller({
+      handoff,
+      maxRps: options.maxRps,
+      timeoutMs: options.timeoutMs,
+      env: options.env,
+    })
+    callers.set(handoff, caller)
+    return caller(entry, args)
+  }
   const serverOptions: ExplorationServerOptions = {
-    handoff,
+    load,
     allowCalls: options.allowCalls,
     unsafeMethods: options.unsafeMethods,
     maxRps: options.maxRps,
     ...(options.allowCalls
-      ? {
-          call: createCaller({
-            handoff,
-            maxRps: options.maxRps,
-            timeoutMs: options.timeoutMs,
-            env: options.env,
-          }),
-        }
+      ? { call }
       : {}),
   }
   const handle = serveStdio(() => createExplorationServer(serverOptions))
-  options.log(`site-to-api MCP server: ${handoff.operations.length} operations on ${handoff.hosts.length} host(s) from ${options.handoffDir}${options.allowCalls
+  const found = await load()
+  options.log(`site-to-api MCP server on ${options.handoffDir}: ${typeof found === 'string'
+    ? 'no handoff folder yet; tools will say how to make one'
+    : `${found.operations.length} operations on ${found.hosts.length} host(s)`}${options.allowCalls
     ? `; call_operation on (${options.unsafeMethods
       ? 'writes allowed'
       : 'reads only'}, ${options.maxRps} request(s)/s)`

@@ -346,8 +346,10 @@ decision 0043):
 ## MCP server (`site-to-api mcp`)
 
 Not a file: `site-to-api mcp [dir]` serves the handoff folder (`outDir` by default) over stdio.
-It reads `specs/`, `flows.json`, `build.json` and `source/` only, never the raw captures. Tools,
-all read-only:
+It reads `specs/`, `flows.json`, `build.json` and `source/` only, never the raw captures. It
+starts without the folder too: every tool then says to run `capture`, then `build`, and the next
+call after `build` (or `probe`, `gen`) reads the new folder without a restart. Tools, all
+read-only:
 
 | Tool | Returns |
 |---|---|
