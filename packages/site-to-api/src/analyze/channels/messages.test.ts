@@ -20,17 +20,23 @@ function frames(data: Array<string | Uint8Array>, direction: 'sent' | 'received'
     const text = binary
       ? btoa(String.fromCharCode(...item))
       : item
+    const json = binary
+      ? undefined
+      : parseFrameJson(text)
     return {
       key: `${sessionId}:ws:0:${index}`,
       sessionId,
+      protocol: null,
       frame: {
         direction,
         ts: index,
         data: text,
         binary,
-        json: binary
-          ? undefined
-          : parseFrameJson(text),
+        json,
+        encoding: json === undefined
+          ? null
+          : 'json',
+        protocol: null,
       },
     }
   })

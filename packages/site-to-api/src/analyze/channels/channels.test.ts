@@ -22,7 +22,7 @@ const T0 = 1_700_000_000_000
 /** Runs the stages the way `build` does and returns the channels. */
 function channelsOf(exchanges: Exchange[], sessions: LoadedSession[], hosts: ResolvedConfig['hosts'] = { include: [], exclude: [] }): WebSocketChannel[] {
   const classified = classifyExchanges(exchanges, hosts)
-  const sockets = channelExchanges(collectConnections(sessions))
+  const sockets = channelExchanges(collectConnections(sessions, exchanges))
   const redactor = createRedactor({
     exchanges: [
       ...classified.exchanges,

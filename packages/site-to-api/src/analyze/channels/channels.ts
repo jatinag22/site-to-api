@@ -3,12 +3,13 @@
  * grouped by direction and type, the opening handshake, cookies on the upgrade request and the
  * HTTP responses that client values came from (decision 0023).
  */
-import type { ChannelMessage, ChannelValueLink, ChannelValueOrigin, Exchange, Operation, Redactor, SourceRef, SourceResolver, SourceRoute, ValueTrace, WebSocketChannel } from '../../model'
+import type { ChannelMessage, ChannelProtocol, ChannelProtocolId, ChannelValueLink, ChannelValueOrigin, Exchange, Operation, Redactor, SourceRef, SourceResolver, SourceRoute, ValueTrace, WebSocketChannel } from '../../model'
 import type { ChannelExchanges, Connection, StandIn } from './connections'
 import type { KeyedFrame } from './messages'
 import { formatLocation } from '../flows'
 import { buildOperations, camelCase, pathPhrase } from '../operations'
 import { inferOperationSchemas } from '../schema'
+import { connectionFacts } from './facts'
 import { handshakeOf } from './handshake'
 import { groupMessages } from './messages'
 
@@ -30,44 +31,14 @@ export interface BuildChannelsInput {
   inScope: (url: { host: string, path: string }, pageUrl: string) => boolean
 }
 
-/** Upgrade requests further from the `open` event than this belong to another connection. */
-const UPGRADE_MATCH_WINDOW_MS = 10_000
-
 function refKey(ref: SourceRef): string {
   return `${ref.file}:${ref.line}:${ref.column}`
 }
 
-/** The HAR upgrade request of each connection: same session and URL, nearest in time, used once. */
-function matchUpgrades(connections: readonly Connection[], exchanges: readonly Exchange[]): Map<string, Exchange> {
-  const upgrades = exchanges.filter(exchange => exchange.resourceType === 'websocket' || exchange.response.status === 101)
-  const used = new Set<string>()
-  const result = new Map<string, Exchange>()
-  for (const connection of connections) {
-    let best: Exchange | null = null
-    for (const exchange of upgrades) {
-      if (used.has(exchange.id) || exchange.sessionId !== connection.sessionId || exchange.request.url !== connection.url)
-        continue
-      const distance = Math.abs(exchange.startedAt - connection.openedAt)
-      if (distance > UPGRADE_MATCH_WINDOW_MS)
-        continue
-      if (best === null || distance < Math.abs(best.startedAt - connection.openedAt))
-        best = exchange
-    }
-    if (best !== null) {
-      used.add(best.id)
-      result.set(connection.id, best)
-    }
-  }
-  return result
-}
-
-function cookiesOf(connections: readonly Connection[], upgrades: ReadonlyMap<string, Exchange>): WebSocketChannel['cookies'] {
-  const matched = connections.flatMap((connection) => {
-    const upgrade = upgrades.get(connection.id)
-    return upgrade
-      ? [upgrade]
-      : []
-  })
+function cookiesOf(connections: readonly Connection[]): WebSocketChannel['cookies'] {
+  const matched = connections.flatMap(connection => connection.upgrade === null
+    ? []
+    : [connection.upgrade])
   if (matched.length === 0)
     return { status: 'unknown', names: [] }
   const names = [
@@ -81,10 +52,10 @@ function cookiesOf(connections: readonly Connection[], upgrades: ReadonlyMap<str
   }
 }
 
-function sentFromOf(connections: readonly Connection[], upgrades: ReadonlyMap<string, Exchange>, resolver: SourceResolver): SourceRef | null {
+function sentFromOf(connections: readonly Connection[], resolver: SourceResolver): SourceRef | null {
   const counts = new Map<string, { ref: SourceRef, count: number }>()
   for (const connection of connections) {
-    const stack = upgrades.get(connection.id)?.initiator?.stack ?? []
+    const stack = connection.upgrade?.initiator?.stack ?? []
     const ref = stack.length > 0
       ? resolver.callSite(stack, connection.sessionId)
       : null
@@ -104,7 +75,12 @@ function sentFromOf(connections: readonly Connection[], upgrades: ReadonlyMap<st
 function keyedFrames(connections: readonly Connection[], direction: 'sent' | 'received'): KeyedFrame[] {
   return connections.flatMap(connection => connection.frames.flatMap((frame, index) => frame.direction === direction
     ? [
-        { key: `${connection.id}:${index}`, sessionId: connection.sessionId, frame },
+        {
+          key: `${connection.id}:${index}`,
+          sessionId: connection.sessionId,
+          frame,
+          protocol: connection.protocol?.id ?? null,
+        },
       ]
     : []))
 }
@@ -245,12 +221,16 @@ function summarizeLinks(found: readonly FoundLink[]): ChannelValueLink[] {
 
 function describeMessages(messages: readonly ChannelMessage[], direction: ChannelMessage['direction']): string | null {
   const names = messages.filter(message => message.direction === direction).map((message) => {
+    if (message.protocol)
+      return message.protocol.name
     if (message.discriminator)
       return message.discriminator.value
     return {
       json: 'JSON messages',
       text: 'text frames',
       binary: 'binary frames',
+      msgpack: 'MessagePack frames',
+      protobuf: 'protobuf frames',
     }[message.format]
   })
   return names.length > 0
@@ -273,6 +253,39 @@ function summaryOf(path: string, messages: readonly ChannelMessage[]): string {
       : 'the server sends nothing',
   ]
   return `WebSocket ${phrase}: ${parts.join('; ')}.`
+}
+
+/**
+ * The protocol most of a channel's connections showed (ties: the first connection's), with the
+ * evidence and versions of the connections that showed it.
+ */
+function channelProtocol(connections: readonly Connection[]): ChannelProtocol | null {
+  const counts = new Map<ChannelProtocolId, number>()
+  for (const connection of connections) {
+    if (connection.protocol !== null)
+      counts.set(connection.protocol.id, (counts.get(connection.protocol.id) ?? 0) + 1)
+  }
+  const id = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0]
+  if (id === undefined)
+    return null
+  const showing = connections.flatMap(connection => connection.protocol?.id === id
+    ? [connection.protocol]
+    : [])
+  const versions = [
+    ...new Set(showing.flatMap(protocol => protocol.version === null
+      ? []
+      : [protocol.version])),
+  ].sort()
+  return {
+    id,
+    version: versions.length > 0
+      ? versions.join(', ')
+      : null,
+    evidence: [
+      ...new Set(showing.flatMap(protocol => protocol.evidence)),
+    ].sort(),
+    wrapper: showing.find(protocol => protocol.wrapper !== null)?.wrapper ?? null,
+  }
 }
 
 function uniqueId(base: string, used: Set<string>): string {
@@ -300,13 +313,6 @@ export function buildChannels(input: BuildChannelsInput): WebSocketChannel[] {
     return []
 
   const templated = inferOperationSchemas(buildOperations(urlExchanges, { sourceRoutes: input.sourceRoutes }).filter(operation => !operation.sourceOnly), redactor)
-  const connections = urlExchanges.flatMap((exchange) => {
-    const connection = standIns.get(exchange.id)?.connection
-    return connection
-      ? [connection]
-      : []
-  })
-  const upgrades = matchUpgrades(connections, input.exchanges)
   const operationByExchange = new Map(input.operations.flatMap(operation => operation.exchanges.map(exchange => [exchange.id, operation] as const)))
   const linkContext: LinkContext = { redactor, operationByExchange }
   const tracesByConnection = new Map<string, ValueTrace[]>()
@@ -356,11 +362,21 @@ export function buildChannels(input: BuildChannelsInput): WebSocketChannel[] {
         pathParams: operation.pathParams,
         query: operation.query,
         connections: members.length,
-        sentFrom: sentFromOf(members, upgrades, input.sourceResolver),
+        sentFrom: sentFromOf(members, input.sourceResolver),
         messages,
         handshake: handshakeOf(members, sent.messages, sent.messageOf, redactor),
-        cookies: cookiesOf(members, upgrades),
+        cookies: cookiesOf(members),
         links: summarizeLinks(urlLinks),
+        protocol: channelProtocol(members),
+        connection: connectionFacts({
+          connections: members,
+          messages,
+          messageOf: new Map([
+            ...sent.messageOf,
+            ...received.messageOf,
+          ]),
+          redactor,
+        }),
         ungrouped: [sent.ungrouped, received.ungrouped].flatMap(entry => entry === null
           ? []
           : [entry]),

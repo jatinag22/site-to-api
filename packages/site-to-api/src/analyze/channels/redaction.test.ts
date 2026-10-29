@@ -152,7 +152,7 @@ function capture(): { exchanges: Exchange[], sessions: LoadedSession[] } {
 function analyse(config: ResolvedConfig['redact'], input = capture()): Analysis {
   const hosts = { include: [], exclude: [] }
   const { exchanges, botProtection } = classifyExchanges(input.exchanges, hosts)
-  const sockets = channelExchanges(collectConnections(input.sessions))
+  const sockets = channelExchanges(collectConnections(input.sessions, input.exchanges))
   const redactor = createRedactor({
     exchanges: [
       ...exchanges,

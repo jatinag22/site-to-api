@@ -1,6 +1,6 @@
 import type { Analysis, Operation } from '../../model'
 import { describe, expect, it } from 'vitest'
-import { channelMessage, tickerChannel } from '../../../test/channels'
+import { channelMessage, socketIoChannel, tickerChannel } from '../../../test/channels'
 import { fakeHash, graphqlAnalysis, graphqlGet, graphqlPost } from '../../../test/graphql'
 import { exchange } from '../../../test/helpers'
 import { HOSTILE, injected, renderMarkdown } from '../../../test/markdown'
@@ -725,6 +725,23 @@ describe('real-time channels', () => {
     expect(guide).toContain('`specs/<host>.asyncapi.yaml`')
   })
 
+  it('names the protocol, the upgrade facts and the first message, and the wire of each setup message', () => {
+    const guide = renderAgentGuide(withChannels([
+      socketIoChannel(),
+    ]), context)
+    const section = guide.split('## Real-time channels')[1]?.split('\n## ')[0] ?? ''
+    expect(section).toContain('- Protocol: Socket.IO (Engine.IO 4), shown by URL path /socket.io/, frames. Messages are named by their Socket.IO event name; control frames by their frame type.')
+    expect(section).toContain('- Upgrade request: `Origin` `https://chat.test`; no subprotocol; tokens in the URL (names only): `token`; the server accepted 1 of 2 connections (status 101, 403), rejected 1; a long-polling connection counts as accepted when its handshake request succeeded.')
+    expect(section).toContain('- Also carried over Engine.IO long-polling')
+    expect(section).toContain('- First authentication message: `connect`; the server\'s next message was `connect`.')
+    expect(section).toContain('1. `connect` (authentication), sent as `40<payload>`, e.g. `{"token":"<redacted: JWT (HS256)>"}`')
+    expect(section).toContain('- Client → server: `connect` (1×), `chat message` (event) (3×).')
+    expect(section).toContain('- Server → client: `connect` (1×), `ping` (1×), `receiveMsgpack` (MessagePack, 4×).')
+    expect(renderApiMap(withChannels([
+      socketIoChannel(),
+    ]), 'current')).toContain('| `socketIo` | `wss://shop.test:8080/socket.io/` | Socket.IO |')
+  })
+
   it('says when the server pushes without a subscription and when cookies are unknown', () => {
     const ticker = tickerChannel()
     const guide = renderAgentGuide(withChannels([
@@ -803,7 +820,7 @@ describe('real-time channels', () => {
       tickerChannel(),
     ]), 'current')
     const rows = map.split('## Real-time channels')[1]?.split('\n').filter(line => line.startsWith('| `')) ?? []
-    expect(rows).toEqual(['| `wsTicker` | `ws://shop.test:8080/ws/ticker` | `subscribe` | `subscribe` | `tick`, text frames, binary frames | `subscribe` `body./productId` ← `body./items/0/id` of `getApiProducts` | cookies: `sid` | `specs/shop.test_8080.asyncapi.yaml` |'])
+    expect(rows).toEqual(['| `wsTicker` | `ws://shop.test:8080/ws/ticker` | JSON / text | `subscribe` | `subscribe` | `tick`, text frames, binary frames | `subscribe` `body./productId` ← `body./items/0/id` of `getApiProducts` | cookies: `sid` | `specs/shop.test_8080.asyncapi.yaml` |'])
   })
 
   const hostile = tickerChannel({
@@ -872,7 +889,7 @@ describe('real-time channels', () => {
     const rows = table.match(/<tr>[\s\S]*?<\/tr>/g) ?? []
     expect(rows).toHaveLength(2)
     for (const row of rows)
-      expect(row.match(/<t[dh][\s>]/g)).toHaveLength(8)
+      expect(row.match(/<t[dh][\s>]/g)).toHaveLength(9)
   })
 })
 

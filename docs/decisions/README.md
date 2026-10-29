@@ -42,3 +42,4 @@ or `Proposed`.
 | [0032](0032-excerpts-as-markdown.md) | Source excerpts are Markdown files | Accepted |
 | [0033](0033-bot-protection-output-and-code-only-evidence.md) | Bot-protection output, challenge pages and code-only evidence (refines 0008, 0015, 0017, 0021) | Accepted |
 | [0034](0034-required-from-evidence.md) | `required` in responses needs two distinct requests; GraphQL variables follow the document | Accepted |
+| [0038](0038-websocket-framing-protocols.md) | WebSocket framing protocols, MessagePack and protobuf frames, connection facts (refines 0023, 0030) | Accepted |

@@ -1,22 +1,34 @@
 /**
- * WebSocket connections rebuilt from the `ws` capture events, and stand-in exchanges that let the
- * redactor and value tracing treat frames exactly like HTTP bodies (decision 0023).
+ * WebSocket connections rebuilt from the `ws` capture events (and Engine.IO long-polling
+ * requests), read with their framing protocol, and stand-in exchanges that let the redactor and
+ * value tracing treat frames exactly like HTTP bodies (decisions 0023, 0038).
  */
-import type { Body, Exchange, LoadedSession, NameValue, WebSocketEvent } from '../../model'
+import type { Body, ChannelProtocol, Exchange, LoadedSession, NameValue, WebSocketEvent } from '../../model'
+import type { DecodedMessage, FrameRecord, Handshake, RawFrame } from './protocols'
+import { decodeBinaryFrame } from './binary'
+import { mergeUpgradedPolling, pollingConnections } from './polling'
+import { decodeConnection } from './protocols'
 
-/** One frame of a connection, in capture order. */
+/** One frame of a connection, in capture order (a frame that batches messages is one per message). */
 export interface Frame {
   direction: 'sent' | 'received'
   ts: number
   data: string
   binary: boolean
-  /** Parsed JSON for text frames holding an object or array; `undefined` otherwise. */
+  /**
+   * The frame's content as JSON: a JSON text frame's object or array, a binary frame that
+   * decoded as MessagePack or protobuf, or a protocol message's payload; `undefined` otherwise.
+   */
   json: unknown
+  /** How `json` was read; null when there is no `json`. */
+  encoding: 'json' | 'msgpack' | 'protobuf' | null
+  /** The framing protocol's reading of the frame; null when none was detected or it did not apply. */
+  protocol: DecodedMessage | null
 }
 
-/** One socket opened during capture. */
+/** One socket opened during capture, or one Engine.IO long-polling session. */
 export interface Connection {
-  /** `<sessionId>:ws:<n>`, unique per build. */
+  /** `<sessionId>:ws:<n>` (or `<sessionId>:poll:<n>` for long-polling), unique per build. */
   id: string
   sessionId: string
   url: string
@@ -27,7 +39,27 @@ export interface Connection {
   pageUrl: string
   openedAt: number
   frames: Frame[]
+  /**
+   * How its frames travelled: `websocket`, `polling`, or both when an Engine.IO session started
+   * on long-polling and upgraded (one connection, frames in time order).
+   */
+  transports: Array<'websocket' | 'polling'>
+  /**
+   * The HAR request that opened it: the upgrade request (status 101 when accepted), or the
+   * Engine.IO handshake request for long-polling. Null when the HAR has none.
+   */
+  upgrade: Exchange | null
+  /** The framing protocol its frames showed (decision 0038). */
+  protocol: ChannelProtocol | null
 }
+
+/** A frame as the capture recorded it, before protocol decoding. */
+export interface TimedFrame extends RawFrame {
+  ts: number
+}
+
+/** A connection as captured, before protocol decoding. */
+export type RawConnection = Omit<Connection, 'frames' | 'protocol' | 'upgrade'> & { frames: TimedFrame[], upgrade: Exchange | null }
 
 /**
  * Client frames per connection that value tracing looks at. The opening messages carry the ids
@@ -69,26 +101,22 @@ function parseSocketUrl(url: string): Pick<Connection, 'scheme' | 'host' | 'path
   }
 }
 
-function frameOf(event: WebSocketEvent): Frame | null {
+function frameOf(event: WebSocketEvent): TimedFrame | null {
   if ((event.direction !== 'sent' && event.direction !== 'received') || event.data === null)
     return null
-  const binary = event.binary === true
   return {
     direction: event.direction,
     ts: event.ts,
     data: event.data,
-    binary,
-    json: binary
-      ? undefined
-      : parseFrameJson(event.data),
+    binary: event.binary === true,
   }
 }
 
 /** Connections of one session as its events arrive; see {@link sessionConnections}. */
 class ConnectionTracker {
-  readonly connections: Connection[] = []
-  private readonly bySocket = new Map<number, Connection>()
-  private readonly openByUrl = new Map<string, Connection>()
+  readonly connections: RawConnection[] = []
+  private readonly bySocket = new Map<number, RawConnection>()
+  private readonly openByUrl = new Map<string, RawConnection>()
 
   constructor(private readonly sessionId: string) {}
 
@@ -109,7 +137,7 @@ class ConnectionTracker {
       connection.frames.push(frame)
   }
 
-  private connectionOf(event: WebSocketEvent): Connection | null {
+  private connectionOf(event: WebSocketEvent): RawConnection | null {
     const known = event.socket === undefined
       ? this.openByUrl.get(event.url)
       : this.bySocket.get(event.socket)
@@ -124,11 +152,11 @@ class ConnectionTracker {
       : this.start(event)
   }
 
-  private start(event: WebSocketEvent): Connection | null {
+  private start(event: WebSocketEvent): RawConnection | null {
     const parts = parseSocketUrl(event.url)
     if (parts === null)
       return null
-    const connection: Connection = {
+    const connection: RawConnection = {
       id: `${this.sessionId}:ws:${this.connections.length}`,
       sessionId: this.sessionId,
       url: event.url,
@@ -136,6 +164,8 @@ class ConnectionTracker {
       pageUrl: event.pageUrl,
       openedAt: event.ts,
       frames: [],
+      transports: ['websocket'],
+      upgrade: null,
     }
     this.connections.push(connection)
     return connection
@@ -147,7 +177,7 @@ class ConnectionTracker {
  * grouped by it; older captures only have the URL, so a frame joins the latest connection to
  * that URL that is still open (two sockets to one URL at the same time are merged there).
  */
-function sessionConnections(session: LoadedSession): Connection[] {
+function sessionSockets(session: LoadedSession): RawConnection[] {
   const tracker = new ConnectionTracker(session.meta.sessionId)
   for (const event of session.events) {
     if (event.t === 'ws')
@@ -156,14 +186,122 @@ function sessionConnections(session: LoadedSession): Connection[] {
   return tracker.connections
 }
 
-/** Every connection of every session, ordered by session id, then opening time. */
-export function collectConnections(sessions: readonly LoadedSession[]): Connection[] {
+/** Upgrade requests further from the `open` event than this belong to another connection. */
+const UPGRADE_MATCH_WINDOW_MS = 10_000
+
+/** Sets each socket's HAR upgrade request: same session and URL, nearest in time, used once. */
+function matchUpgrades(connections: readonly RawConnection[], exchanges: readonly Exchange[]): void {
+  const upgrades = exchanges.filter(exchange => exchange.resourceType === 'websocket' || exchange.response.status === 101)
+  const used = new Set<string>()
+  for (const connection of connections) {
+    let best: Exchange | null = null
+    for (const exchange of upgrades) {
+      if (used.has(exchange.id) || exchange.sessionId !== connection.sessionId || exchange.request.url !== connection.url)
+        continue
+      const distance = Math.abs(exchange.startedAt - connection.openedAt)
+      if (distance > UPGRADE_MATCH_WINDOW_MS)
+        continue
+      if (best === null || distance < Math.abs(best.startedAt - connection.openedAt))
+        best = exchange
+    }
+    if (best !== null) {
+      used.add(best.id)
+      connection.upgrade = best
+    }
+  }
+}
+
+/** `Sec-WebSocket-Protocol` values of a request or response, in order, once each. */
+export function subprotocolsOf(headers: readonly NameValue[]): string[] {
+  return [
+    ...new Set(headers
+      .filter(header => header.name.toLowerCase() === 'sec-websocket-protocol')
+      .flatMap(header => header.value.split(','))
+      .map(value => value.trim())
+      .filter(Boolean)),
+  ]
+}
+
+function handshakeOf(connection: RawConnection): Handshake {
+  return {
+    path: connection.path,
+    query: connection.query,
+    subprotocols: subprotocolsOf(connection.upgrade?.request.headers ?? []),
+  }
+}
+
+/** A record as a frame: its JSON from the protocol payload, the JSON text or the binary readers. */
+function frameOfRecord(source: TimedFrame, record: FrameRecord): Frame {
+  const base = {
+    direction: source.direction,
+    ts: source.ts,
+    data: record.data,
+    binary: record.binary,
+    protocol: record.decoded,
+  }
+  if (record.decoded !== null) {
+    return record.decoded.payload === undefined
+      ? { ...base, json: undefined, encoding: null }
+      : { ...base, json: record.decoded.payload, encoding: 'json' }
+  }
+  if (record.binary) {
+    const decoded = decodeBinaryFrame(record.data)
+    return decoded === null
+      ? { ...base, json: undefined, encoding: null }
+      : { ...base, json: decoded.value, encoding: decoded.encoding }
+  }
+  const json = parseFrameJson(record.data)
+  return {
+    ...base,
+    json,
+    encoding: json === undefined
+      ? null
+      : 'json',
+  }
+}
+
+/** Reads a captured connection with its framing protocol and binary decoders. */
+function decoded(connection: RawConnection): Connection {
+  const reading = decodeConnection(connection.frames, handshakeOf(connection))
+  return {
+    ...connection,
+    protocol: reading.protocol,
+    frames: connection.frames.flatMap((frame, index) => (reading.frames[index] ?? []).map(record => frameOfRecord(frame, record))),
+  }
+}
+
+/**
+ * Every connection of every session, ordered by session id, then sockets in opening order, then
+ * Engine.IO long-polling sessions that never upgraded (one that did is part of its socket). `exchanges` (the HAR) gives each socket its upgrade request,
+ * which names the subprotocol, and holds the long-polling requests.
+ */
+export function collectConnections(sessions: readonly LoadedSession[], exchanges: readonly Exchange[] = []): Connection[] {
   return [...sessions]
     .sort((a, b) => a.meta.sessionId.localeCompare(b.meta.sessionId))
-    .flatMap(sessionConnections)
+    .flatMap((session) => {
+      const sockets = sessionSockets(session)
+      matchUpgrades(sockets, exchanges)
+      const sessionId = session.meta.sessionId
+      const polling = pollingConnections(sessionId, exchanges.filter(exchange => exchange.sessionId === sessionId))
+      return mergeUpgradedPolling(sockets, polling).map(decoded)
+    })
 }
 
 function frameBody(frame: Frame): Body {
+  if (frame.json !== undefined) {
+    // Decoded binary and protocol payloads are bodies the redactor and tracing can read.
+    return {
+      mimeType: 'application/json',
+      text: frame.binary
+        ? null
+        : frame.data,
+      base64: frame.binary
+        ? frame.data
+        : null,
+      json: frame.json,
+      form: null,
+    }
+  }
   if (frame.binary) {
     return {
       mimeType: 'application/octet-stream',
@@ -174,12 +312,10 @@ function frameBody(frame: Frame): Body {
     }
   }
   return {
-    mimeType: frame.json === undefined
-      ? 'text/plain'
-      : 'application/json',
+    mimeType: 'text/plain',
     text: frame.data,
     base64: null,
-    json: frame.json,
+    json: undefined,
     form: null,
   }
 }
@@ -255,7 +391,7 @@ export function channelExchanges(connections: readonly Connection[]): ChannelExc
     connection.frames.forEach((frame, index) => {
       const id = `${connection.id}:${index}`
       const sent = frame.direction === 'sent'
-      const kind = sent && !frame.binary && traced < MAX_TRACED_FRAMES
+      const kind = sent && (!frame.binary || frame.json !== undefined) && traced < MAX_TRACED_FRAMES
         ? 'api'
         : 'noise'
       if (kind === 'api')

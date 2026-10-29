@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { Parser } from '@asyncapi/parser'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
-import { channelMessage as message, tickerChannel } from '../../../test/channels'
+import { channelMessage as message, socketIoChannel, tickerChannel } from '../../../test/channels'
 import { toYaml } from '../openapi'
 import { asyncApiOperationId, buildAsyncApiDocuments } from './document'
 import { writeAsyncApiDocuments } from './write'
@@ -242,6 +242,44 @@ describe('buildAsyncApiDocuments', () => {
       },
     })
     expect(parsed).not.toHaveProperty('injected')
+  })
+
+  it('names protocol messages by their protocol name and records the framing and connection facts', async () => {
+    const documents = buildAsyncApiDocuments([
+      socketIoChannel(),
+    ], 1)
+    const document = documents.get('shop.test:8080')
+    expect(await validate(document ?? {})).toEqual([])
+    const yaml = parse(toYaml(document ?? {})) as { channels: Record<string, Record<string, unknown> & { messages: Record<string, Record<string, unknown>> }> }
+    const channel = yaml.channels.socketIo
+    expect(channel?.['x-site-to-api-protocol']).toEqual({
+      id: 'socket.io',
+      version: 'Engine.IO 4',
+      evidence: ['URL path /socket.io/', 'frames'],
+      wrapper: null,
+    })
+    expect(channel?.['x-site-to-api-connection']).toEqual({
+      origins: ['https://chat.test'],
+      cookies: [],
+      urlTokens: ['token'],
+      subprotocols: { requested: [], selected: [] },
+      upgrade: {
+        accepted: 1,
+        rejected: 1,
+        unknown: 0,
+        statuses: [101, 403],
+      },
+      firstMessage: { message: 'sendConnect', role: 'auth', reply: 'receiveConnect' },
+      transports: ['polling', 'websocket'],
+    })
+    const chat = channel?.messages.sendChatMessage
+    expect(chat?.name).toBe('chat message')
+    expect(chat?.summary).toBe('Sent by the client; seen 3 times. Socket.IO event, on the wire `42["chat message",<payload>]`.')
+    expect(chat?.['x-site-to-api-protocol']).toMatchObject({ frame: 'event', name: 'chat message', role: 'data' })
+    expect(channel?.messages.receiveMsgpack).toMatchObject({
+      contentType: 'application/msgpack',
+      payload: { description: 'Binary frames decoded as MessagePack.' },
+    })
   })
 
   it('writes nothing for no channels', () => {
