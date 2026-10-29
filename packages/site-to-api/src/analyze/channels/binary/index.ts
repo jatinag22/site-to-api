@@ -10,9 +10,17 @@ export interface DecodedBinary {
 
 /** Base64 (as the capture stores binary frames) to bytes; null when it is not base64. */
 export function base64Bytes(data: string): Uint8Array | null {
-  if (!/^[\d+/A-Z]*={0,2}$/i.test(data) || data.length % 4 === 1)
+  if (!/^[\d+/A-Z]*={0,2}$/i.test(data) || data.length % 4 !== 0)
     return null
-  return Uint8Array.from(atob(data), char => char.charCodeAt(0))
+  // The text comes from the site (an Engine.IO `b` packet); a decoding error is not a build error.
+  let binary: string
+  try {
+    binary = atob(data)
+  }
+  catch {
+    return null
+  }
+  return Uint8Array.from(binary, char => char.charCodeAt(0))
 }
 
 /**

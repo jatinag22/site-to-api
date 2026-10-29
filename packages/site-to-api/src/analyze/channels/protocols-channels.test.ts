@@ -3,6 +3,7 @@ import type { Exchange, LoadedSession, WebSocketChannel } from '../../model'
 import { describe, expect, it } from 'vitest'
 import { exchange, loadedSession, socketEvents, textBody } from '../../../test/helpers'
 import { fakeHtmlLocator, fakeSourceResolver } from '../../../test/scenarios'
+import { channelsSection } from '../../emit/handoff/channels'
 import { classifyExchanges, createChannelScope } from '../classify'
 import { traceValues } from '../correlate'
 import { buildOperations } from '../operations'
@@ -124,7 +125,7 @@ describe('buildChannels with framing protocols', () => {
     expect(channel?.protocol).toEqual({
       id: 'socket.io',
       version: 'Engine.IO 4',
-      evidence: ['URL path /socket.io/', 'frames'],
+      evidence: ['URL path ends in /socket.io/', 'frames'],
       wrapper: null,
     })
     const names = channel?.messages.map(message => `${message.direction} ${message.protocol?.frame} ${message.protocol?.name}`)
@@ -312,6 +313,112 @@ describe('engine.IO long-polling without an upgrade', () => {
       statuses: [200],
     })
     expect(channel?.messages.map(message => message.id)).toEqual(['receiveOpen', 'receiveScore'])
+  })
+})
+
+describe('site input that must not crash, stall or leak', () => {
+  it('survives a polling body with an invalid binary packet and a huge packet count', () => {
+    const base = `https://${HOST}/socket.io/?EIO=4`
+    expect(() => channelsOf([
+      exchange({
+        sessionId: 's',
+        url: `${base}&transport=polling`,
+        startedAt: T0,
+        responseBody: textBody('0{"sid":"Aa1"}\x1Ebab=', 'text/plain'),
+      }),
+      exchange({
+        sessionId: 's',
+        url: `${base}&transport=polling&sid=Aa1`,
+        startedAt: T0 + 10,
+        responseBody: textBody('6\x1E'.repeat(200_000), 'text/plain'),
+      }),
+    ], [
+      loadedSession('s', []),
+    ])).not.toThrow()
+  })
+
+  it('never writes a token from the connection path into the protocol evidence', () => {
+    const token = 'a8f3k2m9q7x4z1w6e5r0'
+    const url = `wss://${HOST}/rt/${token}/socket.io/?EIO=4&transport=websocket`
+    const [channel] = channelsOf([
+      upgrade('s', url, 0),
+    ], [
+      loadedSession('s', socketEvents({
+        url,
+        socket: 0,
+        openedAt: T0,
+        frames: [
+          ['<', '0{"sid":"Zx81kq"}'],
+          ['>', '40'],
+          ['<', '40{"sid":"Hd72Lm"}'],
+          ['<', '42["score",{"a":1}]'],
+        ],
+      })),
+    ])
+    expect(channel?.protocol?.evidence).toEqual(['URL path ends in /socket.io/', 'frames'])
+    expect(JSON.stringify(channel)).not.toContain(token)
+    expect(channelsSection(channel === undefined
+      ? []
+      : [channel]).join('\n')).not.toContain(token)
+  })
+
+  it('takes no Markdown from a Phoenix event name and no secret from a STOMP header name in the wire form', () => {
+    const url = `wss://${HOST}/socket/websocket?vsn=2.0.0`
+    const [phoenix] = channelsOf([
+      upgrade('s', url, 0),
+    ], [
+      loadedSession('s', socketEvents({
+        url,
+        socket: 0,
+        openedAt: T0,
+        frames: [
+          [
+            '>',
+            JSON.stringify(['1', '1', 'room:lobby', 'phx_join', {}]),
+          ],
+          [
+            '<',
+            JSON.stringify([
+              null,
+              null,
+              'room:lobby',
+              'phx_` evil](http://x.test) **bold**',
+              { a: 1 },
+            ]),
+          ],
+        ],
+      })),
+    ])
+    const evil = phoenix?.messages.find(message => message.direction === 'receive')
+    expect(evil?.protocol?.frame).toBe('push')
+    const section = channelsSection(phoenix === undefined
+      ? []
+      : [phoenix]).join('\n')
+    expect(section).not.toContain('(phx_` evil')
+    // Every copy of the name is escaped: as text (`\](`) or inside a double-backtick code span.
+    expect(section).toContain('evil\\](http\\://x.test)')
+    expect(section).toContain('`` room:lobby:phx_` evil](http://x.test) **bold** `` (`push`)')
+
+    const stompUrl = `wss://${HOST}/stomp`
+    const [stomp] = channelsOf([
+      upgrade('t', stompUrl, 0, { subprotocol: 'v12.stomp' }),
+    ], [
+      loadedSession('t', socketEvents({
+        url: stompUrl,
+        socket: 0,
+        openedAt: T0,
+        frames: [
+          ['>', `CONNECT\naccept-version:1.2\n${TOKEN}:1\n\n\0`],
+          ['<', 'CONNECTED\nversion:1.2\n\n\0'],
+        ],
+      })),
+    ])
+    expect(stomp?.protocol?.version).toBe('1.2')
+    const connect = stomp?.messages.find(message => message.protocol?.frame === 'CONNECT')
+    expect(connect?.protocol?.wire).toMatch(/^CONNECT\\naccept-version:…\\n.+:…\\n\\n\\0$/)
+    // The wire template names the header through the redactor. (JSON key names in schemas and
+    // examples are not redacted anywhere, for HTTP bodies as for frames: a known, separate gap.)
+    expect(connect?.protocol?.wire).not.toContain(TOKEN)
   })
 })
 

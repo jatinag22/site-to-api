@@ -166,10 +166,12 @@ function readMessage(bytes: Uint8Array, depth: number): Record<string, unknown> 
       return null
     wireOf.set(field.number, wire)
     const key = `field ${field.number} (${field.label})`
-    grouped.set(key, [
-      ...(grouped.get(key) ?? []),
-      field.value,
-    ])
+    // Pushed in place: copying the list per occurrence is quadratic in a site's repeated field.
+    const values = grouped.get(key)
+    if (values === undefined)
+      grouped.set(key, [field.value])
+    else
+      values.push(field.value)
   }
   return Object.fromEntries([...grouped]
     .sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true }))

@@ -44,6 +44,17 @@ describe('decodeProtobuf', () => {
     expect(decodeProtobuf(bytes(0xC0, 0xB8, 0x09, 0x01))).toBeUndefined()
   })
 
+  it('reads a long repeated field in linear time', () => {
+    const count = 40_000
+    const frame = new Uint8Array(count * 2)
+    for (let i = 0; i < count; i++)
+      frame[2 * i] = 0x08
+    const started = performance.now()
+    const decoded = decodeProtobuf(frame)
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(decoded?.['field 1 (varint)']).toHaveLength(count)
+  })
+
   it('rejects text that happens to be bytes', () => {
     expect(decodeProtobuf(new TextEncoder().encode('{"type":"tick"}'))).toBeUndefined()
   })

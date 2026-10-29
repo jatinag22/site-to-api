@@ -478,7 +478,7 @@ describe('framed WebSocket protocols (decision 0038)', () => {
   it('names Socket.IO messages by event and gives each payload a schema', () => {
     const channel = channelAt('/socket.io/')
     expect(channel.protocol).toMatchObject({ id: 'socket.io', version: 'Engine.IO 4' })
-    expect(channel.protocol?.evidence).toContain('URL path /socket.io/')
+    expect(channel.protocol?.evidence).toContain('URL path ends in /socket.io/')
     const stock = named(channel, 'receive', 'stock')
     expect(stock?.protocol).toMatchObject({ frame: 'event', wire: '42["stock",<payload>]' })
     expect(stock?.schema?.properties).toMatchObject({
@@ -515,7 +515,7 @@ describe('framed WebSocket protocols (decision 0038)', () => {
     expect(channel.connection.upgrade.accepted).toBeGreaterThanOrEqual(2)
     expect(channel.connection.urlTokens).toEqual(['sid'])
     const guide = files.get('AGENT.md') ?? ''
-    expect(guide).toContain('- Protocol: Socket.IO (Engine.IO 4), shown by URL path /socket.io/, frames.')
+    expect(guide).toContain('- Protocol: Socket.IO (Engine.IO 4), shown by URL path ends in /socket.io/, frames.')
     expect(guide).toContain('- First authentication message: `connect`; the server\'s next message was `connect`.')
     expect(guide).toMatch(/1\. `connect` \(authentication\), sent as `40<payload>`, e\.g\. `\{"token":"[^"]*redacted[^"]*"\}`/)
     const spec = files.get(`specs/${host.replace(/[^\w.-]/g, '_')}.asyncapi.yaml`) ?? ''

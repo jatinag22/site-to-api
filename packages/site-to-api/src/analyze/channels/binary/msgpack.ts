@@ -135,7 +135,8 @@ function array(reader: Reader, count: number, depth: number): unknown[] {
 
 function map(reader: Reader, count: number, depth: number): Record<string, unknown> {
   reader.need(count * 2)
-  const entries: Record<string, unknown> = {}
+  // No prototype: a `__proto__` key from the site is a plain key, not the object's prototype.
+  const entries: Record<string, unknown> = Object.create(null) as Record<string, unknown>
   for (let i = 0; i < count; i++) {
     const key = value(reader, depth + 1)
     if (typeof key !== 'string' && typeof key !== 'number' && typeof key !== 'boolean')

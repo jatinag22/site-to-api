@@ -259,7 +259,7 @@ function summaryOf(path: string, messages: readonly ChannelMessage[]): string {
  * The protocol most of a channel's connections showed (ties: the first connection's), with the
  * evidence and versions of the connections that showed it.
  */
-function channelProtocol(connections: readonly Connection[]): ChannelProtocol | null {
+function channelProtocol(connections: readonly Connection[], redactor: Redactor): ChannelProtocol | null {
   const counts = new Map<ChannelProtocolId, number>()
   for (const connection of connections) {
     if (connection.protocol !== null)
@@ -271,10 +271,14 @@ function channelProtocol(connections: readonly Connection[]): ChannelProtocol | 
   const showing = connections.flatMap(connection => connection.protocol?.id === id
     ? [connection.protocol]
     : [])
+  // Versions are read from the site's frames: they are redacted like any site text.
+  const safe = (value: string): string => redactor.value(value, { in: 'text' })
   const versions = [
     ...new Set(showing.flatMap(protocol => protocol.version === null
       ? []
-      : [protocol.version])),
+      : [
+          safe(protocol.version),
+        ])),
   ].sort()
   return {
     id,
@@ -282,7 +286,7 @@ function channelProtocol(connections: readonly Connection[]): ChannelProtocol | 
       ? versions.join(', ')
       : null,
     evidence: [
-      ...new Set(showing.flatMap(protocol => protocol.evidence)),
+      ...new Set(showing.flatMap(protocol => protocol.evidence.map(safe))),
     ].sort(),
     wrapper: showing.find(protocol => protocol.wrapper !== null)?.wrapper ?? null,
   }
@@ -367,7 +371,7 @@ export function buildChannels(input: BuildChannelsInput): WebSocketChannel[] {
         handshake: handshakeOf(members, sent.messages, sent.messageOf, redactor),
         cookies: cookiesOf(members),
         links: summarizeLinks(urlLinks),
-        protocol: channelProtocol(members),
+        protocol: channelProtocol(members, redactor),
         connection: connectionFacts({
           connections: members,
           messages,

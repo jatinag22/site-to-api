@@ -734,12 +734,12 @@ describe('real-time channels', () => {
       socketIoChannel(),
     ]), context)
     const section = guide.split('## Real-time channels')[1]?.split('\n## ')[0] ?? ''
-    expect(section).toContain('- Protocol: Socket.IO (Engine.IO 4), shown by URL path /socket.io/, frames. Messages are named by their Socket.IO event name; control frames by their frame type.')
+    expect(section).toContain('- Protocol: Socket.IO (Engine.IO 4), shown by URL path ends in /socket.io/, frames. Messages are named by their Socket.IO event name; control frames by their frame type.')
     expect(section).toContain('- Upgrade request: `Origin` `https://chat.test`; no subprotocol; tokens in the URL (names only): `token`; the server accepted 1 of 2 connections (status 101, 403), rejected 1; a long-polling connection counts as accepted when its handshake request succeeded.')
     expect(section).toContain('- Also carried over Engine.IO long-polling')
     expect(section).toContain('- First authentication message: `connect`; the server\'s next message was `connect`.')
     expect(section).toContain('1. `connect` (authentication), sent as `40<payload>`, e.g. `{"token":"<redacted: JWT (HS256)>"}`')
-    expect(section).toContain('- Client → server: `connect` (1×), `chat message` (event) (3×).')
+    expect(section).toContain('- Client → server: `connect` (1×), `chat message` (`event`) (3×).')
     expect(section).toContain('- Server → client: `connect` (1×), `ping` (1×), `receiveMsgpack` (MessagePack, 4×).')
     expect(renderApiMap(withChannels([
       socketIoChannel(),

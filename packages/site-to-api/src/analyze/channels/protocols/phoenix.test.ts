@@ -41,6 +41,18 @@ describe('phoenix decoder', () => {
     ])
   })
 
+  it('needs a Phoenix-only message to be strong, and calls application events pushes', () => {
+    const session = phoenix.start()
+    const tuple = session.read({ direction: 'received', data: '[1712345678,1,"BTC-USD","trade",{"p":100}]', binary: false })?.[0]
+    expect(tuple).toMatchObject({ frame: 'push', strong: false })
+    const odd = session.read({ direction: 'received', data: '[null,null,"room:lobby","phx_` evil](http://x.test)",{}]', binary: false })?.[0]
+    expect(odd).toMatchObject({ frame: 'push', role: null })
+    const proto = session.read({ direction: 'received', data: '[null,null,"room:lobby","constructor",{}]', binary: false })?.[0]
+    expect(proto?.role).toBeNull()
+    expect(session.read({ direction: 'received', data: '[null,null,"rooms:x","heartbeat",{}]', binary: false })?.[0]).toMatchObject({ frame: 'push', strong: false })
+    expect(session.read({ direction: 'sent', data: '[null,"4","phoenix","heartbeat",{}]', binary: false })?.[0]).toMatchObject({ frame: 'heartbeat', strong: true })
+  })
+
   it('takes /websocket with vsn as a hint', () => {
     expect(phoenix.hint({
       path: '/socket/websocket',
@@ -48,7 +60,7 @@ describe('phoenix decoder', () => {
         { name: 'vsn', value: '2.0.0' },
       ],
       subprotocols: [],
-    })).toBe('URL path /socket/websocket with vsn=2.0.0')
+    })).toBe('URL path ends in /websocket, vsn=2.0.0')
     expect(phoenix.hint({ path: '/socket/websocket', query: [], subprotocols: [] })).toBeNull()
   })
 })

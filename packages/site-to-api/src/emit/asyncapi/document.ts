@@ -5,6 +5,7 @@
  */
 import type { ChannelMessage, ChannelValueLink, ParamInfo, PathParam, WebSocketChannel } from '../../model'
 import { CHANNEL_PROTOCOL_LABELS } from '../../model'
+import { code, text } from '../escape'
 import { schemaObject } from '../openapi'
 
 const ASYNCAPI_VERSION = '3.0.0'
@@ -72,7 +73,7 @@ function protocolSentence(message: ChannelMessage): string {
   const { protocol } = message
   if (protocol === null)
     return ''
-  return ` ${CHANNEL_PROTOCOL_LABELS[protocol.protocol]} ${protocol.frame}, on the wire \`${protocol.wire}\`.`
+  return ` ${CHANNEL_PROTOCOL_LABELS[protocol.protocol]} ${text(protocol.frame)}, on the wire ${code(protocol.wire)}.`
 }
 
 function messageObject(message: ChannelMessage): Json {

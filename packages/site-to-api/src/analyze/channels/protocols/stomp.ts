@@ -66,7 +66,8 @@ function readFrame(text: string): StompFrame | null {
   const [command = '', ...lines] = head.split(/\r?\n/)
   if (!CLIENT_COMMANDS.has(command) && !SERVER_COMMANDS.has(command))
     return null
-  const headers: Record<string, string> = {}
+  // No prototype: a `__proto__` header from the site is a plain header.
+  const headers: Record<string, string> = Object.create(null) as Record<string, string>
   for (const line of lines) {
     const colon = line.indexOf(':')
     if (colon <= 0)
@@ -121,11 +122,16 @@ class StompSession implements DecoderSession {
     if (parsed === null)
       return null
     const version = parsed.headers.version ?? parsed.headers['accept-version']
-    if (version !== undefined && (parsed.command === 'CONNECTED' || this.protocolVersion === null))
+    // Only a version list such as `1.1,1.2` is a version; anything else is site text.
+    if (version !== undefined && /^\d+(?:\.\d+)*(?:,\d+(?:\.\d+)*)*$/.test(version) && (parsed.command === 'CONNECTED' || this.protocolVersion === null))
       this.protocolVersion = version
     const destination = parsed.headers.destination
     const named = BY_DESTINATION.has(parsed.command) && destination !== undefined
-    const { destination: _destination, ...headers } = parsed.headers
+    const headers: Record<string, string> = Object.create(null) as Record<string, string>
+    for (const [name, value] of Object.entries(parsed.headers)) {
+      if (name !== 'destination')
+        headers[name] = value
+    }
     const json = parsed.body === ''
       ? undefined
       : parseJson(parsed.body)
@@ -142,9 +148,10 @@ class StompSession implements DecoderSession {
         role: roleOf(parsed),
         wire: `${parsed.command}\\n${named
           ? 'destination:{0}\\n'
-          : ''}${headerNames.map(name => `${name}:…\\n`).join('')}\\n${parsed.body === ''
+          : ''}${headerNames.map((_, index) => `{k${index}}:…\\n`).join('')}\\n${parsed.body === ''
           ? ''
           : '<body>'}\\0`,
+        wireKeys: headerNames,
         payload: {
           ...(headerNames.length > 0
             ? { headers }

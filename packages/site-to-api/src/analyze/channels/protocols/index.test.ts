@@ -41,6 +41,17 @@ describe('decodeConnection', () => {
         ['<', 'hello'],
         ['<', '42'],
       ]),
+      // Phoenix-shaped tuples from a trading feed: same shape, no Phoenix event.
+      rawFrames(Array.from({ length: 5 }, (_, i): ['<', string] => [
+        '<',
+        JSON.stringify([
+          1712345678 + i,
+          i,
+          'BTC-USD',
+          'trade',
+          { p: 100 + i },
+        ]),
+      ])),
     ]) {
       const decoded = decodeConnection(frames, plainHandshake)
       expect(decoded.protocol).toBeNull()
@@ -69,7 +80,7 @@ describe('decodeConnection', () => {
     expect(hinted.protocol).toEqual({
       id: 'socket.io',
       version: 'Engine.IO 4',
-      evidence: ['URL path /socket.io/', 'frames'],
+      evidence: ['URL path ends in /socket.io/', 'frames'],
       wrapper: null,
     })
     expect(hinted.frames[2]?.[0]?.decoded).toBeNull()

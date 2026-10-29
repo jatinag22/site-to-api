@@ -133,7 +133,9 @@ export function pollingConnections(sessionId: string, exchanges: readonly Exchan
       bySid.set(sid, connection)
       connections.push(connection)
     }
-    connection.frames.push(...framesOf(exchange))
+    // One by one: a body can hold more packets than a spread can pass as arguments.
+    for (const frame of framesOf(exchange))
+      connection.frames.push(frame)
   }
   return connections
 }

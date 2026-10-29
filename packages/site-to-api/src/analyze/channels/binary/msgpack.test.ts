@@ -74,6 +74,24 @@ describe('decodeMessagePack', () => {
     expect(decodeMessagePack(new Uint8Array())).toBeUndefined()
   })
 
+  it('keeps a __proto__ key as a plain key, never as the prototype', () => {
+    // {"__proto__": {"type": "xyz"}, "a": 1}
+    const frame = bytes(0x82, 0xA9, ...utf8('__proto__'), 0x81, 0xA4, ...utf8('type'), 0xA3, ...utf8('xyz'), 0xA1, 0x61, 0x01)
+    const decoded = decodeMessagePack(frame)
+    expect(decoded).toBeTypeOf('object')
+    const object = decoded as Record<string, unknown>
+    expect(Object.getPrototypeOf(object)).toBeNull()
+    expect(Object.keys(object)).toEqual(['__proto__', 'a'])
+    expect(Object.hasOwn(object, 'type')).toBe(false)
+    expect(object.a).toBe(1)
+  })
+
+  it('stops at 32 levels of nesting', () => {
+    const nested = (depth: number): Uint8Array => bytes(...Array.from<number>({ length: depth }).fill(0x91), 0x01)
+    expect(decodeMessagePack(nested(32))).toBeDefined()
+    expect(decodeMessagePack(nested(34))).toBeUndefined()
+  })
+
   it('does not take JSON text for MessagePack', () => {
     expect(decodeMessagePack(new TextEncoder().encode('{"a":1}'))).toBeUndefined()
   })

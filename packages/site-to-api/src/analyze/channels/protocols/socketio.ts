@@ -34,6 +34,9 @@ interface Packet {
   json: unknown
 }
 
+/** Binary attachments one packet may announce; more is not a packet a site sends. */
+const MAX_ATTACHMENTS = 64
+
 /** `<type>[<attachments>-][/<namespace>,][<id>][<json>]`, or null when it is not one. */
 function readPacket(text: string): Packet | null {
   // Socket.IO data is always a JSON object or array, so it starts with `{` or `[`.
@@ -48,6 +51,9 @@ function readPacket(text: string): Packet | null {
     return null
   const binary = type === '5' || type === '6'
   if (binary !== (attachments !== ''))
+    return null
+  // A real packet carries a handful of attachments; a huge count is input meant to exhaust memory.
+  if (attachments.length > 2 || Number(attachments) > MAX_ATTACHMENTS)
     return null
   return {
     type: Number(type),
@@ -106,14 +112,14 @@ class SocketIoSession implements DecoderSession {
     received: new Map<string, string>(),
   }
 
-  /** Binary attachments still to come, per direction, and the event they belong to. */
-  private readonly pending = { sent: [] as string[], received: [] as string[] }
+  /** Binary attachments still to come, per direction, and the event they belong to (a count, not one entry each). */
+  private readonly pending: Record<RawFrame['direction'], Array<{ event: string, remaining: number }>> = { sent: [], received: [] }
   private pingFromServer = false
   private pingFromClient = false
 
   read(frame: RawFrame): DecodedMessage[] | null {
     if (frame.binary) {
-      const event = this.pending[frame.direction].shift()
+      const event = this.nextAttachment(frame.direction)
       return event === undefined
         ? null
         : [
@@ -133,6 +139,23 @@ class SocketIoSession implements DecoderSession {
     return decoded === null
       ? null
       : [decoded]
+  }
+
+  private expectAttachments(direction: RawFrame['direction'], event: string, count: number): void {
+    if (count > 0)
+      this.pending[direction].push({ event, remaining: count })
+  }
+
+  /** The event the next binary frame of this direction is an attachment of, if one is due. */
+  private nextAttachment(direction: RawFrame['direction']): string | undefined {
+    const queue = this.pending[direction]
+    const next = queue[0]
+    if (next === undefined)
+      return undefined
+    next.remaining--
+    if (next.remaining === 0)
+      queue.shift()
+    return next.event
   }
 
   version(): string | null {
@@ -225,8 +248,7 @@ class SocketIoSession implements DecoderSession {
     const names = namespaced(packet.namespace, event)
     if (packet.id !== '')
       this.acks[OTHER_SIDE[frame.direction]].set(`${packet.namespace} ${packet.id}`, event)
-    for (let i = 0; i < packet.attachments; i++)
-      this.pending[frame.direction].push(event)
+    this.expectAttachments(frame.direction, event, packet.attachments)
     const prefix = packet.type === 2
       ? '42'
       : `45${packet.attachments}-`
@@ -256,8 +278,7 @@ class SocketIoSession implements DecoderSession {
     const event = this.acks[frame.direction].get(`${packet.namespace} ${packet.id}`) ?? 'ack'
     const names = namespaced(packet.namespace, event)
     if (packet.type === 6) {
-      for (let i = 0; i < packet.attachments; i++)
-        this.pending[frame.direction].push(event)
+      this.expectAttachments(frame.direction, event, packet.attachments)
     }
     const prefix = packet.type === 3
       ? '43'
@@ -309,7 +330,8 @@ export const socketIo: ProtocolDecoder = {
   id: 'socket.io',
   hint: (handshake) => {
     if (/\/socket\.io\/?$/.test(handshake.path))
-      return `URL path ${handshake.path}`
+      // A fixed phrase: the rest of the path is the site's and may hold a token.
+      return 'URL path ends in /socket.io/'
     const eio = engineVersion(handshake)
     return eio === null
       ? null
@@ -343,7 +365,10 @@ export function pollingPackets(body: string, eio: string | null): Array<{ data: 
     }
   }
   else {
-    packets.push(...body.split('\x1E').filter(packet => packet !== ''))
+    for (const packet of body.split('\x1E')) {
+      if (packet !== '')
+        packets.push(packet)
+    }
   }
   // v3 writes the Engine.IO type after the `b` (`b4<base64>`); v4 binary is always a message.
   const binaryPrefix = lengthPrefixed

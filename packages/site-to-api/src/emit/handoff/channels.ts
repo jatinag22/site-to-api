@@ -61,7 +61,7 @@ function describedName(message: ChannelMessage, render: (value: string) => strin
   const { protocol } = message
   if (protocol === null || protocol.frame === protocol.name)
     return name
-  return `${name} (${protocol.frame})`
+  return `${name} (${render(protocol.frame)})`
 }
 
 function protocolLine(channel: WebSocketChannel): string | null {

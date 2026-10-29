@@ -36,7 +36,11 @@ describe('stomp decoder', () => {
         },
       },
     })
-    expect(decoded[2]).toMatchObject({ role: 'subscribe', wire: 'SUBSCRIBE\\ndestination:{0}\\nid:…\\n\\n\\0' })
+    expect(decoded[2]).toMatchObject({
+      role: 'subscribe',
+      wire: 'SUBSCRIBE\\ndestination:{0}\\n{k0}:…\\n\\n\\0',
+      wireKeys: ['id'],
+    })
     expect(decoded[3]?.payload).toEqual({
       headers: { 'subscription': 'sub-0', 'message-id': '9', 'content-type': 'application/json' },
       body: {
@@ -54,6 +58,16 @@ describe('stomp decoder', () => {
       ['>', 'HELLO\n\n\0'],
       ['>', 'SEND\nbad header\n\n\0'],
     ]))).toEqual([null, null, null])
+  })
+
+  it('keeps a __proto__ header as a plain header and ignores a version that is not one', () => {
+    const session = stomp.start()
+    const decoded = session.read({ direction: 'received', data: 'CONNECTED\nversion:<script>\n__proto__:x\n\n\0', binary: false })?.[0]
+    const payload = decoded?.payload as { headers: Record<string, string> }
+    expect(Object.getPrototypeOf(payload.headers)).toBeNull()
+    expect(Object.keys(payload.headers)).toEqual(['version', '__proto__'])
+    expect(decoded?.wireKeys).toEqual(['version', '__proto__'])
+    expect(session.version()).toBeNull()
   })
 
   it('takes STOMP subprotocols as a hint', () => {

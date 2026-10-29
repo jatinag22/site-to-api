@@ -249,9 +249,21 @@ function protocolNameParts(decoded: DecodedMessage, redactor: Redactor): string[
   return decoded.name.map(part => safeName(part, redactor))
 }
 
-/** The wire template with the name parts in place of `{0}`, `{1}`. */
-function wireWith(decoded: DecodedMessage, parts: readonly string[]): string {
-  return decoded.wire.replace(/\{(\d)\}/g, (slot: string, index: string) => parts[Number(index)] ?? slot)
+/**
+ * The wire template with the name parts in place of `{0}`, `{1}` (or `<name>` when grouped by
+ * frame type) and the redacted key names in place of `{k0}`, `{k1}`.
+ */
+function wireWith(decoded: DecodedMessage, parts: readonly string[] | null, redactor: Redactor): string {
+  return decoded.wire
+    .replace(/\{k(\d+)\}/g, (slot: string, index: string) => {
+      const key = decoded.wireKeys[Number(index)]
+      return key === undefined
+        ? slot
+        : safeName(key, redactor)
+    })
+    .replace(/\{(\d)\}/g, (slot: string, index: string) => parts === null
+      ? '<name>'
+      : parts[Number(index)] ?? slot)
 }
 
 interface ProtocolKey {
@@ -266,28 +278,30 @@ interface ProtocolKey {
  */
 function protocolGroup(direction: ChannelMessage['direction'], item: KeyedFrame, decoded: DecodedMessage, protocol: ChannelProtocolId, redactor: Redactor, byFrameOnly: boolean): ProtocolKey {
   const parts = protocolNameParts(decoded, redactor)
+  // Frame types are the decoders' own words, but go through the redactor like any name.
   const name = byFrameOnly
-    ? decoded.frame
+    ? safeName(decoded.frame, redactor)
     : parts.join(decoded.separator)
+  const frame = safeName(decoded.frame, redactor)
   const format: ChannelMessage['format'] = item.frame.binary
     ? 'binary'
     : item.frame.json === undefined
       ? 'text'
       : 'json'
   return {
-    key: `protocol:${decoded.frame}\u0000${name}`,
+    key: `protocol:${frame}\u0000${name}`,
     name,
     init: {
       id: messageId(direction, name, 'Message'),
       discriminator: null,
       protocol: {
         protocol,
-        frame: decoded.frame,
+        frame,
         name,
         role: decoded.role ?? messageRole(name),
-        wire: byFrameOnly
-          ? decoded.wire.replace(/\{\d\}/g, '<name>')
-          : wireWith(decoded, parts),
+        wire: wireWith(decoded, byFrameOnly
+          ? null
+          : parts, redactor),
       },
       format,
     },

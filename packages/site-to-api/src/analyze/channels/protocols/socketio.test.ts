@@ -66,6 +66,19 @@ describe('socketIo decoder', () => {
     expect(stray).toBeNull()
   })
 
+  it('rejects absurd attachment counts without allocating for them', () => {
+    const session = socketIo.start()
+    const started = performance.now()
+    expect(session.read({ direction: 'received', data: '45400000000-["x"]', binary: false })).toBeNull()
+    expect(session.read({ direction: 'received', data: '4565-["x"]', binary: false })).toBeNull()
+    expect(performance.now() - started).toBeLessThan(100)
+    expect(session.read({ direction: 'received', data: '4564-["x"]', binary: false })?.[0]?.frame).toBe('binary event')
+    // The 64 announced attachments are counted down, not stored one by one.
+    for (let i = 0; i < 64; i++)
+      expect(session.read({ direction: 'received', data: 'AQID', binary: true })?.[0]?.frame).toBe('attachment')
+    expect(session.read({ direction: 'received', data: 'AQID', binary: true })).toBeNull()
+  })
+
   it('tells Engine.IO 3 by the client pinging', () => {
     const session = socketIo.start()
     session.read({ direction: 'sent', data: '2', binary: false })
@@ -84,7 +97,9 @@ describe('socketIo decoder', () => {
   })
 
   it('takes hints from the path and the EIO query', () => {
-    expect(socketIo.hint({ path: '/socket.io/', query: [], subprotocols: [] })).toBe('URL path /socket.io/')
+    expect(socketIo.hint({ path: '/socket.io/', query: [], subprotocols: [] })).toBe('URL path ends in /socket.io/')
+    // The rest of the path is the site's and never part of the evidence.
+    expect(socketIo.hint({ path: '/rt/a8f3k2m9q7x4z1w6e5r0/socket.io/', query: [], subprotocols: [] })).toBe('URL path ends in /socket.io/')
     expect(socketIo.hint({
       path: '/ws',
       query: [
@@ -110,6 +125,10 @@ describe('pollingPackets', () => {
       { data: '42["hi"]', binary: false },
       { data: 'AQID', binary: true },
     ])
+  })
+
+  it('splits bodies with more packets than a spread could pass', () => {
+    expect(pollingPackets('6\x1E'.repeat(200_000), '4')).toHaveLength(200_000)
   })
 
   it('reads v3 length-prefixed bodies', () => {

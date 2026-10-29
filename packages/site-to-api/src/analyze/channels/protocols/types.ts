@@ -30,10 +30,15 @@ export interface DecodedMessage {
   /** What the message does; null leaves it to the words of the name (decision 0030). */
   role: MessageRole | null
   /**
-   * The frame on the wire with `{0}`, `{1}` for the name parts and `<payload>` for the payload,
-   * e.g. `42["{0}",<payload>]`.
+   * The frame on the wire with `{0}`, `{1}` for the name parts, `{k0}`, `{k1}` for
+   * {@link wireKeys} and `<payload>` for the payload, e.g. `42["{0}",<payload>]`.
    */
   wire: string
+  /**
+   * Key names from the site that the wire template shows (STOMP header names, a Centrifugo
+   * reply key); like name parts, they are redacted before the template is written.
+   */
+  wireKeys: string[]
   /** The message's data, read as JSON: what its schema is inferred from; undefined when none. */
   payload: unknown
   /** True for messages only this protocol sends (`0{"sid":…}`, a STOMP frame); one is enough to detect it. */
@@ -58,7 +63,7 @@ export interface DecoderSession {
 
 export interface ProtocolDecoder {
   id: ChannelProtocolId
-  /** Evidence from the URL or subprotocol (`URL path /socket.io/`), or null. */
+  /** Evidence from the URL or subprotocol (`URL path ends in /socket.io/`), or null. */
   hint: (handshake: Handshake) => string | null
   /** The version the handshake names (`EIO=4`), if any. */
   handshakeVersion: (handshake: Handshake) => string | null
@@ -89,10 +94,11 @@ export function argumentsPayload(args: readonly unknown[]): unknown {
 }
 
 /** A text message with the usual defaults: no name separator, not binary. */
-export function message(init: Omit<DecodedMessage, 'separator' | 'binary'> & Partial<Pick<DecodedMessage, 'separator' | 'binary'>>): DecodedMessage {
+export function message(init: Omit<DecodedMessage, 'separator' | 'binary' | 'wireKeys'> & Partial<Pick<DecodedMessage, 'separator' | 'binary' | 'wireKeys'>>): DecodedMessage {
   return {
     separator: '',
     binary: false,
+    wireKeys: [],
     ...init,
   }
 }

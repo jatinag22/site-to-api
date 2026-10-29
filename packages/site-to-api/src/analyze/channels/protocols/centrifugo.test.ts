@@ -28,6 +28,10 @@ describe('centrifugo decoder', () => {
       role: 'subscribe',
       payload: { channel: 'news' },
     })
+    expect(decoded[2]).toMatchObject({
+      wire: '{"id":<id>,"{k0}":<payload>}',
+      wireKeys: ['connect'],
+    })
     expect(decoded[4]).toMatchObject({
       payload: {
         data: { title: 'hi' },

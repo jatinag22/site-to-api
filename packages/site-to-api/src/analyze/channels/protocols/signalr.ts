@@ -72,7 +72,10 @@ class SignalrSession implements DecoderSession {
       return null
     const data = `${record}${RS}`
     if (frame.direction === 'sent' && typeof json.protocol === 'string' && typeof json.version === 'number') {
-      this.protocolVersion = `${json.protocol} ${json.version}`
+      // `json` or `messagepack`: a protocol name is a word; anything else is not written.
+      this.protocolVersion = /^[a-z]{1,20}$/i.test(json.protocol) && Number.isInteger(json.version)
+        ? `${json.protocol} ${json.version}`
+        : null
       return message({
         data,
         frame: 'handshake',

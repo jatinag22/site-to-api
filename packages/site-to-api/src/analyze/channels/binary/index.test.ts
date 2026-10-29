@@ -17,8 +17,13 @@ describe('decodeBinaryFrame', () => {
     expect(decodeBinaryFrame('not base64!')).toBeNull()
   })
 
-  it('reads base64 strictly', () => {
+  it('reads base64 strictly and never throws on the site\'s text', () => {
     expect(base64Bytes('AQI=')).toEqual(Uint8Array.from([1, 2]))
     expect(base64Bytes('A')).toBeNull()
+    expect(base64Bytes('AQI')).toBeNull()
+    // Passes the character check but is not base64: `atob` would throw.
+    expect(() => base64Bytes('ab=a')).not.toThrow()
+    expect(base64Bytes('ab=a')).toBeNull()
+    expect(decodeBinaryFrame('ab=')).toBeNull()
   })
 })

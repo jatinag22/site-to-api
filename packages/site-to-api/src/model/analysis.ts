@@ -266,7 +266,7 @@ export interface ChannelProtocol {
    * (graphql-ws), `json 1` (SignalR), `1.2` (STOMP), `2.0.0` (Phoenix); null when not shown.
    */
   version: string | null
-  /** What showed it, e.g. `URL path /socket.io/`, `subprotocol graphql-transport-ws`, `frames`. */
+  /** What showed it, e.g. `URL path ends in /socket.io/`, `subprotocol graphql-transport-ws`, `frames`. */
   evidence: string[]
   /** Set when the frames were wrapped in another framing, e.g. `sockjs`. */
   wrapper: 'sockjs' | null

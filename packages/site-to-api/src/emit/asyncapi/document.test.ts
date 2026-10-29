@@ -255,7 +255,7 @@ describe('buildAsyncApiDocuments', () => {
     expect(channel?.['x-site-to-api-protocol']).toEqual({
       id: 'socket.io',
       version: 'Engine.IO 4',
-      evidence: ['URL path /socket.io/', 'frames'],
+      evidence: ['URL path ends in /socket.io/', 'frames'],
       wrapper: null,
     })
     expect(channel?.['x-site-to-api-connection']).toEqual({
@@ -276,6 +276,30 @@ describe('buildAsyncApiDocuments', () => {
     expect(chat?.name).toBe('chat message')
     expect(chat?.summary).toBe('Sent by the client; seen 3 times. Socket.IO event, on the wire `42["chat message",<payload>]`.')
     expect(chat?.['x-site-to-api-protocol']).toMatchObject({ frame: 'event', name: 'chat message', role: 'data' })
+    const hostile = buildAsyncApiDocuments([
+      socketIoChannel({
+        messages: [
+          message({
+            id: 'sendX',
+            direction: 'send',
+            protocol: {
+              protocol: 'stomp',
+              frame: 'SEND',
+              name: 'x',
+              role: 'data',
+              wire: 'SEND\\n`](http://x.test)\\n\\n<body>\\0',
+            },
+          }),
+        ],
+        handshake: [],
+        connection: {
+          ...socketIoChannel().connection,
+          firstMessage: null,
+        },
+      }),
+    ], 1)
+    const summary = (parse(toYaml(hostile.get('shop.test:8080') ?? {})) as { channels: Record<string, { messages: Record<string, { summary: string }> }> }).channels.socketIo?.messages.sendX?.summary
+    expect(summary).toContain('`` SEND\\n`](http://x.test)\\n\\n<body>\\0 ``')
     expect(channel?.messages.receiveMsgpack).toMatchObject({
       contentType: 'application/msgpack',
       payload: { description: 'Binary frames decoded as MessagePack.' },

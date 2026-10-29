@@ -215,7 +215,8 @@ class CentrifugoSession implements DecoderSession {
           : command.channel ?? command.command,
       ],
       role: 'data',
-      wire: `{"id":<id>,"${resultKey}":<payload>}`,
+      wire: '{"id":<id>,"{k0}":<payload>}',
+      wireKeys: [resultKey],
       payload: json[resultKey],
       strong: command !== undefined,
     })
@@ -229,7 +230,7 @@ export const centrifugo: ProtocolDecoder = {
     if (subprotocol !== undefined)
       return `subprotocol ${subprotocol}`
     return /\/connection\/websocket$/.test(handshake.path)
-      ? `URL path ${handshake.path}`
+      ? 'URL path ends in /connection/websocket'
       : null
   },
   handshakeVersion: () => null,

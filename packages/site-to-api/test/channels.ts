@@ -206,7 +206,7 @@ export function socketIoChannel(overrides: Partial<WebSocketChannel> = {}): WebS
     protocol: {
       id: 'socket.io',
       version: 'Engine.IO 4',
-      evidence: ['URL path /socket.io/', 'frames'],
+      evidence: ['URL path ends in /socket.io/', 'frames'],
       wrapper: null,
     },
     connection: {

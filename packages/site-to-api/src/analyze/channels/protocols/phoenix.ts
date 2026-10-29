@@ -44,6 +44,33 @@ function readMessage(json: unknown): PhoenixMessage | null {
   }
 }
 
+/** Phoenix's own events; any other event is a push from the application. */
+const PHOENIX_EVENTS = new Set([
+  'phx_join',
+  'phx_leave',
+  'phx_reply',
+  'phx_error',
+  'phx_close',
+])
+
+/** The frame type: a Phoenix event, the socket heartbeat, otherwise `push`. */
+function frameOf(parsed: PhoenixMessage): string {
+  if (PHOENIX_EVENTS.has(parsed.event))
+    return parsed.event
+  return parsed.topic === 'phoenix' && parsed.event === 'heartbeat'
+    ? 'heartbeat'
+    : 'push'
+}
+
+/**
+ * Only Phoenix sends these: a join or its reply, or the heartbeat on the `phoenix` topic. A
+ * plain five-element array (`[ts, seq, "BTC-USD", "trade", {…}]`) has the same shape, so the
+ * shape alone is not enough without a hint from the URL.
+ */
+function isPhoenixOnly(parsed: PhoenixMessage): boolean {
+  return parsed.event === 'phx_join' || parsed.event === 'phx_reply' || (parsed.topic === 'phoenix' && parsed.event === 'heartbeat')
+}
+
 class PhoenixSession implements DecoderSession {
   private serializer: string | null = null
 
@@ -60,19 +87,18 @@ class PhoenixSession implements DecoderSession {
     return [
       message({
         data: frame.data,
-        frame: parsed.event.startsWith('phx_') || parsed.event === 'heartbeat'
-          ? parsed.event
-          : 'push',
+        frame: frameOf(parsed),
         name: [parsed.topic, parsed.event],
         separator: ':',
-        role: ROLES[parsed.event] ?? null,
+        // By the fixed frame type, never by the site's event text (`constructor` is a key of every object).
+        role: ROLES[frameOf(parsed)] ?? null,
         wire: parsed.form === 'array'
           ? '[<joinRef>,<ref>,"{0}","{1}",<payload>]'
           : '{"topic":"{0}","event":"{1}","payload":<payload>,"ref":<ref>}',
         payload: empty
           ? undefined
           : parsed.payload,
-        strong: true,
+        strong: isPhoenixOnly(parsed),
       }),
     ]
   }
@@ -87,7 +113,7 @@ export const phoenix: ProtocolDecoder = {
   hint: (handshake: Handshake) => {
     const vsn = handshake.query.find(param => param.name === 'vsn')?.value
     return /\/websocket$/.test(handshake.path) && vsn !== undefined && /^\d+\.\d+\.\d+$/.test(vsn)
-      ? `URL path ${handshake.path} with vsn=${vsn}`
+      ? `URL path ends in /websocket, vsn=${vsn}`
       : null
   },
   handshakeVersion: (handshake) => {
