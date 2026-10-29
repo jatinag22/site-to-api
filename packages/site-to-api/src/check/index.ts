@@ -36,34 +36,26 @@ export interface CheckOptions {
 }
 
 /**
- * `1` when anything drifted, else `2` when nothing was checked or an operation could not be
- * (blocked, unreachable), else `0`. Drift wins because it is a finding; the rest is a gap.
+ * `1` when anything drifted (a finding beats a gap). Else `2` when something selected could not be
+ * checked: blocked, unreachable, no documented response, or no captured sample; or when nothing
+ * was replayed at all, since "no drift" would then claim more than was looked at. Operations
+ * skipped by probe's safety rules are expected and do not count. Else `0`.
  */
-export function exitCodeFor(operations: readonly OperationCheck[]): 0 | 1 | 2 {
+export function exitCodeFor(operations: readonly OperationCheck[], skipped: CheckReport['skipped'] = []): 0 | 1 | 2 {
   if (operations.some(entry => entry.verdict === 'drift'))
     return 1
-  if (operations.length === 0 || operations.some(entry => entry.verdict !== 'ok'))
-    return 2
-  return 0
+  const unchecked = operations.some(entry => entry.verdict !== 'ok') || skipped.some(entry => entry.cause === 'no-sample')
+  return operations.length === 0 || unchecked
+    ? 2
+    : 0
 }
 
-/** The report with every free-text field passed through the redactor. */
-function redacted(report: CheckReport, redactText: (text: string) => string): CheckReport {
-  return {
-    ...report,
-    operations: report.operations.map(entry => ({
-      ...entry,
-      added: entry.added.map(redactText),
-      removed: entry.removed.map(redactText),
-      typeChanged: entry.typeChanged.map(change => ({
-        ...change,
-        path: redactText(change.path),
-      })),
-      note: entry.note === null
-        ? null
-        : redactText(entry.note),
-    })),
-  }
+function byCodeUnits(a: string, b: string): number {
+  if (a === b)
+    return 0
+  return a < b
+    ? -1
+    : 1
 }
 
 /** Replays every selected operation once and reports how the live answers differ from the capture. */
@@ -76,6 +68,7 @@ export async function checkOperations(options: CheckOptions): Promise<CheckRepor
     ? options.operations
     : options.operations.filter(operation => options.operationIds?.includes(operation.operationId))
 
+  const redact = options.redactText ?? (text => text)
   const replay = createReplayer({
     config: options.config,
     toolVersion: options.toolVersion,
@@ -85,20 +78,24 @@ export async function checkOperations(options: CheckOptions): Promise<CheckRepor
   })
   const operations: OperationCheck[] = []
   const skipped: CheckReport['skipped'] = []
-  const ordered = [...selected].sort((a, b) => a.host.localeCompare(b.host) || a.operationId.localeCompare(b.operationId))
+  const ordered = [...selected].sort((a, b) => byCodeUnits(a.host, b.host) || byCodeUnits(a.operationId, b.operationId))
   for (const operation of ordered) {
     options.log?.(`check ${operation.method} ${operation.path}`)
     const live = await replay(operation)
     if (live.kind === 'skipped') {
-      skipped.push({ operationId: operation.operationId, reason: live.reason })
+      skipped.push({
+        operationId: operation.operationId,
+        reason: redact(live.reason),
+        cause: live.cause,
+      })
     }
     else if (live.kind === 'unreachable') {
       // The captured status is what the check would have compared with; the first 2xx stands in.
       const expected = operation.responses.find(response => response.status >= 200 && response.status < 300)?.status ?? 200
-      operations.push(unreachableCheck(operation, expected, live.error))
+      operations.push(unreachableCheck(operation, expected, redact(live.error)))
     }
     else {
-      operations.push(compareLive(operation, live))
+      operations.push(compareLive(operation, live, redact))
     }
   }
 
@@ -107,13 +104,11 @@ export async function checkOperations(options: CheckOptions): Promise<CheckRepor
     generatedBy: `site-to-api ${options.toolVersion}`,
     checkedAt: new Date(options.now?.() ?? Date.now()).toISOString(),
     maxRps: options.config.maxRps,
-    exitCode: exitCodeFor(operations),
+    exitCode: exitCodeFor(operations, skipped),
     operations,
     skipped,
   }
-  return options.redactText
-    ? redacted(report, options.redactText)
-    : report
+  return report
 }
 
 /** Writes `check.json` (field paths only, safe to commit) atomically. */

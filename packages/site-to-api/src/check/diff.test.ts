@@ -141,4 +141,158 @@ describe('diffAgainstSchema', () => {
     }
     expect(diffAgainstSchema(schema, { z: 1, b: 2, a: 'x' }).added).toEqual(['$.b', '$.z'])
   })
+
+  describe('keys the capture never saw', () => {
+    const fields: JsonSchema = {
+      type: 'object',
+      properties: {
+        id: { type: 'integer' },
+      },
+      required: ['id'],
+    }
+
+    it('prints an ordinary field name and writes the shape of anything that looks like data', () => {
+      const added = diffAgainstSchema(fields, {
+        'id': 1,
+        'badge': 1,
+        'x-total': 1,
+        'a1b2c3d4e5f60718293a4b5c6d7e8f90': 1,
+        'jane.doe@example.com': 1,
+        '7c9e6679-7425-40de-944b-e07fc1f90ae7': 1,
+        '48151623': 1,
+      }).added
+      expect(added).toEqual([
+        '$.<32 hex chars>',
+        '$.<36 chars>',
+        '$.<20 chars>',
+        '$.<8 hex chars>',
+        '$.badge',
+        '$.x-total',
+      ].sort())
+      expect(JSON.stringify(added)).not.toMatch(/jane|7c9e6679|48151623|a1b2c3d4/)
+    })
+
+    it('writes one entry for many keys of one shape', () => {
+      const keys = Object.fromEntries(Array.from({ length: 5 }, (_, i) => [
+        `${'0123456789abcdef'.repeat(2).slice(i)}${'ab'.repeat(i)}`.slice(0, 32),
+        1,
+      ]))
+      expect(diffAgainstSchema(fields, { id: 1, ...keys }).added).toEqual(['$.<32 hex chars>'])
+    })
+
+    it('treats extra keys of an object keyed by data as map entries: no drift, values still checked', () => {
+      const byId: JsonSchema = {
+        type: 'object',
+        properties: {
+          '7c9e6679-7425-40de-944b-e07fc1f90ae7': {
+            type: 'object',
+            properties: {
+              n: { type: 'integer' },
+            },
+            required: ['n'],
+          },
+        },
+      }
+      expect(diffAgainstSchema(byId, {
+        'ffffffff-7425-40de-944b-e07fc1f90ae7': { n: 1 },
+        'eeeeeeee-7425-40de-944b-e07fc1f90ae7': { n: 2 },
+      })).toEqual({ added: [], removed: [], typeChanged: [] })
+      expect(diffAgainstSchema(byId, {
+        'ffffffff-7425-40de-944b-e07fc1f90ae7': { n: 'x' },
+      }).typeChanged).toEqual([
+        { path: '$.*.n', expected: 'integer', actual: 'string' },
+      ])
+    })
+  })
+
+  describe('bounds and unions', () => {
+    const items: JsonSchema = {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer' },
+        },
+        required: ['id'],
+      },
+    }
+
+    it('inspects the first 500 array items and no more', () => {
+      const body = Array.from({ length: 600 }, () => ({ id: 1 }))
+      const inside = body.map((item, i) => i === 499
+        ? { ...item, extra: 1 }
+        : item)
+      const outside = body.map((item, i) => i === 500
+        ? { ...item, extra: 1 }
+        : item)
+      expect(diffAgainstSchema(items, inside).added).toEqual(['$[].extra'])
+      expect(diffAgainstSchema(items, outside).added).toEqual([])
+    })
+
+    it('resolves a union nested in an array and in a map', () => {
+      const union: JsonSchema = {
+        anyOf: [
+          { type: 'string' },
+          {
+            type: 'object',
+            properties: {
+              a: { type: 'integer' },
+            },
+            required: ['a'],
+          },
+        ],
+      }
+      const list: JsonSchema = { type: 'array', items: union }
+      expect(diffAgainstSchema(list, [
+        'x',
+        { a: 1 },
+      ])).toEqual({ added: [], removed: [], typeChanged: [] })
+      expect(diffAgainstSchema(list, [
+        'x',
+        { a: 1 },
+        {},
+      ]).removed).toEqual(['$[].a'])
+      expect(diffAgainstSchema(list, [1]).typeChanged).toEqual([
+        { path: '$[]', expected: 'string', actual: 'integer' },
+      ])
+      const map: JsonSchema = { type: 'object', additionalProperties: union }
+      expect(diffAgainstSchema(map, {
+        'k@example.com': 'x',
+        'j@example.com': { a: 1 },
+      })).toEqual({ added: [], removed: [], typeChanged: [] })
+      expect(diffAgainstSchema(map, { 'k@example.com': {} }).removed).toEqual(['$.*.a'])
+    })
+
+    it('reports a map value of the wrong type once, at .*', () => {
+      const map: JsonSchema = {
+        type: 'object',
+        additionalProperties: { type: 'integer' },
+      }
+      expect(diffAgainstSchema(map, { a1: 'x', a2: 'y', a3: 3 }).typeChanged).toEqual([
+        { path: '$.*', expected: 'integer', actual: 'string' },
+      ])
+    })
+  })
+
+  describe('redaction and order', () => {
+    const open: JsonSchema = {
+      type: 'object',
+      properties: {
+        id: { type: 'integer' },
+      },
+    }
+    const mask = (path: string): string => path.replace(/secret\w*/g, '[redacted]')
+
+    it('redacts before deduplicating, so keys that redact alike appear once', () => {
+      expect(diffAgainstSchema(open, { secretone: 1, secrettwo: 1 }, mask).added).toEqual(['$.[redacted]'])
+    })
+
+    it('sorts after redacting', () => {
+      expect(diffAgainstSchema(open, { zeta: 1, secretalpha: 1, beta: 1 }, path => path.replace('secretalpha', 'aaa')).added).toEqual(['$.aaa', '$.beta', '$.zeta'])
+    })
+
+    it('sorts by code unit, not by locale: capitals first', () => {
+      expect(diffAgainstSchema(open, { a: 1, B: 1, c: 1, Z: 1 }).added).toEqual(['$.B', '$.Z', '$.a', '$.c'])
+    })
+  })
 })

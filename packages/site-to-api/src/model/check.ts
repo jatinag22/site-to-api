@@ -26,13 +26,16 @@ const OperationCheckSchema = z.object({
   /**
    * `ok`: same status, nothing added, removed or retyped. `drift`: something changed.
    * `blocked`: bot protection or a refused session answered instead of the site (see
-   * `rejection`). `unreachable`: no answer. The last two say nothing about drift.
+   * `rejection`). `unreachable`: no answer. `unchecked`: answered, but the capture documents no
+   * response for that status, so there is nothing to compare with. The last three say nothing
+   * about drift.
    */
   verdict: z.enum([
     'ok',
     'drift',
     'blocked',
     'unreachable',
+    'unchecked',
   ]),
   /** Status of the captured response, and of the live one (`null` when there was no answer). */
   status: z.object({
@@ -55,7 +58,7 @@ export const CheckReportSchema = z.object({
   generatedBy: z.string(),
   checkedAt: z.string(),
   maxRps: z.number(),
-  /** `0` no drift and everything checked, `1` drift, `2` an operation could not be checked. */
+  /** `0` no drift and everything selected was checked, `1` drift, `2` something selected could not be checked. */
   exitCode: z.union([
     z.literal(0),
     z.literal(1),
@@ -65,6 +68,8 @@ export const CheckReportSchema = z.object({
   skipped: z.array(z.object({
     operationId: z.string(),
     reason: z.string(),
+    /** `safety`: a rule of probe's, expected. `no-sample`: nothing was captured to replay, so the operation could not be checked. */
+    cause: z.enum(['safety', 'no-sample']),
   })),
 })
 export type CheckReport = z.infer<typeof CheckReportSchema>

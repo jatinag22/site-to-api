@@ -433,6 +433,8 @@ function dispatchChangesState(value: string): boolean {
   return STATE_CHANGING_WORDS.some(phrase => words.some((_, start) => phrase.every((word, offset) => words[start + offset] === word)))
 }
 
+const NO_SAMPLE = 'no successful response was captured'
+
 function skipReason(operation: Operation, config: ResolvedConfig['probe']): string | null {
   if (operation.kind === 'bot-protection')
     return 'bot-protection step: needs a real browser by design'
@@ -454,7 +456,7 @@ function skipReason(operation: Operation, config: ResolvedConfig['probe']): stri
   if (!isSafeOperation(operation) && !config.unsafeMethods)
     return `${operation.method} can change data; pass --unsafe-methods to include it`
   if (!representative(operation))
-    return 'no successful response was captured'
+    return NO_SAMPLE
   return null
 }
 
@@ -594,7 +596,7 @@ export async function probeOperations(options: ProbeOptions): Promise<ProbeRepor
     const reason = skipReason(operation, options.config)
     const exchange = representative(operation)
     if (reason !== null || !exchange) {
-      skipped.push({ operationId: operation.operationId, reason: reason ?? 'no successful response was captured' })
+      skipped.push({ operationId: operation.operationId, reason: reason ?? NO_SAMPLE })
       continue
     }
     options.log?.(`probe ${operation.method} ${operation.path}`)
@@ -613,6 +615,27 @@ export async function probeOperations(options: ProbeOptions): Promise<ProbeRepor
   }
 }
 
+/** Whether a live answer is not plainly the captured kind of answer: another status, media type, a challenge, or JSON that does not parse. */
+function answerDiffers(exchange: Exchange, response: LiveResponse): boolean {
+  const expectedType = exchange.response.body?.mimeType ?? ''
+  const actualType = mediaType(response.contentType)
+  if (response.status !== exchange.response.status
+    || hasChallengeHeader([...response.headers].map(([name, value]) => ({ name, value })))
+    || challengeResponse(response.contentType, response.text) !== null
+    || (expectedType !== '' && actualType !== '' && expectedType !== actualType)) {
+    return true
+  }
+  if (!expectedType.includes('json'))
+    return false
+  try {
+    JSON.parse(response.text)
+    return false
+  }
+  catch {
+    return true
+  }
+}
+
 export interface ReplayerOptions {
   config: ResolvedConfig['probe']
   toolVersion: string
@@ -623,18 +646,23 @@ export interface ReplayerOptions {
 
 /** What one live replay of an operation found. */
 export type LiveReplay
-  = | { kind: 'skipped', reason: string }
-    | { kind: 'unreachable', error: string }
-    | {
-      kind: 'answered'
-      /** The captured exchange that was replayed; its response is what the live one is compared with. */
-      exchange: Exchange
-      status: number
-      contentType: string | null
-      text: string
-      /** Why the answer is not the site's own, with probe's classification (decision 0036). */
-      refusal: { kind: 'bot-protection' | 'session', evidence: string } | null
-    }
+  = | {
+    kind: 'skipped'
+    reason: string
+    /** `safety`: a rule of probe's (expected, nothing to check); `no-sample`: nothing was captured to replay. */
+    cause: 'safety' | 'no-sample'
+  }
+  | { kind: 'unreachable', error: string }
+  | {
+    kind: 'answered'
+    /** The captured exchange that was replayed; its response is what the live one is compared with. */
+    exchange: Exchange
+    status: number
+    contentType: string | null
+    text: string
+    /** Why the answer is not the site's own, with probe's classification (decision 0036). */
+    refusal: { kind: 'bot-protection' | 'session', evidence: string } | null
+  }
 
 /**
  * Replays one operation's representative request once, as probe's first variant does: the same
@@ -652,14 +680,28 @@ export function createReplayer(options: ReplayerOptions): (operation: Operation)
   return async (operation) => {
     const reason = skipReason(operation, config)
     const exchange = representative(operation)
-    if (reason !== null || !exchange)
-      return { kind: 'skipped', reason: reason ?? 'no successful response was captured' }
+    if (reason !== null || !exchange) {
+      return {
+        kind: 'skipped',
+        reason: reason ?? NO_SAMPLE,
+        cause: (reason ?? NO_SAMPLE) === NO_SAMPLE
+          ? 'no-sample'
+          : 'safety',
+      }
+    }
     const fetched = await runner.fetchLive(exchange, captured(exchange, options.toolVersion))
     if ('error' in fetched)
       return { kind: 'unreachable', error: fetched.error }
     const { response } = fetched
-    const blocked = blockEvidence(response)
-    const auth = authEvidence(exchange, response.status, response.headers, response.text)
+    // Refusal is looked for only in an answer that would otherwise differ, as probe's `send` does:
+    // a normal JSON 200 whose text happens to contain a login form is not a login page.
+    const differs = answerDiffers(exchange, response)
+    const blocked = differs
+      ? blockEvidence(response)
+      : null
+    const auth = differs
+      ? authEvidence(exchange, response.status, response.headers, response.text)
+      : null
     return {
       kind: 'answered',
       exchange,

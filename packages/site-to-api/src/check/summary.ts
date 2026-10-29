@@ -21,15 +21,21 @@ function details(entry: OperationCheck): string[] {
 export function summarizeCheck(report: CheckReport): string[] {
   const count = (verdict: OperationCheck['verdict']): number => report.operations.filter(entry => entry.verdict === verdict).length
   const lines = [
-    `Checked ${report.operations.length} operations: ${count('ok')} ok, ${count('drift')} drifted, ${count('blocked')} blocked, ${count('unreachable')} unreachable; ${report.skipped.length} skipped.`,
+    `Checked ${report.operations.length} operations: ${count('ok')} ok, ${count('drift')} drifted, ${count('blocked')} blocked, ${count('unreachable')} unreachable, ${count('unchecked')} unchecked; ${report.skipped.length} skipped.`,
   ]
   for (const entry of report.operations) {
     if (entry.verdict === 'drift')
       lines.push(`DRIFT ${label(entry)}`, ...details(entry))
     else if (entry.verdict === 'blocked')
       lines.push(`BLOCKED ${label(entry)}`, `  ${entry.note ?? 'refused'}`)
+    else if (entry.verdict === 'unchecked')
+      lines.push(`UNCHECKED ${label(entry)}`, `  ${entry.note ?? 'nothing to compare with'}`)
     else if (entry.verdict === 'unreachable')
       lines.push(`UNREACHABLE ${label(entry)}`, `  ${entry.note ?? 'no answer'}`)
+  }
+  for (const entry of report.skipped) {
+    if (entry.cause === 'no-sample')
+      lines.push(`NOT CHECKED ${entry.operationId}`, `  ${entry.reason}`)
   }
   if (report.operations.length === 0)
     lines.push('Nothing was replayed. Every operation was skipped (see check.json) or none matched.')

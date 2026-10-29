@@ -21,7 +21,7 @@ function documentedResponse(operation: Operation, status: number, mimeType: stri
 }
 
 /** Parses the live body as JSON and diffs it; a body that is not JSON is a change at the root. */
-function diffBody(schema: NonNullable<ResponseInfo['schema']>, text: string): SchemaDiff {
+function diffBody(schema: NonNullable<ResponseInfo['schema']>, text: string, redactPath?: (path: string) => string): SchemaDiff {
   let body: unknown
   try {
     body = JSON.parse(text)
@@ -35,7 +35,7 @@ function diffBody(schema: NonNullable<ResponseInfo['schema']>, text: string): Sc
       ],
     }
   }
-  return diffAgainstSchema(schema, body)
+  return diffAgainstSchema(schema, body, redactPath)
 }
 
 /** Without a JSON schema (HTML, text) only the media type can be compared. */
@@ -81,7 +81,8 @@ export function unreachableCheck(operation: Operation, expected: number, error: 
  * A refused answer (bot protection, a session the site no longer accepts) says nothing about the
  * API, so it is `blocked`, not drift. Anything else that differs is drift.
  */
-export function compareLive(operation: Operation, live: Answered): OperationCheck {
+export function compareLive(operation: Operation, live: Answered, redactPath?: (path: string) => string): OperationCheck {
+  const redact = redactPath ?? ((text: string) => text)
   const expected = live.exchange.response.status
   const status = { expected, actual: live.status }
   if (live.refusal) {
@@ -96,7 +97,7 @@ export function compareLive(operation: Operation, live: Answered): OperationChec
       removed: [],
       typeChanged: [],
       rejection: live.refusal.kind,
-      note: `Refused (${live.refusal.evidence}). ${advice}`,
+      note: redact(`Refused (${live.refusal.evidence}). ${advice}`),
     }
   }
 
@@ -109,10 +110,21 @@ export function compareLive(operation: Operation, live: Answered): OperationChec
   // A different status is compared with its own documented body when there is one; an
   // undocumented error body has no schema to check.
   const body = response?.schema
-    ? diffBody(response.schema, live.text)
+    ? diffBody(response.schema, live.text, redactPath)
     : mediaTypeChange(response, live, changed)
   const { added, removed, typeChanged } = body
 
+  if (response === null && !changed) {
+    return {
+      ...base(operation),
+      verdict: 'unchecked',
+      status,
+      added: [],
+      removed: [],
+      typeChanged: [],
+      note: `The capture documents no response for status ${live.status}, so there is nothing to compare with. Build again after capturing this operation.`,
+    }
+  }
   const drift = changed || added.length > 0 || removed.length > 0 || typeChanged.length > 0
   return {
     ...base(operation),

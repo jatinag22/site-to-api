@@ -124,6 +124,31 @@ function walk(schema: JsonSchema, value: unknown, path: string): SchemaDiff {
   return diff
 }
 
+/**
+ * Whether a key reads like a field name a person chose (`badge`, `price_inr`, `x-total`) and not
+ * like data (a session id, an email, a token, a numeric id). Only such keys are printed; others
+ * are written as their shape.
+ */
+function looksLikeFieldName(key: string): boolean {
+  return key.length <= 48
+    && /^[A-Z]\w*(?:-\w+)*$/i.test(key)
+    && (key.match(/\d/g)?.length ?? 0) <= 3
+}
+
+/** `<32 hex chars>` or `<14 chars>`: what a data key looks like, without the key (decision 0042). */
+function keyShape(key: string): string {
+  return /^[\da-f]+$/i.test(key) && key.length >= 8
+    ? `<${key.length} hex chars>`
+    : `<${key.length} chars>`
+}
+
+/** The schemas of an object's own properties as one: what the values of an id-keyed object follow. */
+function memberSchema(properties: Record<string, JsonSchema>): JsonSchema {
+  return {
+    anyOf: Object.values(properties),
+  }
+}
+
 function walkObject(schema: JsonSchema, value: object, path: string): SchemaDiff {
   const diff = emptyDiff()
   const live = new Map(Object.entries(value))
@@ -133,6 +158,9 @@ function walkObject(schema: JsonSchema, value: object, path: string): SchemaDiff
       diff.removed.push(`${path}.${name}`)
   }
   const extra = schema.additionalProperties
+  // Property names that are data say the object is keyed by data: a key the capture did not see
+  // is another entry of the map, not a new field, or it would drift on every run.
+  const keyedByData = Object.keys(properties).some(name => !looksLikeFieldName(name))
   for (const [name, child] of live) {
     const known = Object.hasOwn(properties, name)
       ? properties[name]
@@ -144,28 +172,47 @@ function walkObject(schema: JsonSchema, value: object, path: string): SchemaDiff
       // A map (decision 0042): its keys are data, so they are never listed.
       merge(diff, walk(extra, child, `${path}.*`))
     }
+    else if (keyedByData) {
+      merge(diff, walk(memberSchema(properties), child, `${path}.*`))
+    }
     else if (extra !== true && schema.properties !== undefined) {
-      diff.added.push(`${path}.${name}`)
+      diff.added.push(`${path}.${looksLikeFieldName(name)
+        ? name
+        : keyShape(name)}`)
     }
   }
   return diff
 }
 
+/** Plain code-unit order, so the same drift sorts the same on every machine and locale. */
+function byCodeUnits(a: string, b: string): number {
+  if (a === b)
+    return 0
+  return a < b
+    ? -1
+    : 1
+}
+
 function unique(items: string[]): string[] {
   return [
     ...new Set(items),
-  ].sort()
+  ].sort(byCodeUnits)
 }
 
 /**
  * What differs between `schema` and a live JSON `value`. Paths use `$` for the body, `.name` for
- * a field, `[]` for any array element and `.*` for any value of a map. Each list is sorted and
- * free of duplicates, so the same drift always reads the same.
+ * a field, `[]` for any array element and `.*` for any value of a map. Paths are redacted first,
+ * then deduplicated and sorted, so two keys the redactor writes the same appear once and the order
+ * is the one in the file. Each list is sorted by code unit, so the same drift always reads the same.
  */
-export function diffAgainstSchema(schema: JsonSchema, value: unknown): SchemaDiff {
+export function diffAgainstSchema(schema: JsonSchema, value: unknown, redactPath: (path: string) => string = path => path): SchemaDiff {
   const diff = walk(schema, value, '$')
   const seen = new Set<string>()
   const typeChanged = diff.typeChanged
+    .map(change => ({
+      ...change,
+      path: redactPath(change.path),
+    }))
     .filter((change) => {
       const key = `${change.path}\0${change.expected}\0${change.actual}`
       if (seen.has(key))
@@ -173,10 +220,10 @@ export function diffAgainstSchema(schema: JsonSchema, value: unknown): SchemaDif
       seen.add(key)
       return true
     })
-    .sort((a, b) => a.path.localeCompare(b.path) || a.actual.localeCompare(b.actual))
+    .sort((a, b) => byCodeUnits(a.path, b.path) || byCodeUnits(a.actual, b.actual))
   return {
-    added: unique(diff.added),
-    removed: unique(diff.removed),
+    added: unique(diff.added.map(redactPath)),
+    removed: unique(diff.removed.map(redactPath)),
     typeChanged,
   }
 }

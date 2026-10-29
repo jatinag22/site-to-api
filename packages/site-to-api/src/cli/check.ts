@@ -74,6 +74,13 @@ const checkCommand: CommandRegistrar = (program) => {
     .option('--operations <ids>', 'only these operation ids (comma separated, repeatable)', collect)
     .option('--max-rps <n>', 'requests per second', parseRate)
     .option('--json', 'print check.json to stdout instead of the summary')
+    // Commander exits 1 on a usage error (an unknown flag, `--max-rps abc`), which would read as
+    // drift. Its message is already printed; only the code changes. Help and version stay 0.
+    .exitOverride((error) => {
+      process.exit(error.exitCode === 0
+        ? 0
+        : 2)
+    })
     .action(async (flags: CheckFlags, command: Command) => {
       try {
         await runCheck(flags, command)
