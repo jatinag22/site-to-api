@@ -16,30 +16,46 @@ export function redactRequirement(item: string, redactName: (name: string) => st
     : `${item.slice(0, colon + 1)}${redactName(item.slice(colon + 1))}`
 }
 
-/** A copy of the analysis whose cookie names and `requires` items are redacted, for emitters. */
+/**
+ * A copy of the analysis for emitters, with redacted names: cookie, header and query parameter
+ * names of operations, WebSocket channel cookie and query names, session cookie names, and the
+ * names in `requires` items.
+ */
 export function withRedactedNames(analysis: Analysis, redactName: (name: string) => string): Analysis {
+  const named = <T extends { name: string }>(items: readonly T[]): T[] => items.map(item => ({
+    ...item,
+    name: redactName(item.name),
+  }))
   return {
     ...analysis,
     operations: analysis.operations.map(operation => ({
       ...operation,
-      cookies: operation.cookies.map(cookie => ({
-        ...cookie,
-        name: redactName(cookie.name),
-      })),
+      query: named(operation.query),
+      headers: named(operation.headers),
+      cookies: named(operation.cookies),
       ...(operation.requires === undefined || operation.requires === null
         ? {}
         : {
             requires: operation.requires.map(item => redactRequirement(item, redactName)),
           }),
     })),
+    ...(analysis.channels === undefined
+      ? {}
+      : {
+          channels: analysis.channels.map(channel => ({
+            ...channel,
+            query: named(channel.query),
+            cookies: {
+              ...channel.cookies,
+              names: channel.cookies.names.map(redactName),
+            },
+          })),
+        }),
     flows: {
       ...analysis.flows,
       session: analysis.flows.session.map(entry => ({
         ...entry,
-        cookies: entry.cookies.map(cookie => ({
-          ...cookie,
-          name: redactName(cookie.name),
-        })),
+        cookies: named(entry.cookies),
       })),
     },
   }

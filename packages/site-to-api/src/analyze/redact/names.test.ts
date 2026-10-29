@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { tickerChannel } from '../../../test/channels'
 import { twoHostAnalysis } from '../../../test/two-hosts'
 import { probeReportWithRedactedNames, redactRequirement, withRedactedNames } from './names'
 
@@ -36,6 +37,54 @@ describe('withRedactedNames', () => {
     expect(text).not.toContain(ID)
     expect(emitted.operations[0]?.requires).toEqual([`cookie:${redactName(RAW)}`, 'header:x-csrf-token'])
     expect(analysis.operations[0]?.cookies[0]?.name).toBe(RAW)
+  })
+
+  it('redacts WebSocket channel cookie and query names, and operation header and query names', () => {
+    const analysis = twoHostAnalysis()
+    const operation = analysis.operations[0]
+    if (!operation)
+      throw new Error('fixture changed')
+    operation.headers = [
+      {
+        name: `x-${ID}`,
+        required: true,
+        constant: false,
+        schema: { type: 'string' },
+      },
+    ]
+    operation.query = [
+      {
+        name: `q_${ID}`,
+        required: true,
+        schema: { type: 'string' },
+      },
+    ]
+    const channel = tickerChannel({ host: 'shop.test' })
+    analysis.channels = [
+      {
+        ...channel,
+        query: [
+          {
+            name: `c_${ID}`,
+            required: false,
+            schema: { type: 'string' },
+          },
+        ],
+        cookies: {
+          status: 'sent',
+          names: [RAW],
+        },
+      },
+    ]
+    const emitted = withRedactedNames(analysis, redactName)
+    const text = JSON.stringify(emitted, (key, value: unknown) => key === 'exchanges'
+      ? undefined
+      : value)
+    expect(text).not.toContain(ID)
+    expect(emitted.channels?.[0]?.cookies.names).toEqual([
+      redactName(RAW),
+    ])
+    expect(analysis.channels[0]?.cookies.names).toEqual([RAW])
   })
 
   it('redacts requires items in probe.json the same way', () => {
