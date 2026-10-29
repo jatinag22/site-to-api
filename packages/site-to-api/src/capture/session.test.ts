@@ -671,10 +671,16 @@ async function whenBound(win) {
  * website: `shop.localhost` is the captured site, `sub.shop.localhost` another host of it, and
  * `other.localhost` a third party that tries to borrow the shop's identity.
  *
- * A real server, not `context.route`: with request interception on, a popup opened while the
- * page loads (as the shop does here) can leave an iframe's fulfilled response undelivered, so the
- * iframe never runs its script. That is Playwright's interception, not capture, and it made this
- * test fail about half the time.
+ * Nothing opens a window while a frame is still loading. All these frames share one renderer, and
+ * when a popup opens in the moment a sibling iframe's response arrives, Chromium under Playwright
+ * (which holds each new page until it is set up) can leave that iframe's document unparsed: it
+ * stays at `readyState` "loading" with its script never run, so the shop's load event never fires
+ * and `page.goto` times out. It happens with plain Playwright and no capture code, more often
+ * when the machine is busy, since setting up the popup takes longer. So the shop opens its popup,
+ * and tells frame `b` to start, only after its own load event.
+ *
+ * A real server, not `context.route`, for the same reason: with request interception the window in
+ * which a fulfilled iframe response goes undelivered is wider.
  */
 function scopePages(port: number): Record<string, string> {
   const shop = `http://shop.localhost:${port}`
@@ -691,7 +697,10 @@ const blank = document.createElement('iframe');
 blank.name = 'blank';
 document.body.appendChild(blank);
 send(blank.contentWindow, 'Blank');
-window.open('/popup');
+addEventListener('load', () => {
+  window.open('/popup');
+  frames.b.postMessage('start', '*');
+});
 </script></body>`,
     [`${shop}/same`]: `<!doctype html><script>${SCOPE_SEND} send(window, 'Same'); window.__done = true;</script>`,
     [`http://sub.shop.localhost:${port}/sub`]: `<!doctype html><script>${SCOPE_SEND} send(window, 'Sub'); window.__done = true;</script>`,
@@ -707,7 +716,9 @@ fetch('/api/popup');
 </script>`,
     [`${other}/a`]: '<!doctype html><p>third party</p>',
     [`${other}/b`]: `<!doctype html><script>${SCOPE_SEND}
-(async () => {
+addEventListener('message', async (event) => {
+  if (event.data !== 'start')
+    return;
   // __done is always set and every loop is bounded by time, so a misbehaving step fails the
   // assertions below instead of hanging the capture script.
   try {
@@ -730,7 +741,7 @@ fetch('/api/popup');
   finally {
     window.__done = true;
   }
-})();
+});
 </script>`,
   }
 }

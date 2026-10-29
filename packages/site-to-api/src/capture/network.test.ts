@@ -1,6 +1,6 @@
-import type { Lookup } from './network'
+import type { Lookup, ServedFrom } from './network'
 import { describe, expect, it } from 'vitest'
-import { cachedLookup, isPublicAddress, localPageOf, nonPublicReason, sourceMapRefusal } from './network'
+import { cachedLookup, isPublicAddress, localPageOf, nonPublicReason, ServedAddresses, sourceMapRefusal } from './network'
 
 /** A fake resolver: no test touches real DNS. */
 function fakeLookup(table: Record<string, string[]>): Lookup {
@@ -314,9 +314,83 @@ describe('localPageOf with a mixed DNS answer', () => {
   })
 
   it('goes by the address the browser loaded the page from when it is known', async () => {
-    expect(await localPageOf('https://www.evil.com/', lookup, '93.184.216.34')).toBeNull()
-    expect(await localPageOf('http://app.corp/home', lookup, '10.1.0.10')).toEqual(new URL('http://app.corp/home'))
+    expect(await localPageOf('https://www.evil.com/', lookup, servedFrom('https://www.evil.com/', '93.184.216.34'))).toBeNull()
+    expect(await localPageOf('http://app.corp/home', lookup, servedFrom('http://app.corp/', '10.1.0.10'))).toEqual(new URL('http://app.corp/home'))
     // A private name served from a public address is a public page.
-    expect(await localPageOf('http://app.corp/home', lookup, '93.184.216.34')).toBeNull()
+    expect(await localPageOf('http://app.corp/home', lookup, servedFrom('http://app.corp/', '93.184.216.34'))).toBeNull()
+  })
+})
+
+/** What a {@link ServedAddresses} knows of `url`'s origin after documents came from `addresses`. */
+function servedFrom(url: string, ...addresses: Array<string | null>): ServedFrom | null {
+  const served = new ServedAddresses()
+  for (const address of addresses)
+    served.record(url, address)
+  return served.of(url)
+}
+
+describe('servedAddresses', () => {
+  // The name now resolves only to a private address, as after a DNS change during the capture.
+  const rebound = fakeLookup({
+    'shop.example.com': ['10.0.0.9'],
+  })
+
+  it('keeps an origin served from a public address public, though a later document had no address and DNS is now private', async () => {
+    const served = new ServedAddresses()
+    served.record('https://shop.example.com/', '93.184.216.34')
+    // A page from the service worker: Playwright reports no server address.
+    served.record('https://shop.example.com/account', null)
+    expect(await localPageOf('https://shop.example.com/account', rebound, served.of('https://shop.example.com/account'))).toBeNull()
+    // Without the history, the fresh lookup alone would have made it local.
+    expect(await localPageOf('https://shop.example.com/account', rebound)).not.toBeNull()
+  })
+
+  it('never makes an origin local again once it was served from a public address', async () => {
+    const served = new ServedAddresses()
+    served.record('https://shop.example.com/', '93.184.216.34')
+    served.record('https://shop.example.com/next', '10.0.0.9')
+    expect(served.of('https://shop.example.com/')).toEqual({ last: '10.0.0.9', public: true })
+    expect(await localPageOf('https://shop.example.com/next', rebound, served.of('https://shop.example.com/next'))).toBeNull()
+  })
+
+  it('counts an origin only ever served from private addresses as local when its name is private too', async () => {
+    const served = new ServedAddresses()
+    served.record('http://app.corp/', '10.1.0.10')
+    served.record('http://app.corp/settings', null)
+    served.record('http://app.corp/reports', '10.1.0.11')
+    expect(await localPageOf('http://app.corp/reports', lookup, served.of('http://app.corp/reports'))).toEqual(new URL('http://app.corp/reports'))
+  })
+
+  it('never makes a page local from a private address alone, as behind a proxy', async () => {
+    // Behind mitmproxy or a corporate proxy every document is "served" from the proxy's address.
+    const proxied = new ServedAddresses()
+    proxied.record('https://example.com/', '127.0.0.1')
+    proxied.record('https://intranet-proxy.example/', '10.0.0.1')
+    expect(await localPageOf('https://example.com/', lookup, proxied.of('https://example.com/'))).toBeNull()
+    // A public page whose sourcemap points at a sibling on the metadata address stays refused.
+    const page = await localPageOf('https://www.evil.com/', lookup, servedFrom('https://www.evil.com/', '10.0.0.1'))
+    expect(page).toBeNull()
+    expect(await sourceMapRefusal(new URL('http://meta.evil.com/latest/meta-data/'), new URL('https://www.evil.com/app.js'), page, lookup)).toMatch(/169\.254\.169\.254/)
+  })
+
+  it('records an IPv6 address given in brackets', async () => {
+    const served = new ServedAddresses()
+    served.record('https://shop.example.com/', '[2606:2800:220:1:248:1893:25c8:1946]')
+    expect(served.of('https://shop.example.com/')).toEqual({ last: '2606:2800:220:1:248:1893:25c8:1946', public: true })
+    const rebound = fakeLookup({
+      'shop.example.com': ['10.0.0.9'],
+    })
+    expect(await localPageOf('https://shop.example.com/', rebound, served.of('https://shop.example.com/'))).toBeNull()
+  })
+
+  it('keeps origins apart and ignores documents without an address or outside http(s)', () => {
+    const served = new ServedAddresses()
+    served.record('https://shop.example.com/', '93.184.216.34')
+    served.record('http://shop.example.com/', 'not an address')
+    served.record('about:blank', '10.0.0.1')
+    expect(served.of('https://shop.example.com/x')).toEqual({ last: '93.184.216.34', public: true })
+    expect(served.of('http://shop.example.com/')).toBeNull()
+    expect(served.of('https://shop.example.com:8443/')).toBeNull()
+    expect(served.of('about:blank')).toBeNull()
   })
 })
