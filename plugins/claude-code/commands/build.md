@@ -9,6 +9,5 @@ Run `site-to-api build $ARGUMENTS` from the project root and report the warnings
 Do not pass `--examples raw` unless the person asks for it and understands that captured values,
 including personal data, are then written into the handoff folder.
 
-Then read `api-handoff/AGENT.md` (and `api-handoff/hosts/<host>.md` for the host to wrap, when it
-exists), or use the `site-to-api` MCP tools (`list_hosts`, `search_operations`, `get_operation`),
-and summarise the hosts, what each host's session needs, and the gaps.
+Then read `api-handoff/AGENT.md`, then `api-handoff/hosts/<host>.md` for the host to wrap, or use
+the `site-to-api` MCP tools (`list_hosts`, `search_operations`, `get_operation`), and summarise the hosts, what each host's session needs, and the gaps.

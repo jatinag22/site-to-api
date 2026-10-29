@@ -14,12 +14,15 @@ from the capture; you do the reasoning. Full docs: `README.md`, `docs/output-for
 
 ```sh
 site-to-api init                                   # once: config + gitignore for .site-to-api/
-site-to-api capture https://example.com --channel chrome --minimized
+site-to-api capture https://example.com --channel chrome
 ```
 
-- The browser opens minimized: the person restores it, uses the site the way the wrapper will
-  (log in, search, open the pages that matter), then closes it. Capture ends when the browser
-  closes. Do not drive their session yourself unless they ask; `--script <file>` exists for that.
+- By hand, in a normal Chrome window: the person uses the site the way the wrapper will (log in,
+  search, open the pages that matter), then closes the browser, which ends the capture. Do not
+  drive their session yourself.
+- Unattended, for public pages only: write a script and run it minimized, so it does not take
+  over the screen: `site-to-api capture https://example.com --channel chrome --minimized --script capture.ts`
+  (`export default async ({ page, baseUrl }) => {}`).
 - Ask for a second pass over the same pages (`capture` again): two sessions separate constants
   from per-session values.
 - Only sites the person may use, under their terms. If the site shows a captcha or a challenge,
@@ -31,14 +34,14 @@ site-to-api capture https://example.com --channel chrome --minimized
 site-to-api build
 ```
 
-Read in this order, and stop as soon as you know enough:
+Read `api-handoff/AGENT.md`, then `api-handoff/hosts/<host>.md` for the host you are wrapping:
 
-1. `api-handoff/AGENT.md`: hosts, what each host's session needs (cookies, token, browser), flows,
-   computed values, gaps.
-2. `api-handoff/hosts/<host>.md` for the host you are wrapping, when the folder has one (older
-   folders keep it all in `AGENT.md`).
-3. `API_MAP.md` (one row per operation), then `flows.md`, the host's `specs/<host>.yaml`, and the
-   `source/` excerpts it points to.
+1. `AGENT.md` is a short index: the hosts with what each one's session needs (plain HTTP, cookies,
+   token, real browser), the key flows and the gaps.
+2. `hosts/<host>.md` has that host's details: cookies and who sets them, bot protection, computed
+   values, GraphQL and dispatcher operations, channels, gaps.
+3. Then, as needed: `API_MAP.md` (one row per operation), `flows.md`, `specs/<host>.yaml` and the
+   `source/` excerpts they point to.
 
 With the MCP server (`site-to-api mcp`, or the Claude Code plugin) use the tools instead of reading
 whole files: `list_hosts` → `search_operations` → `get_operation` (inputs and where each value
