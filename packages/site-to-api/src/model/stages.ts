@@ -45,6 +45,8 @@ export interface SourceRoute {
   evidence: 'call' | 'string'
   /** Hosts of the scripts the route was found in, sorted; relative routes belong to their pages. */
   scriptHosts: string[]
+  /** True when every script it was found in is a bot-protection script (Kasada `ips.js`, AWS WAF `challenge.js`). */
+  onlyInBotProtectionScripts: boolean
 }
 
 /** Finds where a value appears inside an HTML or text document (implemented in `analyze/html`). */

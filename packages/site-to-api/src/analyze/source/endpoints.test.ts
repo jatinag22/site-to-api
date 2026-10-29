@@ -151,6 +151,23 @@ describe('findSourceEndpoints', () => {
     expect(routes.map(route => `${route.method} ${route.pathTemplate}`)).toEqual(['PATCH /api/items', 'null /api/other'])
   })
 
+  it('records whether a route was passed to a request call, and whether only vendor scripts hold it', async () => {
+    const session = await writeSession('s1', [
+      { url: 'https://shop.test/a.js', file: 'scripts/a.js', content: 'fetch("/api/items"); const Q = "/api/other"' },
+      {
+        url: 'https://a1b2.eu-west-1.token.awswaf.com/a1b2/c3d4/e5f6/challenge.js',
+        file: 'scripts/challenge.js',
+        content: 'fetch("https://a1b2.eu-west-1.token.awswaf.com/a1b2/c3d4/e5f6/mp_verify", { method: "POST" }); fetch("/api/items")',
+      },
+    ])
+    const routes = await findSourceEndpoints([session])
+    expect(routes.map(route => [`${route.host ?? ''}${route.pathTemplate}`, route.evidence, route.onlyInBotProtectionScripts])).toEqual([
+      ['/api/items', 'call', false],
+      ['/api/other', 'string', false],
+      ['a1b2.eu-west-1.token.awswaf.com/a1b2/c3d4/e5f6/mp_verify', 'call', true],
+    ])
+  })
+
   it('gives unnamed interpolations numbered names and leaves dynamic options without a method', async () => {
     const session = await writeSession('s1', [
       {

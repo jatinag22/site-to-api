@@ -10,6 +10,7 @@ function route(host: string | null, pathTemplate: string): SourceRoute {
     params: [],
     evidence: 'call',
     scriptHosts: [],
+    onlyInBotProtectionScripts: false,
     ref: {
       file: 'src/api.ts',
       line: 1,
@@ -84,6 +85,20 @@ describe('screenSourceRoutes', () => {
       route('intake-analytics.wikimedia.org', '/v1/events'),
       route('app.datadoghq.com', '/api/v1/dashboards'),
     ])).toEqual(['app.datadoghq.com/api/v1/dashboards'])
+  })
+
+  it('drops bot-protection endpoints and routes found only in vendor scripts', () => {
+    expect(kept([
+      route('a1b2c3.d4e5f6.eu-west-1.token.awswaf.com', '/a/b/c/mp_verify'),
+      route('www.google.com', '/recaptcha/api2/reload'),
+      route('challenges.cloudflare.com', '/turnstile/v0/siteverify'),
+      route(null, '/cdn-cgi/challenge-platform/h/g/orchestrate/jsch/v1'),
+      {
+        ...route(null, '/api/telemetry'),
+        onlyInBotProtectionScripts: true,
+      },
+      route('www.google.com', '/maps/api/js'),
+    ])).toEqual(['www.google.com/maps/api/js'])
   })
 
   it('keeps real route templates', () => {

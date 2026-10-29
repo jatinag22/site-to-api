@@ -344,6 +344,19 @@ function challengePageEvidence(exchange: Exchange): Found[] {
 }
 
 /**
+ * True when a request to `host` (`null` for a relative URL) and `path` would be bot-protection
+ * traffic by a signature endpoint: `…token.awswaf.com/…/mp_verify`, `/cdn-cgi/challenge-platform/…`,
+ * `www.google.com/recaptcha/…`. Also true for the vendor's scripts at those endpoints.
+ */
+export function isBotProtectionEndpoint(host: string | null, path: string): boolean {
+  return BOT_PROTECTION_SIGNATURES.some(signature => signature.endpoints.some((endpoint) => {
+    if (endpoint.domain !== undefined && (host === null || !hostMatchesDomain(host, endpoint.domain)))
+      return false
+    return !('path' in endpoint) || endpoint.path.test(path)
+  }))
+}
+
+/**
  * True when `host` is one of a vendor's own hosts (`www.google.com` for reCAPTCHA,
  * `challenges.cloudflare.com` for Turnstile): a challenge frame there protects the page that
  * embeds it, not the vendor.

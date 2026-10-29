@@ -11,7 +11,7 @@
  * name is still that site.
  */
 import type { SourceRoute } from '../../model'
-import { findNoise } from '../classify'
+import { findNoise, isBotProtectionEndpoint } from '../classify'
 
 /** Top-level names that never resolve on the public internet (RFC 2606, 6761, 6762, common LAN). */
 const NON_PUBLIC_TLDS: ReadonlySet<string> = new Set([
@@ -140,6 +140,11 @@ function withoutGluedQuery(route: SourceRoute): SourceRoute {
 /** Why a code-only route cannot be a real call, or `null` when it can. */
 function routeProblem(route: SourceRoute, observedHosts: ReadonlySet<string>): string | null {
   const { host, pathTemplate } = route
+  // A vendor's challenge endpoints and its scripts' own calls are bot protection (decision 0008).
+  if (route.onlyInBotProtectionScripts)
+    return 'found only in a bot-protection script'
+  if (isBotProtectionEndpoint(host, pathTemplate))
+    return 'a bot-protection endpoint'
   if (host === null)
     return pathProblem(pathTemplate)
   if (!observedHosts.has(host)) {

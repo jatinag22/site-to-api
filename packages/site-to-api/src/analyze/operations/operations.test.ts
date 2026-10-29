@@ -30,6 +30,7 @@ function route(pathTemplate: string, init: Partial<SourceRoute> = {}): SourceRou
     },
     evidence: 'call',
     scriptHosts: ['shop.test'],
+    onlyInBotProtectionScripts: false,
     ...init,
   }
 }

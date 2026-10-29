@@ -7,6 +7,7 @@ import type { Argument, BinaryExpression, CallExpression, Expression, NewExpress
 import type { LoadedSession, SourceRef, SourceRoute } from '../../model'
 import type { LiteralNode } from './ast'
 import type { CodeFile } from './files'
+import { isBotProtectionEndpoint } from '../classify'
 import { expressionName, keyName, LineIndex, memberPropertyName, parseCode, walkWithFunctions } from './ast'
 import { compare, readSessionFile, siteCodeFiles } from './files'
 
@@ -73,6 +74,7 @@ interface Found {
   ref: SourceRef
   evidence: SourceRoute['evidence']
   scriptHost: string
+  botProtectionScript: boolean
 }
 
 function hasApiSegment(path: string): boolean {
@@ -429,6 +431,7 @@ class FileRoutes {
         ? 'call'
         : 'string',
       scriptHost: this.file.host,
+      botProtectionScript: isBotProtectionEndpoint(this.file.host, this.file.path),
     })
   }
 }
@@ -557,12 +560,15 @@ function deduplicate(all: Found[]): SourceRoute[] {
   // Evidence and script hosts of every copy of a route, by path: a string in one file and a
   // fetch in another is a call, and a route in two scripts belongs to the pages of both.
   const called = new Set<string>()
+  const outsideVendorScripts = new Set<string>()
   const scriptHosts = new Map<string, Set<string>>()
   for (const route of all) {
     if (route.method !== null)
       withMethod.add(pathKey(route))
     if (route.evidence === 'call')
       called.add(pathKey(route))
+    if (!route.botProtectionScript)
+      outsideVendorScripts.add(pathKey(route))
     scriptHosts.set(pathKey(route), (scriptHosts.get(pathKey(route)) ?? new Set()).add(route.scriptHost))
     const key = `${route.method ?? ''} ${pathKey(route)}`
     if (!byKey.has(key))
@@ -585,5 +591,6 @@ function deduplicate(all: Found[]): SourceRoute[] {
       scriptHosts: [
         ...(scriptHosts.get(pathKey(route)) ?? []),
       ].sort(compare),
+      onlyInBotProtectionScripts: !outsideVendorScripts.has(pathKey(route)),
     }))
 }
