@@ -398,6 +398,22 @@ describe('fitted to the site, not to the captured samples', () => {
     }
   })
 
+  it('points flows.json only at Markdown excerpts that were written', () => {
+    const flows = files.get('flows.json') ?? ''
+    const referenced = [
+      ...new Set(flows.match(/source\/[^"]+/g) ?? []),
+    ]
+    expect(referenced.length).toBeGreaterThan(0)
+    for (const path of referenced) {
+      expect(path, path).toMatch(/\.L\d+(?:-\d+|C\d+)\.[a-z]+\.md$/)
+      expect(files.has(path), `${path} was written`).toBe(true)
+    }
+    const written = [
+      ...files.keys(),
+    ].filter(name => name.startsWith('source/'))
+    expect(written.every(name => name.endsWith('.md'))).toBe(true)
+  })
+
   it('writes the minified sensor excerpt one statement per line', () => {
     const excerpt = [...files].find(([name]) => name.includes('shield/sensor'))?.[1] ?? ''
     expect(excerpt.split('\n').length).toBeGreaterThan(8)

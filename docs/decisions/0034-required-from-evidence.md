@@ -19,12 +19,17 @@ the captured document itself says the server rejects a call without it.
 ## Decision
 - **Responses:** at each object level, a key is `required` only when it was present in every
   object at that level and those objects answered at least two distinct requests. A request's
-  identity is its redacted path, query and body; samples of the same request count once. The
+  identity is its redacted path, query and body; samples of the same request count once.
+  Cache-busters are left out of the identity: a query parameter or body field whose value
+  differs in every sample and that is named `_`, `t`, `ts`, `cb`, `nonce`, `rand` or
+  `timestamp`, or whose values are all Unix times (10 or 13 digits). A field that varies with
+  meaning (`itemNos`) still makes requests distinct. The
   rule applies per level, so items of an array are judged by the requests whose answers held
   them. It is deterministic: it depends only on the set of samples, not their order.
 - **GraphQL variables:** when the query document was captured, its variable definitions decide:
-  a variable declared non-null at the top level (`Int!`, `[ID]!`) is required whatever the
-  sample count; one declared nullable (`Int`, `[ID!]`) is optional. Variables the document does
+  a variable declared non-null at the top level (`Int!`, `[ID]!`) without a default is required
+  whatever the sample count; one declared nullable (`Int`, `[ID!]`) or with a default
+  (`$first: Int! = 20`, which the spec lets a request omit) is optional. Variables the document does
   not declare, and every variable of a persisted query sent without a document, keep the request
   rule above.
 

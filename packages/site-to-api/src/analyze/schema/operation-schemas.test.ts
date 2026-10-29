@@ -124,11 +124,13 @@ describe('inferOperationSchemas', () => {
       'sentry-trace': 'abc-def',
       'x-datadog-origin': 'rum',
       'traceparent': '00-1-2-01',
+      'x-newrelic-id': 'VQEGUlZRGwIBVVRWAQ==',
     }
     const result = infer([
       exchange({ url: 'https://shop.test/api/x', requestHeaders: headers, sessionId: 's1' }),
       exchange({ url: 'https://shop.test/api/x', requestHeaders: headers, sessionId: 's2' }),
     ])
+    expect(result.headers.map(header => header.name).sort()).toEqual(Object.keys(headers).sort())
     for (const header of result.headers) {
       expect(header, header.name).toMatchObject({ required: false, constant: false })
       expect(header.schema.default, header.name).toBeUndefined()
@@ -525,6 +527,44 @@ describe('inferOperationSchemas', () => {
       }),
     ]).responses[0]?.schema
     expect(sameBody?.required).toEqual(['n'])
+  })
+
+  it('does not count a cache-buster as a different request, but does count a real parameter', () => {
+    const answer = (url: string, body: unknown) => exchange({
+      url,
+      responseBody: jsonBody(body),
+    })
+    const full = { availabilities: [], displayLocations: [], salesLocations: [] }
+    const busted = infer([
+      answer('https://api.test/availabilities?itemNos=90529469&expand=StoresList&_=1730000000001', full),
+      answer('https://api.test/availabilities?itemNos=90529469&expand=StoresList&_=1730000000002', full),
+    ]).responses[0]?.schema
+    expect(busted?.required).toBeUndefined()
+    const epoch = infer([
+      answer('https://api.test/availabilities?itemNos=90529469&since=1730000000', full),
+      answer('https://api.test/availabilities?itemNos=90529469&since=1730000500', full),
+    ]).responses[0]?.schema
+    expect(epoch?.required).toBeUndefined()
+    const items = infer([
+      answer('https://api.test/availabilities?itemNos=90529469&_=1730000000001', full),
+      answer('https://api.test/availabilities?itemNos=89471407&_=1730000000002', full),
+    ]).responses[0]?.schema
+    expect(items?.required).toEqual(['availabilities', 'displayLocations', 'salesLocations'])
+    const bodyBuster = infer([
+      exchange({
+        method: 'POST',
+        url: 'https://api.test/q',
+        requestBody: jsonBody({ q: 'a', ts: 1730000000001 }),
+        responseBody: jsonBody({ n: 1 }),
+      }),
+      exchange({
+        method: 'POST',
+        url: 'https://api.test/q',
+        requestBody: jsonBody({ q: 'a', ts: 1730000000002 }),
+        responseBody: jsonBody({ n: 1 }),
+      }),
+    ]).responses[0]?.schema
+    expect(bodyBuster?.required).toBeUndefined()
   })
 
   it('groups responses by status and media type; HTML gets no schema', () => {

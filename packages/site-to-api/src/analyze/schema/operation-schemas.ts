@@ -152,7 +152,7 @@ function inferParams(exchanges: Exchange[], pick: (exchange: Exchange) => NameVa
 }
 
 /**
- * Tracing headers that monitoring scripts (Sentry, OpenTelemetry, Datadog, Zipkin) add to the
+ * Tracing headers that monitoring scripts (Sentry, OpenTelemetry, Datadog, Zipkin, New Relic) add to the
  * page's requests. Servers do not need them, so they are never required and never a default: a
  * client that replayed the capture's trace ids would report into someone else's trace.
  */
@@ -164,6 +164,7 @@ const TELEMETRY_HEADERS: readonly string[] = [
   'b3',
   'x-b3-*',
   'x-datadog-*',
+  'x-newrelic-id',
 ]
 
 /** True for `baggage`, `sentry-trace`, `traceparent`, `x-datadog-*`, `x-b3-*` and the like. */
@@ -334,29 +335,93 @@ function inferRequestBody(exchanges: Exchange[], redactor: Redactor): Operation[
   }
 }
 
+const CACHE_BUSTER_NAMES: ReadonlySet<string> = new Set([
+  '_',
+  't',
+  'ts',
+  'cb',
+  'nonce',
+  'rand',
+  'timestamp',
+])
+/** Unix time in seconds or milliseconds. */
+const EPOCH_VALUE = /^\d{10}(?:\d{3})?$/
+
+/** The values one request sent: query parameters and form or top-level JSON body fields. */
+function requestFields(exchange: Exchange): NameValue[] {
+  const { query, body } = exchange.request
+  const fields = query.map(param => ({ name: `query.${param.name}`, value: param.value }))
+  if (body?.form) {
+    fields.push(...body.form.map(field => ({ name: `body.${field.name}`, value: field.value })))
+  }
+  else if (body?.json !== null && typeof body?.json === 'object' && !Array.isArray(body.json)) {
+    fields.push(...Object.entries(body.json).map(([name, value]) => ({
+      name: `body.${name}`,
+      value: JSON.stringify(value),
+    })))
+  }
+  return fields
+}
+
 /**
- * What one exchange asked for, after redaction: path, query and body. Two exchanges with the same
- * identity are the same request repeated, which says nothing about what the response depends on.
+ * Fields that only defeat caches: a different value in every sample, under a cache-buster name
+ * (`_`, `t`, `ts`, `cb`, `nonce`, `rand`, `timestamp`) or with Unix-time values. They make
+ * repeats of one request look like different requests. A field that varies with meaning
+ * (`itemNos`) never matches both tests.
  */
-function requestIdentity(exchange: Exchange, redactor: Redactor): string {
-  const { path, query, body } = exchange.request
-  const sent = body === null
+function cacheBusters(exchanges: readonly Exchange[]): Set<string> {
+  const values = new Map<string, string[]>()
+  for (const exchange of exchanges) {
+    for (const field of requestFields(exchange)) {
+      values.set(field.name, [
+        ...(values.get(field.name) ?? []),
+        field.value,
+      ])
+    }
+  }
+  const busters = new Set<string>()
+  for (const [name, seen] of values) {
+    const everyTimeDifferent = seen.length === exchanges.length && new Set(seen).size === seen.length
+    const bare = name.slice(name.indexOf('.') + 1)
+    const looksLikeBuster = CACHE_BUSTER_NAMES.has(bare.toLowerCase()) || seen.every(value => EPOCH_VALUE.test(value.replace(/^"|"$/g, '')))
+    if (everyTimeDifferent && looksLikeBuster && exchanges.length > 1)
+      busters.add(name)
+  }
+  return busters
+}
+
+/**
+ * What one exchange asked for, after redaction: path, query and body, without cache-busters. Two
+ * exchanges with the same identity are the same request repeated, which says nothing about what
+ * the response depends on.
+ */
+function requestIdentity(exchange: Exchange, redactor: Redactor, busters: ReadonlySet<string>): string {
+  const { path, body } = exchange.request
+  const fields = requestFields(exchange)
+    .filter(field => !busters.has(field.name))
+    .map(field => [
+      field.name,
+      redactor.value(field.value, field.name.startsWith('query.')
+        ? {
+            in: 'query',
+            name: field.name.slice(6),
+          }
+        : {
+            in: 'body',
+            name: field.name.slice(5),
+          }),
+    ])
+  // Bodies that are not a form or a JSON object are compared whole.
+  const structured = body === null || body.form !== null || (body.json !== null && typeof body.json === 'object' && !Array.isArray(body.json))
+  const whole = structured
     ? null
     : body.json !== undefined
       ? redactor.json(body.json, { in: 'body' })
-      : body.form === null
-        ? redactor.value(body.text ?? body.base64 ?? '', { in: 'body' })
-        : body.form.map(field => [
-            field.name,
-            redactor.value(field.value, { in: 'form', name: field.name }),
-          ])
+      : redactor.value(body.text ?? body.base64 ?? '', { in: 'body' })
   return JSON.stringify([
     redactor.value(path, { in: 'path' }),
-    query.map(param => [
-      param.name,
-      redactor.value(param.value, { in: 'query', name: param.name }),
-    ]),
-    sent,
+    fields,
+    whole,
   ])
 }
 
@@ -389,6 +454,7 @@ function inferResponses(exchanges: Exchange[], redactor: Redactor): ResponseInfo
         }
       }
       const context: RedactContext = { in: 'response-body' }
+      const busters = cacheBusters(members)
       return {
         status,
         mimeType,
@@ -396,7 +462,7 @@ function inferResponses(exchanges: Exchange[], redactor: Redactor): ResponseInfo
         schema: inferSchema(members.map(exchange => ({
           value: exchange.response.body?.json,
           sessionId: exchange.sessionId,
-          request: requestIdentity(exchange, redactor),
+          request: requestIdentity(exchange, redactor, busters),
         })), {
           ...enumGuard(redactor, context),
           required: 'distinct-requests',

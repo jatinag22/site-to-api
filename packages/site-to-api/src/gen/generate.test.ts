@@ -122,6 +122,8 @@ export async function run(baseUrl: string) {
   const meWithoutAuth = await site.sdk.getApiMe()
   // JSON text under the site's form content type, also after the host was configured again.
   const search = await site.sdk.postApiSearch({ body: { query: 'alpha' } })
+  // A content type the caller passes is sent as is (the server here answers 415 to anything but the form type).
+  const ownType = await site.sdk.postApiSearch({ body: { query: 'beta' }, headers: { 'content-type': 'text/plain' } })
   return {
     beforeStatus: before.response?.status ?? 0,
     csrf,
@@ -131,6 +133,7 @@ export async function run(baseUrl: string) {
     me: me.data ?? null,
     meWithoutAuthStatus: meWithoutAuth.response?.status ?? 0,
     search: search.data ?? null,
+    ownTypeStatus: ownType.response?.status ?? 0,
     invalid,
     records,
     cookies: jar.all().map(cookie => cookie.name),
@@ -297,6 +300,7 @@ const DriverResultSchema = z.object({
   me: z.unknown(),
   meWithoutAuthStatus: z.number(),
   search: z.unknown(),
+  ownTypeStatus: z.number(),
   invalid: z.string(),
   records: z.array(z.record(z.string(), z.unknown())),
   cookies: z.array(z.string()),
@@ -406,6 +410,7 @@ describe('generateClient', () => {
     expect(output.search).toEqual({
       hits: ['{"query":"alpha"}'],
     })
+    expect(output.ownTypeStatus).toBe(415)
     expect(output.item).toEqual({
       id: 'a1',
       name: 'Alpha',

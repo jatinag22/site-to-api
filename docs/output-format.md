@@ -99,16 +99,21 @@ characters other than letters, digits, `.`, `_` and `-` replaced by `_` (`localh
   headers (`baggage`, `sentry-trace`, `traceparent`, `tracestate`, `b3`, `x-b3-*`,
   `x-datadog-*`) are never required and never get a default.
 - Query, form and path values that are all digits become `integer` unless they are codes:
-  a value with a leading zero, a name like `id`, `no`, `itemNos`, `code`, `sku`, `number`,
-  `zip`, `pin` or `otp` (`totp`), or digits of one fixed length of six or more. Codes stay
-  `string`.
+  a value with a leading zero, a name with the whole word `id`, `no`, `code`, `sku`, `number`,
+  `zip`, `pin` or `otp` (`itemNos`, `storeCode`, `phoneNumber`), a compound such as `totp`,
+  `zipcode`, `pincode`, `postcode` or `barcode`, or at least two different values of one fixed
+  length of six or more that are not Unix times. `pageNumber`, `pageNo`, `numberOf…`, `encode`
+  and `decode` are not code names. Codes stay `string`, and digit strings never become an
+  `enum`.
 - A request body field is `required` only when every sample has it and it took more than one
   value; a field sent with the same value every time is optional.
 - A response field is `required` only when every object at its level had it and those objects
-  answered at least two different requests (path, query or body after redaction; decision
-  0034). Responses captured from one request, however often repeated, have no required fields.
-- GraphQL variables follow the captured document: declared non-null (`$id: Int!`) is required,
-  declared nullable is optional. Persisted queries without a document use the request body rule.
+  answered at least two different requests (path, query or body after redaction, cache-busters
+  such as `_=<epoch>` left out; decision 0034). Responses captured from one request, however
+  often repeated, have no required fields.
+- GraphQL variables follow the captured document: declared non-null without a default
+  (`$id: Int!`) is required; declared nullable or with a default (`$first: Int! = 20`) is
+  optional. Persisted queries without a document use the request body rule.
 - String `format`s (`date-time`, `date`, `uuid`, `email`, `uri`) are written only when every
   captured sample passes the Zod check the generated client runs for that format;
   `date-time` accepts offsets (`-05:00`) and values without a zone.
