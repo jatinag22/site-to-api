@@ -739,7 +739,7 @@ describe('graphQL operations (decision 0027)', () => {
       hash: HASH,
     }),
     // A second sample with other values, so `uri` and `limit` are required; `id` below has one
-    // sample and stays optional.
+    // sample but is declared `Int!`, so it is required too.
     graphqlPost({
       path: '/pathfinder/v2/query',
       operationName: 'queryArtistOverview',
@@ -764,7 +764,7 @@ describe('graphQL operations (decision 0027)', () => {
     const section = guide.split('## GraphQL operations')[1]?.split('\n## ')[0] ?? ''
     expect(section).toContain('### `GET api.example.test/graphql`')
     expect(section).toContain('### `POST api.example.test/pathfinder/v2/query`')
-    expect(section).toContain('- `AddToWishlist`: mutation (from the query document), sends the query document, variables `id?: integer`. Client: `sdk.addToWishlist({ variables })`; spec path `/pathfinder/v2/query#AddToWishlist`.')
+    expect(section).toContain('- `AddToWishlist`: mutation (from the query document), sends the query document, variables `id: integer`. Client: `sdk.addToWishlist({ variables })`; spec path `/pathfinder/v2/query#AddToWishlist`.')
     expect(section).toContain(`- \`queryArtistOverview\`: type unknown (no query document, and the site's code did not say), so \`probe\` skips it unless \`--unsafe-methods\`, persisted query \`${HASH}\`, variables \`uri: string\`, \`limit: integer\`.`)
     expect(section).toContain('- `StoreHours`: query (sent with GET, which GraphQL allows for queries only)')
   })
@@ -773,7 +773,7 @@ describe('graphQL operations (decision 0027)', () => {
     const map = renderApiMap(analysis, 'current')
     expect(map).toContain('## GraphQL operations')
     expect(map).toContain(`| \`queryArtistOverview\` | unknown | \`${HASH}\` | \`uri: string\`, \`limit: integer\` | \`sdk.queryArtistOverview({ variables })\` |`)
-    expect(map).toContain('| `AddToWishlist` | mutation (from the query document) | none, sends the document | `id?: integer` | `sdk.addToWishlist({ variables })` |')
+    expect(map).toContain('| `AddToWishlist` | mutation (from the query document) | none, sends the document | `id: integer` | `sdk.addToWishlist({ variables })` |')
     const row = map.split('\n').find(line => line.startsWith('| `storeHours` |')) ?? ''
     expect(row).toContain('| api (GraphQL query) |')
     expect(row).toContain('`sdk.storeHours({ variables })`, `zStoreHoursResponse`')
