@@ -10,7 +10,7 @@ import { Buffer } from 'node:buffer'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import { cachedLookup, localPageOf, sourceMapRefusal } from './network'
+import { cachedLookup, localPageOf, pageOrigin, ServedAddresses, sourceMapRefusal } from './network'
 import { hostDir, safeJoin, scriptFilePath, sourceFilePath, sourceMapFilePath } from './paths'
 import { WarningLog } from './warnings'
 
@@ -171,10 +171,6 @@ function errorText(error: unknown): string {
 }
 
 /** URL of the top frame that loaded a script, or `null` for worker scripts and closed pages. */
-function withoutHash(url: string): string {
-  return url.split('#')[0] ?? url
-}
-
 function pageUrlOf(response: Response): string | null {
   try {
     return response.frame().page().mainFrame().url()
@@ -196,8 +192,10 @@ export class ScriptCollector {
   private readonly pending = new Set<Promise<void>>()
   readonly scripts: ScriptRecord[] = []
   private readonly log = new WarningLog()
-  /** Address each page document was loaded from, by URL without its fragment. */
-  private readonly documentAddresses = new Map<string, Promise<string | null>>()
+  /** Addresses page documents were loaded from, by origin, for the whole capture (decision 0040). */
+  private readonly served = new ServedAddresses()
+  /** Address reads not yet in {@link served}, by origin, so a script waits for its page's. */
+  private readonly pendingAddresses = new Map<string, Set<Promise<void>>>()
   private readonly lookup: Lookup
 
   constructor(
@@ -225,7 +223,7 @@ export class ScriptCollector {
   onResponse(response: Response): void {
     const resourceType = response.request().resourceType()
     if (resourceType === 'document') {
-      this.documentAddresses.set(withoutHash(response.url()), response.serverAddr().then(address => address?.ipAddress ?? null, () => null))
+      this.noteAddress(response)
       return
     }
     if (resourceType !== 'script')
@@ -248,6 +246,19 @@ export class ScriptCollector {
     })
     this.pending.add(task)
     void task.finally(() => this.pending.delete(task))
+  }
+
+  private noteAddress(response: Response): void {
+    const url = response.url()
+    const origin = pageOrigin(url)
+    if (origin === null)
+      return
+    // A closed page or a service-worker response has no address; that is not an error.
+    const read = response.serverAddr().then(address => this.served.record(url, address?.ipAddress ?? null), () => {})
+    const pending = this.pendingAddresses.get(origin) ?? new Set<Promise<void>>()
+    this.pendingAddresses.set(origin, pending)
+    pending.add(read)
+    void read.finally(() => pending.delete(read))
   }
 
   /** Waits until every script seen so far, and any started meanwhile, has been processed. */
@@ -282,10 +293,15 @@ export class ScriptCollector {
 
   /** The page URL when the page is on a non-public host (see {@link localPageOf}). */
   private async localPage(pageUrl: string | null): Promise<URL | null> {
-    const connected = pageUrl === null
-      ? null
-      : await (this.documentAddresses.get(withoutHash(pageUrl)) ?? Promise.resolve(null))
-    return await localPageOf(pageUrl, this.lookup, connected)
+    if (pageUrl === null)
+      return null
+    const origin = pageOrigin(pageUrl)
+    const pending = origin === null
+      ? undefined
+      : this.pendingAddresses.get(origin)
+    if (pending !== undefined)
+      await Promise.all(pending)
+    return await localPageOf(pageUrl, this.lookup, this.served.of(pageUrl))
   }
 
   private async findSourceMap(script: ScriptOrigin, headers: Record<string, string>, body: string): Promise<FoundMap | null> {

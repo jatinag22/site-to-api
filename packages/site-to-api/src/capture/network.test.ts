@@ -1,6 +1,6 @@
-import type { Lookup } from './network'
+import type { Lookup, ServedFrom } from './network'
 import { describe, expect, it } from 'vitest'
-import { cachedLookup, isPublicAddress, localPageOf, nonPublicReason, sourceMapRefusal } from './network'
+import { cachedLookup, isPublicAddress, localPageOf, nonPublicReason, ServedAddresses, sourceMapRefusal } from './network'
 
 /** A fake resolver: no test touches real DNS. */
 function fakeLookup(table: Record<string, string[]>): Lookup {
@@ -314,9 +314,65 @@ describe('localPageOf with a mixed DNS answer', () => {
   })
 
   it('goes by the address the browser loaded the page from when it is known', async () => {
-    expect(await localPageOf('https://www.evil.com/', lookup, '93.184.216.34')).toBeNull()
-    expect(await localPageOf('http://app.corp/home', lookup, '10.1.0.10')).toEqual(new URL('http://app.corp/home'))
+    expect(await localPageOf('https://www.evil.com/', lookup, servedFrom('https://www.evil.com/', '93.184.216.34'))).toBeNull()
+    expect(await localPageOf('http://app.corp/home', lookup, servedFrom('http://app.corp/', '10.1.0.10'))).toEqual(new URL('http://app.corp/home'))
     // A private name served from a public address is a public page.
-    expect(await localPageOf('http://app.corp/home', lookup, '93.184.216.34')).toBeNull()
+    expect(await localPageOf('http://app.corp/home', lookup, servedFrom('http://app.corp/', '93.184.216.34'))).toBeNull()
+  })
+})
+
+/** What a {@link ServedAddresses} knows of `url`'s origin after documents came from `addresses`. */
+function servedFrom(url: string, ...addresses: Array<string | null>): ServedFrom | null {
+  const served = new ServedAddresses()
+  for (const address of addresses)
+    served.record(url, address)
+  return served.of(url)
+}
+
+describe('servedAddresses', () => {
+  // The name now resolves only to a private address, as after a DNS change during the capture.
+  const rebound = fakeLookup({
+    'shop.example.com': ['10.0.0.9'],
+  })
+
+  it('keeps an origin served from a public address public, though a later document had no address and DNS is now private', async () => {
+    const served = new ServedAddresses()
+    served.record('https://shop.example.com/', '93.184.216.34')
+    // A page from the service worker: Playwright reports no server address.
+    served.record('https://shop.example.com/account', null)
+    expect(await localPageOf('https://shop.example.com/account', rebound, served.of('https://shop.example.com/account'))).toBeNull()
+    // Without the history, the fresh lookup alone would have made it local.
+    expect(await localPageOf('https://shop.example.com/account', rebound)).not.toBeNull()
+  })
+
+  it('never makes an origin local again once it was served from a public address', async () => {
+    const served = new ServedAddresses()
+    served.record('https://shop.example.com/', '93.184.216.34')
+    served.record('https://shop.example.com/next', '10.0.0.9')
+    expect(served.of('https://shop.example.com/')).toEqual({ last: '10.0.0.9', public: true })
+    expect(await localPageOf('https://shop.example.com/next', rebound, served.of('https://shop.example.com/next'))).toBeNull()
+  })
+
+  it('counts an origin only ever served from private addresses as local', async () => {
+    const served = new ServedAddresses()
+    served.record('http://app.corp/', '10.1.0.10')
+    served.record('http://app.corp/settings', null)
+    served.record('http://app.corp/reports', '10.1.0.11')
+    // Even when DNS now gives a public answer, the browser loaded it from the intranet.
+    const publicNow = fakeLookup({
+      'app.corp': ['93.184.216.34'],
+    })
+    expect(await localPageOf('http://app.corp/reports', publicNow, served.of('http://app.corp/reports'))).toEqual(new URL('http://app.corp/reports'))
+  })
+
+  it('keeps origins apart and ignores documents without an address or outside http(s)', () => {
+    const served = new ServedAddresses()
+    served.record('https://shop.example.com/', '93.184.216.34')
+    served.record('http://shop.example.com/', 'not an address')
+    served.record('about:blank', '10.0.0.1')
+    expect(served.of('https://shop.example.com/x')).toEqual({ last: '93.184.216.34', public: true })
+    expect(served.of('http://shop.example.com/')).toBeNull()
+    expect(served.of('https://shop.example.com:8443/')).toBeNull()
+    expect(served.of('about:blank')).toBeNull()
   })
 })
