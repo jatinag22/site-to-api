@@ -297,6 +297,9 @@ function isEnumWorthy(node: Node, values: string[], name: string | null, options
     return false
   if (!values.every(value => value.length > 0 && value.length <= ENUM_MAX_LENGTH && !/\s/.test(value)))
     return false
+  // Digit codes (`storeCode`, `postalCode`) are open-ended: the next store has another number.
+  if (values.every(value => /^\d+$/.test(value)))
+    return false
   if (!isCodeName(name) && (isIdentityName(name) || !values.every(isCodeToken)))
     return false
   return values.every(value => options.allowEnumValue?.(value) ?? true)
@@ -410,44 +413,61 @@ const INTEGER = /^-?(?:0|[1-9]\d{0,14})$/
 const DECIMAL = /^-?(?:0|[1-9]\d{0,14})\.\d+$/
 
 /**
- * Name words of codes written in digits. `id` and `no` must be whole words (`userId`, `item_no`,
- * `itemNos`); the longer ones may end a word (`totp`, `zipcode`, `pincode`).
+ * Name words of codes written in digits, matched as whole words (singular or plural: `itemNos`,
+ * `userIds`, `zip_code`, `phoneNumber`), plus compounds written as one word. `encode` and
+ * `decode` are not codes, so `code` is never matched as a suffix.
  */
-const DIGIT_CODE_WORDS = ['id', 'no']
-const DIGIT_CODE_SUFFIXES = [
+const DIGIT_CODE_WORDS: ReadonlySet<string> = new Set([
+  'id',
+  'no',
   'code',
   'sku',
   'number',
   'zip',
   'pin',
   'otp',
-]
+  'totp',
+  'zipcode',
+  'pincode',
+  'postcode',
+  'barcode',
+])
 /** Digit strings of one length this long or longer are codes (a TOTP, an item number), not amounts. */
 const MIN_CODE_DIGITS = 6
+/** Unix time in seconds or milliseconds (2001 to 2033): a moment, not a code. */
+const EPOCH = /^1\d{9}(?:\d{3})?$/
+
+function singular(word: string): string {
+  return word.endsWith('s') && word.length > 2
+    ? word.slice(0, -1)
+    : word
+}
 
 function isDigitCodeName(name: string | null): boolean {
   if (name === null)
     return false
-  return nameWords(name).some((word) => {
-    const singular = word.endsWith('s') && word.length > 2
-      ? word.slice(0, -1)
-      : word
-    return [word, singular].some(candidate => DIGIT_CODE_WORDS.includes(candidate)
-      || DIGIT_CODE_SUFFIXES.some(suffix => candidate.endsWith(suffix)))
-  })
+  const words = nameWords(name).map(singular)
+  // `pageNumber`, `pageNo` and `numberOfItems` count things.
+  if (words.includes('page') || (words[0] === 'number' && words[1] === 'of'))
+    return false
+  return words.some(word => DIGIT_CODE_WORDS.has(word))
 }
 
 /**
  * Whether integer-looking text is a code that must stay a string: IKEA item numbers and Spotify's
  * `totp` are digits, but typed as `number` they lose leading zeros and invite arithmetic. Codes
- * are values under a code-like name (`itemNos`, `userId`, `zip`), or digit strings that all have
- * the same length of six or more. Leading zeros already keep a value a string.
+ * are values under a code-like name (`itemNos`, `userId`, `zip`), or at least two different digit
+ * strings that all have the same length of six or more and are not Unix times. One sample of
+ * `amount=250000` says nothing about the length of the next. Leading zeros already keep a value a
+ * string.
  */
 function isDigitCode(values: string[], name: string | null): boolean {
   if (!values.every(value => INTEGER.test(value)))
     return false
   if (isDigitCodeName(name))
     return true
+  if (new Set(values).size < 2 || values.some(value => EPOCH.test(value)))
+    return false
   const lengths = new Set(values.map(value => value.replace(/^-/, '').length))
   const [length] = lengths
   return lengths.size === 1 && length !== undefined && length >= MIN_CODE_DIGITS

@@ -274,4 +274,47 @@ describe('coerceStrings / inferStringSchema', () => {
       { value: '10', sessionId: 's1' },
     ])).toEqual({ type: 'integer' })
   })
+
+  it('matches code names as whole words or known compounds, never page numbers or counts', () => {
+    expect(coerceStrings(['1', '2', '3'], 'pageNumber')).toEqual([1, 2, 3])
+    expect(coerceStrings(['1', '2'], 'pageNo')).toEqual([1, 2])
+    expect(coerceStrings(['4'], 'numberOfGuests')).toEqual([4])
+    expect(coerceStrings(['1', '2'], 'encode')).toEqual([1, 2])
+    expect(coerceStrings(['0', '1'], 'decode')).toEqual([0, 1])
+    expect(coerceStrings(['91'], 'countryCode')).toEqual(['91'])
+    expect(coerceStrings(['400001'], 'postcode')).toEqual(['400001'])
+    expect(coerceStrings(['8901234567890'], 'barcode')).toEqual(['8901234567890'])
+    expect(coerceStrings(['9876543210'], 'phoneNumber')).toEqual(['9876543210'])
+  })
+
+  it('needs two different values for the fixed-length rule, and never takes Unix times for codes', () => {
+    expect(coerceStrings(['250000'], 'amount')).toEqual([250000])
+    expect(coerceStrings(['250000', '250000'], 'amount')).toEqual([250000, 250000])
+    expect(coerceStrings(['1730000000', '1730000500'], 'since')).toEqual([1730000000, 1730000500])
+    expect(coerceStrings(['1730000000001', '1730000000002'], 'since')).toEqual([1730000000001, 1730000000002])
+    expect(coerceStrings(['123456', '654321'], 'value')).toEqual(['123456', '654321'])
+  })
+})
+
+describe('enums of digit strings', () => {
+  it('never makes an enum when every value is all digits', () => {
+    for (const name of [
+      'storeCode',
+      'postalCode',
+      'zipCode',
+      'areaCode',
+      'countryCode',
+    ]) {
+      const schema = inferStringSchema(['1234', '1234', '5678', '5678'].map(value => ({ value, sessionId: 's1' })), { name })
+      expect(schema, name).toEqual({ type: 'string' })
+    }
+    const json = inferSchema(['1234', '1234', '5678', '5678'].map(value => ({
+      value: { storeCode: value },
+      sessionId: 's1',
+    })))
+    expect(json.properties?.storeCode).toEqual({ type: 'string' })
+    // Code words still get enums.
+    const letters = inferStringSchema(['IN', 'IN', 'US', 'US'].map(value => ({ value, sessionId: 's1' })), { name: 'countryCode' })
+    expect(letters.enum).toEqual(['IN', 'US'])
+  })
 })
