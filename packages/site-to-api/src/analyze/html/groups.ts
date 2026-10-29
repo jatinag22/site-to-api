@@ -5,7 +5,7 @@
  * selector that finds the same structure in all samples.
  */
 import type { Document, Element } from './dom'
-import { attr, childElements, contentElements, cssIdent, cssString, nthChild, select, selectFirst, text } from './dom'
+import { childElements, contentElements, cssIdent, cssString, nthChild, select, selectFirst, text } from './dom'
 import { stableClasses, uniqueSelector } from './selector'
 
 export interface Group {
@@ -92,10 +92,13 @@ function isKeyValueTable(table: Element): boolean {
   })
 }
 
-/** True when the table mixes data rows of several cells with rows of one cell spanning columns. */
+/**
+ * True when the table mixes data rows of several cells with rows of one cell. Such a one-cell row
+ * heads the rows below it whether or not it spans columns: `colspan` is optional in practice.
+ */
 export function hasHeadingRows(table: Element): boolean {
   const rows = select('tr', table).map(row => childElements(row).filter(cell => cell.name === 'td'))
-  const heading = rows.filter(cells => cells.length === 1 && Number(attr(cells[0] ?? table, 'colspan') ?? '1') > 1)
+  const heading = rows.filter(cells => cells.length === 1)
   return heading.length > 0 && rows.filter(cells => cells.length >= 2).length > heading.length
 }
 

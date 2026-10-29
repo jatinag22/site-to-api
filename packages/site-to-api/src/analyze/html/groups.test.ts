@@ -146,6 +146,15 @@ describe('tableGroups', () => {
     expect(select(group?.selector ?? '', document)).toHaveLength(2)
   })
 
+  it('skips one-cell heading rows that do not set colspan', () => {
+    const page = '<html><body><table id="t"><tr><th>Name</th><th>Amount</th></tr><tr class="day"><td>Day 1</td></tr><tr><td>A</td><td>1</td></tr><tr><td>B</td><td>2</td></tr><tr class="day"><td>Day 2</td></tr><tr><td>C</td><td>3</td></tr></table></body></html>'
+    const document = parseHtml(page)
+    expect(hasHeadingRows(select('table', document)[0]!)).toBe(true)
+    const [group] = tableGroups([document])
+    expect(group?.selector).toBe('#t tr:has(> td + td)')
+    expect(select(group?.selector ?? '', document)).toHaveLength(3)
+  })
+
   it('leaves label/value tables to detail extraction', () => {
     const page = '<html><body><table id="t"><tr><th>Name</th><td>Ann</td></tr><tr><th>Age</th><td>4</td></tr></table></body></html>'
     expect(tableGroups([
