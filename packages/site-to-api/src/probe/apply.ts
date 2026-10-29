@@ -3,16 +3,25 @@
  * "needs a browser" is a measured fact where probing was possible, not only an inference.
  */
 import type { Operation, SessionRequirement } from '../model'
-import type { ProbeReport } from '../model/probe'
+import type { OperationProbe, ProbeReport } from '../model/probe'
 import { cookieNeedsBrowser } from '../model'
 
 /** Request headers that bot-protection scripts compute in the page; a wrapper cannot make them. */
 const BROWSER_HEADERS = /^header:(?:x-kpsdk-|x-px-|x-acf-sensor-data$|x-dd-b$)/
 
 /**
+ * True when the probe worked out what a request needs: it worked bare, or removing items one by
+ * one found a non-empty set of needs. Anything else leaves the question open.
+ */
+function resolved(probe: OperationProbe): boolean {
+  return probe.bare === 'ok' || (probe.requires !== null && probe.requires.length > 0)
+}
+
+/**
  * The host verdict from the probe results of its operations. It follows what probe measured: a
- * host where every tested request works without cookies is plain HTTP even when the capture saw
- * bot-protection cookies on its pages.
+ * host where every tested request was worked out without a cookie, token or browser-made value
+ * is plain HTTP even when the capture saw bot protection on its pages (the same rule as the
+ * bot-protection branch, without its vendor-header lookup).
  */
 function requirementFor(entry: SessionRequirement, probes: ProbeReport['operations']): SessionRequirement['requires'] {
   const tested = probes.filter(probe => probe.replay === 'ok')
@@ -20,19 +29,20 @@ function requirementFor(entry: SessionRequirement, probes: ProbeReport['operatio
     return entry.requires
   if (tested.every(probe => probe.bare === 'ok'))
     return 'none'
-  const minimized = tested.filter(probe => probe.requires !== null)
-  const needed = new Set(minimized.flatMap(probe => probe.requires ?? []))
-  // Only opaque, browser-made cookies need a browser; a derivable script-set one (`script`) only
-  // needs the wrapper to set it, like any other cookie.
+  const needed = new Set(tested.flatMap(probe => probe.requires ?? []))
+  // Only opaque, browser-made cookies and bot-protection headers need a browser; a derivable
+  // script-set cookie (`script`) only needs the wrapper to set it, like any other cookie.
   const browserCookies = new Set(entry.cookies.filter(cookieNeedsBrowser).map(cookie => `cookie:${cookie.name}`))
-  if ([...needed].some(item => browserCookies.has(item) || BROWSER_HEADERS.test(item)))
+  const needsBrowser = [...needed].some(item => browserCookies.has(item) || BROWSER_HEADERS.test(item))
+  const open = tested.some(probe => !resolved(probe))
+  if (needsBrowser || (open && entry.botProtection.length > 0))
     return 'browser'
   if (needed.has('header:authorization'))
     return 'token'
   if ([...needed].some(item => item.startsWith('cookie:')))
     return 'cookies'
-  // Every tested request was worked out and none needs a cookie, a token or a browser-made value.
-  if (minimized.length === tested.length)
+  // Every tested call was worked out and none needs a browser, a token or a cookie.
+  if (!open && entry.requires === 'browser')
     return 'none'
   return entry.requires
 }
