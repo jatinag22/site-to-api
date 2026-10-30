@@ -65,6 +65,18 @@ const QUERY_SECRET_WORDS = new Set([
   'assertion',
 ])
 
+/**
+ * Whole query parameter names that carry tokens in URLs: Twitch's `?t=<session token>` in a
+ * WebSocket recovery URL. Matched as the whole name, never as a word (`x-t-id`), and never when
+ * the value is a time (`t=1700000000`, `t=30s`), see {@link isPublicValue}.
+ */
+const QUERY_SECRET_NAMES = new Set([
+  't',
+])
+
+/** A number or a duration such as `90`, `1700000000.5`, `1m30s`: a time or offset, not a token. */
+const TIME_VALUE = /^(?:\d+(?:\.\d+)?|(?:\d+[hms])+)$/
+
 const SECRET_JOINED = [
   'apikey',
   'accesskey',
@@ -90,7 +102,7 @@ export function nameWords(name: string): string[] {
 export function isSecretName(name: string | null | undefined, inQuery = false): boolean {
   if (name === null || name === undefined || name === '')
     return false
-  if (CHALLENGE_TOKEN_NAME.test(name))
+  if (CHALLENGE_TOKEN_NAME.test(name) || (inQuery && QUERY_SECRET_NAMES.has(name.toLowerCase())))
     return true
   const parts = nameWords(name)
   if (parts.some(part => SECRET_WORDS.has(part) || (inQuery && QUERY_SECRET_WORDS.has(part))))
@@ -117,6 +129,15 @@ const AUTH_SCHEMES: ReadonlySet<string> = new Set([
  */
 export function isAuthScheme(value: string): boolean {
   return AUTH_SCHEMES.has(value.trim().toLowerCase())
+}
+
+/**
+ * True when a value under a secret-looking name is still public: an auth scheme word
+ * ({@link isAuthScheme}), or a time under the short query name `t` (`?t=1700000000`, a video
+ * offset `?t=1m30s`).
+ */
+export function isPublicValue(name: string | null | undefined, value: string): boolean {
+  return isAuthScheme(value) || (name?.toLowerCase() === 't' && TIME_VALUE.test(value))
 }
 
 /** Joined name words of keys a page embeds for everyone: `x-api-key`, `publishableKey`, `siteKey`. */
