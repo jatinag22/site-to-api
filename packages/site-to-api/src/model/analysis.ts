@@ -252,7 +252,7 @@ export interface ChannelMessage {
   /**
    * `json` for JSON text (or a protocol payload that is JSON), `text` for other text,
    * `msgpack` and `protobuf` for binary frames that decoded fully (decision 0038), `sfs2x` for
-   * SmartFoxServer 2X packets (decision 0047), `binary` for the rest.
+   * SmartFoxServer 2X packets (decision 0048), `binary` for the rest.
    */
   format: 'json' | 'text' | 'binary' | 'msgpack' | 'protobuf' | 'sfs2x'
   /** Frames seen across all connections. */

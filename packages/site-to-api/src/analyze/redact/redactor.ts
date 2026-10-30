@@ -54,7 +54,7 @@ interface RedactorInput {
   config: ResolvedConfig['redact']
   /**
    * Values a protocol decoder knows are credentials by where they sit, though their field names
-   * do not say so (an SFS2X login's `un` and `pw`, decision 0047). Redacted wherever they appear,
+   * do not say so (an SFS2X login's `un` and `pw`, decision 0048). Redacted wherever they appear,
    * whatever their length.
    */
   knownSecrets?: readonly string[]

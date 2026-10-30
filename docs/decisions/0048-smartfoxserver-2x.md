@@ -1,4 +1,4 @@
-# 0047 SmartFoxServer 2X binary packets
+# 0048 SmartFoxServer 2X binary packets
 
 Status: Accepted (2026-10-30). Refines 0038.
 

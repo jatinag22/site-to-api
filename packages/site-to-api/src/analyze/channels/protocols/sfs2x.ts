@@ -1,5 +1,5 @@
 /**
- * SmartFoxServer 2X over WebSocket (decision 0047): binary frames, one packet each (see
+ * SmartFoxServer 2X over WebSocket (decision 0048): binary frames, one packet each (see
  * `binary/sfs2x.ts`), holding the envelope `{c, a, p}`. Controller 0 is the system controller,
  * whose actions are the published request ids (`0` Handshake, `1` Login, `4` JoinRoom, `29`
  * PingPong, `1000` UserEnterRoom, ...); controller 1 is the extension controller, whose command

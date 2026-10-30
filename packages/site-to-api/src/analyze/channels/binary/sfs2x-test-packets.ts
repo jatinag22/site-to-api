@@ -1,5 +1,5 @@
 /**
- * An SFS2X packet writer for the tests, written from the published format (decision 0047): each
+ * An SFS2X packet writer for the tests, written from the published format (decision 0048): each
  * helper returns a typed value's bytes (type id, then body), big-endian.
  */
 import { Buffer } from 'node:buffer'

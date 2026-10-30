@@ -61,7 +61,7 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    grouped per direction by a discriminator field and get schemas from the schema stage. The
    HTTP upgrade request in the HAR, when present, gives the cookie names and the opening stack.
    Framing protocols (Socket.IO including Engine.IO long-polling, SignalR, STOMP, GraphQL over
-   WebSocket, Phoenix, Centrifugo, and SmartFoxServer 2X binary packets, decision 0047) are
+   WebSocket, Phoenix, Centrifugo, and SmartFoxServer 2X binary packets, decision 0048) are
    detected per connection and name the messages instead, and other binary frames are read as
    MessagePack or protobuf wire format when they decode fully (decision 0038); each channel also gets its connection facts (origin, subprotocol, URL token
    names, upgrade answers, first auth message).

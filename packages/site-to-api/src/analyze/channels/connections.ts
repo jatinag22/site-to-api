@@ -288,7 +288,7 @@ export function collectConnections(sessions: readonly LoadedSession[], exchanges
 }
 
 /**
- * Values the connections' protocols say are credentials (decision 0047), for the redactor:
+ * Values the connections' protocols say are credentials (decision 0048), for the redactor:
  * sorted, once each.
  */
 export function protocolSecrets(connections: readonly Connection[]): string[] {

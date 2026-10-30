@@ -208,7 +208,7 @@ const PERSONAL_NAME_ENDINGS: readonly string[] = [
   'customerid',
   'accountid',
   'memberid',
-  // Other players in a game feed (decision 0047): their ids, names and chosen pictures.
+  // Other players in a game feed (decision 0048): their ids, names and chosen pictures.
   'playerid',
   'playername',
   'profileimage',

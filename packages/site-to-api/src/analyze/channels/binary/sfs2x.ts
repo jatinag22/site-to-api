@@ -1,5 +1,5 @@
 /**
- * A strict reader of SmartFoxServer 2X binary packets (decision 0047), written from the
+ * A strict reader of SmartFoxServer 2X binary packets (decision 0048), written from the
  * published client API (`sfs2x-api`, its `PacketHeader`, `ProtocolCodec` and
  * `SFSDataSerializer`). A packet is a header byte (bit 7 binary, 6 encrypted, 5 compressed,
  * 4 blue-boxed, 3 big-sized), a 2-byte length (4 bytes when big-sized), then an SFSObject,
