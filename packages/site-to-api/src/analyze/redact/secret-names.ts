@@ -72,6 +72,8 @@ const QUERY_SECRET_WORDS = new Set([
  */
 const QUERY_SECRET_NAMES = new Set([
   't',
+  // Google's ad-click signature (`/pagead/interaction/?ai=…&sigh=…`), next to `sig`.
+  'sigh',
 ])
 
 /**
