@@ -45,7 +45,7 @@ import { isBotProtectionHeader } from '../classify'
 import { describeShape, inspectJwt } from '../shape'
 import { isOpaqueBlob } from './blobs'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
-import { isFingerprintField, isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
+import { carriesDeviceSignals, isDeviceSignalHeader, isFingerprintField, isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskDeviceSignals, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { CREDENTIAL_HEADERS, isPublicValue, isPublishableKeyName, isSecretName } from './secret-names'
 
 interface RedactorInput {
@@ -303,9 +303,14 @@ function maskByName(text: string, name: string | null | undefined, personRecord:
     if (masked !== null)
       return masked
   }
+  // Screen size, time zone and history length (`x-youtube-ad-signals`) fingerprint whoever
+  // captured them too (0049), in a custom header or any parameter list.
+  const header = where === 'header' || where === 'response-header'
+  if ((header && isDeviceSignalHeader(name)) || carriesDeviceSignals(text))
+    return maskDeviceSignals(text)
   // A user agent or device description in a body fingerprints whoever captured it (0048); the
   // `User-Agent` header has its own rules.
-  const fingerprint = isFingerprintField(name) && where !== 'header' && where !== 'response-header'
+  const fingerprint = isFingerprintField(name) && !header
   return fingerprint || isPersonalField(name) || (personRecord && isPersonRecordField(name))
     ? maskKeepingFormat(text)
     : null

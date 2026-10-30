@@ -265,6 +265,90 @@ export function isFingerprintField(name: string | null | undefined): boolean {
   return parts.map((_, index) => parts.slice(index).join('')).some(tail => FINGERPRINT_NAME_ENDINGS.includes(tail))
 }
 
+/** Name words of custom headers that carry the browser's device or ad signals. */
+const DEVICE_SIGNAL_WORDS: ReadonlySet<string> = new Set([
+  'device',
+  'signals',
+  'adsignals',
+  'fingerprint',
+  'screen',
+  'viewport',
+])
+
+/**
+ * Standard request headers with their own rules, which the tool may report as required: client
+ * hints (`sec-ch-*`, `device-memory`, `dpr`, `viewport-width`), `user-agent`, `accept*`.
+ */
+const STANDARD_HEADER = /^(?:sec-ch-|user-agent$|accept|content-|device-memory$|dpr$|viewport-width$|width$)/i
+
+/**
+ * Custom headers whose name says they carry device or ad-signal data: YouTube's
+ * `x-youtube-device` and `x-youtube-ad-signals` (decision 0049). Standard headers never count.
+ */
+export function isDeviceSignalHeader(name: string | null | undefined): boolean {
+  if (name === null || name === undefined || name === '' || STANDARD_HEADER.test(name))
+    return false
+  const parts = words(name)
+  return parts.some(part => DEVICE_SIGNAL_WORDS.has(part)) || parts.join('').includes('adsignal')
+}
+
+/**
+ * Parameter names of device and ad signals: screen sizes (`u_h`, `u_w`, `biw`, `brdim`), time
+ * zone (`u_tz`), history length (`u_his`), browser and OS (`cbr`, `cosver`, `cplatform`).
+ */
+const DEVICE_SIGNAL_KEYS: ReadonlySet<string> = new Set([
+  'u_tz',
+  'u_his',
+  'u_h',
+  'u_w',
+  'u_ah',
+  'u_aw',
+  'u_cd',
+  'bih',
+  'biw',
+  'brdim',
+  'cbr',
+  'cbrand',
+  'cbrver',
+  'ceng',
+  'cengver',
+  'cos',
+  'cosver',
+  'cplatform',
+  'tz',
+  'timezone',
+  'screen',
+  'sw',
+  'sh',
+])
+const MIN_DEVICE_SIGNAL_KEYS = 2
+
+function parameterNames(value: string): string[] {
+  if (!value.includes('='))
+    return []
+  return value.split('&').map(pair => pair.split('=')[0] ?? '').filter(name => name !== '')
+}
+
+/** True when a value is URL-encoded parameters, two or more of them device or ad signals. */
+export function carriesDeviceSignals(value: string): boolean {
+  return parameterNames(value).filter(name => DEVICE_SIGNAL_KEYS.has(name.toLowerCase())).length >= MIN_DEVICE_SIGNAL_KEYS
+}
+
+/**
+ * A device or ad-signal value with its data masked keeping the format: parameter names stay so a
+ * reader sees what the site collects (`u_tz=000&u_his=0`); any other value is masked whole.
+ */
+export function maskDeviceSignals(value: string): string {
+  if (parameterNames(value).length === 0)
+    return maskKeepingFormat(value)
+  return value.split('&').map((pair) => {
+    const equals = pair.indexOf('=')
+    return equals === -1
+      ? pair
+      : `${pair.slice(0, equals)}=${maskKeepingFormat(pair.slice(equals + 1))}`
+  }).join('&')
+}
+
 /** Words of a property name that say the object under it describes a person or their account. */
 const PERSON_OBJECT_WORDS: ReadonlySet<string> = new Set([
   'user',

@@ -1056,6 +1056,38 @@ describe('createRedactor: short secrets and public labels', () => {
   })
 })
 
+describe('createRedactor: device and ad signals (decision 0049)', () => {
+  const signals = 'dt=1700000000123&flash=0&u_tz=60&u_his=3&u_h=900&u_w=1440&biw=1425&brdim=-10%2C20%2C1440&vis=1'
+  const device = 'cbr=Chrome&cbrand=apple&cbrver=120.0.0.0&cos=Macintosh&cosver=10_15_7&cplatform=DESKTOP'
+
+  it('masks custom device and ad-signal headers, keeping the parameter names', () => {
+    const r = redactor([])
+    expect(r.value(signals, { in: 'header', name: 'x-tube-ad-signals' }))
+      .toBe('dt=0000000000000&flash=0&u_tz=00&u_his=0&u_h=000&u_w=0000&biw=0000&brdim=-00%0X00%0X0000&vis=0')
+    expect(r.value(device, { in: 'header', name: 'x-tube-device' }))
+      .toBe('cbr=Xxxxxx&cbrand=xxxxx&cbrver=000.0.0.0&cos=Xxxxxxxxx&cosver=00_00_0&cplatform=XXXXXXX')
+    expect(r.value('{"w":1440}', { in: 'header', name: 'x-device-info' })).toBe('{"x":0000}')
+  })
+
+  it('masks a parameter list that carries device signals under any name or place', () => {
+    const r = redactor([])
+    expect(r.value(signals, { in: 'query', name: 'extra' })).not.toContain('1440')
+    expect(r.examples([
+      { ctx: device },
+    ], { in: 'body' })).toEqual([
+      { ctx: 'cbr=Xxxxxx&cbrand=xxxxx&cbrver=000.0.0.0&cos=Xxxxxxxxx&cosver=00_00_0&cplatform=XXXXXXX' },
+    ])
+  })
+
+  it('keeps standard headers and ordinary values', () => {
+    const r = redactor([])
+    expect(r.value('?0', { in: 'header', name: 'sec-ch-ua-mobile' })).toBe('?0')
+    expect(r.value('8', { in: 'header', name: 'device-memory' })).toBe('8')
+    expect(r.value('2.20240101.01.00', { in: 'header', name: 'x-tube-client-version' })).toBe('2.20240101.01.00')
+    expect(r.value('q=shoes&page=2', { in: 'query', name: 'next' })).toBe('q=shoes&page=2')
+  })
+})
+
 describe('createRedactor: modes and examples', () => {
   const exchanges = fixtureExchanges()
 
