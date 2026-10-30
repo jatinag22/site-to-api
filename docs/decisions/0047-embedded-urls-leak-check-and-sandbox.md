@@ -18,11 +18,12 @@ Playwright passes unless `chromiumSandbox` is set, and that a capture whose page
   headers such as `Location`) that is or contains an `http(s)` or `ws(s)` URL is redacted like a
   request URL: user info in the authority, credential and opaque path segments (0021), query
   values by secret name and, when random-looking (judged like opaque path segments), whatever
-  their name unless constant, and a query-shaped fragment. URLs inside text keep the punctuation
+  their name unless constant, and the fragment: as a query when it is one (`#access_token=`), and
+  a hash router's own query (`#/cb?token=`), both learnt like queries. URLs inside text keep the punctuation
   that ends the sentence. Their query values are learnt as secrets like request queries, so the
   same token is scrubbed everywhere.
 - **`t` in URLs.** A query parameter named exactly `t` is a secret name, unless its value is a
-  time or offset (`t=1700000000`, `t=1m30s`). It is never matched as a word (`x-t-id`).
+  10- or 13-digit Unix time or a short offset with units (`t=1700000000`, `t=1m30s`). It is never matched as a word (`x-t-id`).
 - **Leak check.** After `build` (and the rebuild `probe` runs) writes the handoff folder, every
   file in it is searched for every secret the redactor learnt from the capture (cookie values,
   auth headers, tokens and other learnt secrets from requests, responses and WebSocket frames,
@@ -32,9 +33,10 @@ Playwright passes unless `chromiumSandbox` is set, and that a capture whose page
   opt-out is `redact.examples: raw`, which copies captured values on purpose; the check is
   skipped then.
 - **Sandbox.** Captures launch Chromium with its sandbox (`capture.browser.sandbox`, default
-  true). If the browser cannot start that way (Linux containers and CI runners without
-  unprivileged user namespaces), it is started once more without the sandbox and the capture
-  warns. The repository's own browser tests turn the sandbox off on GitHub's runners only.
+  true). Only on Linux, and only when the launch error is Chromium's own sandbox failure ("No
+  usable sandbox", a namespace that cannot be created, the setuid sandbox, the zygote), it is
+  started once more without the sandbox and the capture warns; any other launch error is
+  reported as it is. The repository's own browser tests turn the sandbox off on GitHub's runners only.
 - **DNS failures.** When failed page loads are all `net::ERR_NAME_NOT_RESOLVED`, the capture and
   AGENT.md warnings name the hosts that could not be resolved (a DNS blocklist or no network)
   instead of blaming bot protection; mixed failures keep the blocking advice and add the note.
