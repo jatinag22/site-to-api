@@ -636,13 +636,23 @@ describe('traceValues: trivial values', () => {
     const producer = exchange({
       url: 'https://api.example.test/p',
       startedAt: 1,
-      responseBody: jsonBody({ a: 'abc', b: 'search', c: 'en-US' }),
+      responseBody: jsonBody({
+        a: 'abc',
+        b: 'search',
+        c: 'en-US',
+        d: 'gzip-search',
+      }),
     })
     const consumer = exchange({
       method: 'POST',
       url: 'https://api.example.test/api/items?x=abc&mode=search',
       startedAt: 2,
-      requestHeaders: { 'accept-language': 'en-US', 'user-agent': 'Mozilla/5.0 test', 'sec-ch-ua': '"Chromium"' },
+      requestHeaders: {
+        'accept-language': 'en-US',
+        'user-agent': 'Mozilla/5.0 test',
+        'sec-ch-ua': '"Chromium"',
+        'content-encoding': 'gzip-search',
+      },
       requestBody: jsonBody({ flag: true, none: null }),
     })
     expect(trace([producer, consumer]).filter(entry => entry.exchangeId === consumer.id)).toEqual([])

@@ -31,6 +31,18 @@ export interface BuildChannelsInput {
   inScope: (url: { host: string, path: string }, pageUrl: string) => boolean
 }
 
+/** A channel seen over both schemes is documented with the secure one. */
+function channelScheme(schemes: ReadonlySet<WebSocketChannel['scheme']>): WebSocketChannel['scheme'] {
+  if (schemes.has('https') || schemes.has('http')) {
+    return schemes.has('https')
+      ? 'https'
+      : 'http'
+  }
+  return schemes.has('wss')
+    ? 'wss'
+    : 'ws'
+}
+
 function refKey(ref: SourceRef): string {
   return `${ref.file}:${ref.line}:${ref.column}`
 }
@@ -239,12 +251,12 @@ function describeMessages(messages: readonly ChannelMessage[], direction: Channe
     : null
 }
 
-function summaryOf(path: string, messages: readonly ChannelMessage[]): string {
+function summaryOf(path: string, messages: readonly ChannelMessage[], kind: 'WebSocket' | 'Event stream'): string {
   const phrase = pathPhrase(path) || 'root'
   const sends = describeMessages(messages, 'send')
   const receives = describeMessages(messages, 'receive')
   if (sends === null && receives === null)
-    return `WebSocket ${phrase}: no messages were seen during capture.`
+    return `${kind} ${phrase}: no messages were seen during capture.`
   const parts = [
     sends
       ? `the client sends ${sends}`
@@ -253,7 +265,7 @@ function summaryOf(path: string, messages: readonly ChannelMessage[]): string {
       ? `the server sends ${receives}`
       : 'the server sends nothing',
   ]
-  return `WebSocket ${phrase}: ${parts.join('; ')}.`
+  return `${kind} ${phrase}: ${parts.join('; ')}.`
 }
 
 /**
@@ -359,10 +371,7 @@ export function buildChannels(input: BuildChannelsInput): WebSocketChannel[] {
       return {
         id: uniqueId(camelCase(pathPhrase(operation.path)) || 'root', hostIds),
         host: operation.host,
-        // A channel seen over both schemes is documented with the secure one.
-        scheme: schemes.has('wss')
-          ? 'wss'
-          : 'ws',
+        scheme: channelScheme(schemes),
         path: operation.path,
         pathParams: operation.pathParams,
         query: operation.query,
@@ -385,7 +394,9 @@ export function buildChannels(input: BuildChannelsInput): WebSocketChannel[] {
         ungrouped: [sent.ungrouped, received.ungrouped].flatMap(entry => entry === null
           ? []
           : [entry]),
-        summary: summaryOf(operation.path, messages),
+        summary: summaryOf(operation.path, messages, members.some(connection => connection.transports.includes('sse'))
+          ? 'Event stream'
+          : 'WebSocket'),
       }
     })
   return channels

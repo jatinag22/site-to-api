@@ -84,6 +84,8 @@ const NODE_FILES: HarFiles = { readFile: readFileDefault, writeFile: writeFileDe
 
 /** What {@link finishHar} did: the compaction applied, or a warning when it could not be saved. */
 export interface FinishedHar extends HarCompaction {
+  /** Request bodies put back from their raw bytes (`postData._base64`, decision 0050). */
+  bodiesRestored: number
   /** One warning when the compacted HAR could not be written; the original HAR is then kept. */
   warnings: string[]
   /** Top-level page loads, to tell a capture the site blocked (decision 0037). */
@@ -94,9 +96,10 @@ export interface FinishedHar extends HarCompaction {
  * Checks the HAR the browser wrote, then compacts it (decision 0031). The compacted file is
  * written next to the original and renamed over it, so a crash, a second Ctrl+C or a full disk
  * mid-write leaves the original HAR whole instead of a truncated one. A failed write is not
- * fatal: the session keeps the uncompacted HAR and the result carries a warning.
+ * fatal: the session keeps the uncompacted HAR and the result carries a warning. `restoreBodies`
+ * puts back request bodies Playwright could not write as text (see `bodies.ts`).
  */
-export async function finishHar(file: string, files: HarFiles = NODE_FILES): Promise<FinishedHar> {
+export async function finishHar(file: string, files: HarFiles = NODE_FILES, restoreBodies: (entries: unknown[]) => number = () => 0): Promise<FinishedHar> {
   let size = 0
   try {
     size = (await stat(file)).size
@@ -112,8 +115,15 @@ export async function finishHar(file: string, files: HarFiles = NODE_FILES): Pro
     throw new SiteToApiError(`${file} is not a valid HAR file. Capture again.`)
   const navigations = harNavigations(har.log.entries)
   const compaction = compactHar(har)
-  if (compaction.bodiesOmitted === 0 && compaction.framesOmitted === 0)
-    return { ...compaction, warnings: [], navigations }
+  const bodiesRestored = restoreBodies(har.log.entries)
+  if (compaction.bodiesOmitted === 0 && compaction.framesOmitted === 0 && bodiesRestored === 0) {
+    return {
+      ...compaction,
+      bodiesRestored,
+      warnings: [],
+      navigations,
+    }
+  }
   const temporary = `${file}.tmp`
   try {
     await files.writeFile(temporary, JSON.stringify(har))
@@ -129,11 +139,17 @@ export async function finishHar(file: string, files: HarFiles = NODE_FILES): Pro
       entries: compaction.entries,
       bodiesOmitted: 0,
       framesOmitted: 0,
+      bodiesRestored: 0,
       warnings: [`Could not save the compacted HAR (${reason}); kept the original ${file} with every body and frame.${cleanup}`],
       navigations,
     }
   }
-  return { ...compaction, warnings: [], navigations }
+  return {
+    ...compaction,
+    bodiesRestored,
+    warnings: [],
+    navigations,
+  }
 }
 
 /**

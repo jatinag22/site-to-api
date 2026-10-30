@@ -198,6 +198,59 @@ describe('createRedactor: rules', () => {
     expect(r.value('ID EMP-123456 here', { in: 'body' })).toBe('ID XXX-000000 here')
   })
 
+  it('masks the person\'s IP address fields, as YouTube echoes it in every request body', () => {
+    expect(r.json({
+      context: {
+        client: { remoteHost: '203.0.113.94', clientName: 'WEB' },
+      },
+      client_ip: '198.51.100.7',
+      zip: 'x',
+    }, { in: 'body' })).toEqual({
+      context: {
+        client: { remoteHost: '000.0.000.00', clientName: 'WEB' },
+      },
+      client_ip: '000.00.000.0',
+      zip: 'x',
+    })
+  })
+
+  it('masks public IPv4 addresses anywhere, but not versions, networks or private addresses', () => {
+    expect(r.json([
+      ['en-GB', 'IN', null, '203.0.113.94'],
+    ], { in: 'response-body' })).toEqual([
+      ['en-GB', 'IN', null, '000.0.000.00'],
+    ])
+    expect(r.value('Mozilla/5.0 Chrome/156.0.0.0 Safari/537.36', { in: 'header', name: 'user-agent' })).toBe('Mozilla/5.0 Chrome/156.0.0.0 Safari/537.36')
+    expect(r.value('v1.2.3.4', { in: 'body' })).toBe('v1.2.3.4')
+    expect(r.value('2.20261029.00.00', { in: 'body' })).toBe('2.20261029.00.00')
+    expect(r.value('10.0.0.5 and 192.168.1.20 and 172.16.4.4', { in: 'body' })).toBe('10.0.0.5 and 192.168.1.20 and 172.16.4.4')
+    expect(r.value('from 8.8.8.8, via 1.1.1.1.', { in: 'body' })).toBe('from 0.0.0.0, via 0.0.0.0.')
+
+    // Four-part versions named as such stay; addresses named as such are masked.
+    expect(r.value('version 1.2.3.4', { in: 'body' })).toBe('version 1.2.3.4')
+    expect(r.value('app?ver=4.1.2.3&x=1', { in: 'body' })).toBe('app?ver=4.1.2.3&x=1')
+    expect(r.value('Version: 81.2.69.161', { in: 'body' })).toBe('Version: 81.2.69.161')
+    expect(r.value('ip=81.2.69.160', { in: 'body' })).toBe('ip=00.0.00.000')
+    expect(r.value('host 81.2.69.160:8080', { in: 'body' })).toBe('host 00.0.00.000:8080')
+  })
+
+  it('masks public IPv6 addresses in free text, but not times, MAC addresses, hex ids or local addresses', () => {
+    expect(r.value('client 2a00:1450:4009:81f::200e connected', { in: 'body' })).toBe('client 0x00:0000:0000:00x::000x connected')
+    expect(r.value('[2001:4860:4860::8888]:443', { in: 'body' })).toBe('[0000:0000:0000::0000]:443')
+    expect(r.json({ addr: '2604:a880:400:d0::1b4:6001' }, { in: 'response-body' })).toEqual({ addr: '0000:x000:000:x0::0x0:0000' })
+    const kept = [
+      'at 12:30:45 and 23:59:59',
+      'mac aa:bb:cc:dd:ee:ff',
+      'id 2024abcdef1234567890',
+      'loopback ::1 and fe80::1 and fd00::5',
+      'docs 2001:db8::1',
+      'date 2026:10:30',
+      'std::vector<int>',
+    ]
+    for (const text of kept)
+      expect(r.value(text, { in: 'body' })).toBe(text)
+  })
+
   it('masks personal and account fields by name, keeping their format', () => {
     // The shapes of a shop's `GET /api/me` and login responses.
     const me = {

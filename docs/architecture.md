@@ -22,6 +22,10 @@
 | `config` | config sources | stdout | none |
 | `init` | nothing | `site-to-api.config.ts`, `.gitignore` entries | none |
 
+The capture browser starts muted (`--mute-audio`, `capture.browser.muteAudio`, default true;
+decision 0050): captured pages autoplay video and sound, and the person running the capture
+should not hear them.
+
 ## Stages of `build`
 
 All stages are pure functions over the data contracts in `packages/site-to-api/src/model/`.
@@ -54,7 +58,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    navigate), turns each segment into a flow of steps with typed inputs and outputs, merges flows
    seen in several sessions, and derives per-host session requirements.
 7. **channels** (`src/analyze/channels`): rebuilds WebSocket connections from the `ws` capture
-   events and turns them into channels (decision 0023). Frames stand in as exchanges for the
+   events, and server-sent event streams from the `sse` events and `text/event-stream` bodies
+   (decision 0050), and turns them into channels (decision 0023). Frames stand in as exchanges for the
    redactor (so secrets sent over a socket are learnt and scrubbed everywhere) and for value
    tracing (so a client value such as `productId` links to the HTTP response it came from). The
    connection URL is templated by the operations stage's path and query rules; messages are

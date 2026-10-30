@@ -95,6 +95,7 @@ describe('finishHar', () => {
       entries: 2,
       bodiesOmitted: 1,
       framesOmitted: 0,
+      bodiesRestored: 0,
       warnings: [],
       navigations: expect.any(Array),
     })
@@ -107,6 +108,26 @@ describe('finishHar', () => {
     expect(written.log.entries[0]).toHaveProperty('response.content.comment')
     expect(written.log.entries[1]).toHaveProperty('response.content.text', '{"a":1}')
     expect(await readdir(dir)).toEqual(['traffic.har'])
+  })
+
+  it('rewrites the HAR when only request bodies were restored', async () => {
+    const file = path.join(dir, 'traffic.har')
+    await writeFile(file, JSON.stringify({
+      log: {
+        entries: [
+          entry('fetch', 'application/json', '{}'),
+        ],
+      },
+    }))
+    const restore = (entries: unknown[]): number => {
+      const first = entries[0]
+      if (first !== null && typeof first === 'object')
+        Object.assign(first, { restored: true })
+      return 1
+    }
+    expect(await finishHar(file, undefined, restore)).toMatchObject({ bodiesRestored: 1, bodiesOmitted: 0 })
+    const written = JSON.parse(await readFile(file, 'utf8')) as { log: { entries: Array<Record<string, unknown>> } }
+    expect(written.log.entries[0]).toHaveProperty('restored', true)
   })
 
   it('keeps the original HAR and warns, without failing, when the disk is full', async () => {

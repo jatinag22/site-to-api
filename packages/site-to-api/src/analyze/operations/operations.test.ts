@@ -261,6 +261,47 @@ describe('buildOperations: grouping, ids and summaries', () => {
     ])
   })
 
+  it('keeps a navigation a page when a service worker fetched the same HTML (YouTube)', () => {
+    const operations = build([
+      get('/watch', {
+        kind: 'page',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+      get('/watch', {
+        kind: 'api',
+        resourceType: 'fetch',
+        responseBody: textBody('<html>'),
+      }),
+      get('/feed', {
+        kind: 'page',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+      get('/feed', { kind: 'api', resourceType: 'other' }),
+    ])
+    expect(operations.map(operation => [operation.operationId, operation.kind])).toEqual([
+      ['getFeed', 'page'],
+      ['getWatch', 'page'],
+    ])
+  })
+
+  it('still makes a path an API operation when a call beside its navigation returned data', () => {
+    const operations = build([
+      get('/results', {
+        kind: 'page',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+      get('/results', {
+        kind: 'api',
+        resourceType: 'fetch',
+        responseBody: jsonBody({ items: [] }),
+      }),
+    ])
+    expect(operations.map(operation => operation.kind)).toEqual(['api'])
+  })
+
   it('makes code-only operations only from request calls, on the pages that loaded the script', () => {
     const pageOn = (host: string): Exchange => exchange({
       url: `https://${host}/`,

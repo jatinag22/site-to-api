@@ -56,6 +56,18 @@ function framedHosts(operations: readonly Operation[]): Set<string> {
  * that only have operations or channels. Sorted first-party API hosts → page hosts → third-party
  * hosts, then by observed API operations (most first), then by name.
  */
+function hostOfUrl(url: string): string[] {
+  try {
+    const { host } = new URL(url)
+    return host === ''
+      ? []
+      : [host]
+  }
+  catch {
+    return []
+  }
+}
+
 export function rankHosts(analysis: Analysis, pageHosts: readonly SessionRequirement[]): RankedHost[] {
   const sessions = new Map<string, SessionRequirement>()
   for (const entry of [
@@ -72,9 +84,14 @@ export function rankHosts(analysis: Analysis, pageHosts: readonly SessionRequire
   // The site is whatever served the pages the person browsed, never pages loaded into frames;
   // with no pages (an API-only capture), every host counts as the site's own (decision 0046).
   const framed = framedHosts(analysis.operations)
-  const site = new Set(analysis.operations
+  const browsed = new Set(analysis.operations
     .filter(operation => operation.kind === 'page' && !operation.sourceOnly && !framed.has(operation.host))
     .map(operation => siteOf(operation.host)))
+  // No page at all: the start URL still says which site the person meant (YouTube's navigations
+  // all looked like calls, and a font host ranked first); only without one is every host the site's.
+  const site = browsed.size > 0
+    ? browsed
+    : new Set((analysis.startUrls ?? []).flatMap(url => hostOfUrl(url)).map(siteOf))
   const ownHost = (host: string): boolean => site.size === 0 || site.has(siteOf(host))
   const roleOf = (host: string): HostRole => {
     // A host that served only pages is one of the site's page hosts when it is on the site's

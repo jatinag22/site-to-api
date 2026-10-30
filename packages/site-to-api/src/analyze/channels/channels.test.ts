@@ -407,3 +407,60 @@ describe('buildChannels', () => {
     ])).toEqual([])
   })
 })
+
+describe('buildChannels with a server-sent event stream', () => {
+  it('documents a stream as an https channel whose events are server messages named by their event field', () => {
+    const url = `https://${HOST}/v2/stream/recentchange`
+    const request = exchange({
+      url,
+      resourceType: 'eventsource',
+      startedAt: T0 + 50,
+      status: 200,
+      responseHeaders: { 'content-type': 'text/event-stream' },
+      responseBody: textBody('', 'text/event-stream'),
+    })
+    const event = (ts: number, name: string, data: string): CaptureEvent => ({
+      t: 'sse',
+      ts: T0 + ts,
+      pageUrl: `https://${HOST}/`,
+      url,
+      stream: 0,
+      event: name,
+      id: String(ts),
+      data,
+    })
+    const session = loadedSession('s1', [
+      event(100, 'message', '{"title":"A","bytes":10}'),
+      event(200, 'edit', '{"title":"B","user":"x"}'),
+      event(300, 'message', '{"title":"C","bytes":30}'),
+    ])
+    const [channel] = channelsOf([
+      page('s1', '/', 0),
+      request,
+    ], [session])
+    expect(channel).toMatchObject({
+      scheme: 'https',
+      path: '/v2/stream/recentchange',
+      protocol: { id: 'sse' },
+      connection: {
+        transports: ['sse'],
+        upgrade: {
+          accepted: 1,
+          rejected: 0,
+          statuses: [200],
+        },
+      },
+      handshake: [],
+    })
+    expect(channel?.messages.map(message => [message.direction, message.protocol?.name, message.count])).toEqual([
+      ['receive', 'message', 2],
+      ['receive', 'edit', 1],
+    ])
+    expect(channel?.messages.find(message => message.protocol?.name === 'message')?.schema).toMatchObject({
+      properties: {
+        title: { type: 'string' },
+        bytes: { type: 'integer' },
+      },
+    })
+  })
+})
