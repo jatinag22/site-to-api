@@ -3,6 +3,8 @@
  * of character), so a reader still sees "this is a card number" without the number.
  */
 
+import { isIPv6 } from 'node:net'
+
 /** Letters become `X`/`x`, digits `0`; everything else is kept. */
 export function maskKeepingFormat(value: string): string {
   return value.replace(/[A-Z]/g, 'X').replace(/[a-z]/g, 'x').replace(/\d/g, '0')
@@ -61,6 +63,15 @@ const onlyDigits = (value: string): string => value.replace(/\D/g, '')
 
 const OCTET = '(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)'
 
+/**
+ * A public IPv6 address: global unicast (`2000::/3`, written with a first group of four digits
+ * starting 2 or 3), valid, and not the documentation block `2001:db8::/32`. Loopback, link-local,
+ * unique-local and multicast start with other digits and never match.
+ */
+function isPublicIpv6(address: string): boolean {
+  return isIPv6(address) && !/^2001:0?db8:/i.test(address)
+}
+
 /** Address blocks that are not one person's public address: private, loopback, link-local, CGNAT, multicast. */
 function isPublicIpv4(address: string): boolean {
   const [a = 0, b = 0, , d = 0] = address.split('.').map(Number)
@@ -110,8 +121,17 @@ export const PERSONAL_DATA_PATTERNS: readonly PersonalDataPattern[] = [
     // request bodies (YouTube, decision 0050). Not after `/`, `.`, `v` or a word character, so
     // `Chrome/156.0.0.0` and `v1.2.3.4` stay; an address ending in `.0` is a network, not a person.
     name: 'ipv4',
-    regex: new RegExp(`(?<![\\w./-])${OCTET}(?:\\.${OCTET}){3}(?![\\w.]*\\d)`, 'g'),
+    // Not after `version`/`ver` (`version 1.2.3.4`, `ver=4.1.2.3`): those are four-part versions.
+    regex: new RegExp(`(?<![\\w./-])(?<!\\b(?:[Vv]ersion|[Vv]er)(?:\\s*[=:] ?|\\s))${OCTET}(?:\\.${OCTET}){3}(?![\\w.]*\\d)`, 'g'),
     accept: isPublicIpv4,
+  },
+  {
+    // A public IPv6 address in free text (`2a00:1450:4009:81f::200e`). It must start with a
+    // four-digit group 2xxx or 3xxx and be a valid address, so `12:30:45`, MAC addresses and
+    // hex ids never match.
+    name: 'ipv6',
+    regex: /(?<![\w:.])[23][\da-f]{3}(?::[\da-f]{0,4}){2,7}(?![\w:])/gi,
+    accept: isPublicIpv6,
   },
   {
     // International phone numbers written with a leading +.
