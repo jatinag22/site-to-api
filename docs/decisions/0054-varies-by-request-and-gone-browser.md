@@ -30,6 +30,12 @@ The real-site recheck after 0050 and 0052 found two wrong verdicts on YouTube.
   itself: the HAR decides. When it is there and valid the session is complete, with a note;
   when it is missing or invalid the session stays incomplete. A page that had already closed is
   not a failed close. Any other close failure keeps 0050's behaviour.
+- That only applies when the person or the script ended the session first: the script returned
+  or closed the context itself, a stop signal came, or (interactive mode) the person closed the
+  last page. A browser that closed its context before any of those exited on its own (a crash,
+  an out-of-memory kill): its HAR is still read in full, but the session is incomplete with
+  `the browser exited during the capture`. Playwright closes every page before the context also
+  when the browser crashes, so in script mode a last page closing is not taken as the end.
 - An `error` session is described as "stopped on an error" with "what came after the error is
   missing", not as having failed before the run.
 

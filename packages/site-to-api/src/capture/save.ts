@@ -101,6 +101,33 @@ export async function writeJsonAtomic(file: string, value: unknown): Promise<voi
   await rename(temporary, file)
 }
 
+/**
+ * Who ended the session (decision 0054): the person or the script (the script returned, a stop
+ * signal came, or the last page was closed), or the browser itself, by closing its context
+ * before any of those (a crash, an out-of-memory kill). A browser that exits on its own leaves
+ * the session incomplete, even when the HAR it wrote is read in full.
+ */
+export class SessionEnd {
+  private ended = false
+  private early = false
+
+  /** The person or the script ended the session. */
+  end(): void {
+    this.ended = true
+  }
+
+  /** The browser context closed; before {@link end}, the browser exited on its own. */
+  browserClosed(): void {
+    if (!this.ended)
+      this.early = true
+  }
+
+  /** True when the browser closed before the person or the script ended the session. */
+  get exitedEarly(): boolean {
+    return this.early
+  }
+}
+
 /** The parts of a browser context saving needs; a structural type so tests can fake it. */
 export interface ClosableContext {
   pages: () => Array<{ close: (options?: { runBeforeUnload?: boolean }) => Promise<void> }>
@@ -120,6 +147,8 @@ export interface SaveInput {
   kill: () => Promise<void>
   /** Puts back request bodies the HAR could not hold (`RequestBodyRecorder.patch`). */
   restoreBodies?: (entries: unknown[]) => number
+  /** True when the browser exited on its own before the session was ended ({@link SessionEnd}). */
+  exitedEarly?: () => boolean
 }
 
 export interface SaveResult {
@@ -254,7 +283,12 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
   const interrupted: Incomplete | null = input.scripted && input.stopper.signal.aborted
     ? { reason: 'interrupted', error: null }
     : null
-  let incomplete = browser.incomplete ?? settled ?? interrupted
+  // A browser that exited on its own lost what the person would have done next, whatever it
+  // wrote: the session is incomplete even when its HAR is read in full below.
+  const exited: Incomplete | null = input.exitedEarly?.() === true
+    ? { reason: 'error', error: 'the browser exited during the capture' }
+    : null
+  let incomplete = exited ?? browser.incomplete ?? settled ?? interrupted
   let har: FinishedHar
   try {
     har = await finishHar(input.harPath, undefined, input.restoreBodies)
@@ -277,10 +311,12 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
   }
   // The browser was gone before capture closed it, and the HAR it left is there and valid: nothing
   // is missing. Only the close's own error is dropped; a timeout or interruption still counts.
-  if (browser.alreadyGone && incomplete === browser.incomplete) {
+  if (browser.alreadyGone && exited === null && incomplete === browser.incomplete) {
     incomplete = settled ?? interrupted
     warnings.push('The browser had already closed when the capture closed it; the HAR was read in full.')
   }
+  if (exited !== null)
+    warnings.push('The browser exited on its own during the capture (a crash or the system ended it); what it recorded until then was read, but the session is incomplete.')
   warnings.push(...har.warnings)
   if (har.entries === 0)
     warnings.push('The HAR has no requests. Did the page load?')

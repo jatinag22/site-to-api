@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createStopper, saveSession, writeJsonAtomic } from './save'
+import { createStopper, saveSession, SessionEnd, writeJsonAtomic } from './save'
 
 let dir: string
 let harPath: string
@@ -115,6 +115,21 @@ describe('saveSession', () => {
     expect(result.entries).toBe(1)
     expect(result.warnings).toContain('The browser had already closed when the capture closed it; the HAR was read in full.')
     expect(result.warnings.some(warning => warning.startsWith('Closing the browser failed'))).toBe(false)
+  })
+
+  it('marks the session incomplete when the browser exited on its own, while still reading its HAR', async () => {
+    const result = await saveSession(input({
+      pages: () => [],
+      close: async () => {
+        throw new Error('Target page, context or browser has been closed')
+      },
+    }, {
+      exitedEarly: () => true,
+    }))
+    expect(result.incomplete).toEqual({ reason: 'error', error: 'the browser exited during the capture' })
+    expect(result.entries).toBe(1)
+    expect(result.warnings.some(warning => warning.startsWith('The browser exited on its own during the capture'))).toBe(true)
+    expect(result.warnings.some(warning => warning.includes('already closed when the capture closed it'))).toBe(false)
   })
 
   it('marks a gone browser incomplete when it left no readable HAR', async () => {
@@ -306,5 +321,19 @@ describe('writeJsonAtomic', () => {
     const file = path.join(dir, 'meta.json')
     await writeJsonAtomic(file, { a: 1 })
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ a: 1 })
+  })
+})
+
+describe('sessionEnd', () => {
+  it('calls a browser that closed before the session was ended an early exit, and one after it not', () => {
+    const crashed = new SessionEnd()
+    crashed.browserClosed()
+    crashed.end()
+    expect(crashed.exitedEarly).toBe(true)
+    const ended = new SessionEnd()
+    ended.end()
+    ended.browserClosed()
+    expect(ended.exitedEarly).toBe(false)
+    expect(new SessionEnd().exitedEarly).toBe(false)
   })
 })

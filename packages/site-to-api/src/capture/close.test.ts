@@ -78,7 +78,7 @@ export default async ({ page, context, baseUrl }) => {
       cwd: work,
       timeouts: { settleMs: 3_000, closeMs: 5_000 },
     })
-    expect(result.meta.incomplete).toBeDefined()
+    expect(result.meta.incomplete).toEqual({ reason: 'error', error: 'the browser exited during the capture' })
     expect(result.warnings.some(warning => warning.includes('already closed when the capture closed it'))).toBe(false)
   }, 60_000)
 })

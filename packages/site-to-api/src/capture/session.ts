@@ -24,7 +24,7 @@ import { harOmissionNote } from './har'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
 import { launchWithSandbox } from './sandbox'
-import { createStopper, DEFAULT_TIMEOUTS, saveSession, waitBounded, writeJsonAtomic } from './save'
+import { createStopper, DEFAULT_TIMEOUTS, saveSession, SessionEnd, waitBounded, writeJsonAtomic } from './save'
 import { ScriptCollector } from './scripts'
 import { EventStreamRecorder } from './streams'
 import { launchArgs, minimizes, minimizeWindow } from './window'
@@ -203,6 +203,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     throw error
   }
 
+  const sessionEnd = trackSessionEnd(context, stopper.signal, script === null)
   const pending = new Set<Promise<void>>()
   const track = (task: Promise<void>): void => {
     pending.add(task)
@@ -249,7 +250,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       userAgent = browser.userAgent ?? await page.evaluate(() => navigator.userAgent)
       incomplete = script === null
         ? await runInteractive(context, page, options, stopper.signal, log)
-        : await runScripted(script, context, page, options, stopper.signal, log)
+        : await runScripted(script, scriptContext(context, sessionEnd), page, options, stopper.signal, log)
     }
     catch (error) {
       // Instrumentation or the first page failed before the run: save what exists anyway.
@@ -258,6 +259,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
         error: errorMessage(error),
       }
     }
+    sessionEnd.end()
     logFailure(incomplete, log)
     const saved = await saveSession({
       context,
@@ -269,6 +271,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       scripted: script !== null,
       kill,
       restoreBodies: entries => bodies.patch(entries),
+      exitedEarly: () => sessionEnd.exitedEarly,
     })
     closed = true
     const finalIncomplete = incomplete ?? saved.incomplete
@@ -531,6 +534,49 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
 }
 
 /** Runs the capture script; a failure or interruption is returned, so the session is still saved. */
+/**
+ * Records whether the person or the script ended the session before the browser closed
+ * (decision 0054). Playwright closes every page before the context also on a crash, so a last
+ * page closing ends the session only in interactive mode, where the person closed it.
+ */
+function trackSessionEnd(context: BrowserContext, stop: AbortSignal, interactive: boolean): SessionEnd {
+  const sessionEnd = new SessionEnd()
+  context.on('close', () => sessionEnd.browserClosed())
+  stop.addEventListener('abort', () => sessionEnd.end(), { once: true })
+  if (interactive) {
+    const watch = (page: Page): void => {
+      page.on('close', () => {
+        if (context.pages().length === 0)
+          sessionEnd.end()
+      })
+    }
+    context.pages().forEach(watch)
+    context.on('page', watch)
+  }
+  return sessionEnd
+}
+
+/**
+ * The context a capture script gets: the same one, except that its `close()` first records that
+ * the script ended the session, so a script that closes the browser is not taken for a crash.
+ */
+function scriptContext(context: BrowserContext, sessionEnd: SessionEnd): BrowserContext {
+  return new Proxy(context, {
+    get(target, property, receiver) {
+      if (property === 'close') {
+        return async (...args: Parameters<BrowserContext['close']>): Promise<void> => {
+          sessionEnd.end()
+          await target.close(...args)
+        }
+      }
+      const value: unknown = Reflect.get(target, property, receiver)
+      return typeof value === 'function'
+        ? value.bind(target)
+        : value
+    },
+  })
+}
+
 async function runScripted(script: CaptureScript, context: BrowserContext, page: Page, options: RunCaptureOptions, stop: AbortSignal, log: (message: string) => void): Promise<Incomplete | null> {
   log('Running capture script.')
   if (stop.aborted)
