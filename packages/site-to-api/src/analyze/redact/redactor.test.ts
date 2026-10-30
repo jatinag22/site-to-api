@@ -867,6 +867,26 @@ describe('createRedactor: URLs inside values (decision 0047)', () => {
   })
 })
 
+describe('createRedactor: learntSecrets (decision 0047)', () => {
+  it('lists token-like secrets from cookies, headers, bodies and URLs, never words or short values', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { sid: 'c0ffee00deadbeef0123', layout: 'desktop-layout-wide', n: 'a1b2' },
+        requestHeaders: { authorization: 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln' },
+        responseBody: jsonBody({ recoveryUrl: 'wss://h.test/a?t=PH8DAQEIZW52aXJvbm1lbnQ' }),
+      }),
+    ])
+    const secrets = r.learntSecrets()
+    expect(secrets).toContain('c0ffee00deadbeef0123')
+    expect(secrets).toContain('PH8DAQEIZW52aXJvbm1lbnQ')
+    expect(secrets.some(secret => secret.includes('eyJhbGciOiJIUzI1NiJ9'))).toBe(true)
+    expect(secrets).not.toContain('desktop-layout-wide')
+    expect(secrets).not.toContain('a1b2')
+    expect(secrets).toEqual([...secrets].sort())
+  })
+})
+
 describe('createRedactor: modes and examples', () => {
   const exchanges = fixtureExchanges()
 

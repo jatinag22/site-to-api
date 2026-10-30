@@ -54,6 +54,16 @@ interface RedactorInput {
   config: ResolvedConfig['redact']
 }
 
+/**
+ * Learnt secrets the leak check looks for: long enough, and mixing letters and digits like tokens
+ * do, so a cookie such as `desktop-layout` or an epoch never matches ordinary output.
+ */
+const MIN_CHECKED_SECRET_LENGTH = 12
+
+function isCheckedSecret(value: string): boolean {
+  return value.length >= MIN_CHECKED_SECRET_LENGTH && /\d/.test(value) && /[a-z]/i.test(value)
+}
+
 /** Secrets shorter than this are only redacted where they sit, not searched for in other text. */
 const MIN_SEARCHED_SECRET_LENGTH = 6
 const MAX_DEPTH = 32
@@ -641,6 +651,7 @@ export function createRedactor(input: RedactorInput): Redactor {
       ? redactString(value, context, 0)
       : redactJson(value, context, 0))(values),
     isSecretKey,
+    learntSecrets: () => [...secrets].filter(isCheckedSecret).sort(),
     browserOnly: {
       value: text => raw || text === ''
         ? text

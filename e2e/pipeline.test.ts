@@ -8,7 +8,7 @@ import type { Analysis, ResolvedConfig } from '../packages/site-to-api/src'
 import type { FixtureSite } from './fixture-site/server'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { cp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -308,6 +308,32 @@ describe('handoff folder', () => {
     ].sort())
     for (const [name, content] of files)
       expect(again.get(name), name).toBe(content)
+  }, 120_000)
+
+  it('fails the build when a secret learnt from the capture is in the folder (decision 0047)', async () => {
+    const session = analysis.operations
+      .flatMap(op => op.exchanges)
+      .flatMap(exchange => exchange.request.cookies)
+      .find(cookie => cookie.name === 'pm_session')
+      ?.value ?? ''
+    expect(session.length).toBeGreaterThan(11)
+    const planted = join(outDir, 'notes', 'planted.md')
+    await mkdir(join(outDir, 'notes'), { recursive: true })
+    await writeFile(planted, `copied by hand: ${session}\n`)
+    try {
+      const error = await buildHandoff({ config, cwd: work }).then(() => null, (failure: unknown) => failure)
+      expect(error).toBeInstanceOf(Error)
+      const message = error instanceof Error
+        ? error.message
+        : ''
+      expect(message).toContain('Leak check failed: 1 secret value(s) learnt from the capture appear in')
+      expect(message).toContain(`notes/planted.md: ${session.slice(0, 3)}…${session.slice(-2)} (${session.length} chars)`)
+      expect(message).not.toContain(session)
+    }
+    finally {
+      await rm(join(outDir, 'notes'), { recursive: true, force: true })
+    }
+    await buildHandoff({ config, cwd: work })
   }, 120_000)
 })
 

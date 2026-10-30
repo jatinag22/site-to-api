@@ -31,6 +31,7 @@ import { VERSION } from '../version'
 import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
 import { inHostFilter, unmatchedHostPatterns } from './hosts'
+import { findHandoffLeaks, leakError } from './leaks'
 import { buildRecordFor, writeBuildRecord } from './record'
 
 export { readBuildRecord, recordClientGenerated, stickyOptions } from './record'
@@ -428,6 +429,13 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION)),
   )
   log(`Wrote ${files.length} files to ${outDir}`)
+  // The folder must hold no secret the capture had (decision 0047). With `examples: raw` it
+  // copies captured values on purpose, so the check would only restate that choice.
+  if (options.config.redact.examples !== 'raw') {
+    const leaks = await findHandoffLeaks(outDir, analyzed.redactor.learntSecrets())
+    if (leaks.length > 0)
+      throw leakError(outDir, leaks)
+  }
   return { analysis, outDir, files, warnings }
 }
 
