@@ -332,6 +332,11 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 
   const analysis: Analysis = {
     sessions: loaded.sessions.map(session => session.meta.sessionId),
+    startUrls: [
+      ...new Set(loaded.sessions.flatMap(session => session.meta.startUrl === null
+        ? []
+        : [session.meta.startUrl])),
+    ].sort(),
     hosts: hostsOf(operations),
     operations,
     flows,

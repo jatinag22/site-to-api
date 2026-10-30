@@ -368,6 +368,12 @@ export interface BotProtectionFinding {
 
 export interface Analysis {
   sessions: string[]
+  /**
+   * The URLs the capture sessions started at (`meta.json` `startUrl`), sorted, once each. When no
+   * page was browsed (every navigation was answered by a script, or the capture had none), their
+   * site is the site's own (decision 0049). Optional and additive.
+   */
+  startUrls?: string[]
   hosts: string[]
   operations: Operation[]
   flows: FlowsDocument
