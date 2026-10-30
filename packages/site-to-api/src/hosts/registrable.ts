@@ -24,7 +24,33 @@ const SHARED_SUFFIXES = [
   'blogspot.com',
   'onrender.com',
   'fly.dev',
+  'a.run.app',
+  'run.app',
+  'cloudfunctions.net',
+  'storage.googleapis.com',
+  'azurestaticapps.net',
+  'ngrok-free.app',
+  'supabase.co',
 ]
+
+/**
+ * AWS hosts tenants under service and region labels (`bucket.s3.us-east-1.amazonaws.com`,
+ * `abc123.execute-api.eu-west-1.amazonaws.com`, `ec2-1-2-3-4.compute-1.amazonaws.com`,
+ * `fn.lambda-url.us-east-1.on.aws`): those labels belong to the suffix, so tenants stay apart.
+ */
+const AWS_ROOTS: readonly string[] = ['amazonaws.com', 'on.aws']
+const AWS_LABEL = /^(?:s3|s3-website|s3-accesspoint|s3-control|dualstack|execute-api|lambda-url|elb|compute(?:-\d+)?|[a-z]{2}(?:-gov)?-[a-z]+-\d+)$/
+
+/** Labels of the AWS suffix of a host (`s3.us-east-1.amazonaws.com` is 4), or null. */
+function awsSuffixLength(host: string, labels: readonly string[]): number | null {
+  const root = AWS_ROOTS.find(suffix => host === suffix || host.endsWith(`.${suffix}`))
+  if (root === undefined)
+    return null
+  let length = root.split('.').length
+  while (length < labels.length - 1 && AWS_LABEL.test(labels.at(-length - 1) ?? ''))
+    length++
+  return length
+}
 
 /** Second-level labels that act as public suffixes under country TLDs (`co.uk`, `com.au`). */
 const COUNTRY_SECOND_LEVEL = new Set([
@@ -63,8 +89,11 @@ export function registrableHost(hostname: string): string {
     return host
   const labels = host.split('.')
   const shared = SHARED_SUFFIXES.find(suffix => host === suffix || host.endsWith(`.${suffix}`))
+  const aws = awsSuffixLength(host, labels)
   let keep = 2
-  if (shared !== undefined)
+  if (aws !== null)
+    keep = aws + 1
+  else if (shared !== undefined)
     keep = shared.split('.').length + 1
   else if (labels.length >= 3 && (labels.at(-1) ?? '').length === 2 && COUNTRY_SECOND_LEVEL.has(labels.at(-2) ?? ''))
     keep = 3

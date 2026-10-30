@@ -59,6 +59,9 @@ const AUTH_PATH = /token|auth|login|signin|sign-in|otp|verify/i
 function sentName(location: ValueLocation): string | null {
   switch (location.in) {
     case 'query':
+      return location.pointer === undefined
+        ? location.name
+        : lastPointerToken(location.pointer)
     case 'form':
     case 'header':
       return location.name

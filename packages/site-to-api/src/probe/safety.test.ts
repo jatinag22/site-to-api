@@ -88,3 +88,45 @@ describe('changesData and neverSentReason', () => {
     expect(dispatchChangesState('post.like')).toBe(true)
   })
 })
+
+describe('rPC methods', () => {
+  it('sends a Connect POST its descriptor marks read-only, and nothing else that is a POST', () => {
+    const read = subject({
+      method: 'POST',
+      path: '/demo.v1.ItemService/GetItems',
+      rpc: { protocol: 'connect', procedure: 'demo.v1.ItemService/GetItems', readOnly: true },
+    })
+    const write = subject({
+      method: 'POST',
+      path: '/demo.v1.ItemService/PutItem',
+      rpc: { protocol: 'connect', procedure: 'demo.v1.ItemService/PutItem', readOnly: false },
+    })
+    const mutation = subject({
+      method: 'POST',
+      path: '/api/trpc/bookings.create',
+      rpc: { protocol: 'trpc', procedure: 'bookings.create', readOnly: false },
+    })
+    expect(replaySkipReason(read, false)).toBeNull()
+    expect(changesData(read)).toBe(false)
+    expect(replaySkipReason(write, false)).toMatch(/can change data/)
+    expect(replaySkipReason(mutation, false)).toMatch(/can change data/)
+    // A read-only method whose path names a state change is still never replayed.
+    expect(changesData(subject({
+      method: 'POST',
+      path: '/demo.v1.ItemService/DeleteItem',
+      rpc: { protocol: 'connect', procedure: 'demo.v1.ItemService/DeleteItem', readOnly: true },
+    }))).toBe(true)
+  })
+})
+
+describe('rPC method names', () => {
+  it('never treats a method whose name writes as a read, whatever its descriptor', () => {
+    const transfer = subject({
+      method: 'POST',
+      path: '/acme.v1.PaymentService/Transfer',
+      rpc: { protocol: 'connect', procedure: 'acme.v1.PaymentService/Transfer', readOnly: true },
+    })
+    expect(changesData(transfer)).toBe(true)
+    expect(replaySkipReason(transfer, false)).toMatch(/can change data/)
+  })
+})

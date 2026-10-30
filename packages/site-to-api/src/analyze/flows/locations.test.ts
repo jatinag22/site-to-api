@@ -177,3 +177,11 @@ describe('keySafePointer / keySafeLocation', () => {
     expect(keySafeLocation({ in: 'query', name: 'tok' }, isSecretKey)).toEqual({ in: 'query', name: 'tok' })
   })
 })
+
+describe('jSON inside a query parameter', () => {
+  it('formats and key-safes a field of a tRPC input', () => {
+    expect(formatLocation({ in: 'query', name: 'input', pointer: '/json/slug' })).toBe('query.input./json/slug')
+    expect(formatLocation({ in: 'query', name: 'input' })).toBe('query.input')
+    expect(keySafeLocation({ in: 'query', name: 'input', pointer: '/json/sess-1234567890abcdef/x' }, key => key.startsWith('sess-'))).toEqual({ in: 'query', name: 'input', pointer: '/json/{key}/x' })
+  })
+})

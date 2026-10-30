@@ -18,6 +18,32 @@ describe('registrableHost', () => {
     expect(registrableHost('alice.github.io')).toBe('alice.github.io')
     expect(registrableHost('docs.alice.github.io')).toBe('alice.github.io')
     expect(registrableHost('my-app.vercel.app')).toBe('my-app.vercel.app')
+    // Cloud hosts whose tenants are different sites: one tenant's script vouches for no other.
+    expect([
+      'svc-a1b2-uc.a.run.app',
+      'eu-west1-proj.cloudfunctions.net',
+      'bucket-one.s3.amazonaws.com',
+      'bucket-two.s3.us-east-1.amazonaws.com',
+      'abc123.execute-api.eu-west-1.amazonaws.com',
+      'ec2-1-2-3-4.compute-1.amazonaws.com',
+      'fn9.lambda-url.us-east-1.on.aws',
+      'my-bucket.storage.googleapis.com',
+      'green-sea.azurestaticapps.net',
+      'ab12.ngrok-free.app',
+      'xyzproj.supabase.co',
+    ].map(registrableHost)).toEqual([
+      'svc-a1b2-uc.a.run.app',
+      'eu-west1-proj.cloudfunctions.net',
+      'bucket-one.s3.amazonaws.com',
+      'bucket-two.s3.us-east-1.amazonaws.com',
+      'abc123.execute-api.eu-west-1.amazonaws.com',
+      'ec2-1-2-3-4.compute-1.amazonaws.com',
+      'fn9.lambda-url.us-east-1.on.aws',
+      'my-bucket.storage.googleapis.com',
+      'green-sea.azurestaticapps.net',
+      'ab12.ngrok-free.app',
+      'xyzproj.supabase.co',
+    ])
   })
 
   it('returns IP addresses and single labels unchanged', () => {

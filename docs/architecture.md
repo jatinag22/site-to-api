@@ -45,7 +45,9 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    0027); the source stage reads the site's code for the type of persisted queries. An endpoint
    where one parameter picks the function (`functionName`, `action`, JSON-RPC `method`), on the
    evidence of differing parameters or response shapes, becomes one operation per value at
-   `<endpoint>#<value>` (decision 0039). Path parameters come from source route templates, value tracing, variation
+   `<endpoint>#<value>` (decision 0039). tRPC procedures and Connect RPC methods, marked by
+   `src/analyze/rpc` (tRPC batches split), are one operation each at their literal path
+   (decision 0051). Path parameters come from source route templates, value tracing, variation
    across samples, ID-like segments (UUID, hex, base58, numbers, upper-case slugs) and sibling
    paths whose word values the capture shows are data (decision 0035).
 4. **schema** (`src/analyze/schema`): infers JSON Schema for query, headers, request bodies and
@@ -66,7 +68,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    grouped per direction by a discriminator field and get schemas from the schema stage. The
    HTTP upgrade request in the HAR, when present, gives the cookie names and the opening stack.
    Framing protocols (Socket.IO including Engine.IO long-polling, SignalR, STOMP, GraphQL over
-   WebSocket, Phoenix, Centrifugo, and SmartFoxServer 2X binary packets, decision 0048) are
+   WebSocket, Phoenix, Centrifugo, SmartFoxServer 2X binary packets (decision 0048), Firebase
+   Realtime Database and Primus (decision 0051)) are
    detected per connection and name the messages instead, and other binary frames are read as
    MessagePack or protobuf wire format when they decode fully (decision 0038); each channel also gets its connection facts (origin, subprotocol, URL token
    names, upgrade answers, first auth message).

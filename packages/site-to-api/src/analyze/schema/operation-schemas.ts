@@ -528,6 +528,19 @@ function safeDecode(segment: string): string {
 }
 
 /**
+ * Query parameters that carry JSON: GraphQL `variables` and `extensions`, a tRPC `input`, a
+ * Connect GET `message` (decision 0051).
+ */
+function jsonParams(operation: Operation): ReadonlySet<string> | undefined {
+  if (operation.graphql)
+    return GRAPHQL_JSON_PARAMS
+  const names = new Set(operation.exchanges.flatMap(exchange => exchange.rpc?.jsonParam ?? []))
+  return names.size === 0
+    ? undefined
+    : names
+}
+
+/**
  * Infers the request and response shapes of every observed operation. Examples go through the
  * redactor; operations found only in source code are returned unchanged. GraphQL operations get
  * their `variables` and `extensions` query parameters decoded and their constants pinned
@@ -548,9 +561,7 @@ export function inferOperationSchemas(operations: Operation[], redactor: Redacto
     return pinDispatchSchemas(pinGraphqlSchemas({
       ...operation,
       pathParams: enrichPathParams(operation, values),
-      query: inferParams(exchanges, exchange => exchange.request.query, 'query', values, operation.graphql
-        ? GRAPHQL_JSON_PARAMS
-        : undefined),
+      query: inferParams(exchanges, exchange => exchange.request.query, 'query', values, jsonParams(operation)),
       headers: inferHeaders(exchanges, values, hostConstants.get(operation.host) ?? new Map()),
       cookies: inferCookies(exchanges),
       requestBody: inferRequestBody(exchanges, values),

@@ -96,6 +96,11 @@ export const PERSONAL_DATA_PATTERNS: readonly PersonalDataPattern[] = [
     regex: /[\w.%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi,
   },
   {
+    // An email as a Firebase key, where `.` is not allowed and is written `,` (decision 0051).
+    name: 'email-key',
+    regex: /[\w.%+-]+@[a-z0-9-]+(?:,[a-z0-9-]+)*,[a-z]{2,}\b/gi,
+  },
+  {
     // Indian Permanent Account Number: five letters, four digits, one letter.
     name: 'pan',
     regex: /\b[A-Z]{5}\d{4}[A-Z]\b/g,

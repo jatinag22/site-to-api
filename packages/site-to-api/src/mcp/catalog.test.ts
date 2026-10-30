@@ -153,3 +153,38 @@ describe('clientArguments', () => {
     expect(clientArguments(login, operationInputs(login, shopFlows))).toBe('{}')
   })
 })
+
+describe('connect methods', () => {
+  it('treats only GET-called Connect methods as reads; a descriptor alone is probe\'s business', () => {
+    const rpc = (readOnly: boolean, readOnlyEvidence: string | null): Record<string, unknown> => ({
+      'x-site-to-api-rpc': {
+        protocol: 'connect',
+        procedure: 'demo.v1.ItemService/GetItems',
+        readOnly,
+        readOnlyEvidence,
+      },
+    })
+    const document = OpenApiDocumentSchema.parse({
+      openapi: '3.1.0',
+      paths: {
+        '/demo.v1.ItemService/GetItems': {
+          post: {
+            operationId: 'postGetItems',
+            responses: {},
+            ...rpc(true, 'NO_SIDE_EFFECTS in the site\'s descriptor'),
+          },
+          get: {
+            operationId: 'getGetItems',
+            responses: {},
+            ...rpc(true, 'called with GET'),
+          },
+        },
+      },
+    })
+    const found = catalogOperations(host, document, [], shopFlows, [])
+    expect(found.map(item => [item.operationId, item.rpc?.readOnly])).toEqual([
+      ['getGetItems', true],
+      ['postGetItems', false],
+    ])
+  })
+})

@@ -6,8 +6,10 @@
 import type { ChannelProtocol } from '../../../model'
 import type { DecodedMessage, Handshake, ProtocolDecoder, RawFrame } from './types'
 import { centrifugo } from './centrifugo'
+import { firebase } from './firebase'
 import { graphqlWs } from './graphql-ws'
 import { phoenix } from './phoenix'
+import { primus } from './primus'
 import { sfs2x } from './sfs2x'
 import { signalr } from './signalr'
 import { socketIo } from './socketio'
@@ -29,6 +31,8 @@ const DECODERS: readonly ProtocolDecoder[] = [
   phoenix,
   centrifugo,
   sfs2x,
+  firebase,
+  primus,
 ]
 
 /**
@@ -66,7 +70,7 @@ interface Attempt {
 }
 
 function attempt(decoder: ProtocolDecoder, frames: readonly RawFrame[], handshake: Handshake): Attempt {
-  const session = decoder.start()
+  const session = decoder.start(handshake)
   const readings = frames.map(frame => session.read(frame))
   const carries = (frame: RawFrame | undefined): boolean => frame?.binary === (decoder.content === 'binary')
   return {

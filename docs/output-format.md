@@ -218,6 +218,13 @@ same stem. Conventions:
   - `x-site-to-api-kind`: `api` | `page` | `bot-protection`
   - `x-site-to-api-dispatch`: on a dispatcher function, `{ endpoint, parameter, in (query | form
     | json), value }`
+  - `x-site-to-api-rpc`: on a tRPC procedure or Connect RPC method (decision 0051), `{ protocol
+    (trpc | connect), procedure, readOnly, readOnlyEvidence }`. Each procedure is its own
+    operation at its literal path (a tRPC batch is split into one unbatched call per
+    procedure); a tRPC `input` and a Connect GET `message` are JSON query parameters
+    (`content: application/json`), and flow inputs inside them read `query.input./json/slug`.
+    `readOnly` (a GET, or `NO_SIDE_EFFECTS` in the site's protobuf descriptor) lets probe and
+    the MCP servers send the call.
   - `x-site-to-api-graphql`: on a GraphQL operation, `{ endpoint, operationName, operationType
     (query | mutation | subscription | unknown), operationTypeFrom (document | get | source |
     null), persistedQuery ({ version, sha256Hash } | null), hashes (only when more than one was
@@ -270,6 +277,11 @@ are written from the client's point of view: `send` is client → server, `recei
   is that of the params (`p`, or `p.p` for an extension); `contentType` stays
   `application/octet-stream`. Encrypted packets are one `encrypted` message, counted only. The
   channel's version is the client API the handshake names (`client API 1.8.4`).
+- Firebase Realtime Database (`/.ws?v=5&ns=…`) and Primus (decision 0051): Firebase messages
+  are named by action and templated database path (`listen /v0/item/{id}`, pushes `data
+  /v0/item/{id}`, answers after their request), control frames by type (`hello`, `ping`);
+  Primus data messages by their `type`-like field, its heartbeat `ping`/`pong`, over Engine.IO
+  or plain frames.
 - Binary frames that decode fully as MessagePack (`application/msgpack`) or as protobuf wire
   format (`application/x-protobuf`, fields named `field <n> (<wire type>)`) get schemas and
   examples like JSON messages, and MessagePack messages are grouped by discriminator.

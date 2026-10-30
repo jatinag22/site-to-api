@@ -53,6 +53,11 @@ const OperationFactsSchema = z.looseObject({
     in: z.enum(['query', 'form', 'json']),
     value: z.string(),
   }).optional(),
+  'x-site-to-api-rpc': z.looseObject({
+    protocol: z.enum(['trpc', 'connect']),
+    procedure: z.string(),
+    readOnly: z.boolean(),
+  }).optional(),
 })
 
 /** A spec parameter as the tools describe it. */
@@ -236,6 +241,7 @@ function toEntry(context: EntryContext, path: string, method: string, pathItemPa
   ]
   const graphql = facts['x-site-to-api-graphql']
   const dispatch = facts['x-site-to-api-dispatch']
+  const rpc = facts['x-site-to-api-rpc']
   return {
     host: context.host.host,
     identifier: context.host.identifier,
@@ -260,6 +266,13 @@ function toEntry(context: EntryContext, path: string, method: string, pathItemPa
             in: dispatch.in,
             value: dispatch.value,
           },
+        }
+      : {}),
+    ...(rpc
+      ? {
+          // The MCP servers send with the person's session: a descriptor's word is enough for
+          // probe's own replay, but here only a call the page itself made with GET reads.
+          rpc: { protocol: rpc.protocol, procedure: rpc.procedure, readOnly: rpc.readOnly && method.toUpperCase() === 'GET' },
         }
       : {}),
     client: clientShape(facts, parameters),
@@ -564,7 +577,8 @@ function optionParts(entry: OperationEntry, named: (prefix: string) => string[])
     ],
     [
       'query',
-      named('query.'),
+      // A field inside a JSON parameter (`input./json/id`) is part of that parameter.
+      named('query.').filter(name => !name.includes('./')),
     ],
     [
       'body',
