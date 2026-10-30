@@ -145,7 +145,7 @@ function decodeOne(bytes: Buffer, coding: string): Buffer | null {
 }
 
 /**
- * Undoes a `content-encoding` (decision 0049): `gzip`, `deflate`, `br` or `identity`, several
+ * Undoes a `content-encoding` (decision 0050): `gzip`, `deflate`, `br` or `identity`, several
  * in the order they were applied (`gzip, br`). Null when a coding is unknown, the data is
  * corrupt, or the result would pass {@link MAX_DECODED_BODY_BYTES}.
  */

@@ -44,7 +44,7 @@ export interface Connection {
   /**
    * How its frames travelled: `websocket`, `polling`, or both when an Engine.IO session started
    * on long-polling and upgraded (one connection, frames in time order); `sse` for a server-sent
-   * event stream, whose events are its received frames (decision 0049).
+   * event stream, whose events are its received frames (decision 0050).
    */
   transports: Array<'websocket' | 'polling' | 'sse'>
   /**
@@ -277,7 +277,7 @@ function decoded(connection: RawConnection): Connection {
 /**
  * Every connection of every session, ordered by session id, then sockets in opening order, then
  * Engine.IO long-polling sessions that never upgraded (one that did is part of its socket), then
- * server-sent event streams (decision 0049). `exchanges` (the HAR) gives each socket its upgrade request,
+ * server-sent event streams (decision 0050). `exchanges` (the HAR) gives each socket its upgrade request,
  * which names the subprotocol, and holds the long-polling requests.
  */
 export function collectConnections(sessions: readonly LoadedSession[], exchanges: readonly Exchange[] = []): Connection[] {

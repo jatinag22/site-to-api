@@ -42,7 +42,7 @@ export const ConfigSchema = z.strictObject({
        */
       sandbox: z.boolean().default(true),
       /**
-       * Start the browser with `--mute-audio` (decision 0049): a capture opens pages that autoplay
+       * Start the browser with `--mute-audio` (decision 0050): a capture opens pages that autoplay
        * video and sound, and the person running it should not hear them. Set false to hear them.
        */
       muteAudio: z.boolean().default(true),

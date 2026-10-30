@@ -1,5 +1,5 @@
 /**
- * Server-sent event streams as channel connections (decision 0049). A stream's events come from
+ * Server-sent event streams as channel connections (decision 0050). A stream's events come from
  * the capture's `sse` events (Chrome reports each event an `EventSource` receives, also on a
  * stream that never ends) or, for a stream that ended during the capture (`fetch` reading
  * `text/event-stream`), from the response body the HAR holds. Each event is a received frame.

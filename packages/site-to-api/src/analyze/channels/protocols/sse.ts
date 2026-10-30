@@ -1,5 +1,5 @@
 /**
- * Server-sent events (decision 0049): a `text/event-stream` response read as a channel whose
+ * Server-sent events (decision 0050): a `text/event-stream` response read as a channel whose
  * server messages are its events, named by their `event:` field. The frames of such a connection
  * are its events in the stream's own syntax (`event: …`, `id: …`, `data: …` lines), whether
  * Chrome reported them one by one or the HAR held the whole body of a stream that ended.

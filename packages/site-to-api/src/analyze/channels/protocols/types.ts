@@ -56,7 +56,7 @@ export interface Handshake {
   query: ReadonlyArray<{ name: string, value: string }>
   /** `Sec-WebSocket-Protocol` values the browser asked for. */
   subprotocols: readonly string[]
-  /** True for a server-sent event stream (decision 0049): only the `sse` decoder reads it. */
+  /** True for a server-sent event stream (decision 0050): only the `sse` decoder reads it. */
   eventStream?: boolean
 }
 

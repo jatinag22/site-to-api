@@ -22,7 +22,7 @@ const BROWSER_REQUEST_HEADERS = new Set([
   'accept-language',
   'cache-control',
   'connection',
-  // Names how the body was compressed; load decodes the body and drops it (decision 0049).
+  // Names how the body was compressed; load decodes the body and drops it (decision 0050).
   'content-encoding',
   'content-length',
   'content-type',

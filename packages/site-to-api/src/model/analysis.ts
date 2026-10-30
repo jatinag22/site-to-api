@@ -318,7 +318,7 @@ export interface ChannelConnectionFacts {
   firstMessage: { message: string, role: HandshakeRole, reply: string | null } | null
   /**
    * `websocket`, and `polling` when Engine.IO long-polling carried the same channel; `sse` for a
-   * server-sent event stream (decision 0049), which is a channel of its own.
+   * server-sent event stream (decision 0050), which is a channel of its own.
    */
   transports: Array<'websocket' | 'polling' | 'sse'>
 }
@@ -328,7 +328,7 @@ export interface WebSocketChannel {
   /** Unique per host and usable as an AsyncAPI key, e.g. `wsTicker`. */
   id: string
   host: string
-  /** `ws` or `wss` for a WebSocket; `http` or `https` for a server-sent event stream (decision 0049). */
+  /** `ws` or `wss` for a WebSocket; `http` or `https` for a server-sent event stream (decision 0050). */
   scheme: 'ws' | 'wss' | 'http' | 'https'
   /** Connection path with parameters, templated by the same rules as HTTP paths. */
   path: string
@@ -376,7 +376,7 @@ export interface Analysis {
   /**
    * The URLs the capture sessions started at (`meta.json` `startUrl`), sorted, once each. When no
    * page was browsed (every navigation was answered by a script, or the capture had none), their
-   * site is the site's own (decision 0049). Optional and additive.
+   * site is the site's own (decision 0050). Optional and additive.
    */
   startUrls?: string[]
   hosts: string[]

@@ -1,4 +1,4 @@
-# 0049 Compressed request bodies, server-sent event streams, and pages next to service workers
+# 0050 Compressed request bodies, server-sent event streams, and pages next to service workers
 
 Status: Accepted (2026-10-30). Refines 0023, 0031, 0036, 0037, 0038, 0044, 0046.
 

@@ -33,7 +33,7 @@ export const HarEntrySchema = z.object({
     postData: z.object({
       mimeType: z.string().nullish(),
       text: z.string().nullish(),
-      /** The raw body when Playwright could not write it as text, added by capture (decision 0049). */
+      /** The raw body when Playwright could not write it as text, added by capture (decision 0050). */
       _base64: z.string().nullish(),
       params: z.array(z.object({
         name: z.string(),

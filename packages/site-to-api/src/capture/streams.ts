@@ -1,5 +1,5 @@
 /**
- * Records server-sent events (decision 0049). An `EventSource` stream never ends while the page
+ * Records server-sent events (decision 0050). An `EventSource` stream never ends while the page
  * is open, so the HAR holds no body for it, and the page's own events reach only the listeners
  * the page registered. Chrome's DevTools protocol reports every event an `EventSource` receives
  * (`Network.eventSourceMessageReceived`), whatever its name; each becomes an `sse` capture event.

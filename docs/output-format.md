@@ -239,7 +239,7 @@ same stem. Conventions:
 ## `specs/<host>.asyncapi.yaml`
 
 AsyncAPI 3.0, one file per host that has WebSocket channels or server-sent event streams
-(decisions 0023, 0049), named like the
+(decisions 0023, 0050), named like the
 OpenAPI file with `.asyncapi.yaml` (`localhost:4173` → `localhost_4173.asyncapi.yaml`). Operations
 are written from the client's point of view: `send` is client → server, `receive` server → client.
 
@@ -260,7 +260,7 @@ are written from the client's point of view: `send` is client → server, `recei
   Phoenix `topic:event` or Centrifugo channel (identifiers as `{id}`), and the payload schema
   is that of the message's data (event arguments, STOMP `{headers, body}`, graphql-ws
   `payload`). Engine.IO long-polling requests are part of the channel, not HTTP operations.
-- Server-sent event streams (decision 0049) are channels whose messages the server sends: one
+- Server-sent event streams (decision 0050) are channels whose messages the server sends: one
   per `event:` name (`message` when none), with the event's `data` as the payload (its JSON
   when it is JSON), and the protocol `sse`.
 - SmartFoxServer 2X (decision 0048): binary packets (often on `/BlueBox/websocket`) are decoded

@@ -77,7 +77,7 @@ function resolveInitiator(event: RequestEvent | undefined, resourceType: string)
 type PostData = NonNullable<HarEntry['request']['postData']>
 
 /**
- * The request body and the headers to keep (decision 0049). A body capture saved as raw bytes is
+ * The request body and the headers to keep (decision 0050). A body capture saved as raw bytes is
  * decoded with its `content-encoding`; once decoded, that header no longer describes the body the
  * exchange holds, so it is dropped: a client sends the decoded body, and an input whose value the
  * HTTP stack sets is not one the wrapper has to find.

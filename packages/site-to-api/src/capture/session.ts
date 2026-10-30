@@ -211,7 +211,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
   const collector = new ScriptCollector(sessionDir, context.request, { saveScripts: capture.saveScripts, sourcemaps: capture.sourcemaps })
   if (capture.saveScripts || capture.sourcemaps)
     context.on('response', response => collector.onResponse(response))
-  // Bodies the HAR would garble (compressed or binary), kept as bytes for the HAR (decision 0049).
+  // Bodies the HAR would garble (compressed or binary), kept as bytes for the HAR (decision 0050).
   const bodies = new RequestBodyRecorder()
   context.on('request', (request) => {
     try {

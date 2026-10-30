@@ -84,7 +84,7 @@ const NODE_FILES: HarFiles = { readFile: readFileDefault, writeFile: writeFileDe
 
 /** What {@link finishHar} did: the compaction applied, or a warning when it could not be saved. */
 export interface FinishedHar extends HarCompaction {
-  /** Request bodies put back from their raw bytes (`postData._base64`, decision 0049). */
+  /** Request bodies put back from their raw bytes (`postData._base64`, decision 0050). */
   bodiesRestored: number
   /** One warning when the compacted HAR could not be written; the original HAR is then kept. */
   warnings: string[]

@@ -26,12 +26,12 @@ const NOT_REPLAYED = new Set([
   'accept-encoding',
   'cookie',
   // The browser's cache validators: replayed, they make the server answer 304 with no body, which
-  // reads as a rejection to probe and as drift (200 -> 304) to check (decision 0049).
+  // reads as a rejection to probe and as drift (200 -> 304) to check (decision 0050).
   'if-none-match',
   'if-modified-since',
 ])
 
-/** Responses that never end on their own; only their start is read (decision 0049). */
+/** Responses that never end on their own; only their start is read (decision 0050). */
 const STREAM_TYPES = new Set([
   'text/event-stream',
   'application/x-ndjson',
@@ -178,9 +178,9 @@ function topLevelKeys(value: unknown): string[] | null {
 }
 
 /** An HTML response that is a bot challenge or block page; the marker that says so, or null. */
-function challengeResponse(contentType: string | null, body: string): string | null {
+function challengeResponse(contentType: string | null, body: string, status: number): string | null {
   return mediaType(contentType).includes('html')
-    ? challengePageMarker(body)
+    ? challengePageMarker(body, status)
     : null
 }
 
@@ -220,7 +220,7 @@ function differenceFromCapture(exchange: Exchange, status: number, contentType: 
   if (hasChallengeHeader(headers))
     return 'a bot challenge (challenge header)'
   // An interstitial answered 200 (Reddit's JavaScript challenge) is never the API working.
-  if (challengeResponse(contentType, body) !== null)
+  if (challengeResponse(contentType, body, status) !== null)
     return 'a bot challenge page'
   const expected = exchange.response.body?.mimeType ?? ''
   const actual = mediaType(contentType)
@@ -300,7 +300,7 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
     const body = exchange.request.body?.text ?? null
     // One signal for the whole exchange: the timeout covers the wait for the headers and, except
     // for a stream, the body; a stream's start is read under its own limit, then the connection
-    // is closed (decision 0049).
+    // is closed (decision 0050).
     const done = new AbortController()
     const timer = setTimeout(() => done.abort(new DOMException('timed out', 'TimeoutError')), options.config.timeoutMs)
     try {
@@ -376,7 +376,7 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
  */
 function blockEvidence(response: LiveResponse): string | null {
   const answered = [...response.headers].map(([name, value]) => ({ name, value }))
-  const marker = challengeResponse(response.contentType, response.text)
+  const marker = challengeResponse(response.contentType, response.text, response.status)
   return detectBlock(response.status, response.headers, response.text)
     ?? (hasChallengeHeader(answered)
       ? `challenge header, status ${response.status}`
@@ -584,7 +584,7 @@ function answerDiffers(exchange: Exchange, response: LiveResponse): boolean {
   const actualType = mediaType(response.contentType)
   if (response.status !== exchange.response.status
     || hasChallengeHeader([...response.headers].map(([name, value]) => ({ name, value })))
-    || challengeResponse(response.contentType, response.text) !== null
+    || challengeResponse(response.contentType, response.text, response.status) !== null
     || (expectedType !== '' && actualType !== '' && expectedType !== actualType)) {
     return true
   }

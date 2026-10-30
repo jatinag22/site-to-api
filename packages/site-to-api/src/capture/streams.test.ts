@@ -1,7 +1,7 @@
 /**
  * Real headless captures (bundled Chromium) against a local `node:http` site that opens a
  * server-sent event stream which never ends and sends a gzip-compressed request body, the two
- * things a HAR alone loses (decision 0049). Checks the raw session and what `load` and the
+ * things a HAR alone loses (decision 0050). Checks the raw session and what `load` and the
  * channels stage make of it.
  */
 import type { AddressInfo } from 'node:net'

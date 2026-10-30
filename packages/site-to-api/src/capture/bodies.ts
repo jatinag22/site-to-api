@@ -1,5 +1,5 @@
 /**
- * Request bodies the HAR cannot hold (decision 0049). Playwright writes `postData.text` as the
+ * Request bodies the HAR cannot hold (decision 0050). Playwright writes `postData.text` as the
  * body decoded as UTF-8, and leaves it empty for `application/octet-stream`, so a body the page
  * compressed before sending (YouTube gzips every innertube request) arrives in the HAR as
  * replacement characters or nothing. Capture keeps the raw bytes of such bodies from Playwright's

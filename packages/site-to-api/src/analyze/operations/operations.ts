@@ -672,18 +672,57 @@ function assignOperationIds(operations: Operation[]): Operation[] {
   })
 }
 
+/** `POST shop.test /graphql`: the endpoint a request went to, whatever operation it carried. */
+function endpointKey(exchange: Exchange): string {
+  return `${exchange.request.method} ${exchange.request.host} ${exchange.request.path}`
+}
+
 /**
- * Builds operations from classified exchanges (`api`, `page` and `bot-protection` only) and adds
+ * The exchanges operations are built from, without challenge answers on endpoints that answered
+ * other calls normally, and how many such answers each endpoint had. One batch of CodePen's
+ * GraphQL that met a Cloudflare 403 must not become a `postGraphql` operation reported as browser
+ * only while every other call to `/graphql` worked.
+ */
+function withoutStrayChallenges(exchanges: readonly Exchange[]): { kept: Exchange[], challenged: Map<string, number> } {
+  const answered = new Set(exchanges
+    .filter(exchange => (exchange.kind === 'api' || exchange.kind === 'page') && exchange.response.status > 0 && exchange.response.status < 400)
+    .map(endpointKey))
+  const challenged = new Map<string, number>()
+  const kept = exchanges.filter((exchange) => {
+    const key = endpointKey(exchange)
+    if (!isChallengeAnswer(exchange) || !answered.has(key))
+      return true
+    challenged.set(key, (challenged.get(key) ?? 0) + 1)
+    return false
+  })
+  return { kept, challenged }
+}
+
+/** The summary with a note when calls to the operation's endpoint were sometimes challenged. */
+function withChallengeNote(operation: Operation, challenged: ReadonlyMap<string, number>): Operation {
+  const count = [
+    ...new Set(operation.exchanges.map(endpointKey)),
+  ]
+    .reduce((total, key) => total + (challenged.get(key) ?? 0), 0)
+  return count === 0
+    ? operation
+    : { ...operation, summary: `${operation.summary} Sometimes challenged: ${count} call(s) to this endpoint got a bot challenge instead and are left out.` }
+}
+
+/**
+ * Builds operations from classified exchanges (`api`, `page` and `bot-protection` only; challenge answers
+ * on endpoints that answered other calls normally are left out) and adds
  * `sourceOnly` operations for source routes that were never called. Request and response shapes
  * are left empty for `analyze/schema`; `sentFrom` is left empty for the flows stage.
  *
  * @returns operations sorted by host, path, method
  */
 export function buildOperations(exchanges: Exchange[], options: BuildOperationsOptions): Operation[] {
+  const { kept, challenged } = withoutStrayChallenges(exchanges)
   const observed = [
-    ...observedOperations(exchanges, options.sourceRoutes, options.isSecretKey),
-    ...graphqlOperations(exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind)), options.isSecretKey),
-  ]
+    ...observedOperations(kept, options.sourceRoutes, options.isSecretKey),
+    ...graphqlOperations(kept.filter(exchange => OPERATION_KINDS.has(exchange.kind)), options.isSecretKey),
+  ].map(operation => withChallengeNote(operation, challenged))
   return assignOperationIds([
     ...observed,
     ...sourceOnlyOperations(options.sourceRoutes, observed, exchanges),

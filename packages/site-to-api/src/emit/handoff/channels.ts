@@ -15,7 +15,7 @@ import { MAX_SUMMARY_LINES, moreLine } from './summary'
 /** Examples longer than this are left to the AsyncAPI file instead of filling a Markdown line. */
 const MAX_INLINE_EXAMPLE = 400
 
-/** True for a server-sent event stream, which a client opens with a plain GET (decision 0049). */
+/** True for a server-sent event stream, which a client opens with a plain GET (decision 0050). */
 function isEventStream(channel: WebSocketChannel): boolean {
   return channel.connection.transports.includes('sse')
 }
@@ -154,7 +154,7 @@ function firstMessageLine(channel: WebSocketChannel): string | null {
     : 'none'}.`
 }
 
-/** How an event stream is opened and read (decision 0049), in place of a WebSocket upgrade. */
+/** How an event stream is opened and read (decision 0050), in place of a WebSocket upgrade. */
 function streamRequestLines(facts: ChannelConnectionFacts, origin: string, tokens: string): string[] {
   return [
     `- Stream request: a \`GET\` the server answers with \`text/event-stream\`; ${origin}; ${tokens}; ${upgradeSentence(facts.upgrade, false).replace('connection', 'stream')}.`,
