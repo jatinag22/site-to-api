@@ -62,6 +62,24 @@ export default async ({ page, context, baseUrl }) => {
     expect(await readFile(path.join(result.sessionDir, 'traffic.har'), 'utf8')).toContain('/api/items')
   }, 60_000)
 
+  it('takes a close through page.context() for the script\'s own end, not a crash', async () => {
+    await writeFile(path.join(work, 'page-context.mjs'), `
+export default async ({ page, baseUrl }) => {
+  await page.goto(baseUrl)
+  await page.waitForResponse(response => response.url().endsWith('/api/items'))
+  await page.context().close()
+}
+`)
+    const result = await runCapture(config('page-context.mjs'), {
+      url: `${origin}/`,
+      sessionId: 'page-context',
+      cwd: work,
+      timeouts: { settleMs: 3_000, closeMs: 5_000 },
+    })
+    expect(result.meta.incomplete).toBeUndefined()
+    expect(await readFile(path.join(result.sessionDir, 'traffic.har'), 'utf8')).toContain('/api/items')
+  }, 60_000)
+
   it('marks the session incomplete when the browser process ended and left no HAR', async () => {
     await writeFile(path.join(work, 'kills.mjs'), `
 export default async ({ page, context, baseUrl }) => {

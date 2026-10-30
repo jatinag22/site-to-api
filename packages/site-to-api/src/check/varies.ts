@@ -103,15 +103,28 @@ function driftPaths(diff: SchemaDiff): string[] {
   ]
 }
 
-/** Keys an error answer has instead of data: `{"error": "rate"}`, `{"errors": [...]}`, `{"message": "..."}`. */
-const ERROR_KEYS = new Set(['error', 'errors', 'message'])
+/** Keys an error answer has instead of data: `{"error": "rate"}`, `{"errors": [...]}`, `{"message": "..."}`, `{"reason": "..."}`. */
+const ERROR_KEYS = new Set(['error', 'errors', 'message', 'reason'])
 
-/** True for a JSON object that holds only error keys: an error answered with the data's status. */
+/** `status` values that say an answer failed (JSend's `fail` and `error`). */
+const FAILED_STATUS = /^(?:fail|failed|failure|error)$/i
+
+/**
+ * True for an error answered with the data's status: an object holding only error keys, or one
+ * that says it failed (`ok: false`, `success: false`, `status: "fail" | "error"`, a numeric
+ * `code` of 400 or more).
+ */
 function isErrorShaped(read: Read): boolean {
   if (read === NOT_JSON || read.json === null || typeof read.json !== 'object' || Array.isArray(read.json))
     return false
-  const keys = Object.keys(read.json)
-  return keys.length > 0 && keys.every(key => ERROR_KEYS.has(key))
+  const body: Record<string, unknown> = { ...read.json }
+  const keys = Object.keys(body)
+  if (keys.length > 0 && keys.every(key => ERROR_KEYS.has(key)))
+    return true
+  return body.ok === false
+    || body.success === false
+    || (typeof body.status === 'string' && FAILED_STATUS.test(body.status))
+    || (typeof body.code === 'number' && body.code >= 400)
 }
 
 /**

@@ -31,13 +31,17 @@ The real-site recheck after 0050 and 0052 found two wrong verdicts on YouTube.
   when it is missing or invalid the session stays incomplete. A page that had already closed is
   not a failed close. Any other close failure keeps 0050's behaviour.
 - That only applies when the person or the script ended the session first: the script returned
-  or closed the context itself, a stop signal came, or (interactive mode) the person closed the
-  last page. A browser that closed its context before any of those exited on its own (a crash,
-  an out-of-memory kill): its HAR is still read in full, but the session is incomplete with
-  `the browser exited during the capture`. Playwright closes every page before the context also
-  when the browser crashes, so in script mode a last page closing is not taken as the end.
-- An `error` session is described as "stopped on an error" with "what came after the error is
-  missing", not as having failed before the run.
+  or closed the context itself (any `close()` of the context, also through `page.context()`), a
+  stop signal came, or (interactive mode) the person closed the last page and the context was
+  still open 50 ms later. A browser that closed its context before any of those exited on its
+  own (a crash, an out-of-memory kill): its HAR is still read in full, but the session is
+  incomplete with `the browser exited during the capture`. Playwright closes every page before
+  the context also when the browser crashes, so a last page closing with the context closing
+  right after is a crash, and in script mode a last page closing is never the end. Quitting the
+  whole browser by hand (Cmd+Q) in interactive mode looks the same as a crash.
+- Error answers (that keep a difference drift) are objects holding only `error`, `errors`,
+  `message` or `reason`, or saying they failed: `ok: false`, `success: false`,
+  `status: "fail" | "error"`, a numeric `code` of 400 or more.
 
 ## Consequences
 - `check.json` has one more verdict value, `varies`; readers that list the verdicts need it.

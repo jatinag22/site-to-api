@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createStopper, saveSession, SessionEnd, writeJsonAtomic } from './save'
+import { createStopper, LAST_PAGE_GRACE_MS, saveSession, SessionEnd, writeJsonAtomic } from './save'
 
 let dir: string
 let harPath: string
@@ -335,5 +335,28 @@ describe('sessionEnd', () => {
     ended.browserClosed()
     expect(ended.exitedEarly).toBe(false)
     expect(new SessionEnd().exitedEarly).toBe(false)
+  })
+
+  it('takes a last page closing and the context closing back to back for a crash (interactive)', async () => {
+    const crash = new SessionEnd()
+    crash.lastPageClosed()
+    crash.browserClosed()
+    await crash.settled()
+    expect(crash.exitedEarly).toBe(true)
+  })
+
+  it('takes a last page closing as the person\'s end when the context stays open (interactive)', async () => {
+    const person = new SessionEnd()
+    person.lastPageClosed()
+    await person.settled()
+    // The capture closes the context afterwards; that is not an early exit.
+    person.browserClosed()
+    expect(person.exitedEarly).toBe(false)
+    // And waiting the grace by hand gives the same answer.
+    const waited = new SessionEnd()
+    waited.lastPageClosed()
+    await new Promise(resolve => setTimeout(resolve, LAST_PAGE_GRACE_MS + 20))
+    waited.browserClosed()
+    expect(waited.exitedEarly).toBe(false)
   })
 })

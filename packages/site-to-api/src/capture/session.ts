@@ -250,7 +250,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       userAgent = browser.userAgent ?? await page.evaluate(() => navigator.userAgent)
       incomplete = script === null
         ? await runInteractive(context, page, options, stopper.signal, log)
-        : await runScripted(script, scriptContext(context, sessionEnd), page, options, stopper.signal, log)
+        : await runScripted(script, context, page, options, stopper.signal, log)
     }
     catch (error) {
       // Instrumentation or the first page failed before the run: save what exists anyway.
@@ -259,7 +259,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
         error: errorMessage(error),
       }
     }
-    sessionEnd.end()
+    await runEnded(sessionEnd, script !== null)
     logFailure(incomplete, log)
     const saved = await saveSession({
       context,
@@ -535,9 +535,21 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
 
 /** Runs the capture script; a failure or interruption is returned, so the session is still saved. */
 /**
+ * The run returned. A script that returned ended the session; in interactive mode the run also
+ * returns when a crash closed every page, so only the last-page grace or a stop signal decides.
+ */
+async function runEnded(sessionEnd: SessionEnd, scripted: boolean): Promise<void> {
+  if (scripted)
+    sessionEnd.end()
+  else
+    await sessionEnd.settled()
+}
+
+/**
  * Records whether the person or the script ended the session before the browser closed
- * (decision 0055). Playwright closes every page before the context also on a crash, so a last
- * page closing ends the session only in interactive mode, where the person closed it.
+ * (decision 0055). Interactive: the last page closing, if the context then stays open (a crash
+ * closes pages and context back to back). Script: any `close()` of this context, however the
+ * script reached it (`context`, `page.context()`), patched on the instance itself.
  */
 function trackSessionEnd(context: BrowserContext, stop: AbortSignal, interactive: boolean): SessionEnd {
   const sessionEnd = new SessionEnd()
@@ -547,34 +559,20 @@ function trackSessionEnd(context: BrowserContext, stop: AbortSignal, interactive
     const watch = (page: Page): void => {
       page.on('close', () => {
         if (context.pages().length === 0)
-          sessionEnd.end()
+          sessionEnd.lastPageClosed()
       })
     }
     context.pages().forEach(watch)
     context.on('page', watch)
   }
+  else {
+    const close = context.close.bind(context)
+    context.close = async (...args: Parameters<BrowserContext['close']>): Promise<void> => {
+      sessionEnd.end()
+      await close(...args)
+    }
+  }
   return sessionEnd
-}
-
-/**
- * The context a capture script gets: the same one, except that its `close()` first records that
- * the script ended the session, so a script that closes the browser is not taken for a crash.
- */
-function scriptContext(context: BrowserContext, sessionEnd: SessionEnd): BrowserContext {
-  return new Proxy(context, {
-    get(target, property, receiver) {
-      if (property === 'close') {
-        return async (...args: Parameters<BrowserContext['close']>): Promise<void> => {
-          sessionEnd.end()
-          await target.close(...args)
-        }
-      }
-      const value: unknown = Reflect.get(target, property, receiver)
-      return typeof value === 'function'
-        ? value.bind(target)
-        : value
-    },
-  })
 }
 
 async function runScripted(script: CaptureScript, context: BrowserContext, page: Page, options: RunCaptureOptions, stop: AbortSignal, log: (message: string) => void): Promise<Incomplete | null> {

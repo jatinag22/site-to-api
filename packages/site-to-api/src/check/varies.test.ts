@@ -87,4 +87,24 @@ describe('variesInCapture', () => {
     expect(variesInCapture([')]}\'\n[1]', 'oops'], 'busy', root)).toBe(true)
     expect(variesInCapture([')]}\'\n[1]', '[2]'], 'busy', root)).toBe(false)
   })
+
+  it('counts failure flags, failed statuses, error codes and a bare reason as error answers', () => {
+    const diff: SchemaDiff = {
+      added: [],
+      removed: ['$.items'],
+      typeChanged: [],
+    }
+    const failures = [
+      '{"ok":false,"items":null}',
+      '{"success":false}',
+      '{"status":"fail","data":{}}',
+      '{"status":"error"}',
+      '{"code":429,"detail":"slow down"}',
+      '{"reason":"maintenance"}',
+    ]
+    for (const failure of failures)
+      expect(variesInCapture(['{"items":[1]}', failure], '{}', diff)).toBe(false)
+    // Ordinary data that happens to have these keys is not an error answer.
+    expect(variesInCapture(['{"items":[1],"ok":true}', '{"code":200,"status":"active"}'], '{}', diff)).toBe(true)
+  })
 })

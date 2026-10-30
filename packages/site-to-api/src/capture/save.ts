@@ -107,19 +107,58 @@ export async function writeJsonAtomic(file: string, value: unknown): Promise<voi
  * before any of those (a crash, an out-of-memory kill). A browser that exits on its own leaves
  * the session incomplete, even when the HAR it wrote is read in full.
  */
+/**
+ * How long the context must stay open after the last page closed for that close to count as the
+ * person's: a crashing browser closes every page and then its context at once.
+ */
+export const LAST_PAGE_GRACE_MS = 50
+
 export class SessionEnd {
   private ended = false
   private early = false
+  private closed = false
+  private grace: { timer: ReturnType<typeof setTimeout>, done: Promise<void>, resolve: () => void } | null = null
 
   /** The person or the script ended the session. */
   end(): void {
     this.ended = true
   }
 
+  /**
+   * The last page closed (interactive mode). It is the person's end only when the context is
+   * still open {@link LAST_PAGE_GRACE_MS} later; a context that closes first was a crash.
+   */
+  lastPageClosed(): void {
+    if (this.grace !== null || this.closed)
+      return
+    let resolve = (): void => {}
+    const done = new Promise<void>((settle) => {
+      resolve = settle
+    })
+    const timer = setTimeout(() => {
+      if (!this.closed)
+        this.ended = true
+      this.grace = null
+      resolve()
+    }, LAST_PAGE_GRACE_MS)
+    this.grace = { timer, done, resolve }
+  }
+
   /** The browser context closed; before {@link end}, the browser exited on its own. */
   browserClosed(): void {
+    this.closed = true
+    if (this.grace !== null) {
+      clearTimeout(this.grace.timer)
+      this.grace.resolve()
+      this.grace = null
+    }
     if (!this.ended)
       this.early = true
+  }
+
+  /** Resolves once a pending last-page close has been judged; call before closing the context. */
+  async settled(): Promise<void> {
+    await this.grace?.done
   }
 
   /** True when the browser closed before the person or the script ended the session. */
