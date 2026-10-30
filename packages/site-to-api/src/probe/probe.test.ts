@@ -389,6 +389,15 @@ describe('resemblesCapture', () => {
     expect(resemblesCapture(html, 302, 'text/html', '')).toBe(false)
   })
 
+  it('takes a page that only includes the AWS WAF integration script for success', () => {
+    const app = `<html><head><script src="https://a1b2.edge.sdk.awswaf.com/a1b2/c3d4/challenge.js"></script></head><body>${'<p>Model card text for an ordinary page.</p>'.repeat(30)}</body></html>`
+    const page = exchange({
+      url: 'https://hub.test/models',
+      responseBody: textBody(app),
+    })
+    expect(resemblesCapture(page, 200, 'text/html', app)).toBe(true)
+  })
+
   it('never takes an AWS WAF challenge for success, by header or by its interstitial', () => {
     const goku = '<html><head><script>window.gokuProps = { "key": "k" }</script></head><body>'.padEnd(1000, 'z')
     expect(resemblesCapture(html, 202, 'text/html', goku, [

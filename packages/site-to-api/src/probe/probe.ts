@@ -112,9 +112,9 @@ function topLevelKeys(value: unknown): string[] | null {
 }
 
 /** An HTML response that is a bot challenge or block page; the marker that says so, or null. */
-function challengeResponse(contentType: string | null, body: string): string | null {
+function challengeResponse(contentType: string | null, body: string, status: number): string | null {
   return mediaType(contentType).includes('html')
-    ? challengePageMarker(body)
+    ? challengePageMarker(body, status)
     : null
 }
 
@@ -154,7 +154,7 @@ function differenceFromCapture(exchange: Exchange, status: number, contentType: 
   if (hasChallengeHeader(headers))
     return 'a bot challenge (challenge header)'
   // An interstitial answered 200 (Reddit's JavaScript challenge) is never the API working.
-  if (challengeResponse(contentType, body) !== null)
+  if (challengeResponse(contentType, body, status) !== null)
     return 'a bot challenge page'
   const expected = exchange.response.body?.mimeType ?? ''
   const actual = mediaType(contentType)
@@ -296,7 +296,7 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
  */
 function blockEvidence(response: LiveResponse): string | null {
   const answered = [...response.headers].map(([name, value]) => ({ name, value }))
-  const marker = challengeResponse(response.contentType, response.text)
+  const marker = challengeResponse(response.contentType, response.text, response.status)
   return detectBlock(response.status, response.headers, response.text)
     ?? (hasChallengeHeader(answered)
       ? `challenge header, status ${response.status}`
@@ -504,7 +504,7 @@ function answerDiffers(exchange: Exchange, response: LiveResponse): boolean {
   const actualType = mediaType(response.contentType)
   if (response.status !== exchange.response.status
     || hasChallengeHeader([...response.headers].map(([name, value]) => ({ name, value })))
-    || challengeResponse(response.contentType, response.text) !== null
+    || challengeResponse(response.contentType, response.text, response.status) !== null
     || (expectedType !== '' && actualType !== '' && expectedType !== actualType)) {
     return true
   }

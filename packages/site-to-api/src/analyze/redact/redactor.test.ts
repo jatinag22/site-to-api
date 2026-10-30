@@ -1,7 +1,7 @@
 import type { ResolvedConfig } from '../../config/schema'
 import type { Exchange, RedactContext, Redactor } from '../../model'
 import { describe, expect, it } from 'vitest'
-import { exchange, jsonBody } from '../../../test/helpers'
+import { exchange, jsonBody, textBody } from '../../../test/helpers'
 import { CONFIG, fixtureExchanges, SECRETS } from '../../../test/secret-fixture'
 import { SiteToApiError } from '../../errors'
 import { isLuhnValid, isTrackingIdName, isVerhoeffValid, maskPersonalData, PERSONAL_DATA_PATTERNS } from './personal-data'
@@ -995,6 +995,174 @@ describe('createRedactor: learntSecrets (decision 0047)', () => {
     expect(secrets).not.toContain('desktop-layout-wide')
     expect(secrets).not.toContain('a1b2')
     expect(secrets).toEqual([...secrets].sort())
+  })
+})
+
+describe('createRedactor: short secrets and public labels', () => {
+  it('never learns a host label sent under a key name, and keeps it wherever it is redacted', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://www.pagebook.so/api/v3/getSpaces',
+        method: 'POST',
+        requestBody: jsonBody({ api_key: 'pagebook' }),
+      }),
+    ])
+    expect(r.value('https://www.pagebook.so/api', { in: 'text' })).toBe('https://www.pagebook.so/api')
+    expect(r.value('x-pagebook-client-version', { in: 'text' })).toBe('x-pagebook-client-version')
+    expect(r.value('Open pagebook to continue', { in: 'text' })).toBe('Open pagebook to continue')
+    expect(r.value('pagebook', { in: 'body', name: 'api_key' })).toBe('pagebook')
+    expect(r.value('pagebook', { in: 'header', name: 'x-api-key' })).toBe('pagebook')
+    expect(r.learntSecrets()).toEqual([])
+  })
+
+  it('keeps a short lower-case word under a name that says the key is public', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/x',
+        method: 'POST',
+        requestBody: jsonBody({ siteKey: 'docs' }),
+      }),
+    ])
+    expect(r.value('docs', { in: 'body', name: 'siteKey' })).toBe('docs')
+  })
+
+  it('never keeps a key by its shape: letters-only and word-like keys stay secret unless constant', () => {
+    for (const key of [
+      'KxRtQmPzLwVbNnHjGfDsAa',
+      'Kx-RtQmPz_LwVbNn',
+      'correct-horse-battery-staple',
+      'webapp',
+    ]) {
+      const r = redactor([
+        exchange({
+          url: 'https://api.shop.test/v1/x',
+          requestHeaders: { 'x-api-key': key },
+          responseBody: jsonBody({ note: `k ${key}` }),
+        }),
+      ])
+      expect(r.value(key, { in: 'header', name: 'x-api-key' }), key).toMatch(/^<redacted: /)
+      expect(r.value(key, { in: 'query', name: 'api_key' }), key).toMatch(/^<redacted: /)
+      expect(r.value(`use ${key} now`, { in: 'response-body', name: 'note' }), key).not.toContain(key)
+    }
+  })
+
+  it('still treats a real key under a key name as a secret unless constant', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://www.pagebook.so/api/x',
+        method: 'POST',
+        requestBody: jsonBody({ api_key: 'pk_9f3a7c21e8b4' }),
+      }),
+    ])
+    expect(r.value('pk_9f3a7c21e8b4', { in: 'body', name: 'api_key' })).toBe('<redacted: 15 chars>')
+    expect(r.value('use pk_9f3a7c21e8b4 here', { in: 'text' })).toBe('use <redacted: 15 chars> here')
+  })
+
+  it('replaces short secrets with digits wherever they occur, and checks them for leaks', () => {
+    const sid = 'a1b2c3d4e5'
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { sid },
+      }),
+    ])
+    for (const text of [
+      `/files/${sid}.json`,
+      `uid_${sid}`,
+      `user-${sid}`,
+      `x.${sid}`,
+      `${sid}-x`,
+      `"${sid}"`,
+      `sid=${sid}`,
+      `${sid}.`,
+      `https://cdn.test/${sid}.js`,
+    ])
+      expect(r.value(text, { in: 'response-body', name: 'note' }), text).not.toContain(sid)
+    expect(r.learntSecrets()).toContain(sid)
+  })
+
+  it('replaces short letters-only secrets only as whole words', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { theme: 'kqzvwx' },
+      }),
+    ])
+    expect(r.value('a kqzvwx b, kqzvwx.json, user-kqzvwx', { in: 'text' }))
+      .toBe('a <redacted: 6 chars> b, <redacted: 6 chars>.json, user-<redacted: 6 chars>')
+    for (const text of ['kqzvwxmode', 'xkqzvwx', 'kqzvwx2'])
+      expect(r.value(text, { in: 'text' }), text).toBe(text)
+  })
+
+  it('replaces long learnt secrets anywhere, also inside other text', () => {
+    const long = 'c0ffee00deadbeef0123'
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { sid: long },
+      }),
+    ])
+    expect(r.value(`prefix${long}suffix`, { in: 'text' })).toBe('prefix<redacted: 20 hex chars>suffix')
+  })
+})
+
+describe('createRedactor: device and ad signals (decision 0049)', () => {
+  const signals = 'dt=1700000000123&flash=0&u_tz=60&u_his=3&u_h=900&u_w=1440&biw=1425&brdim=-10%2C20%2C1440&vis=1'
+  const device = 'cbr=Chrome&cbrand=apple&cbrver=120.0.0.0&cos=Macintosh&cosver=10_15_7&cplatform=DESKTOP'
+
+  it('masks custom device and ad-signal headers, keeping the parameter names', () => {
+    const r = redactor([])
+    expect(r.value(signals, { in: 'header', name: 'x-tube-ad-signals' }))
+      .toBe('dt=0000000000000&flash=0&u_tz=00&u_his=0&u_h=000&u_w=0000&biw=0000&brdim=-00%0X00%0X0000&vis=0')
+    expect(r.value(device, { in: 'header', name: 'x-tube-device' }))
+      .toBe('cbr=Xxxxxx&cbrand=xxxxx&cbrver=000.0.0.0&cos=Xxxxxxxxx&cosver=00_00_0&cplatform=XXXXXXX')
+    expect(r.value('{"w":1440}', { in: 'header', name: 'x-device-info' })).toBe('{"x":0000}')
+  })
+
+  it('masks a parameter list that carries device signals under any name or place', () => {
+    const r = redactor([])
+    expect(r.value(signals, { in: 'query', name: 'extra' })).not.toContain('1440')
+    expect(r.examples([
+      { ctx: device },
+    ], { in: 'body' })).toEqual([
+      { ctx: 'cbr=Xxxxxx&cbrand=xxxxx&cbrver=000.0.0.0&cos=Xxxxxxxxx&cosver=00_00_0&cplatform=XXXXXXX' },
+    ])
+  })
+
+  it('keeps standard headers and ordinary values', () => {
+    const r = redactor([])
+    expect(r.value('?0', { in: 'header', name: 'sec-ch-ua-mobile' })).toBe('?0')
+    expect(r.value('8', { in: 'header', name: 'device-memory' })).toBe('8')
+    expect(r.value('2.20240101.01.00', { in: 'header', name: 'x-tube-client-version' })).toBe('2.20240101.01.00')
+    expect(r.value('q=shoes&page=2', { in: 'query', name: 'next' })).toBe('q=shoes&page=2')
+  })
+})
+
+describe('createRedactor: escaped and protocol-relative URLs', () => {
+  it('redacts and learns tokens in JSON-escaped URLs, keeping the escaping', () => {
+    const text = 'window.cfg = {"next":"https:\\/\\/shop.test\\/cb?token=Zq8xT2mLp4VwRk7YbN3c&page=2"}'
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/',
+        responseBody: textBody(`<script>${text}</script>`),
+      }),
+    ])
+    expect(r.value(text, { in: 'response-body' }))
+      .toBe('window.cfg = {"next":"https:\\/\\/shop.test\\/cb?token=<redacted: 20 base64 chars>&page=2"}')
+    expect(r.value('copy Zq8xT2mLp4VwRk7YbN3c', { in: 'text' })).toBe('copy <redacted: 20 base64 chars>')
+  })
+
+  it('redacts and learns tokens in protocol-relative URLs, and leaves code comments alone', () => {
+    const text = 'load //cdn.shop.test/a.js?sig=hX7kQ2mZpL9vRt4WcB8n then // note: done'
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/',
+        responseBody: textBody(text),
+      }),
+    ])
+    expect(r.value(text, { in: 'response-body' }))
+      .toBe('load //cdn.shop.test/a.js?sig=<redacted: 20 base64 chars> then // note: done')
+    expect(r.value('x hX7kQ2mZpL9vRt4WcB8n', { in: 'text' })).toBe('x <redacted: 20 base64 chars>')
   })
 })
 

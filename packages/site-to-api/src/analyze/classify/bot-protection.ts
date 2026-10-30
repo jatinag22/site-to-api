@@ -301,24 +301,65 @@ const CHALLENGE_MARKERS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
   { pattern: /blocked by network security/i, label: 'block page' },
   { pattern: /captcha-delivery\.com/, label: 'DataDome captcha' },
   { pattern: /id=["']?px-captcha/, label: 'PerimeterX captcha' },
-  { pattern: /\bgokuProps\b|awswaf\.com\/[^"']*challenge\.js/, label: 'AWS WAF challenge' },
+  { pattern: /\bgokuProps\b/, label: 'AWS WAF challenge' },
 ]
+/**
+ * Scripts a challenge page loads but ordinary pages load too: AWS WAF's `challenge.js` is also
+ * the integration SDK Hugging Face puts on every page. Seen alone they mean nothing; they mark a
+ * challenge only on a page that is an interstitial ({@link isInterstitial}).
+ */
+const SHARED_CHALLENGE_MARKERS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
+  { pattern: /awswaf\.com\/[^"']*challenge\.js/, label: 'AWS WAF challenge' },
+]
+/** Statuses challenge interstitials answer with: AWS WAF 202 and 405, most vendors 403. */
+const INTERSTITIAL_STATUSES: ReadonlySet<number> = new Set([202, 403, 405])
+/** An interstitial is small and says almost nothing: no app content around the script. */
+const MAX_INTERSTITIAL_BYTES = 20_000
+const MAX_INTERSTITIAL_TEXT = 300
+
+/** Visible text of a page, roughly: scripts, styles and tags removed, spaces collapsed. */
+function visibleText(html: string): string {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * True when a page is the challenge itself rather than the site: an interstitial status, or a
+ * small page with almost no text of its own.
+ */
+function isInterstitial(html: string, status: number | null): boolean {
+  if (status !== null && INTERSTITIAL_STATUSES.has(status))
+    return true
+  return html.length <= MAX_INTERSTITIAL_BYTES && visibleText(html).length <= MAX_INTERSTITIAL_TEXT
+}
 /** Only the start of a page is read; interstitials put their title and script up front. */
 const MAX_CHALLENGE_SCAN = 300_000
 const TITLE = /<title[^>]*>([^<]{0,200})<\/title>/i
 
 /**
  * What marks an HTML body as a bot challenge or block page, whatever its status (Reddit answers
- * its JavaScript challenge with 200): a challenge title or challenge-only markup. `null` for an
- * ordinary page. The returned text is one of this file's labels, never text from the page.
+ * its JavaScript challenge with 200): a challenge title or challenge-only markup, or a challenge
+ * script on a page that is an interstitial (`status` 202, 403 or 405, or a tiny page). `null` for
+ * an ordinary page, including one that merely includes a vendor's challenge script. The returned
+ * text is one of this file's labels, never text from the page.
  */
-export function challengePageMarker(html: string): string | null {
+export function challengePageMarker(html: string, status: number | null = null): string | null {
   const head = html.slice(0, MAX_CHALLENGE_SCAN)
   const title = TITLE.exec(head)?.[1]?.toLowerCase().replace(/\s+/g, ' ') ?? ''
   const phrase = CHALLENGE_TITLES.find(candidate => title.includes(candidate))
   if (phrase !== undefined)
     return `title "${phrase}"`
-  return CHALLENGE_MARKERS.find(marker => marker.pattern.test(head))?.label ?? null
+  const marker = CHALLENGE_MARKERS.find(candidate => candidate.pattern.test(head))
+  if (marker !== undefined)
+    return marker.label
+  const shared = SHARED_CHALLENGE_MARKERS.find(candidate => candidate.pattern.test(head))
+  return shared !== undefined && isInterstitial(html, status)
+    ? shared.label
+    : null
 }
 
 /**
@@ -336,7 +377,7 @@ function challengePageEvidence(exchange: Exchange): Found[] {
   const body = exchange.response.body
   if (!body || body.text === null || !body.mimeType.includes('html'))
     return []
-  const marker = challengePageMarker(body.text)
+  const marker = challengePageMarker(body.text, exchange.response.status)
   return marker === null
     ? []
     : [

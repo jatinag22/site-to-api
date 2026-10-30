@@ -2,7 +2,7 @@ import type { ExchangeInit } from '../../../test/helpers'
 import type { Exchange } from '../../model'
 import { describe, expect, it } from 'vitest'
 import { exchange, formBody, jsonBody, textBody } from '../../../test/helpers'
-import { looksLikeRandomSensorPath } from './bot-protection'
+import { challengePageMarker, looksLikeRandomSensorPath } from './bot-protection'
 import { classifyExchanges } from './classify'
 import { compileHostGlobs } from './host-glob'
 
@@ -699,6 +699,27 @@ describe('classifyExchanges: challenge pages', () => {
       doc('https://shop.test/login', '<html><head><title>Log in</title></head><body><div class="g-recaptcha" data-sitekey="k"></div></body></html>'),
       doc('https://shop.test/', '<html><head><title>Home</title><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></head></html>'),
     ])).toEqual(['page', 'page'])
+  })
+
+  it('takes the AWS WAF challenge script for a challenge only on an interstitial', () => {
+    const sdk = '<script src="https://a1b2c3d4.edge.sdk.awswaf.com/a1b2c3d4/e5f6/challenge.js" defer></script>'
+    const app = `<html><head><title>Models - Example Hub</title>${sdk}</head><body><main>${'<article><h2>model-name</h2><p>A text model with a long description of what it does.</p></article>'.repeat(40)}</main></body></html>`
+    const interstitial = `<html><head><title></title>${sdk}</head><body><div id="challenge-container"></div><noscript>Enable JavaScript</noscript></body></html>`
+    expect(kinds([
+      doc('https://hub.test/models', app),
+      doc('https://hub.test/', interstitial, 202),
+      doc('https://hub.test/spaces', interstitial),
+      doc('https://hub.test/datasets', app, 405),
+    ])).toEqual([
+      'page',
+      'bot-protection',
+      'bot-protection',
+      'bot-protection',
+    ])
+    expect(challengePageMarker(app)).toBeNull()
+    expect(challengePageMarker(app, 200)).toBeNull()
+    expect(challengePageMarker(interstitial, 202)).toBe('AWS WAF challenge')
+    expect(challengePageMarker('<html><script>window.gokuProps = {}</script><body>big page</body></html>', 200)).toBe('AWS WAF challenge')
   })
 })
 
