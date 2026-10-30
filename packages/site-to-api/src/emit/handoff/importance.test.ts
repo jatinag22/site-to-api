@@ -1,6 +1,6 @@
 import type { Analysis, ComputedValue, Flow, Operation } from '../../model'
 import { describe, expect, it } from 'vitest'
-import { exchange } from '../../../test/helpers'
+import { exchange, jsonBody } from '../../../test/helpers'
 import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { createStepResolver } from '../steps'
 import { rankedComputedValues } from './computed'
@@ -59,7 +59,7 @@ describe('rankHosts: consent, analytics and telemetry last (decision 0054)', () 
       { ...api, host: 'cdn.privacy-mgmt.test', operationId: 'getConsent' },
       { ...api, host: 'cdn.vendor.test', operationId: 'getWidget' },
       report('otlp-http-production.shopsvc.test', '/v1/traces', { method: 'POST', url: 'https://otlp-http-production.shopsvc.test/v1/traces' }),
-      report('pixel.example.test', '/img', { url: 'https://pixel.example.test/img', status: 204 }),
+      report('pixel.example.test', '/collect', { url: 'https://pixel.example.test/collect', status: 204 }),
     )
     const ranked = rankHosts(analysis, [])
     expect(ranked.map(entry => [entry.host, entry.role])).toEqual([
@@ -70,6 +70,45 @@ describe('rankHosts: consent, analytics and telemetry last (decision 0054)', () 
       ['otlp-http-production.shopsvc.test', 'telemetry'],
       ['pixel.example.test', 'telemetry'],
     ])
+  })
+})
+
+describe('rankHosts: first-party APIs with telemetry-like names or answers stay first-party', () => {
+  it('keeps a parcel tracking API, a cart that answers 204, and an unresolved own host that only reports', () => {
+    const analysis: Analysis = twoHostAnalysis()
+    const www = analysis.operations.find(entry => entry.host === WWW)
+    const api = analysis.operations.find(entry => entry.host === API)
+    if (!www || !api)
+      throw new Error('fixture changed')
+    www.kind = 'page'
+    const call = (host: string, path: string, init: Parameters<typeof exchange>[0], extra: Partial<Operation> = {}): Operation => ({
+      ...api,
+      host,
+      path,
+      operationId: `op${host.length}${path.length}`,
+      exchanges: [
+        exchange(init),
+      ],
+      ...extra,
+    })
+    analysis.operations.push(
+      call('tracking.site.test', '/v2/parcels', {
+        url: 'https://tracking.site.test/v2/parcels',
+        responseBody: jsonBody({ status: 'shipped' }),
+      }),
+      call('cart.site.test', '/cart/add', { method: 'POST', url: 'https://cart.site.test/cart/add', status: 204 }),
+      call('events.site.test', '/events', { method: 'POST', url: 'https://events.site.test/events', status: 204 }, {
+        requires: ['cookie:sid'],
+      }),
+      call('metrics.vendor.test', '/collect', { method: 'POST', url: 'https://metrics.vendor.test/collect', status: 204 }),
+    )
+    const roles = new Map(rankHosts(analysis, []).map(entry => [entry.host, entry.role]))
+    expect(roles.get('tracking.site.test')).not.toBe('telemetry')
+    expect(roles.get('cart.site.test')).not.toBe('telemetry')
+    // Own domain, only reports, but probe found a cookie it needs: not demoted.
+    expect(roles.get('events.site.test')).not.toBe('telemetry')
+    // A generic name and only reports, on another site: telemetry.
+    expect(roles.get('metrics.vendor.test')).toBe('telemetry')
   })
 })
 

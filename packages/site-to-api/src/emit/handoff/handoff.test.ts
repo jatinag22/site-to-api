@@ -307,8 +307,24 @@ describe('telemetry host files (decision 0054)', () => {
       client: 'current',
       probe: null,
     }
+    const first = analysis.operations.find(entry => entry.operationId === 'postV1Traces0')
+    analysis.flows.flows[0]?.steps.push({
+      id: 's9',
+      operationId: 'postV1Traces0',
+      kind: 'api',
+      browserOnly: false,
+      summary: 'report',
+      sentFrom: null,
+      inputs: {
+        'header.x-api-key': { kind: 'unknown', shape: '32 hex chars' },
+      },
+      outputs: {},
+      observedIn: first?.exchanges.map(entry => entry.id) ?? [],
+    })
     const doc = hostDoc(analysis, context, 'otlp.collector.example')
     expect(doc).toContain('A consent, analytics or telemetry host')
+    // Inputs with no known origin are still listed: a wrapper that must send reports needs them.
+    expect(doc).toContain('`header.x-api-key` of `postV1Traces0` has no known origin')
     expect(doc).toContain('- and 5 more')
     expect(doc).not.toContain('postV1Traces14')
     expect(renderAgentGuide(analysis, context)).toContain('### Consent, analytics and telemetry hosts')

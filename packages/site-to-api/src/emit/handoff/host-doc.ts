@@ -66,15 +66,26 @@ function operationsSection(operations: readonly Operation[], limit = Number.POSI
   ]
 }
 
-/** A telemetry host's gaps, counted rather than listed: they rarely matter to a wrapper. */
+/** Gaps a telemetry host's file still lists: its session (probe) and inputs with no known origin. */
+const LISTED_TELEMETRY_GAPS: ReadonlySet<GapGroup['kind']> = new Set(['probe-failure', 'not-minimized', 'unknown-origin'])
+
+/**
+ * A telemetry host's gaps: session and required-input gaps listed as for any host, the rest
+ * counted, since they rarely matter to a wrapper.
+ */
 function telemetryGapsSection(groups: readonly GapGroup[]): string[] {
-  const count = groups.reduce((sum, group) => sum + group.count, 0)
+  const listed = groups.filter(group => LISTED_TELEMETRY_GAPS.has(group.kind))
+  const hidden = groups.filter(group => !LISTED_TELEMETRY_GAPS.has(group.kind)).reduce((sum, group) => sum + group.count, 0)
+  const section = gapsSection(listed)
+  if (hidden === 0)
+    return section
+  const note = `- ${counted(hidden, 'other gap')} not listed: this host only takes reports. \`API_MAP.md\` still has every operation.`
+  const lines = section.slice(0, -1)
   return [
-    '## Gaps',
-    '',
-    count === 0
-      ? 'None found for this host.'
-      : `${counted(count, 'gap')} not listed: this host only takes reports. \`API_MAP.md\` still has every operation.`,
+    ...(lines.at(-1) === 'None found for this host.'
+      ? lines.slice(0, -1)
+      : lines),
+    note,
     '',
   ]
 }

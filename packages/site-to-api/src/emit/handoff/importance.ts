@@ -22,19 +22,17 @@ export interface RankedHost {
   apiOperations: number
 }
 
+/** Endpoints that report on the page rather than serve it: event, log, metric and tracking sinks. */
+const TELEMETRY_WORDS = /(?:^|[^a-z])(?:events?|telemetry|analytics|metrics?|logs?|logging|collect(?:or)?|track(?:ing|er)?|beacons?|pixel|rum|ping|stats|heartbeat)(?:[^a-z]|$)/i
+
 /**
- * Name words of hosts that run consent banners, analytics or telemetry: Sourcepoint
- * (`cdn.privacy-mgmt.com`, `sp-prod.net`), OneTrust, Cookiebot, IAB consent frameworks, OTLP
- * collectors (`otlp-http-production.shopifysvc.com`), Sentry, New Relic, Datadog intake, and the
- * site's own analytics hosts (`ophan.theguardian.com`).
+ * Host name words that alone say consent, analytics or telemetry: vendors (Sourcepoint's
+ * `privacy-mgmt`, OneTrust's `cookielaw`, Cookiebot, IAB `consensu`, OTLP collectors, Sentry,
+ * Datadog, New Relic…), the Guardian's `ophan`, and the words `analytics` and `telemetry`.
  */
-const TELEMETRY_HOST_WORDS: ReadonlySet<string> = new Set([
-  'consent',
-  'cmp',
-  'privacy',
-  'mgmt',
-  'sp',
+const VENDOR_HOST_WORDS: ReadonlySet<string> = new Set([
   'sourcepoint',
+  'privacy-mgmt',
   'onetrust',
   'cookielaw',
   'cookiebot',
@@ -42,61 +40,65 @@ const TELEMETRY_HOST_WORDS: ReadonlySet<string> = new Set([
   'trustarc',
   'didomi',
   'usercentrics',
-  'quantcast',
-  'analytics',
-  'ophan',
-  'telemetry',
-  'otlp',
-  'opentelemetry',
-  'collector',
-  'metrics',
-  'tracking',
-  'beacon',
-  'rum',
   'sentry',
-  'newrelic',
-  'nr',
   'datadoghq',
-  'intake',
+  'newrelic',
+  'nr-data',
   'mixpanel',
   'amplitude',
-  'segment',
   'hotjar',
-  'clarity',
+  'otlp',
+  'opentelemetry',
+  'ophan',
+  'analytics',
+  'telemetry',
 ])
 
 /** OTLP export paths: `/v1/traces`, `/v1/metrics`, `/v1/logs`. */
 const OTLP_PATH = /^\/v1\/(?:traces|metrics|logs)\/?$/
 
 /**
- * A call that reports rather than fetches: an OTLP export, a beacon or ping, a 204, or a POST
- * the server answered with an empty body. A GET recorded without a body says nothing.
+ * A call that reports rather than fetches: an OTLP export, a beacon or ping, or a call to a
+ * sink path (`/collect`, `/events`, `/log`) answered with a 204 or nothing. `POST /cart/add`
+ * answered 204 is an action, not a report.
  */
 function isReportCall(operation: Operation): boolean {
   if (OTLP_PATH.test(operation.path))
     return true
   return operation.exchanges.length > 0 && operation.exchanges.every(exchange => exchange.resourceType === 'beacon'
     || exchange.resourceType === 'ping'
-    || exchange.response.status === 204
-    || (exchange.request.method === 'POST' && exchange.response.body !== null && exchange.response.body.text?.trim() === ''))
+    || (TELEMETRY_WORDS.test(operation.path) && (exchange.response.status === 204 || (exchange.response.body?.text ?? '').trim() === '')))
+}
+
+/** Words of a host name: labels and their `-` parts, plus two-part joins (`privacy-mgmt`). */
+function hostWords(host: string): string[] {
+  const labels = host.replace(/:\d+$/, '').toLowerCase().split('.')
+  return labels.flatMap((label) => {
+    const parts = label.split('-')
+    return [
+      label,
+      ...parts,
+      ...parts.slice(1).map((part, index) => `${parts[index]}-${part}`),
+    ]
+  })
 }
 
 /**
- * A host that only takes reports: its name says consent, analytics or telemetry (a whole word of
- * its labels, `sp` and `nr` only as a first label), or every call observed on it reports (see
- * {@link isReportCall}). A host that served a page the person browsed never is.
+ * A host that only takes reports (decision 0054): a vendor or `analytics`/`telemetry` name; or,
+ * whatever its name (`tracking`, `metrics`… say nothing alone: a parcel tracking API is an API),
+ * every call observed on it reports ({@link isReportCall}). A host that served a page the person browsed never is, and a host on
+ * the site's own domain is never demoted on behaviour alone while something about it is unresolved
+ * (`unresolved`: a session need, a probe-measured need or an untraced input).
  */
-function isTelemetryHost(host: string, operations: readonly Operation[], browsedHosts: ReadonlySet<string>): boolean {
-  if (browsedHosts.has(host))
+function isTelemetryHost(host: string, operations: readonly Operation[], context: { browsed: ReadonlySet<string>, own: boolean, unresolved: boolean }): boolean {
+  if (context.browsed.has(host))
     return false
-  const labels = host.replace(/:\d+$/, '').toLowerCase().split('.')
-  const words = labels.flatMap(label => label.split('-'))
-  const named = words.some(word => TELEMETRY_HOST_WORDS.has(word) && word !== 'sp' && word !== 'nr')
-    || ['sp', 'nr'].includes(labels[0]?.split('-')[0] ?? '')
-  if (named)
+  const words = hostWords(host)
+  if (words.some(word => VENDOR_HOST_WORDS.has(word)))
     return true
   const observed = operations.filter(operation => operation.host === host && !operation.sourceOnly)
-  return observed.length > 0 && observed.every(operation => operation.kind === 'api' && isReportCall(operation))
+  const reports = observed.length > 0 && observed.every(operation => operation.kind === 'api' && isReportCall(operation))
+  return reports && !(context.own && context.unresolved)
 }
 
 /** `api.example.com:8443` → `example.com`; the port is not part of the site. */
@@ -148,6 +150,33 @@ function hostOfUrl(url: string): string[] {
   }
 }
 
+/**
+ * Hosts with something a wrapper must still work out: a session that needs more than plain
+ * HTTP, a cookie or header probe found needed, or a request input with no known origin.
+ */
+function unresolvedHosts(analysis: Analysis, sessions: ReadonlyMap<string, SessionRequirement>): Set<string> {
+  const hosts = new Set<string>()
+  for (const [host, session] of sessions) {
+    if (session.requires !== 'none')
+      hosts.add(host)
+  }
+  const hostOfExchange = new Map(analysis.operations.flatMap(operation => operation.exchanges.map(exchange => [exchange.id, operation.host] as const)))
+  for (const operation of analysis.operations) {
+    if ((operation.requires?.length ?? 0) > 0)
+      hosts.add(operation.host)
+  }
+  for (const step of analysis.flows.flows.flatMap(flow => flow.steps)) {
+    if (!Object.values(step.inputs).some(origin => origin.kind === 'unknown'))
+      continue
+    for (const id of step.observedIn) {
+      const host = hostOfExchange.get(id)
+      if (host !== undefined)
+        hosts.add(host)
+    }
+  }
+  return hosts
+}
+
 export function rankHosts(analysis: Analysis, pageHosts: readonly SessionRequirement[]): RankedHost[] {
   const sessions = new Map<string, SessionRequirement>()
   for (const entry of [
@@ -173,12 +202,18 @@ export function rankHosts(analysis: Analysis, pageHosts: readonly SessionRequire
     ? browsed
     : new Set((analysis.startUrls ?? []).flatMap(url => hostOfUrl(url)).map(siteOf))
   const ownHost = (host: string): boolean => site.size === 0 || site.has(siteOf(host))
+  const unresolved = unresolvedHosts(analysis, sessions)
   const browsedHosts = new Set(analysis.operations
     .filter(operation => operation.kind === 'page' && !operation.sourceOnly && !framed.has(operation.host))
     .map(operation => operation.host))
   const roleOf = (host: string): HostRole => {
-    if (isTelemetryHost(host, analysis.operations, browsedHosts))
+    if (isTelemetryHost(host, analysis.operations, {
+      browsed: browsedHosts,
+      own: ownHost(host),
+      unresolved: unresolved.has(host),
+    })) {
       return 'telemetry'
+    }
     // A host that served only pages is one of the site's page hosts when it is on the site's
     // domain or served a page the person browsed; a host whose pages were all framed (an ad
     // network's sync page) or that only answered a captcha widget is a third party.
@@ -251,9 +286,6 @@ export function rankFlows(analysis: Analysis, resolver: StepResolver): Flow[] {
     .sort((a, b) => a.tier - b.tier || b.flow.seenInSessions - a.flow.seenInSessions || a.index - b.index)
     .map(({ flow }) => flow)
 }
-
-/** Endpoints that report on the page rather than serve it: event, log, metric and tracking sinks. */
-const TELEMETRY_WORDS = /(?:^|[^a-z])(?:events?|telemetry|analytics|metrics?|logs?|logging|collect(?:or)?|track(?:ing|er)?|beacons?|pixel|rum|ping|stats|heartbeat)(?:[^a-z]|$)/i
 
 /** Request fields that carry a credential or a code a server checks. */
 const CREDENTIAL_INPUT = /(?:^|[^a-z])(?:authorization|token|password|passwd|otp|totp|mfa|signature|sig|nonce|csrf|xsrf|captcha|secret)(?:[^a-z]|$)/i

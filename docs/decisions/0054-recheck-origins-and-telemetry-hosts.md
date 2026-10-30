@@ -19,13 +19,18 @@ telemetry hosts ranked first or given huge host files.
 - **Substrings.** A value contained in another counts as copied only when the contained part is
   not a path (starts with `/`) and has some entropy (a digit or an upper-case letter).
 - **`sigh`.** A query parameter named `sigh` is a secret, like `sig` and `signature`.
-- **Telemetry hosts.** A host whose name says consent, analytics or telemetry (Sourcepoint,
-  OneTrust, Cookiebot, OTLP collectors, Sentry, the site's own analytics host), or whose every
-  observed call reports (OTLP exports, beacons and pings, 204s, POSTs answered empty), ranks last
-  under "Consent, analytics and telemetry hosts", unless it served a page the person browsed.
-  Its host file lists ten operations and counts its gaps instead of listing them.
+- **Telemetry hosts.** A host ranks last under "Consent, analytics and telemetry hosts" when its
+  name holds a vendor's name (Sourcepoint's `privacy-mgmt`, OneTrust, Cookiebot, IAB `consensu`,
+  OTLP, Sentry, Datadog, New Relic, Mixpanel, Amplitude, Hotjar, the Guardian's `ophan`) or the
+  word `analytics` or `telemetry`; or, whatever its name, when every observed call on it reports
+  (an OTLP export, a beacon or ping, or a call to a sink path such as `/collect` or `/events`
+  answered with a 204 or nothing). Generic words alone (`tracking`, `metrics`, `consent`) never
+  demote a host: a parcel tracking API is an API. A host on the site's own domain is never demoted
+  on behaviour alone while it has a session need, a need probe measured or an untraced input, and
+  a host that served a page the person browsed never is. A telemetry host's file lists ten
+  operations, still lists its probe and untraced-input gaps, and counts the others.
 
 ## Consequences
-A first-party API that answers every call with 204 is ranked with telemetry; it still has its
-spec and `API_MAP.md` rows. A pattern needed for a value that only appears next to a search term
+A first-party host whose every call is a sink call answered 204, with nothing unresolved, is ranked
+with telemetry; it still has its spec and `API_MAP.md` rows. A pattern needed for a value that only appears next to a search term
 is not written; the value keeps another origin or none.
