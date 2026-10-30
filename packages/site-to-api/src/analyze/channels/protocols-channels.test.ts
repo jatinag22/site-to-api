@@ -500,10 +500,10 @@ describe('smartFoxServer 2X', () => {
     code: sfs.int(200),
     openBetsCount: sfs.int(12),
     cashouts: sfs.array([
-      player('51082&&demo', 'demo_51660', 'av-7.png'),
-      player('71292&&demo', 'demo_71292', 'av-31.png'),
+      player('40001&&demo', 'demo_90001', 'av-1.png'),
+      player('40002&&demo', 'demo_40002', 'av-2.png'),
     ]),
-    topPlayerProfileImages: sfs.stringArray(['av-44.png']),
+    topPlayerProfileImages: sfs.stringArray(['av-3.png']),
   }, { compress: true })
 
   function sfsChannel(): WebSocketChannel | undefined {
@@ -546,7 +546,7 @@ describe('smartFoxServer 2X', () => {
             packet(0, 1, {
               zn: sfs.string('game_zone'),
               un: sfs.string('gambler7'),
-              id: sfs.int(881_458),
+              id: sfs.int(123_456),
             }),
           ],
           [
@@ -610,16 +610,16 @@ describe('smartFoxServer 2X', () => {
     for (const secret of [
       'gambler7',
       'hunter2',
-      '881458',
+      '123456',
       SESSION_TOKEN,
       TOKEN,
-      'demo_51660',
-      'demo_71292',
-      '51082',
-      '71292',
-      'av-7.png',
-      'av-31.png',
-      'av-44.png',
+      'demo_90001',
+      'demo_40002',
+      '40001',
+      '40002',
+      'av-1.png',
+      'av-2.png',
+      'av-3.png',
     ])
       expect(written).not.toContain(secret)
     // Public game data stays.

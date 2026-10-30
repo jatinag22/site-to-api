@@ -19,7 +19,7 @@ export interface InferOptions {
   /**
    * Called for each candidate enum value with the name of the field holding it; returning false
    * drops the enum. Lets the caller refuse enums of values the redactor would change (personal
-   * data must not leak through `enum`, `username: ["demo_51660", …]` included).
+   * data must not leak through `enum`, `username: ["demo_90001", …]` included).
    */
   allowEnumValue?: (value: string, name: string | null) => boolean
   /**

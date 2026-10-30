@@ -289,22 +289,22 @@ describe('createRedactor: rules', () => {
     const feed = {
       cashouts: [
         {
-          player_id: '51082&&demo',
-          username: 'demo_51660',
-          profileImage: 'av-7.png',
-          avatarUrl: 'https://cdn.example/a/51082.png',
+          player_id: '40001&&demo',
+          username: 'demo_90001',
+          profileImage: 'av-1.png',
+          avatarUrl: 'https://cdn.example/a/40001.png',
           multiplier: 1.5,
         },
       ],
-      topPlayerProfileImages: ['av-44.png'],
+      topPlayerProfileImages: ['av-3.png'],
       openBetsCount: 12,
     }
     const masked = JSON.stringify(r.json(feed, { in: 'response-body' }))
     for (const value of [
-      '51082',
-      'demo_51660',
-      'av-7.png',
-      'av-44.png',
+      '40001',
+      'demo_90001',
+      'av-1.png',
+      'av-3.png',
     ])
       expect(masked).not.toContain(value)
     expect(masked).toContain('"multiplier":1.5')
