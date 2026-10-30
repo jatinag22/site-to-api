@@ -170,10 +170,11 @@ same stem. Conventions:
 - Constant headers are parameters with `x-site-to-api-constant: true` and a `default`. A header
   is constant when it had one value in every request of the operation, and that value was seen
   in two or more sessions, in the operation itself or in every request to the host.
-- A cookie or header parameter is `required` when `probe` proved it is needed
-  (`x-site-to-api-requires`), and not required when probe removed it on its own and the answer
-  still matched (`tested` in `probe.json`); otherwise a cookie sent in every captured request is
-  required, a header is not unless every sample sent it. Tracing
+- A header parameter is `required` only when `probe` proved it is needed
+  (`x-site-to-api-requires`); being sent in every captured request is not enough. A cookie is
+  required when probe proved it needed; it is not when probe removed it on its own and the
+  answer still matched (`tested` in `probe.json`); otherwise a cookie sent in every captured
+  request is required. Tracing
   headers (`baggage`, `sentry-trace`, `traceparent`, `tracestate`, `b3`, `x-b3-*`,
   `x-datadog-*`) are never required and never get a default.
 - Query, form and path values that are all digits become `integer` unless they are codes:
