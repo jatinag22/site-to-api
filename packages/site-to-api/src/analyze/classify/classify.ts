@@ -59,14 +59,37 @@ const HASHED_BUNDLE = /[.-][0-9a-f]{8,}(?:\.chunk)?\.(?:m?js|css)(?:\.map)?$/i
 const STATIC_FILE = /\.(?:m?js|cjs|css|map|woff2?|ttf|otf|eot|png|jpe?g|gif|svg|ico|webp|avif|bmp|mp4|webm|mp3|ogg|wav|webmanifest)$/i
 const MANIFEST = /(?:^|\/)(?:manifest|site\.webmanifest|browserconfig)\.(?:json|xml)$/i
 
+/** Query names of JSONP callbacks: `/api/prices.js?callback=cb` returns data wrapped in a call. */
+const JSONP_PARAMETERS = new Set([
+  'callback',
+  'jsonp',
+  'cb',
+  'jsoncallback',
+])
+/** A body that calls a function with the data: `cb({...})`, `jQuery123_456([...]);`. */
+const JSONP_BODY = /^\s*(?:\/\*\*\/\s*)?[\w$.]+\s*\(\s*[[{"]/
+
 /**
- * True for a request of a static file (see {@link STATIC_FILE}): a manifest always, another file
- * name unless it answered with data (`/api/widget.js` returning JSON is an API).
+ * True for a request of a static file (see {@link STATIC_FILE} and {@link MANIFEST}): only a read
+ * (`GET`, `HEAD`; uploading `avatar.png` is an API call), never one that answered with data
+ * (`/api/widget.js` returning JSON, an IIIF `manifest.json`), and never a JSONP call
+ * (`?callback=`, or a body that wraps data in a function call).
  */
-function isStaticFile(path: string, response: Body | null): boolean {
-  if (MANIFEST.test(path))
-    return true
-  return STATIC_FILE.test(path.slice(path.lastIndexOf('/') + 1)) && !isDataBody(response)
+function isStaticFile(exchange: Exchange): boolean {
+  const { request, response } = exchange
+  if (request.method !== 'GET' && request.method !== 'HEAD')
+    return false
+  const named = MANIFEST.test(request.path) || STATIC_FILE.test(request.path.slice(request.path.lastIndexOf('/') + 1))
+  if (!named || isDataBody(response.body))
+    return false
+  return !isJsonp(exchange)
+}
+
+/** A JSONP call: a callback parameter, or a script body that wraps data in a function call. */
+function isJsonp(exchange: Exchange): boolean {
+  const { request, response } = exchange
+  return request.query.some(item => JSONP_PARAMETERS.has(item.name.toLowerCase()))
+    || (response.body?.text !== null && response.body?.text !== undefined && JSONP_BODY.test(response.body.text))
 }
 
 /** True for a path a front-end build serves as a static file, never an API. */
@@ -124,12 +147,12 @@ function defaultScope(exchanges: Exchange[]): Set<string> {
 
 /** Why an exchange is a static asset by its resource type or path, or `null`. */
 function assetReason(exchange: Exchange): string | null {
-  const { resourceType, request, response } = exchange
+  const { resourceType, request } = exchange
   if (ASSET_TYPES.has(resourceType))
     return `resource type ${resourceType}`
   if (isBuildAsset(request.path))
     return 'front-end build file'
-  return resourceType !== 'document' && isStaticFile(request.path, response.body)
+  return resourceType !== 'document' && isStaticFile(exchange)
     ? 'static file'
     : null
 }
@@ -151,7 +174,7 @@ function classifyByType(exchange: Exchange): { kind: ExchangeKind, reason: strin
     return { kind: 'noise', reason: `${resourceType} without a response` }
   if (isDataBody(response.body))
     return { kind: 'api', reason: `${resourceType} returning ${response.body?.mimeType || 'JSON'}` }
-  if (response.body && ASSET_MEDIA.test(response.body.mimeType))
+  if (response.body && ASSET_MEDIA.test(response.body.mimeType) && !isJsonp(exchange))
     return { kind: 'asset', reason: `${resourceType} returning ${response.body.mimeType}` }
   if (!response.body && isDataBody(request.body))
     return { kind: 'api', reason: `${resourceType} sending ${request.body?.mimeType || 'data'}` }

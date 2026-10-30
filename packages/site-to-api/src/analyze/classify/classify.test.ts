@@ -42,8 +42,9 @@ describe('classifyExchanges: static files and pixel sandboxes (decision 0052)', 
       on({ url: 'https://shop.test/favicon.ico', resourceType: 'other' }),
       on({ url: 'https://shop.test/apple-touch-icon-180.png', resourceType: 'fetch' }),
       on({
+        // The browser fetches the web app manifest with its own resource type.
         url: 'https://shop.test/manifest.json',
-        resourceType: 'fetch',
+        resourceType: 'manifest',
         responseBody: jsonBody({ name: 'Shop' }),
       }),
       on({ url: 'https://shop.test/site.webmanifest', resourceType: 'other' }),
@@ -62,6 +63,55 @@ describe('classifyExchanges: static files and pixel sandboxes (decision 0052)', 
       'asset',
       'asset',
       'asset',
+      'api',
+    ])
+  })
+
+  it('keeps uploads, data manifests and JSONP calls to file-like paths as API calls', () => {
+    const png = {
+      mimeType: 'image/png',
+      text: null,
+      base64: 'iVBORw0KGgo=',
+      json: undefined,
+      form: null,
+    }
+    expect(kinds([
+      page(),
+      on({
+        url: 'https://shop.test/api/uploads/avatar.png',
+        method: 'POST',
+        resourceType: 'fetch',
+        requestBody: png,
+      }),
+      on({
+        url: 'https://shop.test/api/users/7/photo.jpg',
+        method: 'PUT',
+        resourceType: 'fetch',
+        requestBody: png,
+      }),
+      on({ url: 'https://shop.test/api/images/42.png', method: 'DELETE', resourceType: 'fetch' }),
+      on({
+        url: 'https://shop.test/iiif/123/manifest.json',
+        resourceType: 'fetch',
+        responseBody: jsonBody({ '@context': 'x', 'items': [] }),
+      }),
+      on({
+        url: 'https://shop.test/api/prices.js?callback=cb',
+        resourceType: 'fetch',
+        responseBody: textBody('cb({"price":1})', 'application/javascript'),
+      }),
+      on({
+        url: 'https://shop.test/api/stock.js',
+        resourceType: 'other',
+        responseBody: textBody('/**/handle([1,2])', 'text/javascript'),
+      }),
+    ])).toEqual([
+      'page',
+      'api',
+      'api',
+      'api',
+      'api',
+      'api',
       'api',
     ])
   })
