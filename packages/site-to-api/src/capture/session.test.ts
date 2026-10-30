@@ -520,7 +520,7 @@ describe('runCapture errors and interactive mode', () => {
     // marked incomplete and pending work (the navigation label checked below) is still saved.
     expect(result.meta.incomplete).toBeUndefined()
     expect(result.warnings.some(warning => warning.includes('interrupted'))).toBe(false)
-    expect(logs.some(m => m.includes('close the browser window'))).toBe(true)
+    expect(logs.some(m => m.includes('close the last tab or window, quit the browser, or press Ctrl+C'))).toBe(true)
     const files = await readdir(result.sessionDir)
     expect(files).toEqual(expect.arrayContaining(['meta.json', 'traffic.har', 'events.jsonl']))
     const events = await readEvents(path.join(result.sessionDir, 'events.jsonl'))

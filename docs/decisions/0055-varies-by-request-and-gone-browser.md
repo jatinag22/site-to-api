@@ -1,0 +1,55 @@
+# 0055 Answers that vary by request; a browser that was already gone
+
+Status: Accepted (2026-10-30). Refines 0044, 0050.
+
+## Context
+The real-site recheck after 0050 and 0052 found two wrong verdicts on YouTube.
+
+- `check` exited 1 on `GET /sw.js_data`: the live body was "not JSON". The body starts with
+  `)]}'`, which `load` strips before parsing but `check` did not. Some answers also change on
+  every request by nature (a field present in one answer and missing in the next), which `check`
+  reported as drift although the capture itself shows that variation.
+- Capture marked the session incomplete because `context.close()` rejected with Playwright's
+  "Target page, context or browser has been closed", although every page had closed and the HAR
+  held all 583 requests (0050 had made every rejected close incomplete).
+
+## Decision
+- `check` reads a live body the way `load` does: an XSSI prefix (`)]}'`, `while(1);`) is
+  dropped before parsing.
+- A difference is `varies`, not `drift`, when the status is the captured one, at least two
+  captured answers with that status exist, they already differ from each other at every
+  drifting path (presence, or the set of JSON types there), and at each such path the live answer
+  looks like one of them (the same types, or the field absent). A live shape the capture never
+  had is drift, and so is any difference when one of the captured answers is an error answer
+  (an object with only `error`, `errors` or `message`): an error captured with the data's status
+  would otherwise make any error look normal. The paths are listed with a note;
+  `varies` does not change the exit code. A path that cannot be followed (a map key written as
+  its shape) never counts as varying.
+- A close that rejects only because the browser was already gone (`has been closed`,
+  `browser has disconnected`, `target closed`) no longer marks the session incomplete by
+  itself: the HAR decides. When it is there and valid the session is complete, with a note;
+  when it is missing or invalid the session stays incomplete. A page that had already closed is
+  not a failed close. Any other close failure keeps 0050's behaviour.
+- That only applies when the person or the script ended the session first: the script returned
+  or closed the context itself (any `close()` of the context, also through `page.context()`), a
+  stop signal came, or (interactive mode) the person closed the last page and the context was
+  still open 50 ms later. A browser that closed its context before any of those exited on its
+  own (a crash, an out-of-memory kill): its HAR is still read in full, but the session is
+  incomplete (script mode) with `the browser exited during the capture`. Playwright closes every
+  page before the context also when the browser crashes, so a last page closing with the context
+  closing right after is a crash or a quit, and in script mode a last page closing is never the
+  end.
+- In interactive mode those same signs are also how quitting the browser (Cmd+Q) looks, a normal
+  way to finish: the session is complete with the note "The browser closed all at once (quit or
+  crash); everything up to then was recorded", unless the HAR is missing or invalid. Only in
+  script mode, where the script had not finished, is a browser closing first incomplete. An
+  interactive capture is finished by closing the last tab or window, quitting the browser, or
+  pressing Ctrl+C.
+- Error answers (that keep a difference drift) are objects holding only `error`, `errors`,
+  `message` or `reason`, or saying they failed: `ok: false`, `success: false`,
+  `status: "fail" | "error"`, a numeric `code` of 400 or more.
+
+## Consequences
+- `check.json` has one more verdict value, `varies`; readers that list the verdicts need it.
+  `CHECK_FORMAT_VERSION` stays 1: no field changed, and nothing in the tool reads the file back.
+- A field that varies in the capture and then takes a type it never had is drift.

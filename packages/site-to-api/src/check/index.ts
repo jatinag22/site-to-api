@@ -46,12 +46,13 @@ export interface CheckOptions {
  * be judged: blocked, unreachable, or answered with a status the capture documents nothing for;
  * or when nothing was replayed at all, since "no drift" would then claim more than was looked at.
  * Operations skipped by probe's safety rules, or because the capture holds no success to replay
- * (decision 0052), were never replayed: the summary notes them, and they do not count. Else `0`.
+ * (decision 0052), were never replayed: the summary notes them, and they do not count. An answer
+ * that varies by request by nature (`varies`) is neither drift nor a gap. Else `0`.
  */
 export function exitCodeFor(operations: readonly OperationCheck[]): 0 | 1 | 2 {
   if (operations.some(entry => entry.verdict === 'drift'))
     return 1
-  return operations.length === 0 || operations.some(entry => entry.verdict !== 'ok')
+  return operations.length === 0 || operations.some(entry => entry.verdict !== 'ok' && entry.verdict !== 'varies')
     ? 2
     : 0
 }

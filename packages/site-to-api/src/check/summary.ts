@@ -21,11 +21,13 @@ function details(entry: OperationCheck): string[] {
 export function summarizeCheck(report: CheckReport): string[] {
   const count = (verdict: OperationCheck['verdict']): number => report.operations.filter(entry => entry.verdict === verdict).length
   const lines = [
-    `Checked ${report.operations.length} operations: ${count('ok')} ok, ${count('drift')} drifted, ${count('blocked')} blocked, ${count('unreachable')} unreachable, ${count('unchecked')} unchecked; ${report.skipped.length} skipped.`,
+    `Checked ${report.operations.length} operations: ${count('ok')} ok, ${count('drift')} drifted, ${count('varies')} varying by request, ${count('blocked')} blocked, ${count('unreachable')} unreachable, ${count('unchecked')} unchecked; ${report.skipped.length} skipped.`,
   ]
   for (const entry of report.operations) {
     if (entry.verdict === 'drift')
       lines.push(`DRIFT ${label(entry)}`, ...details(entry))
+    else if (entry.verdict === 'varies')
+      lines.push(`VARIES ${label(entry)}`, `  ${entry.note ?? 'varies by request'}`)
     else if (entry.verdict === 'blocked')
       lines.push(`BLOCKED ${label(entry)}`, `  ${entry.note ?? 'refused'}`)
     else if (entry.verdict === 'unchecked')

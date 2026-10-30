@@ -24,7 +24,7 @@ import { harOmissionNote } from './har'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
 import { launchWithSandbox } from './sandbox'
-import { createStopper, DEFAULT_TIMEOUTS, saveSession, waitBounded, writeJsonAtomic } from './save'
+import { createStopper, DEFAULT_TIMEOUTS, saveSession, SessionEnd, waitBounded, writeJsonAtomic } from './save'
 import { ScriptCollector } from './scripts'
 import { EventStreamRecorder } from './streams'
 import { launchArgs, minimizes, minimizeWindow } from './window'
@@ -203,6 +203,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     throw error
   }
 
+  const sessionEnd = trackSessionEnd(context, stopper.signal, script === null)
   const pending = new Set<Promise<void>>()
   const track = (task: Promise<void>): void => {
     pending.add(task)
@@ -258,6 +259,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
         error: errorMessage(error),
       }
     }
+    await runEnded(sessionEnd, script !== null)
     logFailure(incomplete, log)
     const saved = await saveSession({
       context,
@@ -269,6 +271,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       scripted: script !== null,
       kill,
       restoreBodies: entries => bodies.patch(entries),
+      exitedEarly: () => sessionEnd.exitedEarly,
     })
     closed = true
     const finalIncomplete = incomplete ?? saved.incomplete
@@ -520,7 +523,7 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
       })
     }
     log('Browser open. Use the site the way a person would: log in, search, open the pages you want covered.')
-    log('When you are done, close the browser window (or press Ctrl+C here). The capture is saved on exit.')
+    log('When you are done, close the last tab or window, quit the browser, or press Ctrl+C here. The capture is saved on exit.')
     await done
     // Ending an interactive session is the normal way to finish it, not an interruption.
     return null
@@ -531,6 +534,47 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
 }
 
 /** Runs the capture script; a failure or interruption is returned, so the session is still saved. */
+/**
+ * The run returned. A script that returned ended the session; in interactive mode the run also
+ * returns when a crash closed every page, so only the last-page grace or a stop signal decides.
+ */
+async function runEnded(sessionEnd: SessionEnd, scripted: boolean): Promise<void> {
+  if (scripted)
+    sessionEnd.end()
+  else
+    await sessionEnd.settled()
+}
+
+/**
+ * Records whether the person or the script ended the session before the browser closed
+ * (decision 0055). Interactive: the last page closing, if the context then stays open (a crash
+ * closes pages and context back to back). Script: any `close()` of this context, however the
+ * script reached it (`context`, `page.context()`), patched on the instance itself.
+ */
+function trackSessionEnd(context: BrowserContext, stop: AbortSignal, interactive: boolean): SessionEnd {
+  const sessionEnd = new SessionEnd()
+  context.on('close', () => sessionEnd.browserClosed())
+  stop.addEventListener('abort', () => sessionEnd.end(), { once: true })
+  if (interactive) {
+    const watch = (page: Page): void => {
+      page.on('close', () => {
+        if (context.pages().length === 0)
+          sessionEnd.lastPageClosed()
+      })
+    }
+    context.pages().forEach(watch)
+    context.on('page', watch)
+  }
+  else {
+    const close = context.close.bind(context)
+    context.close = async (...args: Parameters<BrowserContext['close']>): Promise<void> => {
+      sessionEnd.end()
+      await close(...args)
+    }
+  }
+  return sessionEnd
+}
+
 async function runScripted(script: CaptureScript, context: BrowserContext, page: Page, options: RunCaptureOptions, stop: AbortSignal, log: (message: string) => void): Promise<Incomplete | null> {
   log('Running capture script.')
   if (stop.aborted)

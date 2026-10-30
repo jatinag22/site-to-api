@@ -7,6 +7,7 @@ import type { OperationCheck } from '../model/check'
 import type { LiveReplay } from '../probe'
 import type { SchemaDiff } from './diff'
 import { diffAgainstSchema } from './diff'
+import { readJsonBody, variesInCapture } from './varies'
 
 type Answered = Extract<LiveReplay, { kind: 'answered' }>
 
@@ -20,13 +21,10 @@ function documentedResponse(operation: Operation, status: number, mimeType: stri
   return sameStatus.find(response => response.mimeType === mimeType) ?? sameStatus[0] ?? null
 }
 
-/** Parses the live body as JSON and diffs it; a body that is not JSON is a change at the root. */
+/** Parses the live body as JSON (XSSI prefix dropped, as load does) and diffs it; a body that is not JSON is a change at the root. */
 function diffBody(schema: NonNullable<ResponseInfo['schema']>, text: string, redactPath?: (path: string) => string): SchemaDiff {
-  let body: unknown
-  try {
-    body = JSON.parse(text)
-  }
-  catch {
+  const read = readJsonBody(text)
+  if (read === 'not JSON') {
     return {
       added: [],
       removed: [],
@@ -35,7 +33,14 @@ function diffBody(schema: NonNullable<ResponseInfo['schema']>, text: string, red
       ],
     }
   }
-  return diffAgainstSchema(schema, body, redactPath)
+  return diffAgainstSchema(schema, read.json, redactPath)
+}
+
+/** The captured response texts of an operation with this status, in capture order. */
+function capturedTexts(operation: Operation, status: number): string[] {
+  return operation.exchanges.flatMap(exchange => exchange.response.status === status && typeof exchange.response.body?.text === 'string'
+    ? [exchange.response.body.text]
+    : [])
 }
 
 /** Without a JSON schema (HTML, text) only the media type can be compared. */
@@ -126,6 +131,18 @@ export function compareLive(operation: Operation, live: Answered, redactPath?: (
     }
   }
   const drift = changed || added.length > 0 || removed.length > 0 || typeChanged.length > 0
+  // The capture's own answers already differ where the live one does: it changes by request.
+  if (drift && !changed && variesInCapture(capturedTexts(operation, live.status), live.text, body)) {
+    return {
+      ...base(operation),
+      verdict: 'varies',
+      status,
+      added,
+      removed,
+      typeChanged,
+      note: 'Varies by request: the captured answers already differ from each other in these fields, so this difference is not drift.',
+    }
+  }
   return {
     ...base(operation),
     verdict: drift

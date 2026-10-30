@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createStopper, saveSession, writeJsonAtomic } from './save'
+import { createStopper, LAST_PAGE_GRACE_MS, saveSession, SessionEnd, writeJsonAtomic } from './save'
 
 let dir: string
 let harPath: string
@@ -97,8 +97,8 @@ describe('saveSession', () => {
     expect(result.warnings.some(warning => warning.includes('the HAR was written in full afterwards'))).toBe(true)
   })
 
-  it('never takes a rejected close for a finished one: the session stays incomplete', async () => {
-    // Rejects only after the wait, once the browser was ended: no "written in full" note.
+  it('keeps a session complete when the browser was already gone and its HAR is valid (YouTube)', async () => {
+    // Rejects only after the wait, once the browser was ended, with Playwright's "already closed".
     let reject = (): void => {}
     const late = new Promise<void>((_resolve, fail) => {
       reject = () => fail(new Error('Target page, context or browser has been closed'))
@@ -111,8 +111,72 @@ describe('saveSession', () => {
         reject()
       },
     }))
+    expect(result.incomplete).toBeNull()
+    expect(result.entries).toBe(1)
+    expect(result.warnings).toContain('The browser had already closed when the capture closed it; the HAR was read in full.')
+    expect(result.warnings.some(warning => warning.startsWith('Closing the browser failed'))).toBe(false)
+  })
+
+  it('marks the session incomplete when the browser exited on its own, while still reading its HAR', async () => {
+    const result = await saveSession(input({
+      pages: () => [],
+      close: async () => {
+        throw new Error('Target page, context or browser has been closed')
+      },
+    }, {
+      exitedEarly: () => true,
+    }))
+    expect(result.incomplete).toEqual({ reason: 'error', error: 'the browser exited during the capture' })
+    expect(result.entries).toBe(1)
+    expect(result.warnings.some(warning => warning.startsWith('The browser exited on its own during the capture'))).toBe(true)
+    expect(result.warnings.some(warning => warning.includes('already closed when the capture closed it'))).toBe(false)
+  })
+
+  it('keeps an interactive session complete when the browser closed all at once (Cmd+Q), with a note', async () => {
+    const result = await saveSession(input({
+      pages: () => [],
+      close: async () => {
+        throw new Error('Target page, context or browser has been closed')
+      },
+    }, {
+      scripted: false,
+      exitedEarly: () => true,
+    }))
+    expect(result.incomplete).toBeNull()
+    expect(result.entries).toBe(1)
+    expect(result.warnings).toContain('The browser closed all at once (quit or crash); everything up to then was recorded.')
+    expect(result.warnings.some(warning => warning.startsWith('The browser exited on its own'))).toBe(false)
+  })
+
+  it('keeps an interactive session that closed all at once incomplete when its HAR is missing', async () => {
+    const result = await saveSession(input({
+      pages: () => [],
+      close: async () => {
+        throw new Error('Target page, context or browser has been closed')
+      },
+    }, {
+      scripted: false,
+      exitedEarly: () => true,
+      harPath: path.join(dir, 'quit-without-har.har'),
+    }))
+    expect(result.incomplete).toMatchObject({ reason: 'error' })
+    expect(result.har).toBeNull()
+  })
+
+  it('marks a gone browser incomplete when it left no readable HAR', async () => {
+    const result = await saveSession(input({
+      pages: () => [],
+      close: async () => {
+        throw new Error('Target page, context or browser has been closed')
+      },
+    }, {
+      harPath: path.join(dir, 'never-written.har'),
+    }))
     expect(result.incomplete).toEqual({ reason: 'error', error: 'closing the browser failed: Target page, context or browser has been closed' })
-    expect(result.warnings.some(warning => warning.includes('written in full'))).toBe(false)
+    expect(result.har).toBeNull()
+  })
+
+  it('never takes a genuinely failed close for a finished one: the session stays incomplete', async () => {
     // Rejecting at once is not a clean close either.
     const failing = input({
       pages: () => [],
@@ -124,6 +188,18 @@ describe('saveSession', () => {
       incomplete: { reason: 'error', error: 'closing the browser failed: boom' },
     })
     expect(failing.killed()).toBe(1)
+  })
+
+  it('does not count a page that had already closed as a failed one', async () => {
+    const result = await saveSession(input({
+      pages: () => [
+        {
+          close: async () => { throw new Error('Target page, context or browser has been closed') },
+        },
+      ],
+      close: async () => {},
+    }))
+    expect(result).toMatchObject({ closed: true, incomplete: null })
   })
 
   it('keeps the session incomplete when a page failed to close, even if the HAR is written after the end', async () => {
@@ -276,5 +352,42 @@ describe('writeJsonAtomic', () => {
     const file = path.join(dir, 'meta.json')
     await writeJsonAtomic(file, { a: 1 })
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ a: 1 })
+  })
+})
+
+describe('sessionEnd', () => {
+  it('calls a browser that closed before the session was ended an early exit, and one after it not', () => {
+    const crashed = new SessionEnd()
+    crashed.browserClosed()
+    crashed.end()
+    expect(crashed.exitedEarly).toBe(true)
+    const ended = new SessionEnd()
+    ended.end()
+    ended.browserClosed()
+    expect(ended.exitedEarly).toBe(false)
+    expect(new SessionEnd().exitedEarly).toBe(false)
+  })
+
+  it('takes a last page closing and the context closing back to back for a crash (interactive)', async () => {
+    const crash = new SessionEnd()
+    crash.lastPageClosed()
+    crash.browserClosed()
+    await crash.settled()
+    expect(crash.exitedEarly).toBe(true)
+  })
+
+  it('takes a last page closing as the person\'s end when the context stays open (interactive)', async () => {
+    const person = new SessionEnd()
+    person.lastPageClosed()
+    await person.settled()
+    // The capture closes the context afterwards; that is not an early exit.
+    person.browserClosed()
+    expect(person.exitedEarly).toBe(false)
+    // And waiting the grace by hand gives the same answer.
+    const waited = new SessionEnd()
+    waited.lastPageClosed()
+    await new Promise(resolve => setTimeout(resolve, LAST_PAGE_GRACE_MS + 20))
+    waited.browserClosed()
+    expect(waited.exitedEarly).toBe(false)
   })
 })

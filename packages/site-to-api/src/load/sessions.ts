@@ -135,11 +135,13 @@ async function loadSession(dir: string, name: string, warnings: string[]): Promi
       'script-failed': 'the capture script failed',
       'interrupted': 'the capture was interrupted',
       'timeout': 'a page or the browser did not finish in time',
-      'error': 'the capture failed before the run',
+      'error': 'the capture stopped on an error',
     }[incomplete.reason]
     warnings.push(`${meta.data.sessionId}: incomplete capture (${why}${incomplete.error
       ? `: ${incomplete.error}`
-      : ''}). It is used as recorded; pages after that point are missing, so capture again for full coverage.`)
+      : ''}). It is used as recorded; ${incomplete.reason === 'error'
+      ? 'what came after the error is missing'
+      : 'pages after that point are missing'}, so capture again for full coverage.`)
   }
   const events = await readEvents(dir, meta.data, warnings)
   const { entries, raw } = await readHarEntries(dir, meta.data, warnings)

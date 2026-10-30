@@ -101,6 +101,72 @@ export async function writeJsonAtomic(file: string, value: unknown): Promise<voi
   await rename(temporary, file)
 }
 
+/**
+ * Who ended the session (decision 0055): the person or the script (the script returned, a stop
+ * signal came, or the last page was closed), or the browser itself, by closing its context
+ * before any of those (a crash, an out-of-memory kill). A browser that exits on its own leaves
+ * the session incomplete, even when the HAR it wrote is read in full.
+ */
+/**
+ * How long the context must stay open after the last page closed for that close to count as the
+ * person's: a crashing browser closes every page and then its context at once.
+ */
+export const LAST_PAGE_GRACE_MS = 50
+
+export class SessionEnd {
+  private ended = false
+  private early = false
+  private closed = false
+  private grace: { timer: ReturnType<typeof setTimeout>, done: Promise<void>, resolve: () => void } | null = null
+
+  /** The person or the script ended the session. */
+  end(): void {
+    this.ended = true
+  }
+
+  /**
+   * The last page closed (interactive mode). It is the person's end only when the context is
+   * still open {@link LAST_PAGE_GRACE_MS} later; a context that closes first was a crash.
+   */
+  lastPageClosed(): void {
+    if (this.grace !== null || this.closed)
+      return
+    let resolve = (): void => {}
+    const done = new Promise<void>((settle) => {
+      resolve = settle
+    })
+    const timer = setTimeout(() => {
+      if (!this.closed)
+        this.ended = true
+      this.grace = null
+      resolve()
+    }, LAST_PAGE_GRACE_MS)
+    this.grace = { timer, done, resolve }
+  }
+
+  /** The browser context closed; before {@link end}, the browser exited on its own. */
+  browserClosed(): void {
+    this.closed = true
+    if (this.grace !== null) {
+      clearTimeout(this.grace.timer)
+      this.grace.resolve()
+      this.grace = null
+    }
+    if (!this.ended)
+      this.early = true
+  }
+
+  /** Resolves once a pending last-page close has been judged; call before closing the context. */
+  async settled(): Promise<void> {
+    await this.grace?.done
+  }
+
+  /** True when the browser closed before the person or the script ended the session. */
+  get exitedEarly(): boolean {
+    return this.early
+  }
+}
+
 /** The parts of a browser context saving needs; a structural type so tests can fake it. */
 export interface ClosableContext {
   pages: () => Array<{ close: (options?: { runBeforeUnload?: boolean }) => Promise<void> }>
@@ -120,6 +186,11 @@ export interface SaveInput {
   kill: () => Promise<void>
   /** Puts back request bodies the HAR could not hold (`RequestBodyRecorder.patch`). */
   restoreBodies?: (entries: unknown[]) => number
+  /**
+   * True when the browser closed before the session was ended ({@link SessionEnd}): incomplete in
+   * script mode; in interactive mode the person quitting the browser, so only a note.
+   */
+  exitedEarly?: () => boolean
 }
 
 export interface SaveResult {
@@ -157,6 +228,22 @@ async function settleAll(input: SaveInput, warnings: string[]): Promise<Incomple
 interface ClosedBrowser {
   closed: boolean
   incomplete: Incomplete | null
+  /**
+   * The close rejected only because the browser was already gone (Playwright's "Target page,
+   * context or browser has been closed"). Whether anything is missing is then decided by the HAR:
+   * {@link saveSession} keeps the session complete when the HAR is there and valid.
+   */
+  alreadyGone: boolean
+}
+
+/** Playwright's rejection for a page, context or browser that had already closed. */
+const ALREADY_CLOSED = /has been closed|browser has disconnected|target closed/i
+
+/** The message of a rejection. */
+function messageOf(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : String(error)
 }
 
 /** Closes pages, then the context; kills the browser when that times out or a second stop comes. */
@@ -167,23 +254,23 @@ async function closeBrowser(input: SaveInput, warnings: string[]): Promise<Close
   let pagesFailed = false
   let closeError: string | null = null
   // Pages first, without beforeunload: closing the context waits forever on a page whose main
-  // thread never yields, and the HAR is only written once the context has closed.
-  const closingPages = Promise.all(input.context.pages().map(page => page.close({ runBeforeUnload: false }))).then(() => {}, () => {
-    pagesFailed = true
+  // thread never yields, and the HAR is only written once the context has closed. A page that
+  // was already closed is not a failure.
+  const closingPages = Promise.all(input.context.pages().map(page => page.close({ runBeforeUnload: false }))).then(() => {}, (error: unknown) => {
+    if (!ALREADY_CLOSED.test(messageOf(error)))
+      pagesFailed = true
   })
   const pages = await waitBounded(closingPages, closeMs, input.stopper.forced)
   const closing = pages === 'stopped'
     ? null
     : input.context.close().then(() => {}, (error: unknown) => {
-        closeError = error instanceof Error
-          ? error.message
-          : String(error)
+        closeError = messageOf(error)
       })
   const closed = closing === null
     ? 'stopped'
     : await waitBounded(closing, closeMs, input.stopper.forced)
   if (closed === 'done' && closeError === null)
-    return { closed: true, incomplete: null }
+    return { closed: true, incomplete: null, alreadyGone: false }
   await waitBounded(input.kill(), KILL_MS, null)
   // Playwright writes the HAR when the context's close finishes, which ending the browser lets
   // happen: wait for it (bounded) so the HAR is checked as it ends up, not before it is written.
@@ -196,13 +283,18 @@ async function closeBrowser(input: SaveInput, warnings: string[]): Promise<Close
   // session is complete; ending the browser is worth a note, not an incomplete mark.
   if (closed === 'timeout' && pages === 'done' && !pagesFailed && flushed === 'done' && closeError === null) {
     warnings.push(`The browser did not close within ${seconds(closeMs)} after its pages had closed, so it was ended; the HAR was written in full afterwards.`)
-    return { closed: false, incomplete: null }
+    return { closed: false, incomplete: null, alreadyGone: false }
   }
   if (closeError !== null) {
-    warnings.push(`Closing the browser failed (${closeError}), so it was ended and the HAR may be missing or incomplete.`)
+    // The browser had gone on its own (a site closed its last window, the process exited): the
+    // HAR decides. A close that failed for any other reason may have written no HAR.
+    const gone = ALREADY_CLOSED.test(closeError) && pages === 'done' && !pagesFailed
+    if (!gone)
+      warnings.push(`Closing the browser failed (${closeError}), so it was ended and the HAR may be missing or incomplete.`)
     return {
       closed: false,
       incomplete: { reason: 'error', error: `closing the browser failed: ${closeError}` },
+      alreadyGone: gone,
     }
   }
   if (closed === 'stopped') {
@@ -210,13 +302,44 @@ async function closeBrowser(input: SaveInput, warnings: string[]): Promise<Close
     return {
       closed: false,
       incomplete: { reason: 'interrupted', error: 'a second stop signal ended the browser' },
+      alreadyGone: false,
     }
   }
   warnings.push(`The browser did not close within ${seconds(closeMs)}, so it was ended and the HAR may be missing or incomplete.`)
   return {
     closed: false,
     incomplete: { reason: 'timeout', error: `the browser did not close within ${seconds(closeMs)}` },
+    alreadyGone: false,
   }
+}
+
+interface HarReadInput {
+  browser: ClosedBrowser
+  exited: Incomplete | null
+  allAtOnce: boolean
+  scripted: boolean
+  incomplete: Incomplete | null
+  /** What else made the session incomplete: pages that did not settle, an interrupted script. */
+  rest: Incomplete | null
+}
+
+/**
+ * The session's final state once its HAR was read: a browser that was gone before capture closed
+ * it lost nothing, so only the close's own error is dropped (a timeout or interruption still
+ * counts); and the note that says how the browser ended, when it ended on its own.
+ */
+function afterReadableHar(input: HarReadInput, warnings: string[]): Incomplete | null {
+  let incomplete = input.incomplete
+  if (input.browser.alreadyGone && input.exited === null && incomplete === input.browser.incomplete) {
+    incomplete = input.rest
+    if (!input.allAtOnce)
+      warnings.push('The browser had already closed when the capture closed it; the HAR was read in full.')
+  }
+  if (input.exited !== null)
+    warnings.push('The browser exited on its own during the capture (a crash or the system ended it); what it recorded until then was read, but the session is incomplete.')
+  else if (input.allAtOnce && !input.scripted)
+    warnings.push('The browser closed all at once (quit or crash); everything up to then was recorded.')
+  return incomplete
 }
 
 /**
@@ -231,7 +354,14 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
   const interrupted: Incomplete | null = input.scripted && input.stopper.signal.aborted
     ? { reason: 'interrupted', error: null }
     : null
-  const incomplete = browser.incomplete ?? settled ?? interrupted
+  // A script that had not finished lost the rest of its run when the browser exited: incomplete
+  // even when the HAR is read in full below. In interactive mode the same signs are how quitting
+  // the browser looks (Cmd+Q), the person's way to finish: complete, with a note.
+  const allAtOnce = input.exitedEarly?.() === true
+  const exited: Incomplete | null = allAtOnce && input.scripted
+    ? { reason: 'error', error: 'the browser exited during the capture' }
+    : null
+  let incomplete = exited ?? browser.incomplete ?? settled ?? interrupted
   let har: FinishedHar
   try {
     har = await finishHar(input.harPath, undefined, input.restoreBodies)
@@ -252,6 +382,14 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
       closed: browser.closed,
     }
   }
+  incomplete = afterReadableHar({
+    browser,
+    exited,
+    allAtOnce,
+    scripted: input.scripted,
+    incomplete,
+    rest: settled ?? interrupted,
+  }, warnings)
   warnings.push(...har.warnings)
   if (har.entries === 0)
     warnings.push('The HAR has no requests. Did the page load?')
