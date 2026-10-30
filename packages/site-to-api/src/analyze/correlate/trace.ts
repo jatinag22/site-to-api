@@ -527,9 +527,10 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
           literal: staticStrings.has(sent.value),
         }
         const constant = evidence.everySession || evidence.literal
-        // Typing `ciphe` after `ciph`: the longer value contains the earlier one, which the
-        // response echoed. A typed field explains it better than that substring.
-        if (producer && !(producer.transform === 'substring' && field !== null) && !isCoincidence(producer, sent.value, evidence)) {
+        // A typed field beats a substring (`ciphe` echoed after `ciph`) and a value read out of
+        // a page or text document (`lofi` in the suggestion list that echoed the search box).
+        const typedWins = field !== null && producer !== null && (producer.transform === 'substring' || producer.location.in === 'html')
+        if (producer && !typedWins && !isCoincidence(producer, sent.value, evidence)) {
           return {
             kind: 'response',
             exchangeId: producer.exchange.id,

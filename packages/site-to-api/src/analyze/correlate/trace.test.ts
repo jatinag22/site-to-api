@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { exchange, formBody, jsonBody, textBody } from '../../../test/helpers'
 import { CLIENT_VERSION, CONSTANT_API_KEY, fakeHtmlLocator, ITEM_ID, shopCapture } from '../../../test/scenarios'
 import { createHtmlLocator } from '../html'
-import { traceValues, untracedCodeLiterals } from './index'
+import { searchedTexts, traceValues, untracedCodeLiterals } from './index'
 
 const noLocator: HtmlLocator = () => null
 
@@ -858,6 +858,38 @@ describe('traceValues: values no response produced', () => {
     expect(originAt(trace([listing, search]), search, '{"in":"query","name":"type"}')?.kind).not.toBe('response')
   })
 
+  it('credits typing over a value a text document echoed (decision 0054)', () => {
+    const events: CaptureEvent[] = [
+      {
+        t: 'action',
+        ts: 5,
+        pageUrl: 'https://x.example.test/',
+        kind: 'change',
+        label: 'Search',
+        selector: 'input[name="search_query"]',
+        field: 'search_query',
+      },
+    ]
+    const suggest = exchange({
+      url: 'https://x.example.test/complete/search?q=lofi',
+      startedAt: 3,
+      responseBody: textBody('window.ac.h(["lofi",[["lofi beats",0],["lofi hip hop",0]],{"k":1}])', 'text/javascript'),
+    })
+    const search = exchange({
+      method: 'POST',
+      url: 'https://x.example.test/api/search',
+      startedAt: 10,
+      requestBody: jsonBody({ query: 'lofi hip hop' }),
+    })
+    const origin = originAt(trace([suggest, search], {
+      sessions: [
+        session('s1', events),
+      ],
+      htmlLocator: createHtmlLocator(),
+    }), search, '{"in":"body","pointer":"/query"}')
+    expect(origin).toEqual({ kind: 'user-input', field: 'search_query' })
+  })
+
   it('does not credit typing that happened after the request', () => {
     const events: CaptureEvent[] = [
       {
@@ -1019,5 +1051,24 @@ describe('untracedCodeLiterals (decision 0053)', () => {
     expect(literal('zoe_quinn')).toBe(false)
     expect(literal('pat@example.org')).toBe(false)
     expect(literal('get_feed')).toBe(true)
+  })
+})
+
+describe('searchedTexts', () => {
+  it('collects search parameter values with their encoded forms, and nothing else', () => {
+    expect(searchedTexts([
+      exchange({ url: 'https://map.test/search?query=Gate%20Tower&format=json' }),
+      exchange({ url: 'https://x.test/complete?q=ab', method: 'GET' }),
+      exchange({
+        method: 'POST',
+        url: 'https://x.test/api',
+        requestBody: jsonBody({ search_query: 'lofi', page: 'home' }),
+      }),
+    ])).toEqual([
+      'Gate Tower',
+      'Gate%20Tower',
+      'Gate+Tower',
+      'lofi',
+    ])
   })
 })

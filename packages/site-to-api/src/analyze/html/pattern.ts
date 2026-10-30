@@ -42,8 +42,11 @@ export function capture(pattern: string, input: string): string | null {
   return new RegExp(pattern).exec(input)?.[1] ?? null
 }
 
-/** A long number or a decimal with three or more places: data, not part of a page's template. */
-const DATA_NUMBER = /\d{5,}|\d\.\d{3,}/
+/**
+ * A number of three or more digits or a decimal with three or more places: data (a size
+ * `[512,433]`, an id, a coordinate), not part of a page's template.
+ */
+const DATA_NUMBER = /\d{3,}|\d\.\d{3,}/
 
 /**
  * A pattern that finds `value` at `index` in `input` from the text before it: tries ever longer
