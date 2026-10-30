@@ -25,7 +25,73 @@ const NOT_REPLAYED = new Set([
   'trailer',
   'accept-encoding',
   'cookie',
+  // The browser's cache validators: replayed, they make the server answer 304 with no body, which
+  // reads as a rejection to probe and as drift (200 -> 304) to check (decision 0049).
+  'if-none-match',
+  'if-modified-since',
 ])
+
+/** Responses that never end on their own; only their start is read (decision 0049). */
+const STREAM_TYPES = new Set([
+  'text/event-stream',
+  'application/x-ndjson',
+  'application/jsonl',
+])
+/** How much of a stream is read, at most. */
+const MAX_STREAM_PREFIX = 64 * 1024
+/** How long a stream may take, after its headers, to send its first event. */
+const STREAM_FIRST_EVENT_MS = 10_000
+
+/** True for a media type whose response is a stream of events. */
+function isStreamType(contentType: string | null): boolean {
+  return STREAM_TYPES.has(mediaType(contentType))
+}
+
+/**
+ * Reads the start of a stream: until its first complete event (a blank line for server-sent
+ * events, a newline for NDJSON), {@link MAX_STREAM_PREFIX} or {@link STREAM_FIRST_EVENT_MS},
+ * then cancels it. Reading to the end would wait forever: such a response only ends when the
+ * client leaves.
+ */
+async function readStreamStart(body: ReadableStream<Uint8Array>, eventEnd: RegExp, waitMs: number): Promise<string> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let text = ''
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(resolve, waitMs, null)
+  })
+  try {
+    while (text.length < MAX_STREAM_PREFIX && !eventEnd.test(text)) {
+      const step = await Promise.race([
+        reader.read(),
+        deadline,
+      ])
+      if (step === null || step.done)
+        break
+      text += decoder.decode(step.value, { stream: true })
+    }
+  }
+  catch {
+    // The server closed the stream early: what arrived is the answer.
+  }
+  finally {
+    clearTimeout(timer)
+    await reader.cancel().catch(() => {})
+  }
+  return text
+}
+
+/** The body of a live answer: all of it, or the start of a stream. */
+async function readLive(response: Response, waitMs: number): Promise<string> {
+  const contentType = response.headers.get('content-type')
+  if (!isStreamType(contentType) || response.body === null)
+    return await response.text()
+  const eventEnd = mediaType(contentType) === 'text/event-stream'
+    ? /\r?\n\r?\n/
+    : /\n/
+  return await readStreamStart(response.body, eventEnd, waitMs)
+}
 
 /** Sent in every variant, so they are never reported as "required". */
 const GENERIC = new Set([
@@ -160,6 +226,9 @@ function differenceFromCapture(exchange: Exchange, status: number, contentType: 
   const actual = mediaType(contentType)
   if (expected && actual && expected !== actual)
     return `${actual} where the capture had ${expected}`
+  // Only a stream's start was read, so its length says nothing; that it answered as a stream does.
+  if (isStreamType(contentType))
+    return null
   if (expected.includes('json'))
     return jsonDifference(exchange, body)
   const expectedLength = exchange.response.body?.text?.length ?? 0
@@ -229,6 +298,11 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
     if (variant.cookies.length > 0)
       headers.set('cookie', variant.cookies.map(([name, value]) => `${name}=${value}`).join('; '))
     const body = exchange.request.body?.text ?? null
+    // One signal for the whole exchange: the timeout covers the wait for the headers and, except
+    // for a stream, the body; a stream's start is read under its own limit, then the connection
+    // is closed (decision 0049).
+    const done = new AbortController()
+    const timer = setTimeout(() => done.abort(new DOMException('timed out', 'TimeoutError')), options.config.timeoutMs)
     try {
       const response = await options.fetch(exchange.request.url, {
         method: exchange.request.method,
@@ -237,9 +311,12 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
           ? null
           : body,
         redirect: 'manual',
-        signal: AbortSignal.timeout(options.config.timeoutMs),
+        signal: done.signal,
       })
-      const text = await response.text()
+      if (isStreamType(response.headers.get('content-type')))
+        clearTimeout(timer)
+      const text = await readLive(response, Math.min(STREAM_FIRST_EVENT_MS, options.config.timeoutMs))
+      done.abort()
       return {
         response: {
           status: response.status,
@@ -253,6 +330,9 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
       return {
         error: failureReason(error),
       }
+    }
+    finally {
+      clearTimeout(timer)
     }
   }
   return {

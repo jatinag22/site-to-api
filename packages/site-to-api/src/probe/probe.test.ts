@@ -22,7 +22,32 @@ function json(status: number, body: string): Handler {
   }
 }
 
+const conditionals: string[] = []
+const openStreams = new Set<import('node:http').ServerResponse>()
+
 const ROUTES: Record<string, Handler> = {
+  // Wikimedia EventStreams: headers and a first event at once, then the stream never ends.
+  '/v2/stream/recentchange': (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+    res.write(':ok\n\nevent: message\nid: 1\ndata: {"title":"A"}\n\n')
+    openStreams.add(res)
+    res.on('close', () => openStreams.delete(res))
+  },
+  // A stream whose first event never comes: still a stream that answered.
+  '/v2/stream/quiet': (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.flushHeaders()
+    openStreams.add(res)
+    res.on('close', () => openStreams.delete(res))
+  },
+  // Answers 304 to a cache validator, as Wikimedia's UI did.
+  '/v2/ui/': (req, res) => {
+    conditionals.push(String(req.headers['if-none-match'] ?? '') + String(req.headers['if-modified-since'] ?? ''))
+    if (req.headers['if-none-match'] !== undefined)
+      res.writeHead(304).end()
+    else
+      res.writeHead(200, { 'content-type': 'text/html' }).end('<html>'.padEnd(600, 'x'))
+  },
   '/api/tags': (req, res) => {
     // As Cloudflare did on Stack Overflow: the `HeadlessChrome` token alone gets a challenge.
     userAgents.push(req.headers['user-agent'] ?? '')
@@ -448,6 +473,49 @@ describe('probeOperations: challenge pages in the capture', () => {
 })
 
 describe('probeOperations: failures and data-changing requests', () => {
+  it('reads only the start of an event stream and counts it as answered, not timed out', async () => {
+    const started = Date.now()
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config: { ...config, timeoutMs: 2000 },
+      operations: [
+        op('getStream', 'GET', '/v2/stream/recentchange', {
+          url: `${origin}/v2/stream/recentchange`,
+          // The capture's HAR holds a long body for a stream that ended there; its length says nothing.
+          responseBody: textBody('data: x\n\n'.repeat(5000), 'text/event-stream'),
+        }),
+        op('getQuiet', 'GET', '/v2/stream/quiet', {
+          url: `${origin}/v2/stream/quiet`,
+          responseBody: textBody('', 'text/event-stream'),
+        }),
+      ],
+    })
+    expect(report.operations.find(result => result.operationId === 'getStream')).toMatchObject({ replay: 'ok', bare: 'ok' })
+    expect(report.operations.find(result => result.operationId === 'getQuiet')).toMatchObject({ replay: 'ok', bare: 'ok' })
+    // Two streams, each replayed twice, waited at most for the 2 s limit and never for the end.
+    expect(Date.now() - started).toBeLessThan(15_000)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(openStreams.size).toBe(0)
+  }, 30_000)
+
+  it('never replays the browser\'s cache validators, which turn a 200 into a 304', async () => {
+    conditionals.length = 0
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getUi', 'GET', '/v2/ui/', {
+          url: `${origin}/v2/ui/`,
+          requestHeaders: { 'if-none-match': 'W/"abc"', 'if-modified-since': 'Wed, 01 Jan 2026 00:00:00 GMT' },
+          responseBody: textBody('<html>'.padEnd(600, 'x')),
+        }),
+      ],
+    })
+    expect(report.operations[0]).toMatchObject({ replay: 'ok', bare: 'ok' })
+    expect(conditionals.length).toBeGreaterThan(0)
+    expect(conditionals.every(value => value === '')).toBe(true)
+  })
+
   it('says the host is unreachable instead of blaming the session', async () => {
     // A port that was just free: nothing listens there.
     const closed = createServer()
