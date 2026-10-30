@@ -91,6 +91,7 @@ const WRITE_WORDS: ReadonlySet<string> = new Set([
   'buy',
   'cancel',
   'charge',
+  'checkin',
   'checkout',
   'claim',
   'clear',
@@ -115,6 +116,7 @@ const WRITE_WORDS: ReadonlySet<string> = new Set([
   'order',
   'patch',
   'pay',
+  'payout',
   'post',
   'publish',
   'purchase',
@@ -161,7 +163,6 @@ function methodWords(procedure: string): string[] {
  */
 const READ_VERBS: ReadonlySet<string> = new Set([
   'browse',
-  'check',
   'count',
   'describe',
   'estimate',
@@ -171,30 +172,40 @@ const READ_VERBS: ReadonlySet<string> = new Set([
   'get',
   'has',
   'list',
-  'load',
   'lookup',
   'preview',
   'query',
   'read',
-  'resolve',
   'retrieve',
-  'scan',
   'search',
-  'show',
   'stream',
   'view',
-  'watch',
 ])
 
-/** Whether the method part of a procedure names a write (`pkg.Service/TransferFunds`). */
+/**
+ * Whether the method part of a procedure names a write (`pkg.Service/TransferFunds`): a write
+ * word among its words, or among runs of two or three of them joined (`CheckOut` is `checkout`,
+ * `Pay Out` is `payout`).
+ */
 function rpcMethodWrites(procedure: string): boolean {
-  return methodWords(procedure).some(word => WRITE_WORDS.has(word))
+  const words = methodWords(procedure)
+  const runs = words.flatMap((_, index) => [
+    words.slice(index, index + 2).join(''),
+    words.slice(index, index + 3).join(''),
+  ])
+  return [
+    ...words,
+    ...runs,
+  ].some(word => WRITE_WORDS.has(word))
 }
+
+/** Words that join a second action onto the first (`FetchAndMarkRead`, `GetOrCreate`). */
+const CONJUNCTIONS: ReadonlySet<string> = new Set(['and', 'or', 'then'])
 
 /**
  * Whether a method's name says it only reads: its first word is a read verb (after `batch`, as
- * in `BatchGetUsers`; `Look Up` counts as `lookup`) and no word names a write
- * (`GetOrCreateUser`). A descriptor's `NO_SIDE_EFFECTS` counts only for such a method.
+ * in `BatchGetUsers`; `Look Up` counts as `lookup`), no `And`/`Or`/`Then` joins another action
+ * onto it (`FetchAndMarkRead`), and no word names a write (`GetOrCreateUser`, `StreamPayout`). A descriptor's `NO_SIDE_EFFECTS` counts only for such a method.
  */
 export function rpcMethodReads(procedure: string): boolean {
   const words = methodWords(procedure)
@@ -204,7 +215,9 @@ export function rpcMethodReads(procedure: string): boolean {
   const first = verbs[0] === 'look' && verbs[1] === 'up'
     ? 'lookup'
     : verbs[0]
-  return first !== undefined && READ_VERBS.has(first) && !rpcMethodWrites(procedure)
+  // A second action after `And`, `Or` or `Then` may write: only a lone read is a read.
+  const compound = verbs.slice(1, -1).some(word => CONJUNCTIONS.has(word))
+  return first !== undefined && READ_VERBS.has(first) && !compound && !rpcMethodWrites(procedure)
 }
 
 /**

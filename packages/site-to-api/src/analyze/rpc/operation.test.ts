@@ -141,6 +141,19 @@ describe('rPC operations', () => {
       'Ack',
       'GetOrCreateUser',
       'BatchDeleteUsers',
+      'CheckOut',
+      'CheckIn',
+      'ResolveTicket',
+      'LoadFunds',
+      'ScanTicket',
+      'FetchAndMarkRead',
+      'GetAndIncrement',
+      'QueryAndPurge',
+      'ViewAndDismiss',
+      'HasAndConsume',
+      'StreamPayout',
+      'ShowBanner',
+      'WatchAndBuy',
     ]
     expect(writes.filter(name => rpcMethodReads(`pkg.S/${name}`))).toEqual([])
     const reads = [
@@ -150,9 +163,10 @@ describe('rPC operations', () => {
       'BatchGetUsers',
       'LookUpAddress',
       'FindNearby',
-      'WatchPrices',
+      'StreamPrices',
       'CountUnread',
       'ListTransfers',
+      'GetUserWithOrders',
     ]
     expect(reads.filter(name => !rpcMethodReads(`pkg.S/${name}`))).toEqual([])
   })

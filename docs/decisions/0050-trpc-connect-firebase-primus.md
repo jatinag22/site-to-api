@@ -51,14 +51,17 @@ A run over real sites found four protocols the output did not understand:
     - protobuf-es v1 writes service objects with `idempotency: X.NoSideEffects`.
   - Only descriptors in the operation's own site's scripts count (same registrable domain as
     the host the method is called on; tenants of cloud hosts such as `run.app`,
-    `cloudfunctions.net`, `amazonaws.com`, `azurestaticapps.net`, `ngrok-free.app` and
-    `supabase.co` are separate sites). A third-party or injected script must not vouch for a
+    `cloudfunctions.net`, `azurestaticapps.net`, `ngrok-free.app`, `supabase.co`,
+    `storage.googleapis.com`, and AWS hosts under their service and region labels
+    (`bucket.s3.us-east-1.amazonaws.com`, `fn.lambda-url.us-east-1.on.aws`) are separate sites). A third-party or injected script must not vouch for a
     site's method. A method that two of the site's files describe differently is left out.
   - A method declared `NO_SIDE_EFFECTS` is `readOnly`, and probe treats it as a safe read.
   - A descriptor's `NO_SIDE_EFFECTS` counts only for a method whose name says it reads: its
     first word (after `Batch`) is a read verb (`Get`, `List`, `Search`, `Find`, `Fetch`, `Read`,
-    `Query`, `Count`, `Lookup`, `Describe`, `Check`, `Watch`, `Stream` and a few more) and no
-    word names a write (`GetOrCreate…`). Writes have too many names (`Payout`, `BookFlight`,
+    `Query`, `Count`, `Lookup`, `Describe`, `Stream` and a few more; not `Check`, `Resolve`,
+    `Load`, `Scan`, `Show` or `Watch`, which also name writes: `CheckOut`, `LoadFunds`), no
+    `And`/`Or`/`Then` joins a second action onto it (`FetchAndMarkRead`), and no word or run of
+    joined words names a write (`GetOrCreate…`, `StreamPayout`, `Check Out`). Writes have too many names (`Payout`, `BookFlight`,
     `ToggleFeature`, `Mint`) for a list of them to be complete, so reads are listed instead.
   - The MCP servers send with the person's session, so for them only a Connect method the
     page called with GET reads. A read declared only in a descriptor stays probe-only.
