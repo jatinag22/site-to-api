@@ -58,7 +58,9 @@ A matrix run on fourteen real sites found three gaps.
 - **A browser that lingers after its pages.** When every page closed, the context's close timed
   out, and it finished once the browser was ended (so Playwright wrote the HAR), the session is
   complete, with a warning that the browser had to be ended. A page that never closed, or a close
-  that rejected, keeps the session incomplete.
+  that rejected, keeps the session incomplete, except a rejection that only says the browser
+  had already closed ("Target page, context or browser has been closed"): then the HAR decides,
+  and a HAR that is there and valid keeps the session complete, with a note.
 
 - **The person's IP address.** Decoded innertube bodies carry the visitor's public IP
   (`context.client.remoteHost`), and YouTube's `sw.js_data` array holds it without a field

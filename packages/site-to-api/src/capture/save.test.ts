@@ -97,8 +97,8 @@ describe('saveSession', () => {
     expect(result.warnings.some(warning => warning.includes('the HAR was written in full afterwards'))).toBe(true)
   })
 
-  it('never takes a rejected close for a finished one: the session stays incomplete', async () => {
-    // Rejects only after the wait, once the browser was ended: no "written in full" note.
+  it('keeps a session complete when the browser was already gone and its HAR is valid (YouTube)', async () => {
+    // Rejects only after the wait, once the browser was ended, with Playwright's "already closed".
     let reject = (): void => {}
     const late = new Promise<void>((_resolve, fail) => {
       reject = () => fail(new Error('Target page, context or browser has been closed'))
@@ -111,8 +111,26 @@ describe('saveSession', () => {
         reject()
       },
     }))
+    expect(result.incomplete).toBeNull()
+    expect(result.entries).toBe(1)
+    expect(result.warnings).toContain('The browser had already closed when the capture closed it; the HAR was read in full.')
+    expect(result.warnings.some(warning => warning.startsWith('Closing the browser failed'))).toBe(false)
+  })
+
+  it('marks a gone browser incomplete when it left no readable HAR', async () => {
+    const result = await saveSession(input({
+      pages: () => [],
+      close: async () => {
+        throw new Error('Target page, context or browser has been closed')
+      },
+    }, {
+      harPath: path.join(dir, 'never-written.har'),
+    }))
     expect(result.incomplete).toEqual({ reason: 'error', error: 'closing the browser failed: Target page, context or browser has been closed' })
-    expect(result.warnings.some(warning => warning.includes('written in full'))).toBe(false)
+    expect(result.har).toBeNull()
+  })
+
+  it('never takes a genuinely failed close for a finished one: the session stays incomplete', async () => {
     // Rejecting at once is not a clean close either.
     const failing = input({
       pages: () => [],
@@ -124,6 +142,18 @@ describe('saveSession', () => {
       incomplete: { reason: 'error', error: 'closing the browser failed: boom' },
     })
     expect(failing.killed()).toBe(1)
+  })
+
+  it('does not count a page that had already closed as a failed one', async () => {
+    const result = await saveSession(input({
+      pages: () => [
+        {
+          close: async () => { throw new Error('Target page, context or browser has been closed') },
+        },
+      ],
+      close: async () => {},
+    }))
+    expect(result).toMatchObject({ closed: true, incomplete: null })
   })
 
   it('keeps the session incomplete when a page failed to close, even if the HAR is written after the end', async () => {

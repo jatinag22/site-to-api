@@ -157,6 +157,22 @@ async function settleAll(input: SaveInput, warnings: string[]): Promise<Incomple
 interface ClosedBrowser {
   closed: boolean
   incomplete: Incomplete | null
+  /**
+   * The close rejected only because the browser was already gone (Playwright's "Target page,
+   * context or browser has been closed"). Whether anything is missing is then decided by the HAR:
+   * {@link saveSession} keeps the session complete when the HAR is there and valid.
+   */
+  alreadyGone: boolean
+}
+
+/** Playwright's rejection for a page, context or browser that had already closed. */
+const ALREADY_CLOSED = /has been closed|browser has disconnected|target closed/i
+
+/** The message of a rejection. */
+function messageOf(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : String(error)
 }
 
 /** Closes pages, then the context; kills the browser when that times out or a second stop comes. */
@@ -167,23 +183,23 @@ async function closeBrowser(input: SaveInput, warnings: string[]): Promise<Close
   let pagesFailed = false
   let closeError: string | null = null
   // Pages first, without beforeunload: closing the context waits forever on a page whose main
-  // thread never yields, and the HAR is only written once the context has closed.
-  const closingPages = Promise.all(input.context.pages().map(page => page.close({ runBeforeUnload: false }))).then(() => {}, () => {
-    pagesFailed = true
+  // thread never yields, and the HAR is only written once the context has closed. A page that
+  // was already closed is not a failure.
+  const closingPages = Promise.all(input.context.pages().map(page => page.close({ runBeforeUnload: false }))).then(() => {}, (error: unknown) => {
+    if (!ALREADY_CLOSED.test(messageOf(error)))
+      pagesFailed = true
   })
   const pages = await waitBounded(closingPages, closeMs, input.stopper.forced)
   const closing = pages === 'stopped'
     ? null
     : input.context.close().then(() => {}, (error: unknown) => {
-        closeError = error instanceof Error
-          ? error.message
-          : String(error)
+        closeError = messageOf(error)
       })
   const closed = closing === null
     ? 'stopped'
     : await waitBounded(closing, closeMs, input.stopper.forced)
   if (closed === 'done' && closeError === null)
-    return { closed: true, incomplete: null }
+    return { closed: true, incomplete: null, alreadyGone: false }
   await waitBounded(input.kill(), KILL_MS, null)
   // Playwright writes the HAR when the context's close finishes, which ending the browser lets
   // happen: wait for it (bounded) so the HAR is checked as it ends up, not before it is written.
@@ -196,13 +212,18 @@ async function closeBrowser(input: SaveInput, warnings: string[]): Promise<Close
   // session is complete; ending the browser is worth a note, not an incomplete mark.
   if (closed === 'timeout' && pages === 'done' && !pagesFailed && flushed === 'done' && closeError === null) {
     warnings.push(`The browser did not close within ${seconds(closeMs)} after its pages had closed, so it was ended; the HAR was written in full afterwards.`)
-    return { closed: false, incomplete: null }
+    return { closed: false, incomplete: null, alreadyGone: false }
   }
   if (closeError !== null) {
-    warnings.push(`Closing the browser failed (${closeError}), so it was ended and the HAR may be missing or incomplete.`)
+    // The browser had gone on its own (a site closed its last window, the process exited): the
+    // HAR decides. A close that failed for any other reason may have written no HAR.
+    const gone = ALREADY_CLOSED.test(closeError) && pages === 'done' && !pagesFailed
+    if (!gone)
+      warnings.push(`Closing the browser failed (${closeError}), so it was ended and the HAR may be missing or incomplete.`)
     return {
       closed: false,
       incomplete: { reason: 'error', error: `closing the browser failed: ${closeError}` },
+      alreadyGone: gone,
     }
   }
   if (closed === 'stopped') {
@@ -210,12 +231,14 @@ async function closeBrowser(input: SaveInput, warnings: string[]): Promise<Close
     return {
       closed: false,
       incomplete: { reason: 'interrupted', error: 'a second stop signal ended the browser' },
+      alreadyGone: false,
     }
   }
   warnings.push(`The browser did not close within ${seconds(closeMs)}, so it was ended and the HAR may be missing or incomplete.`)
   return {
     closed: false,
     incomplete: { reason: 'timeout', error: `the browser did not close within ${seconds(closeMs)}` },
+    alreadyGone: false,
   }
 }
 
@@ -231,7 +254,7 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
   const interrupted: Incomplete | null = input.scripted && input.stopper.signal.aborted
     ? { reason: 'interrupted', error: null }
     : null
-  const incomplete = browser.incomplete ?? settled ?? interrupted
+  let incomplete = browser.incomplete ?? settled ?? interrupted
   let har: FinishedHar
   try {
     har = await finishHar(input.harPath, undefined, input.restoreBodies)
@@ -251,6 +274,12 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
       incomplete: incomplete ?? { reason: 'timeout', error: reason },
       closed: browser.closed,
     }
+  }
+  // The browser was gone before capture closed it, and the HAR it left is there and valid: nothing
+  // is missing. Only the close's own error is dropped; a timeout or interruption still counts.
+  if (browser.alreadyGone && incomplete === browser.incomplete) {
+    incomplete = settled ?? interrupted
+    warnings.push('The browser had already closed when the capture closed it; the HAR was read in full.')
   }
   warnings.push(...har.warnings)
   if (har.entries === 0)

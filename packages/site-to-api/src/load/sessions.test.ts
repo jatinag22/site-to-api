@@ -380,6 +380,15 @@ describe('loadSessions', () => {
     expect(warnings).toEqual(['s1: incomplete capture (the capture script failed: boom). It is used as recorded; pages after that point are missing, so capture again for full coverage.'])
   })
 
+  it('says a session that stopped on an error lost what came after it, not that it failed before the run', async () => {
+    await writeSession('s1', {
+      ...meta('s1', '2026-01-01T10:00:00.000Z'),
+      incomplete: { reason: 'error', error: 'closing the browser failed: boom' },
+    }, [], [])
+    const { warnings } = await loadSessions(root)
+    expect(warnings).toContain('s1: incomplete capture (the capture stopped on an error: closing the browser failed: boom). It is used as recorded; what came after the error is missing, so capture again for full coverage.')
+  })
+
   it('explains a session folder that has a HAR but no meta.json', async () => {
     await mkdir(join(root, 'lost'), { recursive: true })
     await writeFile(join(root, 'lost', 'traffic.har'), '{"log":{"entries":[]}}')
