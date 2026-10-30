@@ -286,6 +286,35 @@ describe('renderAgentGuide', () => {
   })
 })
 
+describe('telemetry host files (decision 0054)', () => {
+  it('summarise a host that only takes reports instead of listing every operation and gap', () => {
+    const analysis = fixture()
+    for (let index = 0; index < 15; index++) {
+      analysis.operations.push(operation({
+        host: 'otlp.collector.example',
+        operationId: `postV1Traces${index}`,
+        method: 'POST',
+        path: `/v1/traces/${index}`,
+        exchanges: [
+          exchange({ method: 'POST', url: `https://otlp.collector.example/v1/traces/${index}`, status: 204 }),
+        ],
+      }))
+    }
+    const context: Context = {
+      toolVersion: '0.1.0',
+      examples: 'masked',
+      probed: false,
+      client: 'current',
+      probe: null,
+    }
+    const doc = hostDoc(analysis, context, 'otlp.collector.example')
+    expect(doc).toContain('A consent, analytics or telemetry host')
+    expect(doc).toContain('- and 5 more')
+    expect(doc).not.toContain('postV1Traces14')
+    expect(renderAgentGuide(analysis, context)).toContain('### Consent, analytics and telemetry hosts')
+  })
+})
+
 describe('renderApiMap', () => {
   const map = renderApiMap(fixture(), 'current')
 

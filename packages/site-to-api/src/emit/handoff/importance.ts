@@ -7,8 +7,11 @@ import type { Analysis, ComputedValue, Exchange, Flow, Operation, SessionRequire
 import type { StepResolver } from '../steps'
 import { registrableHost } from '../../hosts'
 
-/** The three groups of hosts, in the order `AGENT.md` lists them. */
-export type HostRole = 'first-party' | 'pages' | 'third-party'
+/**
+ * The groups of hosts, in the order `AGENT.md` lists them. `telemetry`: consent, analytics and
+ * telemetry hosts, the site's own included, which only receive reports (decision 0054).
+ */
+export type HostRole = 'first-party' | 'pages' | 'third-party' | 'telemetry'
 
 export interface RankedHost {
   host: string
@@ -17,6 +20,83 @@ export interface RankedHost {
   session: SessionRequirement | null
   /** Observed (not code-only) API operations, the main sort key within a group. */
   apiOperations: number
+}
+
+/**
+ * Name words of hosts that run consent banners, analytics or telemetry: Sourcepoint
+ * (`cdn.privacy-mgmt.com`, `sp-prod.net`), OneTrust, Cookiebot, IAB consent frameworks, OTLP
+ * collectors (`otlp-http-production.shopifysvc.com`), Sentry, New Relic, Datadog intake, and the
+ * site's own analytics hosts (`ophan.theguardian.com`).
+ */
+const TELEMETRY_HOST_WORDS: ReadonlySet<string> = new Set([
+  'consent',
+  'cmp',
+  'privacy',
+  'mgmt',
+  'sp',
+  'sourcepoint',
+  'onetrust',
+  'cookielaw',
+  'cookiebot',
+  'consensu',
+  'trustarc',
+  'didomi',
+  'usercentrics',
+  'quantcast',
+  'analytics',
+  'ophan',
+  'telemetry',
+  'otlp',
+  'opentelemetry',
+  'collector',
+  'metrics',
+  'tracking',
+  'beacon',
+  'rum',
+  'sentry',
+  'newrelic',
+  'nr',
+  'datadoghq',
+  'intake',
+  'mixpanel',
+  'amplitude',
+  'segment',
+  'hotjar',
+  'clarity',
+])
+
+/** OTLP export paths: `/v1/traces`, `/v1/metrics`, `/v1/logs`. */
+const OTLP_PATH = /^\/v1\/(?:traces|metrics|logs)\/?$/
+
+/**
+ * A call that reports rather than fetches: an OTLP export, a beacon or ping, a 204, or a POST
+ * the server answered with an empty body. A GET recorded without a body says nothing.
+ */
+function isReportCall(operation: Operation): boolean {
+  if (OTLP_PATH.test(operation.path))
+    return true
+  return operation.exchanges.length > 0 && operation.exchanges.every(exchange => exchange.resourceType === 'beacon'
+    || exchange.resourceType === 'ping'
+    || exchange.response.status === 204
+    || (exchange.request.method === 'POST' && exchange.response.body !== null && exchange.response.body.text?.trim() === ''))
+}
+
+/**
+ * A host that only takes reports: its name says consent, analytics or telemetry (a whole word of
+ * its labels, `sp` and `nr` only as a first label), or every call observed on it reports (see
+ * {@link isReportCall}). A host that served a page the person browsed never is.
+ */
+function isTelemetryHost(host: string, operations: readonly Operation[], browsedHosts: ReadonlySet<string>): boolean {
+  if (browsedHosts.has(host))
+    return false
+  const labels = host.replace(/:\d+$/, '').toLowerCase().split('.')
+  const words = labels.flatMap(label => label.split('-'))
+  const named = words.some(word => TELEMETRY_HOST_WORDS.has(word) && word !== 'sp' && word !== 'nr')
+    || ['sp', 'nr'].includes(labels[0]?.split('-')[0] ?? '')
+  if (named)
+    return true
+  const observed = operations.filter(operation => operation.host === host && !operation.sourceOnly)
+  return observed.length > 0 && observed.every(operation => operation.kind === 'api' && isReportCall(operation))
 }
 
 /** `api.example.com:8443` → `example.com`; the port is not part of the site. */
@@ -93,7 +173,12 @@ export function rankHosts(analysis: Analysis, pageHosts: readonly SessionRequire
     ? browsed
     : new Set((analysis.startUrls ?? []).flatMap(url => hostOfUrl(url)).map(siteOf))
   const ownHost = (host: string): boolean => site.size === 0 || site.has(siteOf(host))
+  const browsedHosts = new Set(analysis.operations
+    .filter(operation => operation.kind === 'page' && !operation.sourceOnly && !framed.has(operation.host))
+    .map(operation => operation.host))
   const roleOf = (host: string): HostRole => {
+    if (isTelemetryHost(host, analysis.operations, browsedHosts))
+      return 'telemetry'
     // A host that served only pages is one of the site's page hosts when it is on the site's
     // domain or served a page the person browsed; a host whose pages were all framed (an ad
     // network's sync page) or that only answered a captcha widget is a third party.
@@ -107,7 +192,12 @@ export function rankHosts(analysis: Analysis, pageHosts: readonly SessionRequire
       ? 'first-party'
       : 'third-party'
   }
-  const order: Record<HostRole, number> = { 'first-party': 0, 'pages': 1, 'third-party': 2 }
+  const order: Record<HostRole, number> = {
+    'first-party': 0,
+    'pages': 1,
+    'third-party': 2,
+    'telemetry': 3,
+  }
   return [...hosts]
     .map(host => ({
       host,

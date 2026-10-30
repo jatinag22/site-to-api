@@ -43,6 +43,7 @@ const ROLE_HEADINGS: Record<HostRole, string> = {
   'first-party': '### The site\'s own hosts',
   'pages': '### Hosts that served only pages',
   'third-party': '### Third-party hosts',
+  'telemetry': '### Consent, analytics and telemetry hosts',
 }
 
 /** What `AGENT.md` and the host files are computed from, worked out once per build. */

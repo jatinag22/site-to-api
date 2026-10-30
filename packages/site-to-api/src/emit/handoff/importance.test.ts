@@ -38,6 +38,41 @@ describe('rankFlows', () => {
   })
 })
 
+describe('rankHosts: consent, analytics and telemetry last (decision 0054)', () => {
+  it('ranks hosts named for consent or telemetry, and hosts that only take reports, after third parties', () => {
+    const analysis: Analysis = twoHostAnalysis()
+    const www = analysis.operations.find(entry => entry.host === WWW)
+    const api = analysis.operations.find(entry => entry.host === API)
+    if (!www || !api)
+      throw new Error('fixture changed')
+    www.kind = 'page'
+    const report = (host: string, path: string, init: Parameters<typeof exchange>[0]): Operation => ({
+      ...api,
+      host,
+      path,
+      operationId: `post${host.length}`,
+      exchanges: [
+        exchange(init),
+      ],
+    })
+    analysis.operations.push(
+      { ...api, host: 'cdn.privacy-mgmt.test', operationId: 'getConsent' },
+      { ...api, host: 'cdn.vendor.test', operationId: 'getWidget' },
+      report('otlp-http-production.shopsvc.test', '/v1/traces', { method: 'POST', url: 'https://otlp-http-production.shopsvc.test/v1/traces' }),
+      report('pixel.example.test', '/img', { url: 'https://pixel.example.test/img', status: 204 }),
+    )
+    const ranked = rankHosts(analysis, [])
+    expect(ranked.map(entry => [entry.host, entry.role])).toEqual([
+      [API, 'first-party'],
+      [WWW, 'first-party'],
+      ['cdn.vendor.test', 'third-party'],
+      ['cdn.privacy-mgmt.test', 'telemetry'],
+      ['otlp-http-production.shopsvc.test', 'telemetry'],
+      ['pixel.example.test', 'telemetry'],
+    ])
+  })
+})
+
 describe('rankHosts', () => {
   it('orders the site\'s own API hosts, then page-only hosts, then third parties', () => {
     const analysis: Analysis = twoHostAnalysis()
