@@ -121,6 +121,10 @@ function locateInText(document: string, value: string): HtmlLocation | null {
  * Text documents get `selector: ''` (the whole document) and a pattern.
  */
 export function createHtmlLocator(onError: (error: unknown) => void = () => {}): HtmlLocator {
+  // Tracing asks about the same value in the same page again and again (an id sent by every
+  // request): the answer is remembered per page, so each page is parsed once per distinct value
+  // at most, and not at all for values it does not contain.
+  const answers = new Map<string, Map<string, HtmlLocation | null>>()
   // A page the analysis cannot read (markup it builds an invalid selector from) loses this value
   // origin, not the build.
   const locate: HtmlLocator = (document, value) => {
@@ -141,12 +145,20 @@ export function createHtmlLocator(onError: (error: unknown) => void = () => {}):
       ?? byPartialAttribute(dom, allElements(dom), value)
   }
   return (document, value) => {
+    const known = answers.get(document)?.get(value)
+    if (known !== undefined)
+      return known
+    let found: HtmlLocation | null
     try {
-      return locate(document, value)
+      found = locate(document, value)
     }
     catch (error) {
       onError(error)
-      return null
+      found = null
     }
+    const byValue = answers.get(document) ?? new Map<string, HtmlLocation | null>()
+    byValue.set(value, found)
+    answers.set(document, byValue)
+    return found
   }
 }

@@ -28,7 +28,7 @@ import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
 import { registrableHost } from '../hosts'
 import { failedNavigationsWarning, loadSessions } from '../load'
-import { alignProbeReport, applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation, writeProbeReport } from '../probe'
+import { alignProbeReport, applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation, testedByOperation, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
@@ -47,6 +47,22 @@ export interface BuildOptions {
    */
   sources?: Record<string, ConfigSource>
   log?: (message: string) => void
+  /**
+   * The analysis of the raw captures from {@link analyzeForProbe}, for the same config: `probe`
+   * hands it over so its rebuild applies the new `probe.json` instead of analysing every capture
+   * a second time.
+   */
+  captured?: CapturedAnalysis
+}
+
+/**
+ * The analysis of the raw captures before `probe.json` is applied: what `build` and `probe` share.
+ * Opaque outside this module.
+ */
+export interface CapturedAnalysis {
+  readonly analysis: Analysis
+  readonly redactor: Redactor
+  readonly rawDir: string
 }
 
 export interface BuildResult {
@@ -221,6 +237,11 @@ interface Analyzed {
 }
 
 async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, log: (message: string) => void): Promise<Analyzed> {
+  return await withStoredProbe(await analyzeRawCaptures(config, rawDir, log), outDir)
+}
+
+/** Everything `build` learns from the raw captures; `probe.json` is applied by {@link withStoredProbe}. */
+async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (message: string) => void): Promise<CapturedAnalysis> {
   const loaded = await loadSessions(rawDir)
   log(`Loaded ${loaded.sessions.length} session(s), ${loaded.exchanges.length} requests`)
   const classified = classifyExchanges(loaded.exchanges, config.hosts)
@@ -321,20 +342,6 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     inScope: createChannelScope(exchanges, config.hosts),
   })
 
-  // probe.json may predate this build's operation ids: match its entries by replayed exchange.
-  const stored = await readProbeReport(outDir)
-  const probe = stored && alignProbeReport(stored, operations)
-  if (probe) {
-    flows.session = applyProbeReport(flows.session, probe, operations, redactor.text)
-    const requires = requirementsByOperation(probe)
-    operations = operations.map(operation => ({
-      ...operation,
-      requires: operation.kind === 'bot-protection'
-        ? null
-        : requires.get(`${operation.host} ${operation.operationId}`) ?? null,
-    }))
-  }
-
   const analysis: Analysis = {
     sessions: loaded.sessions.map(session => session.meta.sessionId),
     startUrls: [
@@ -352,7 +359,70 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   }
   if (config.build.excerpts)
     await addExcerpts(analysis, loaded.sessions, redactor)
+  return { analysis, redactor, rawDir }
+}
+
+/**
+ * The captured analysis with `probe.json` applied: session requirements and the needs probe
+ * measured per operation. Returns copies; `captured` is left as it was, so `probe` can apply the
+ * report it just wrote to the analysis it replayed from.
+ */
+async function withStoredProbe(captured: CapturedAnalysis, outDir: string): Promise<Analyzed> {
+  const { redactor } = captured
+  const base = captured.analysis
+  // probe.json may predate this build's operation ids: match its entries by replayed exchange.
+  const stored = await readProbeReport(outDir)
+  const probe = stored && alignProbeReport(stored, base.operations)
+  // The emitters add warnings to the analysis they write: each build gets its own list.
+  const analysis: Analysis = {
+    ...base,
+    warnings: [...base.warnings],
+  }
+  if (probe) {
+    const requires = requirementsByOperation(probe)
+    const tested = testedByOperation(probe)
+    analysis.flows = {
+      ...base.flows,
+      session: applyProbeReport(base.flows.session, probe, base.operations, redactor.text),
+    }
+    analysis.operations = base.operations.map(operation => ({
+      ...operation,
+      requires: operation.kind === 'bot-protection'
+        ? null
+        : requires.get(`${operation.host} ${operation.operationId}`) ?? null,
+      probeTested: operation.kind === 'bot-protection'
+        ? []
+        : tested.get(`${operation.host} ${operation.operationId}`) ?? [],
+    }))
+  }
   return { analysis, probe, stored, redactor }
+}
+
+/**
+ * Generates `client/` (or removes or keeps it) and says which state it is in. Pushes the files it
+ * wrote to `files` and its warnings to `warnings`.
+ */
+async function writeClient(outDir: string, analysis: Analysis, config: ResolvedConfig, files: string[], warnings: string[]): Promise<ClientState> {
+  if (config.gen.client && analysis.operations.length > 0) {
+    const generated = await generateClient({ handoffDir: outDir, flows: analysis.flows, mcp: config.gen.mcp })
+    files.push(...generated.files.map(file => join(outDir, file)))
+    warnings.push(...generated.warnings)
+    return generated.empty
+      ? 'empty'
+      : 'current'
+  }
+  if (analysis.operations.length === 0) {
+    // Nothing left to describe: a client from an earlier build would point at operations that are gone.
+    await rm(join(outDir, 'client'), { recursive: true, force: true })
+    return 'none'
+  }
+  if (!existsSync(join(outDir, 'client', 'index.ts')))
+    return 'none'
+  // Same sentence as the AGENT.md gap, so the terminal and the folder say the same thing.
+  const stale = clientGap('stale')
+  if (stale !== null)
+    warnings.push(stale)
+  return 'stale'
 }
 
 /**
@@ -364,7 +434,9 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
   const rawDir = resolve(options.cwd, options.config.rawDir)
   const outDir = resolve(options.cwd, options.config.outDir)
   assertOwnOutDir(outDir, resolve(options.cwd), rawDir)
-  const analyzed = await analyze(options.config, rawDir, outDir, log)
+  const analyzed = options.captured !== undefined && options.captured.rawDir === rawDir
+    ? await withStoredProbe(options.captured, outDir)
+    : await analyze(options.config, rawDir, outDir, log)
   // Matching is done on raw names; everything written from here on gets the redacted spelling.
   const analysis = withRedactedNames(analyzed.analysis, analyzed.redactor.text)
   const probe = analyzed.probe && probeReportWithRedactedNames(analyzed.probe, analyzed.redactor.text)
@@ -402,24 +474,7 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     ...await writeExcerpts(outDir, analysis.excerpts),
   ]
   const warnings = [...analysis.warnings]
-  let client: ClientState = 'none'
-  if (options.config.gen.client && analysis.operations.length > 0) {
-    const generated = await generateClient({ handoffDir: outDir, flows: analysis.flows, mcp: options.config.gen.mcp })
-    files.push(...generated.files.map(file => join(outDir, file)))
-    warnings.push(...generated.warnings)
-    client = 'current'
-  }
-  else if (analysis.operations.length === 0) {
-    // Nothing left to describe: a client from an earlier build would point at operations that are gone.
-    await rm(join(outDir, 'client'), { recursive: true, force: true })
-  }
-  else if (existsSync(join(outDir, 'client', 'index.ts'))) {
-    client = 'stale'
-    // Same sentence as the AGENT.md gap, so the terminal and the folder say the same thing.
-    const stale = clientGap(client)
-    if (stale !== null)
-      warnings.push(stale)
-  }
+  const client = await writeClient(outDir, analysis, options.config, files, warnings)
   files.push(
     ...await writeHandoffDocs(outDir, analysis, {
       toolVersion: VERSION,
@@ -469,12 +524,14 @@ export async function analyzeCaptures(options: BuildOptions): Promise<Analysis> 
  * The analysis plus the name redaction the handoff folder uses, so `probe` writes `probe.json`
  * with redacted names itself, even when the rebuild after it fails.
  */
-export async function analyzeForProbe(options: BuildOptions): Promise<{ analysis: Analysis, redactProbeReport: (report: ProbeReport) => ProbeReport, redactText: (text: string) => string }> {
+export async function analyzeForProbe(options: BuildOptions): Promise<{ analysis: Analysis, captured: CapturedAnalysis, redactProbeReport: (report: ProbeReport) => ProbeReport, redactText: (text: string) => string }> {
   const rawDir = resolve(options.cwd, options.config.rawDir)
   const outDir = resolve(options.cwd, options.config.outDir)
-  const { analysis, redactor } = await analyze(options.config, rawDir, outDir, options.log ?? (() => {}))
+  const captured = await analyzeRawCaptures(options.config, rawDir, options.log ?? (() => {}))
+  const { analysis, redactor } = await withStoredProbe(captured, outDir)
   return {
     analysis,
+    captured,
     redactProbeReport: report => probeReportWithRedactedNames(report, redactor.text),
     redactText: redactor.text,
   }

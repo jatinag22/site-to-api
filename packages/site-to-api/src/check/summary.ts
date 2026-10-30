@@ -33,10 +33,11 @@ export function summarizeCheck(report: CheckReport): string[] {
     else if (entry.verdict === 'unreachable')
       lines.push(`UNREACHABLE ${label(entry)}`, `  ${entry.note ?? 'no answer'}`)
   }
-  for (const entry of report.skipped) {
-    if (entry.cause === 'no-sample')
-      lines.push(`NOT CHECKED ${entry.operationId}`, `  ${entry.reason}`)
-  }
+  const unsampled = report.skipped.filter(entry => entry.cause === 'no-sample')
+  for (const entry of unsampled)
+    lines.push(`NOT CHECKED ${entry.operationId}`, `  ${entry.reason}`)
+  if (unsampled.length > 0 && report.operations.length > 0)
+    lines.push(`${unsampled.length} operation(s) had no captured success to replay and were not checked; this does not change the exit code. Capture them working to check them.`)
   if (report.skippedHosts.length > 0)
     lines.push(`Third-party hosts not checked (name one with --include to check it): ${report.skippedHosts.join(', ')}.`)
   if (report.operations.length === 0)

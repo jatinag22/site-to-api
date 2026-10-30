@@ -43,9 +43,15 @@ function fieldCount(draft: { spec: ExtractSpec } | null): number {
 }
 
 /** Chooses between a record list and a detail layout found in the same samples. */
-function chooseHtml(texts: string[]): Draft | null {
+/**
+ * Samples inference looks at. Layouts are inferred from the first few pages: every further page
+ * multiplied the selector checks (a shop's product pages, each with 150 cards, took minutes),
+ * while the spec is still checked against every sample.
+ */
+const MAX_INFERENCE_SAMPLES = 8
+
+function chooseHtml(texts: string[], several: boolean): Draft | null {
   const documents = texts.map(parseHtml)
-  const several = documents.length >= 2
   const records = inferRecords(documents, several)
   // Positions inside the records vary too; they belong to the records, not to a detail layout.
   const [first] = documents
@@ -106,6 +112,23 @@ function verify(draft: Draft | TextDraft, texts: string[]): { spec: ExtractSpec,
 }
 
 /**
+ * True when the spec finds one record (`many: false`) or some records in every sample, and every
+ * field that is not optional has a value in each of them: a type or pattern inferred from the
+ * first pages must hold on the rest too.
+ */
+function extractsFromEach(spec: ExtractSpec, texts: readonly string[]): boolean {
+  const single = spec.kind === 'html' && !spec.many
+  const required = Object.entries(spec.fields).filter(([, field]) => !field.optional).map(([name]) => name)
+  return texts.every((text) => {
+    const records = applyExtractSpec(text, spec)
+    const found = single
+      ? records.length === 1
+      : records.length > 0
+    return found && records.every(record => required.every(name => record[name] !== null))
+  })
+}
+
+/**
  * Infers an extraction spec from responses of one operation.
  *
  * HTML samples are compared to separate template from data: repeated records (table rows,
@@ -129,14 +152,25 @@ export function inferExtraction(
   const html = samples.filter(isHtmlSample).length
   if (html !== 0 && html !== samples.length)
     return null
+  // Inference reads the first pages only; `several` still counts every sample, as before.
+  const distinct = texts.slice(0, MAX_INFERENCE_SAMPLES)
   const draft = html > 0
-    ? chooseHtml(texts)
+    ? chooseHtml(distinct, texts.length >= 2)
     : inferText(texts)
-  const verified = draft
-    ? verify(draft, texts)
+  const checked = draft
+    ? verify(draft, html > 0
+        ? distinct
+        : texts)
     : null
-  if (!verified)
+  if (!checked)
     return null
+  // The pages inference skipped must still extract: the same rule `verify` applies to the rest.
+  const verified = html > 0 && checked.consistent && distinct.length < texts.length
+    ? {
+        ...checked,
+        consistent: extractsFromEach(checked.spec, texts),
+      }
+    : checked
   const high = samples.length >= 2 && samples.length >= options.minSamples && verified.consistent
   return {
     spec: verified.spec,

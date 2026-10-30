@@ -34,11 +34,66 @@ export function isStrongIdentifier(segment: string, previous?: string | null): b
   return TOKEN.test(segment) && segment.length >= 20 && HAS_DIGIT.test(segment) && /[a-z]/.test(segment) && /[A-Z]/.test(segment)
 }
 
+const CAMEL_CASE = /^[a-z][a-z\d]*(?:[A-Z][a-z\d]*)+$/
+const PASCAL_WORDS = /^[A-Z][a-z\d]+(?:[A-Z][a-z\d]*)+$/
+const SNAKE_WORDS = /^[a-z]+(?:_[a-z]+)+$/
+/** `buf.registry.module.v1.ResourceService`: a package path, three or more dotted parts. */
+const DOTTED_NAME = /^[a-z][\w-]*(?:\.[\w-]+){2,}$/i
+
+/** A word part of a name: two or more letters with a vowel, or a version suffix (`V2`). */
+const WORD_PART = /^(?:[BCDFGHJ-NP-TVWXZ]*[AEIOUY][A-Z]*|[a-z]\d+)$/i
+
+/**
+ * True when every camelCase, PascalCase or snake_case part reads as a word (`load`, `Cached`,
+ * `V2`). Random tokens are mixed-case too (`aB3dE5gH7jK9`) but their parts are not words.
+ */
+function readsAsWords(segment: string): boolean {
+  const parts = segment.split(/_|(?=[A-Z])/).filter(part => part !== '')
+  return parts.length >= 2 && parts.every(part => part.length >= 2 && WORD_PART.test(part))
+}
+
+/**
+ * Names of methods and operations rather than values: camelCase (`loadCachedPageChunkV2`),
+ * PascalCase words (`GetResources`), snake_case words (`log_event`) and dotted service names
+ * (`buf.registry.module.v1.ResourceService`). RPC-style APIs put the operation in the path, and
+ * templating that position merges different endpoints. Random tokens never count. File names (`app.min.js`) have a dot
+ * before an extension and are not matched as service names unless they have three or more parts.
+ */
+function isMethodName(segment: string): boolean {
+  if (CAMEL_CASE.test(segment) || PASCAL_WORDS.test(segment) || SNAKE_WORDS.test(segment))
+    return readsAsWords(segment)
+  // A JWT is dotted too (`eyJ….eyJ….sig`), but random.
+  return DOTTED_NAME.test(segment) && /[a-z]{3,}/i.test(segment) && !/^\d/.test(segment) && !isRandomPathSegment(segment)
+}
+
+/**
+ * Segments after which an RPC-style API names the method: a version (`v1`, `v3`), `rpc`, `svc`,
+ * `service`, `services`, or a dotted service name (`acme.registry.v1.ResourceService`).
+ */
+function isRpcPrefix(segment: string | undefined): boolean {
+  if (segment === undefined)
+    return false
+  return /^(?:v\d+(?:\.\d+)*|rpc|svc|services?)$/i.test(segment) || (DOTTED_NAME.test(segment) && isMethodName(segment))
+}
+
+/**
+ * True when the segment at `index` is the method of an RPC-style path, never a value: a dotted
+ * service name (`/acme.registry.v1.ResourceService/GetResources`), or a method name
+ * (`loadCachedPageChunkV2`, `log_event`, `GetResources`) right after a version, `rpc`, `svc` or a
+ * service segment. A `john_smith` after `/users/` is a value like any other.
+ */
+export function isRpcMethodAt(segments: readonly string[], index: number): boolean {
+  const segment = segments[index] ?? ''
+  if (!isMethodName(segment))
+    return false
+  return DOTTED_NAME.test(segment) || isRpcPrefix(segments[index - 1])
+}
+
 /**
  * Values that may be parameters when they vary: integers, UUIDs, hex (≥ 8), base58/base64url
  * tokens (≥ 10, with a digit), UPPER_CASE slugs (`RELIANCE`, `NIFTY_50`) and mixed alphanumeric
- * slugs with digits (`iphone-15`). Plain words (`marketStatus`, `disclaimer`) and versions
- * (`v1`) are not.
+ * slugs with digits (`iphone-15`). Plain words (`disclaimer`) and versions (`v1`) are not; method
+ * names in RPC positions are left out by {@link isRpcMethodAt}.
  */
 export function isIdentifierLike(segment: string): boolean {
   if (segment === '' || VERSION.test(segment))

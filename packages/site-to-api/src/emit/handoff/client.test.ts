@@ -10,7 +10,7 @@ import { renderAgentGuide } from './agent-guide'
 import { renderApiMap } from './api-map'
 import { updateClientState, withApiMapClientState, withClientState } from './client'
 
-const STATES: ClientState[] = ['current', 'stale', 'none']
+const STATES: ClientState[] = ['current', 'stale', 'none', 'empty']
 
 function guide(client: ClientState, warnings: string[] = [], excerpts = new Map<string, string>()): string {
   const context: AgentGuideContext = {
@@ -38,6 +38,8 @@ describe('client state in AGENT.md and API_MAP.md', () => {
   it('describes each state the same way in the reading order, the gaps and API_MAP.md', () => {
     expect(guide('current')).toContain('5. `client/`: typed client with Zod validation')
     expect(guide('current')).toContain('## Gaps\n\nNone found.')
+    expect(guide('empty')).toContain('5. `client/`: none, because the capture has no API operations to call')
+    expect(guide('empty')).toContain('- No client: the capture has no API operations')
     expect(guide('stale')).toContain('5. `client/`: from an earlier build and not regenerated (`--no-client`)')
     expect(guide('stale')).toContain('- `client/` is from an earlier build and was not regenerated (`--no-client`); run `site-to-api gen` to bring it up to date.')
     expect(guide('none')).toContain('5. `client/`: not generated; run `site-to-api gen`.')

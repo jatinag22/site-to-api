@@ -335,7 +335,7 @@ describe('exit code with skipped operations', () => {
     expect(report.exitCode).toBe(0)
   })
 
-  it('is 2 for a selected operation that has no captured sample', async () => {
+  it('is 0 with a note when an operation only lacked a captured success (decision 0052)', async () => {
     const { report } = await run([
       op('ok'),
       noSample(),
@@ -343,6 +343,14 @@ describe('exit code with skipped operations', () => {
     expect(report.skipped).toMatchObject([
       { operationId: 'empty', cause: 'no-sample' },
     ])
+    expect(report.exitCode).toBe(0)
+    expect(summarizeCheck(report)).toContain('1 operation(s) had no captured success to replay and were not checked; this does not change the exit code. Capture them working to check them.')
+  })
+
+  it('is still 2 when nothing at all was replayed', async () => {
+    const { report } = await run([
+      noSample(),
+    ], answers)
     expect(report.exitCode).toBe(2)
   })
 

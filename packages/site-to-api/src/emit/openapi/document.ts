@@ -92,20 +92,51 @@ export function schemaObject(schema: JsonSchema): Json {
  */
 function originsByOperation(analysis: Analysis): Map<string, Map<string, ValueOrigin>> {
   const resolver = createStepResolver(analysis.operations, analysis.flows)
-  const result = new Map<string, Map<string, ValueOrigin>>()
+  const seen = new Map<string, Map<string, ValueOrigin[]>>()
   for (const step of analysis.flows.flows.flatMap(flow => flow.steps)) {
     const operation = resolver.operation(step)
     if (!operation)
       continue
     const key = operationKey(operation.host, operation.operationId)
-    const inputs = result.get(key) ?? new Map<string, ValueOrigin>()
-    result.set(key, inputs)
+    const inputs = seen.get(key) ?? new Map<string, ValueOrigin[]>()
+    seen.set(key, inputs)
     for (const [input, origin] of Object.entries(step.inputs)) {
-      if (!inputs.has(input))
-        inputs.set(input, origin)
+      inputs.set(input, [
+        ...(inputs.get(input) ?? []),
+        origin,
+      ])
     }
   }
+  const result = new Map<string, Map<string, ValueOrigin>>()
+  for (const [key, inputs] of seen) {
+    const chosen = new Map<string, ValueOrigin>()
+    for (const [input, origins] of inputs) {
+      const origin = operationOrigin(origins)
+      if (origin !== null)
+        chosen.set(input, origin)
+    }
+    result.set(key, chosen)
+  }
   return result
+}
+
+/**
+ * One origin for an operation input seen in several steps: the first that says where the value
+ * comes from (a response, a computation, typing…) beats an unknown, and a constant holds only
+ * when every step sent that same constant. Next.js sent `next-router-segment-prefetch: /_tree`
+ * in one step and `/!KG5…/__PAGE__` in another: that is no constant, so no origin is written.
+ */
+function operationOrigin(origins: readonly ValueOrigin[]): ValueOrigin | null {
+  const informative = origins.find(origin => origin.kind !== 'unknown' && origin.kind !== 'constant')
+  if (informative !== undefined)
+    return informative
+  const constants = origins.filter(origin => origin.kind === 'constant')
+  if (constants.length === 0)
+    return origins[0] ?? null
+  const values = new Set(constants.map(origin => JSON.stringify(origin)))
+  return values.size === 1 && constants.length === origins.length
+    ? constants[0] ?? null
+    : null
 }
 
 function originExtensions(origin: ValueOrigin | undefined): Json {
@@ -154,14 +185,29 @@ function hasDefault(header: Operation['headers'][number]): boolean {
 }
 
 /**
- * A header is required only when probe proved the request fails without it (`header:<name>` in
- * `x-site-to-api-requires`). A constant with a default is sent by the client itself, and tracing
- * headers are never needed by the server.
+ * A header is required when probe proved the request fails without it (`header:<name>` in
+ * `x-site-to-api-requires`), or, for an operation probe did not minimize, when every sample sent
+ * it. A constant with a default is sent by the client itself, and tracing headers are never
+ * needed by the server.
  */
 function headerRequired(operation: Operation, header: Operation['headers'][number]): boolean {
   if (hasDefault(header) || isTelemetryHeader(header.name))
     return false
-  return header.required || (operation.requires?.includes(`header:${header.name.toLowerCase()}`) ?? false)
+  return probedRequired(operation, `header:${header.name.toLowerCase()}`) ?? header.required
+}
+
+/**
+ * What probe measured about one need (`cookie:__cf_bm`): needed when probe found it needed; not
+ * needed only when probe removed it on its own and the answer still matched; `null` otherwise
+ * (a bare answer that worked tested nothing one by one), when presence in every sample decides.
+ * Cloudflare's `__cf_bm` is sent with every request yet none of them needs it.
+ */
+function probedRequired(operation: Operation, need: string): boolean | null {
+  if (operation.requires?.includes(need) === true)
+    return true
+  return operation.probeTested?.includes(need) === true
+    ? false
+    : null
 }
 
 function parameters(operation: Operation, origins: Map<string, ValueOrigin>): Json[] {
@@ -179,7 +225,7 @@ function parameters(operation: Operation, origins: Map<string, ValueOrigin>): Js
     // Cookie values never appear in the spec: the schema is a bare string.
     ...operation.cookies.map(cookie => parameter('cookie', {
       name: cookie.name,
-      required: cookie.required,
+      required: probedRequired(operation, `cookie:${cookie.name}`) ?? cookie.required,
       schema: { type: 'string' },
     }, origins)),
   ]

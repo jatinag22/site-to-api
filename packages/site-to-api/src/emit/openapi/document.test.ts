@@ -1,4 +1,4 @@
-import type { Analysis, Exchange, FlowsDocument, Operation } from '../../model'
+import type { Analysis, Exchange, FlowsDocument, Operation, ValueOrigin } from '../../model'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -420,6 +420,75 @@ describe('operation ids shared by two hosts', () => {
         },
       },
     })
+  })
+})
+
+describe('origins of an input seen in several steps (decision 0052)', () => {
+  const originOfLang = (second: ValueOrigin): unknown => {
+    const analysis = twoHostAnalysis()
+    const flow = analysis.flows.flows[0]!
+    const api = flow.steps[1]!
+    const again = {
+      ...api,
+      id: 's3',
+      inputs: { ...api.inputs, 'query.lang': second },
+    }
+    const withAgain = {
+      ...analysis,
+      flows: {
+        ...analysis.flows,
+        flows: [
+          {
+            ...flow,
+            steps: [...flow.steps, again],
+          },
+        ],
+      },
+    }
+    const yaml = parse(toYaml(buildOpenApiDocuments(withAgain).get(API) ?? {})) as { paths: Record<string, Record<string, { parameters: Array<Record<string, unknown>> }>> }
+    return yaml.paths['/']!.get!.parameters.find(parameter => parameter.name === 'lang')?.['x-site-to-api-origin']
+  }
+
+  it('writes no constant when steps sent different constants, and prefers a known origin over unknown', () => {
+    expect(originOfLang({ kind: 'constant', value: 'en' })).toEqual({ kind: 'constant', value: 'en' })
+    expect(originOfLang({ kind: 'constant', value: 'de' })).toBeUndefined()
+    expect(originOfLang({ kind: 'user-input', field: 'lang' })).toEqual({ kind: 'user-input', field: 'lang' })
+  })
+})
+
+describe('required cookies', () => {
+  it('follows probe over presence: a cookie sent every time but needed by nothing is optional', () => {
+    const call = (sessionId: string) => exchange({
+      sessionId,
+      url: 'https://shop.test/api/peer',
+      cookies: { __cf_bm: `bm-${sessionId}`, sid: `s-${sessionId}` },
+      responseBody: jsonBody({ ok: true }),
+    })
+    const cookiesOf = (requires: string[] | null, probeTested: string[] = []) => {
+      const analysis = analyse([
+        page(),
+        call('s1'),
+        call('s2'),
+      ], NO_FLOWS, operations => operations.map(operation => ({ ...operation, requires, probeTested })))
+      const document = buildOpenApiDocuments(analysis).get('shop.test') as { paths: Record<string, Record<string, { parameters: Array<{ name: string, in: string, required: boolean }> }>> }
+      return document.paths['/api/peer']!.get!.parameters
+        .filter(parameter => parameter.in === 'cookie')
+        .map(parameter => [parameter.name, parameter.required])
+    }
+    expect(cookiesOf(null)).toEqual([
+      ['__cf_bm', true],
+      ['sid', true],
+    ])
+    // Minimized: `__cf_bm` removed on its own and the answer still matched.
+    expect(cookiesOf(['cookie:sid'], ['cookie:__cf_bm', 'cookie:sid'])).toEqual([
+      ['__cf_bm', false],
+      ['sid', true],
+    ])
+    // A bare request that worked removed nothing one by one: presence still decides.
+    expect(cookiesOf([], [])).toEqual([
+      ['__cf_bm', true],
+      ['sid', true],
+    ])
   })
 })
 

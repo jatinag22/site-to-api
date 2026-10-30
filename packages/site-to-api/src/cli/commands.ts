@@ -211,7 +211,7 @@ const probeCommand: CommandRegistrar = (program) => {
       if (sticky.described.length > 0)
         consola.info(`Using the options of the last build (build.json): ${sticky.described.join(', ')}.`)
       warnIfRaw(config.redact.examples)
-      const { analysis, redactProbeReport } = await analyzeForProbe({ config, cwd })
+      const { analysis, captured, redactProbeReport } = await analyzeForProbe({ config, cwd })
       const report = await probeOperations({
         operations: analysis.operations,
         config: config.probe,
@@ -222,7 +222,8 @@ const probeCommand: CommandRegistrar = (program) => {
       // probe.json lives in the handoff folder: names that carry values are redacted here, not
       // only by the rebuild below, which may fail.
       await writeProbeReport(outDir, redactProbeReport(report))
-      const result = await buildHandoff({ config, cwd, sources })
+      // The captures were analysed above: the rebuild only applies the new probe.json.
+      const result = await buildHandoff({ config, cwd, sources, captured })
       printWarnings(result.warnings)
       for (const line of summarizeProbe(report))
         consola.info(line)
@@ -264,7 +265,9 @@ const genCommand: CommandRegistrar = (program) => {
       // AGENT.md and API_MAP.md were written when the client was missing or stale; say it exists now.
       printWarnings([
         ...result.warnings,
-        ...await updateClientState(handoffDir, 'current'),
+        ...await updateClientState(handoffDir, result.empty
+          ? 'empty'
+          : 'current'),
       ])
       await recordClientGenerated(handoffDir, { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' })
       consola.success(`Generated ${result.files.length} client files`)

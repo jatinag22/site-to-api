@@ -83,7 +83,7 @@ export interface Structure {
   text: string
 }
 
-type SiblingEvidence = 'links' | 'earlier-value' | 'count' | 'sessions'
+type SiblingEvidence = 'links' | 'earlier-value' | 'count' | 'sessions' | 'slug-pages'
 
 interface Free {
   path: string
@@ -299,6 +299,33 @@ interface Group {
   start: number
   size: number
   items: Free[]
+  /** A literal segment stays outside the window. Without one only `slug-pages` evidence counts. */
+  literal: boolean
+}
+
+/** `bert-base-uncased`, `programming`, `whisper-large-v3`: lower-case words, digits, `-` or `_`. */
+const SLUG_VALUE = /^[a-z\d]+(?:[-_][a-z\d]+)*$/
+const MIN_SLUG_LENGTH = 3
+
+function isSlugValue(segment: string): boolean {
+  const value = decode(segment)
+  return value.length >= MIN_SLUG_LENGTH && SLUG_VALUE.test(value) && /[a-z]/.test(value)
+}
+
+const PAGE_TITLE = /<title[^>]*>([^<]{0,300})<\/title>/i
+
+/** Lower-case words of a text, `-`, `_` and punctuation as spaces: `Bert-Base_Uncased` → `bert base uncased`. */
+function words(text: string): string {
+  return ` ${text.toLowerCase().replace(/[^a-z\d]+/g, ' ').trim()} `
+}
+
+/** True when the page's title names every value (`r/programming` in "programming - Reddit"). */
+function titleNames(text: string, values: readonly string[]): boolean {
+  const title = PAGE_TITLE.exec(text)?.[1]
+  if (title === undefined)
+    return false
+  const spelled = words(title)
+  return values.every(value => spelled.includes(words(decode(value))))
 }
 
 /** A value usable as data: not empty, not a version, not a reserved endpoint word. */
@@ -311,21 +338,23 @@ function tupleOf(item: Free, start: number, size: number): string {
   return item.segments.slice(start, start + size).join('/')
 }
 
-function groupKey(item: Free, start: number, size: number): string | null {
+function groupKey(item: Free, start: number, size: number): { key: string, literal: boolean } | null {
   const { segments, marks } = item
   for (let index = start; index < start + size; index++) {
     if (marks.has(index) || !isDataValue(segments[index]!))
       return null
   }
-  // At least one literal segment must stay, so `/about-us` next to `/contact-us` never merges.
-  const literalLeft = segments.some((segment, index) => (index < start || index >= start + size) && !marks.has(index) && segment !== '')
-  if (!literalLeft)
+  // At least one literal segment must stay, so `/about-us` next to `/contact-us` never merges;
+  // an `owner/repo` pair at the root (`/google-bert/bert-base-uncased`) is the one exception,
+  // and only with `slug-pages` evidence.
+  const literal = segments.some((segment, index) => (index < start || index >= start + size) && !marks.has(index) && segment !== '')
+  if (!literal && size !== 2)
     return null
-  return `${start}|${size}|${segments.map((segment, index) => index >= start && index < start + size
+  return { literal, key: `${start}|${size}|${segments.map((segment, index) => index >= start && index < start + size
     ? '*'
     : marks.has(index)
       ? '{}'
-      : segment).join('/')}`
+      : segment).join('/')}` }
 }
 
 function linkedValues(group: Group, facts: SiblingFacts): Set<string> {
@@ -416,14 +445,28 @@ function readableTemplate(group: Group, facts: SiblingFacts): boolean {
   return new Set(readable.map(structure => structure.text)).size > 1
 }
 
-function evidenceFor(group: Group, facts: SiblingFacts, repeated: boolean): SiblingEvidence[] {
-  const tuples = new Set(group.items.map(item => tupleOf(item, group.start, group.size)))
-  if (tuples.size < 2)
-    return []
-  // A value that looks like an id among plain words (`/users/123` next to `/users/me`) needs
-  // the strongest evidence: a listing or many values, never a coincidence of sessions.
-  const values = group.items.flatMap(item => item.segments.slice(group.start, group.start + group.size))
-  const mixed = values.some(isIdentifierLike) && !values.every(isIdentifierLike)
+/**
+ * `slug-pages`: safe reads whose values are all slugs (`programming`, `bert-base-uncased`), each
+ * answered with an HTML page whose title names its value, all pages alike and not one shell for
+ * every path: the pages of one template (`/r/programming`, `/r/webdev`). Two words a site uses
+ * as endpoint names (`/help/contact`, `/help/shipping`) do not title their pages with the path. Without a literal segment around them a
+ * two-position window also needs a `-` or a digit in each value, as repository names have.
+ */
+function slugPages(group: Group, facts: SiblingFacts, values: readonly string[]): boolean {
+  if (!SAFE_READS.has(facts.method) || !values.every(isSlugValue))
+    return false
+  if (!group.literal && !group.items.every(item => /[-\d]/.test(item.segments[group.start + group.size - 1] ?? '')))
+    return false
+  const structures = group.items.map(item => facts.structures.get(item.path))
+  const [first] = structures
+  return first?.kind === 'html'
+    && structures.every(structure => structure !== undefined && alike(first, structure))
+    && new Set(structures.map(structure => structure?.text)).size === new Set(group.items.map(item => item.path)).size
+    && group.items.every((item, index) => titleNames(structures[index]?.text ?? '', item.segments.slice(group.start, group.start + group.size)))
+}
+
+/** `links` and `earlier-value`: the values were seen elsewhere before they were requested. */
+function tracedEvidence(group: Group, facts: SiblingFacts, tuples: ReadonlySet<string>, mixed: boolean): SiblingEvidence[] {
   const evidence: SiblingEvidence[] = []
   const linked = linkedValues(group, facts)
   if (linked.size >= MIN_LINKED && [...tuples].some(tuple => linked.has(tuple)))
@@ -433,6 +476,23 @@ function evidenceFor(group: Group, facts: SiblingFacts, repeated: boolean): Sibl
     .every(segment => facts.seenBefore.get(item.path)?.has(decode(segment)) === true))
   if (!mixed && new Set(earlier.map(item => tupleOf(item, group.start, group.size))).size >= 2)
     evidence.push('earlier-value')
+  return evidence
+}
+
+function evidenceFor(group: Group, facts: SiblingFacts, repeated: boolean): SiblingEvidence[] {
+  const tuples = new Set(group.items.map(item => tupleOf(item, group.start, group.size)))
+  if (tuples.size < 2)
+    return []
+  // A value that looks like an id among plain words (`/users/123` next to `/users/me`) needs
+  // the strongest evidence: a listing or many values, never a coincidence of sessions.
+  const values = group.items.flatMap(item => item.segments.slice(group.start, group.start + group.size))
+  const mixed = values.some(isIdentifierLike) && !values.every(isIdentifierLike)
+  const evidence = tracedEvidence(group, facts, tuples, mixed)
+  if (slugPages(group, facts, values))
+    evidence.push('slug-pages')
+  // Without a literal segment only slug pages can be one template.
+  if (!group.literal)
+    return evidence.filter(item => item === 'slug-pages')
   // Values seen elsewhere are evidence on their own. Many values, or each session its own, are
   // only evidence for safe reads whose readable responses show one template: writes, 204s and
   // errors look alike whatever the endpoint. A two-position window always needs the former.
@@ -454,12 +514,18 @@ function collectGroups(free: Free[], size: number): Group[] {
   const groups = new Map<string, Group>()
   for (const item of free) {
     for (let start = 0; start + size <= item.segments.length; start++) {
-      const key = groupKey(item, start, size)
-      if (key === null)
+      const found = groupKey(item, start, size)
+      if (found === null)
         continue
-      const group = groups.get(key) ?? { key, start, size, items: [] }
+      const group = groups.get(found.key) ?? {
+        key: found.key,
+        start,
+        size,
+        items: [],
+        literal: found.literal,
+      }
       group.items.push(item)
-      groups.set(key, group)
+      groups.set(found.key, group)
     }
   }
   // Rightmost positions first: data sits at the leaf (`/docs/app/getting-started/{slug}`), and

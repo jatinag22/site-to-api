@@ -40,6 +40,8 @@ export interface GenerateClientResult {
   files: string[]
   /** Things the user may want to fix, e.g. a constant header with conflicting values. */
   warnings: string[]
+  /** True when no spec had an API operation, so no client was written and `client/` was removed. */
+  empty: boolean
 }
 
 /**
@@ -64,8 +66,11 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
     seen.set(host.identifier, host.file)
   }
 
-  assertTypeScript6()
   await rm(clientDir, { recursive: true, force: true })
+  // A client of no hosts does not type-check (its host union is `never`); there is nothing to call.
+  if (loaded.length === 0)
+    return { files: [], warnings, empty: true }
+  assertTypeScript6()
   await mkdir(clientDir, { recursive: true })
   const hosts: HostSpec[] = []
   for (const { host, document } of loaded) {
@@ -97,7 +102,7 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
   // Generated here, so this machine may run it (call_operation, the generated MCP server).
   await trustClient(clientDir, input.trustStore)
   const files = (await listFiles(clientDir)).map(file => path.posix.join('client', file))
-  return { files, warnings }
+  return { files, warnings, empty: false }
 }
 
 interface LoadedSpec {

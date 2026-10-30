@@ -556,7 +556,7 @@ function renderHostSection(host: HostSpec, session: SessionRequirement | null): 
     `- Namespace ${code(host.identifier)}, base URL ${code(host.baseUrl)}, ${host.operationIds.length} operation${host.operationIds.length === 1
       ? ''
       : 's'}.`,
-    `- Session: ${describeSession(session, probedHeaders(host.probedRequires))}`,
+    `- Session: ${describeSession(session, host.probedRequires)}`,
   ]
   if (session)
     lines.push(...cookieLines(session, host.probedRequires))
@@ -672,14 +672,23 @@ function probedHeaders(probedRequires: string[][]): string[] {
   ].sort()
 }
 
-function describeSession(session: SessionRequirement | null, headers: string[]): string {
+/** `requests` when every probed request needed the headers, else `2 of 9 probed requests`. */
+function headerNeeders(probedRequires: string[][]): string {
+  const needing = probedRequires.filter(requires => requires.some(item => item.startsWith('header:'))).length
+  return needing === probedRequires.length
+    ? 'requests'
+    : `${needing} of ${probedRequires.length} probed requests`
+}
+
+function describeSession(session: SessionRequirement | null, probedRequires: string[][]): string {
+  const headers = probedHeaders(probedRequires)
   if (!session)
     return 'not described in flows.json; start with cookies and run `site-to-api probe` to find out.'
   const probed = session.probed ? 'confirmed by `probe`' : 'inferred from captured traffic, not probed'
   switch (session.requires) {
     case 'none':
       return headers.length > 0
-        ? `plain HTTP works; requests need ${headers.length === 1
+        ? `plain HTTP works; ${headerNeeders(probedRequires)} need ${headers.length === 1
           ? 'header'
           : 'headers'} ${headers.map(code).join(', ')} (${probed}).`
         : `none, plain HTTP works (${probed}).`

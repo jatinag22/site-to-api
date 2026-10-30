@@ -171,7 +171,10 @@ same stem. Conventions:
   is constant when it had one value in every request of the operation, and that value was seen
   in two or more sessions, in the operation itself or in every request to the host.
 - A header parameter is `required` only when `probe` proved it is needed
-  (`x-site-to-api-requires`); being sent in every captured request is not enough. Tracing
+  (`x-site-to-api-requires`); being sent in every captured request is not enough. A cookie is
+  required when probe proved it needed; it is not when probe removed it on its own and the
+  answer still matched (`tested` in `probe.json`); otherwise a cookie sent in every captured
+  request is required. Tracing
   headers (`baggage`, `sentry-trace`, `traceparent`, `tracestate`, `b3`, `x-b3-*`,
   `x-datadog-*`) are never required and never get a default.
 - Query, form and path values that are all digits become `integer` unless they are codes:
@@ -407,7 +410,10 @@ captured request still works (`replay`), whether it works with no cookies or aut
 the cookies and headers it needs (`requires`, names only; `null` when not worked out). Finding
 `requires` costs one request per cookie and header, so it is done for at most
 `probe.minimizePerHost` operations per host (default 5, `--minimize-per-host <n>`), recorded as
-`minimizePerHost`. When neither the captured session nor a bare request was accepted,
+`minimizePerHost`. `tested` lists the cookies and headers removed one at a time; only these
+can make a spec parameter not required, and a bare request counts as working only when its
+answer also carries the captured content, not just its shape (decision 0052). When neither the
+captured session nor a bare request was accepted,
 `rejection` says why: `bot-protection`, `session` (401/403) or `other`, and `note` says what the
 site answered (decision 0036). Probe sends its own `user-agent` (`site-to-api/<version> (probe;
 automated)`), never the capture browser's. Names only.
@@ -469,10 +475,11 @@ and names only, never values, so it is safe to commit. `build` does not read or 
   `enum` (`expected: "enum"`, the value is never written), or a body that is no longer JSON
   (`expected: "JSON"`). A status that differs from the captured one is `drift` with both statuses
   and a note.
-- `exitCode` is what the command exits with: `0` no drift and every selected operation checked,
-  `1` any drift, `2` something selected could not be checked (blocked, unreachable, unchecked, an
-  operation with no captured sample, or nothing replayed). Operations skipped by the safety rules
-  do not count. A usage error also exits 2.
+- `exitCode` is what the command exits with: `0` no drift in what was replayed, `1` any drift,
+  `2` a replayed operation could not be judged (blocked, unreachable, unchecked) or nothing was
+  replayed. Operations skipped by the safety rules, or because the capture holds no success to
+  replay, were never replayed and do not count; the summary notes the latter (decision 0052).
+  A usage error also exits 2.
   An error before the check ran (no captures, an unknown `--operations` id) also exits 2 and
   writes no file.
 - `skipped` lists operations that were not replayed and why, by the rules of `probe`. `cause` is

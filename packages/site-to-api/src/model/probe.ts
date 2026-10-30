@@ -34,6 +34,12 @@ export const OperationProbeSchema = z.object({
    * keeps working, e.g. `cookie:_abck`, `header:referer`. `null` when not tested.
    */
   requires: z.array(z.string()).nullable(),
+  /**
+   * The cookies and headers that were removed one at a time (`cookie:sid`), whether needed or
+   * not. Only these can be called not needed (decision 0052); a bare request that worked tests
+   * none of them one by one. Absent in older reports.
+   */
+  tested: z.array(z.string()).optional(),
   /** HTTP statuses seen, in the order the variants ran. */
   statuses: z.array(z.number().int()),
   note: z.string().nullable(),

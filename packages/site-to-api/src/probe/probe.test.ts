@@ -71,6 +71,27 @@ const ROUTES: Record<string, Handler> = {
     res.writeHead(200, { 'content-type': 'text/html' }).end('<form action="/session"><input name="user"><input type="password" name="pw"></form>')
   },
   '/api/open': json(200, '{"items":[1]}'),
+  // A list the session fills; without it, an empty list.
+  '/api/notifications': (req, res) => {
+    const signedIn = String(req.headers.cookie ?? '').includes('sid=abc')
+    res.writeHead(200, { 'content-type': 'application/json' }).end(signedIn
+      ? '[{"id":1,"text":"hi"}]'
+      : '[]')
+  },
+  // A count the session fills; without it, a string.
+  '/api/unread': (req, res) => {
+    const signedIn = String(req.headers.cookie ?? '').includes('sid=abc')
+    res.writeHead(200, { 'content-type': 'application/json' }).end(signedIn
+      ? '3'
+      : '"login required"')
+  },
+  // Without the session cookie the same shape comes back, but empty.
+  '/api/me': (req, res) => {
+    const signedIn = String(req.headers.cookie ?? '').includes('sid=abc')
+    res.writeHead(200, { 'content-type': 'application/json' }).end(signedIn
+      ? '{"user":{"id":7,"name":"Ada"}}'
+      : '{"user":null}')
+  },
   '/api/px': json(403, JSON.stringify({
     appId: 'PXabc123',
     jsClientSrc: '/abc/init.js',
@@ -192,6 +213,68 @@ describe('probeOperations', () => {
     })
     const open = report.operations.find(result => result.operationId === 'getOpen')
     expect(open).toMatchObject({ replay: 'ok', bare: 'ok', requires: [] })
+  })
+
+  it('needs the session when a list empties or a value changes kind without it', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getApiNotifications', 'GET', '/api/notifications', {
+          url: `${origin}/api/notifications`,
+          cookies: { sid: 'abc' },
+          responseBody: jsonBody([
+            { id: 1, text: 'hi' },
+          ]),
+        }),
+        op('getApiUnread', 'GET', '/api/unread', {
+          url: `${origin}/api/unread`,
+          cookies: { sid: 'abc' },
+          responseBody: jsonBody(3),
+        }),
+      ],
+    })
+    for (const result of report.operations) {
+      expect(result, result.operationId).toMatchObject({
+        replay: 'ok',
+        requires: ['cookie:sid'],
+      })
+    }
+  })
+
+  it('does not take an empty bare answer for "no session needed": it minimizes instead (decision 0052)', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getApiMe', 'GET', '/api/me', {
+          url: `${origin}/api/me`,
+          cookies: { sid: 'abc', theme: 'dark' },
+          responseBody: jsonBody({
+            user: { id: 7, name: 'Ada' },
+          }),
+        }),
+      ],
+    })
+    expect(report.operations[0]).toMatchObject({
+      replay: 'ok',
+      bare: 'ok',
+      requires: ['cookie:sid'],
+    })
+    expect(report.operations[0]?.tested).toEqual(expect.arrayContaining(['cookie:sid', 'cookie:theme']))
+    const open = (await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getOpen', 'GET', '/api/open', {
+          url: `${origin}/api/open`,
+          responseBody: jsonBody({
+            items: [1],
+          }),
+        }),
+      ],
+    })).operations[0]
+    expect(open).toMatchObject({ bare: 'ok', requires: [], tested: [] })
   })
 
   it('treats a 200 challenge page as rejected when the capture had JSON', async () => {

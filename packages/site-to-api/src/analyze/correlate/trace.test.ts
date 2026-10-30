@@ -814,6 +814,50 @@ describe('traceValues: values no response produced', () => {
     ])).toEqual(['unknown', 'unknown', 'unknown'])
   })
 
+  it('credits text typed right before a navigation whose change fired just after it', () => {
+    const events: CaptureEvent[] = [
+      {
+        t: 'action',
+        ts: 1200,
+        pageUrl: 'https://x.example.test/',
+        kind: 'change',
+        label: 'Search',
+        selector: '#query',
+        field: 'query',
+      },
+    ]
+    const navigation = {
+      ...exchange({ url: 'https://x.example.test/search?query=blue%20mugs', startedAt: 1000 }),
+      resourceType: 'document',
+    }
+    expect(trace([navigation], {
+      sessions: [
+        session('s1', events),
+      ],
+    })[0]?.origin).toEqual({ kind: 'user-input', field: 'query' })
+    const late = { ...navigation, startedAt: 1000 - 5000 }
+    expect(trace([late], {
+      sessions: [
+        session('s1', events),
+      ],
+    })[0]?.origin.kind).toBe('unknown')
+  })
+
+  it('does not trace a word to a listing item field of an unrelated name', () => {
+    const listing = exchange({
+      url: 'https://x.example.test/api/models',
+      startedAt: 1,
+      responseBody: jsonBody({
+        models: [
+          { id: 'a/b', repoType: 'model' },
+          { id: 'c/d', repoType: 'model' },
+        ],
+      }),
+    })
+    const search = exchange({ url: 'https://x.example.test/api/search?type=model', startedAt: 2 })
+    expect(originAt(trace([listing, search]), search, '{"in":"query","name":"type"}')?.kind).not.toBe('response')
+  })
+
   it('does not credit typing that happened after the request', () => {
     const events: CaptureEvent[] = [
       {

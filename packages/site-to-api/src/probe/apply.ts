@@ -156,6 +156,26 @@ export function pageHostRequirements(operations: readonly Operation[], session: 
 }
 
 /**
+ * Per `<host> <operationId>`, the needs probe removed one at a time (`tested`), so only these can
+ * be called not needed. Older reports without `tested` give nothing.
+ */
+export function testedByOperation(report: ProbeReport): Map<string, string[]> {
+  const result = new Map<string, string[]>()
+  for (const probe of report.operations) {
+    if (probe.tested === undefined)
+      continue
+    const key = `${probe.host} ${probe.operationId}`
+    result.set(key, [
+      ...new Set([
+        ...result.get(key) ?? [],
+        ...probe.tested,
+      ]),
+    ].sort())
+  }
+  return result
+}
+
+/**
  * `x-site-to-api-requires` per operation: what probing showed each request needs. Several
  * entries can name one operation after `alignProbeReport` (paths merged into one template); the
  * operation then needs everything any of them needed.

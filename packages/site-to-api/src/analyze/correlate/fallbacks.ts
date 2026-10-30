@@ -113,6 +113,9 @@ function isFieldFor(event: ActionEvent, wanted: string, searchParameter: boolean
     || (searchParameter && [...candidates, event.label].some(text => SEARCH_WORDS.test(text)))
 }
 
+/** How long after a request a field's `change` may still explain it: blur on navigation. */
+const CHANGE_AFTER_NAVIGATION_MS = 2000
+
 /**
  * The form field the person typed this value into: the latest `change` action before the
  * request whose field name, or the name or id in its selector, matches the request field name.
@@ -120,30 +123,43 @@ function isFieldFor(event: ActionEvent, wanted: string, searchParameter: boolean
  * typed, `q` sent; a nameless box, `query` sent): a well-known search parameter matches a field
  * whose name, selector or label says search. The capture records no typed values, so names are
  * all there is to go on. With `stillTyping` (the request is one of several sending ever longer
- * values of the field), the first `change` after the request counts too.
+ * values of the field), the first `change` after the request counts too. With `navigation` (the
+ * request loads a page), a `change` up to two seconds after it counts: typing and pressing
+ * Enter loads the page before the field loses focus.
  */
-export function findUserInputField(events: readonly CaptureEvent[], name: string, before: number, options: { stillTyping?: boolean } = {}): string | null {
+export function findUserInputField(events: readonly CaptureEvent[], name: string, before: number, options: { stillTyping?: boolean, navigation?: boolean } = {}): string | null {
   const wanted = normalizeField(name)
   if (!wanted)
     return null
   const searchParameter = SEARCH_PARAMETERS.has(wanted)
+  const matches = (event: ActionEvent): boolean => event.kind === 'change' && isFieldFor(event, wanted, searchParameter)
   const actions = events.filter((event): event is ActionEvent => event.t === 'action')
-  let field: string | null = null
-  for (const event of actions) {
-    if (event.ts <= before && event.kind === 'change' && isFieldFor(event, wanted, searchParameter))
-      field = event.field ?? name
-  }
-  if (field !== null || !options.stillTyping)
-    return field
-  // `change` fires when the field loses focus, after the requests sent on each keystroke. A value
-  // still being typed belongs to the next `change`, unless the person clicked or submitted first.
+  const typed = actions.findLast(event => event.ts <= before && matches(event))
+    // Typing then pressing Enter loads the next page first; the field's `change` fires as the
+    // old page loses focus, just after. The value in the navigation was still typed.
+    ?? (options.navigation === true
+      ? actions.find(event => event.ts > before && event.ts - before <= CHANGE_AFTER_NAVIGATION_MS && matches(event))
+      : undefined)
+    ?? (options.stillTyping === true
+      ? nextChange(actions, before, matches)
+      : undefined)
+  return typed === undefined
+    ? null
+    : typed.field ?? name
+}
+
+/**
+ * `change` fires when the field loses focus, after the requests sent on each keystroke: a value
+ * still being typed belongs to the next `change`, unless the person clicked or submitted first.
+ */
+function nextChange(actions: readonly ActionEvent[], before: number, matches: (event: ActionEvent) => boolean): ActionEvent | undefined {
   for (const event of actions) {
     if (event.ts <= before)
       continue
     if (event.kind === 'click' || event.kind === 'submit')
-      return null
-    if (event.kind === 'change' && isFieldFor(event, wanted, searchParameter))
-      return event.field ?? name
+      return undefined
+    if (matches(event))
+      return event
   }
-  return null
+  return undefined
 }

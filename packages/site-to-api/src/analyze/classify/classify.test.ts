@@ -35,6 +35,102 @@ function kinds(list: Exchange[], include: string[] = [], exclude: string[] = [])
   return classify(list, include, exclude).exchanges.map(item => item.kind)
 }
 
+describe('classifyExchanges: static files and pixel sandboxes (decision 0052)', () => {
+  it('labels icons, manifests and named scripts and styles assets, whatever their resource type', () => {
+    expect(kinds([
+      page(),
+      on({ url: 'https://shop.test/favicon.ico', resourceType: 'other' }),
+      on({ url: 'https://shop.test/apple-touch-icon-180.png', resourceType: 'fetch' }),
+      on({
+        // The browser fetches the web app manifest with its own resource type.
+        url: 'https://shop.test/manifest.json',
+        resourceType: 'manifest',
+        responseBody: jsonBody({ name: 'Shop' }),
+      }),
+      on({ url: 'https://shop.test/site.webmanifest', resourceType: 'other' }),
+      on({ url: 'https://shop.test/cloud/checkout-web/assets/c1/polyfills-entry-modern.Ab12Cd.worker.js', resourceType: 'fetch' }),
+      on({ url: 'https://shop.test/cloud/checkout-web/assets/c1/app.css', resourceType: 'other' }),
+      on({
+        url: 'https://shop.test/api/cart.json',
+        resourceType: 'fetch',
+        responseBody: jsonBody({ items: [] }),
+      }),
+    ])).toEqual([
+      'page',
+      'asset',
+      'asset',
+      'asset',
+      'asset',
+      'asset',
+      'asset',
+      'api',
+    ])
+  })
+
+  it('keeps uploads, data manifests and JSONP calls to file-like paths as API calls', () => {
+    const png = {
+      mimeType: 'image/png',
+      text: null,
+      base64: 'iVBORw0KGgo=',
+      json: undefined,
+      form: null,
+    }
+    expect(kinds([
+      page(),
+      on({
+        url: 'https://shop.test/api/uploads/avatar.png',
+        method: 'POST',
+        resourceType: 'fetch',
+        requestBody: png,
+      }),
+      on({
+        url: 'https://shop.test/api/users/7/photo.jpg',
+        method: 'PUT',
+        resourceType: 'fetch',
+        requestBody: png,
+      }),
+      on({ url: 'https://shop.test/api/images/42.png', method: 'DELETE', resourceType: 'fetch' }),
+      on({
+        url: 'https://shop.test/iiif/123/manifest.json',
+        resourceType: 'fetch',
+        responseBody: jsonBody({ '@context': 'x', 'items': [] }),
+      }),
+      on({
+        url: 'https://shop.test/api/prices.js?callback=cb',
+        resourceType: 'fetch',
+        responseBody: textBody('cb({"price":1})', 'application/javascript'),
+      }),
+      on({
+        url: 'https://shop.test/api/stock.js',
+        resourceType: 'other',
+        responseBody: textBody('/**/handle([1,2])', 'text/javascript'),
+      }),
+    ])).toEqual([
+      'page',
+      'api',
+      'api',
+      'api',
+      'api',
+      'api',
+      'api',
+    ])
+  })
+
+  it('treats Shopify web-pixel sandbox iframes as noise, not pages', () => {
+    const frame = (path: string): Exchange => on({
+      url: `https://shop.test${path}`,
+      resourceType: 'document',
+      responseBody: textBody('<html><body></body></html>'),
+    })
+    expect(kinds([
+      page(),
+      frame('/wpm@a1b2c3d4e5/app/web-pixel-12345@abcdef/sandbox/modern/products/shoe'),
+      frame('/wpm@a1b2c3d4e5/custom/web-pixel-67890@2/sandbox/modern/'),
+      frame('/products/sandbox'),
+    ])).toEqual(['page', 'noise', 'noise', 'page'])
+  })
+})
+
 describe('classifyExchanges: front-end build files and ad networks (decision 0046)', () => {
   it('labels prefetched build chunks assets, whatever their resource type', () => {
     expect(kinds([

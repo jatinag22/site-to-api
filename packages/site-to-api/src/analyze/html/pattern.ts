@@ -42,10 +42,14 @@ export function capture(pattern: string, input: string): string | null {
   return new RegExp(pattern).exec(input)?.[1] ?? null
 }
 
+/** A long number or a decimal with three or more places: data, not part of a page's template. */
+const DATA_NUMBER = /\d{5,}|\d\.\d{3,}/
+
 /**
  * A pattern that finds `value` at `index` in `input` from the text before it: tries ever longer
  * anchors (starting at a quote, word or punctuation boundary) until the first match of the
- * pattern captures exactly this occurrence. `null` if no anchor of up to 80 characters works.
+ * pattern captures exactly this occurrence. Anchors holding data numbers are never used. `null`
+ * if no anchor of up to 80 characters works.
  */
 export function anchoredPattern(input: string, index: number, value: string): string | null {
   const follower = input.charAt(index + value.length)
@@ -65,7 +69,9 @@ export function anchoredPattern(input: string, index: number, value: string): st
     const anchorText = before.slice(before.length - length)
     // Start anchors at a boundary so they read as `"csrfToken":"` rather than `rfToken":"`.
     const startsClean = length === before.length || /[\s{,;:(=>[]/.test(before.charAt(before.length - length - 1))
-    if (!startsClean || anchorText.trim() === '')
+    // An anchor holding data (a coordinate `13.40538024902344`, an id, a timestamp) only finds
+    // the value on this one page: the next page has another number there.
+    if (!startsClean || anchorText.trim() === '' || DATA_NUMBER.test(anchorText))
       continue
     const trailingSpace = /\s$/.test(anchorText)
       ? '\\s*'

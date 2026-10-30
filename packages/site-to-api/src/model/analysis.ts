@@ -154,6 +154,8 @@ export interface Operation {
   methodUnknown?: boolean
   /** From `probe`: cookies and headers the request needs (`cookie:sid`, `header:referer`). Absent when not probed. */
   requires?: string[] | null
+  /** From `probe`: the cookies and headers removed one at a time while minimizing (`cookie:sid`). */
+  probeTested?: string[]
   /** Short description without an LLM: trigger labels, path words, response field names. */
   summary: string
   exchanges: Exchange[]

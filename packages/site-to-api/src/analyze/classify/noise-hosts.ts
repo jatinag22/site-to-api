@@ -238,6 +238,10 @@ const NOISE_HOST_PATTERNS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
  */
 const NOISE_PATHS: ReadonlyArray<{ pattern: RegExp, label: string }> = [
   { pattern: /^\/[gj]\/collect$/, label: 'Google Analytics hits (/g/collect)' },
+  // Shopify's web-pixel sandbox iframes (`/wpm@<hash>/app/web-pixel-…/sandbox/modern/…`): a copy
+  // of each page in which tracking pixels run, never a page of the shop.
+  { pattern: /^\/wpm@[^/]+\/(?:[^/]+\/)*sandbox\//, label: 'Shopify web pixel sandbox' },
+  { pattern: /\/web-pixels?(?:-[^/]*)?\/sandbox\//, label: 'Shopify web pixel sandbox' },
 ]
 
 /** Noise on domains that also serve real content: host suffix + path prefix. */

@@ -10,29 +10,33 @@ import { join } from 'pathe'
 
 /**
  * `current`: generated from these specs. `stale`: left from an earlier build that `--no-client`
- * did not regenerate. `none`: no client in the folder.
+ * did not regenerate. `none`: no client in the folder. `empty`: no client because the capture
+ * has no API operations to call (only pages or bot-protection steps).
  */
-export type ClientState = 'current' | 'stale' | 'none'
+export type ClientState = 'current' | 'stale' | 'none' | 'empty'
 
-const STATES: ClientState[] = ['current', 'stale', 'none']
+const STATES: ClientState[] = ['current', 'stale', 'none', 'empty']
 
 /** The last item of the reading order, without its number (4 or 5, depending on `source/`). */
 const READING_LINE: Record<ClientState, string> = {
   current: '`client/`: typed client with Zod validation; see `client/README.md`.',
   stale: '`client/`: from an earlier build and not regenerated (`--no-client`), so it may not match these specs; run `site-to-api gen`.',
   none: '`client/`: not generated; run `site-to-api gen`. `API_MAP.md` names the functions it will have.',
+  empty: '`client/`: none, because the capture has no API operations to call (only pages or bot-protection steps).',
 }
 
 const GAP: Record<ClientState, string | null> = {
   current: null,
   stale: '`client/` is from an earlier build and was not regenerated (`--no-client`); run `site-to-api gen` to bring it up to date.',
   none: 'No client generated: run `site-to-api gen`.',
+  empty: 'No client: the capture has no API operations (only pages or bot-protection steps). Capture the site\'s data requests, or use a browser for this site.',
 }
 
 const MAP_LINE: Record<ClientState, string> = {
   current: 'The Client column names the functions and Zod schemas exported by the generated `client/`.',
   stale: 'The Client column names what `site-to-api gen` generates; `client/` is from an earlier build and may not match it until you run gen.',
   none: 'The Client column names what `site-to-api gen` will generate into `client/`; no client has been generated yet.',
+  empty: 'There is no client: the capture has no API operations to call.',
 }
 
 /** The client item of the reading order in `AGENT.md`, numbered `position`. */

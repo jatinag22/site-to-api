@@ -3,7 +3,8 @@
  */
 import type { PathParam, SourceRoute } from '../../model'
 import type { SiblingFacts } from './siblings'
-import { isIdentifierLike, isSlug, isStrongIdentifier } from './identifiers'
+import { isPersonalField } from '../redact'
+import { isIdentifierLike, isRpcMethodAt, isSlug, isStrongIdentifier } from './identifiers'
 import { markSiblingPositions } from './siblings'
 
 export type Evidence = PathParam['evidence'][number]
@@ -51,7 +52,7 @@ export function templateMatches(template: ParsedTemplate, segments: string[]): b
  * from `${base}/${token}`) is anchored to nothing, so it only applies where every parameter falls
  * on a segment that could be one: otherwise it would turn `/stream` on any host into `/{token}`.
  */
-function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCandidate: (segment: string) => boolean): ParsedTemplate | null {
+function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCandidate: (segment: string, index: number, segments: readonly string[]) => boolean): ParsedTemplate | null {
   const matching = templates
     .filter(template => templateMatches(template, segments)
       && (template.literals > 0 || segments.every(isCandidate)))
@@ -79,10 +80,13 @@ function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCand
 export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set(), siblings: SiblingFacts | null = null, titled: ReadonlySet<string> = new Set()): Map<string, Marks> {
   // A hyphenated slug (`pine-hill`) only counts when another response links to it: plain-word
   // endpoint names (`/api/all-upcoming-issues`) appear in bundles, never as links in data.
-  const isCandidate = (segment: string): boolean => isIdentifierLike(segment) || linkedSlugs.has(segment)
+  // A method name in an RPC position (`/api/v3/getAssetsJsonV2`) is never a value.
+  const isCandidate = (segment: string, index: number, segments: readonly string[]): boolean =>
+    !isRpcMethodAt(segments, index) && (isIdentifierLike(segment) || linkedSlugs.has(segment))
   const templates = routes.map(parseTemplate)
   const result = new Map<string, Marks>()
   const free: Array<{ path: string, segments: string[], marks: Marks }> = []
+  const sourced: Array<{ path: string, segments: string[], marks: Marks, template: ParsedTemplate }> = []
 
   for (const path of paths) {
     const segments = segmentsOf(path)
@@ -90,6 +94,8 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
     const source = bestSourceMatch(templates, segments, isCandidate)
     if (source) {
       source.segments.forEach((part, index) => {
+        // A position the code marks as a parameter stays one whatever its value (`john_smith`
+        // in `/users/${username}`); RPC method positions are undone below, from all their values.
         if ('param' in part) {
           marks.set(index, {
             evidence: ['source-template'],
@@ -98,10 +104,16 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
         }
       })
       result.set(path, marks)
+      sourced.push({
+        path,
+        segments,
+        marks,
+        template: source,
+      })
       continue
     }
     segments.forEach((segment, index) => {
-      if (isStrongIdentifier(segment, segments[index - 1])) {
+      if (isStrongIdentifier(segment, segments[index - 1]) && !isRpcMethodAt(segments, index)) {
         marks.set(index, {
           evidence: ['looks-like-id'],
           sourceName: null,
@@ -112,6 +124,7 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
     result.set(path, marks)
   }
 
+  unmarkWordOperations(sourced)
   markVaryingPositions(free, isCandidate)
   markTrailingSlugs(free, titled)
   if (siblings)
@@ -119,15 +132,146 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
   return result
 }
 
+/** Words of a code name: `userName` → `user`, `name`; `rpc_method` → `rpc`, `method`. */
+function codeWords(name: string): string[] {
+  return name.replace(/([a-z\d])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z\d]+/).filter(word => word !== '')
+}
+
+/** Code names of a parameter that identifies something: its values are data, never operations. */
+const IDENTITY_WORDS: ReadonlySet<string> = new Set([
+  'user',
+  'username',
+  'handle',
+  'name',
+  'slug',
+  'id',
+  'account',
+  'owner',
+  'profile',
+  'login',
+  'email',
+  'member',
+  'customer',
+])
+/** Code names of a parameter that names an operation: `/youtubei/v1/${endpoint}`, `/svc/${svc}/…`. */
+const OPERATION_WORDS: ReadonlySet<string> = new Set([
+  'endpoint',
+  'method',
+  'action',
+  'op',
+  'operation',
+  'rpc',
+  'svc',
+  'service',
+  'procedure',
+  'fn',
+  'func',
+  'function',
+  'command',
+])
+/** First words of operation names (`getAssets`, `log_event`, `loadCachedPageChunk`). */
+const VERBS: ReadonlySet<string> = new Set([
+  'get',
+  'list',
+  'load',
+  'fetch',
+  'create',
+  'update',
+  'delete',
+  'remove',
+  'set',
+  'add',
+  'search',
+  'query',
+  'find',
+  'log',
+  'send',
+  'submit',
+  'track',
+  'save',
+  'sync',
+  'check',
+  'init',
+  'start',
+  'stop',
+  'edit',
+  'read',
+  'write',
+  'subscribe',
+  'unsubscribe',
+  'upload',
+  'download',
+  'post',
+  'put',
+  'patch',
+  'report',
+  'record',
+  'register',
+  'validate',
+  'verify',
+  'refresh',
+  'resolve',
+  'lookup',
+  'batch',
+])
+/** More distinct values than this at one position are data, not an endpoint's operations. */
+const MAX_OPERATION_VALUES = 12
+
+/**
+ * Whether a code template's parameter may be undone: its code name says it names an operation
+ * (`endpoint`, `method`, `action`, `svc`…), or it has no code name and every value starts with a
+ * verb (`log_event`, `getAssetsJsonV2`). A name that says identity (`username`, `handle`, `slug`,
+ * `id`, `owner`, or any personal field name) never is, and neither is any other name.
+ */
+function namesOperations(name: string, values: readonly string[]): boolean {
+  const words = codeWords(name)
+  if (words.some(word => IDENTITY_WORDS.has(word)) || isPersonalField(name))
+    return false
+  if (words.some(word => OPERATION_WORDS.has(word)))
+    return true
+  // `{param}`, `{param2}`: a position the code gave no name.
+  return /^param\d*$/.test(name) && values.every(value => VERBS.has(codeWords(value)[0] ?? ''))
+}
+
+/**
+ * Undoes code-template parameters that name operations (decision 0052): `/youtubei/v1/${endpoint}`
+ * sent `feedback` and `log_event`, and `/svc/${svc}/${slug}` sent `events` and `shreddit`,
+ * different endpoints each. Only {@link namesOperations} parameters with a few values (twelve at
+ * most, none id-like) are undone; every other position a code template marks stays a parameter
+ * whatever its values: `john_smith` and `JohnSmith` in `/api/v1/${username}`.
+ */
+function unmarkWordOperations(sourced: Array<{ path: string, segments: string[], marks: Marks, template: ParsedTemplate }>): void {
+  const byTemplate = new Map<ParsedTemplate, typeof sourced>()
+  for (const item of sourced) {
+    byTemplate.set(item.template, [
+      ...(byTemplate.get(item.template) ?? []),
+      item,
+    ])
+  }
+  for (const [template, items] of byTemplate) {
+    template.segments.forEach((part, index) => {
+      if (!('param' in part))
+        return
+      const values = [
+        ...new Set(items.map(item => item.segments[index] ?? '')),
+      ]
+      if (values.length > MAX_OPERATION_VALUES || values.some(isIdentifierLike) || !namesOperations(part.param, values))
+        return
+      for (const item of items)
+        item.marks.delete(index)
+    })
+  }
+}
+
 /**
  * Groups paths by their segments that are not parameter candidates: within a group only
  * candidate positions differ, so every such position with two or more distinct values (or one,
  * when a strong identifier already made it a parameter) becomes a parameter.
  */
-function markVaryingPositions(free: Array<{ segments: string[], marks: Marks }>, isCandidate: (segment: string) => boolean): void {
+function markVaryingPositions(free: Array<{ segments: string[], marks: Marks }>, isCandidate: (segment: string, index: number, segments: readonly string[]) => boolean): void {
   const groups = new Map<string, typeof free>()
   for (const item of free) {
-    const key = `${item.segments.length}|${item.segments.map((segment, index) => item.marks.has(index) || isCandidate(segment)
+    const key = `${item.segments.length}|${item.segments.map((segment, index) => item.marks.has(index) || isCandidate(segment, index, item.segments)
       ? '*'
       : segment).join('/')}`
     groups.set(key, [
@@ -139,7 +283,7 @@ function markVaryingPositions(free: Array<{ segments: string[], marks: Marks }>,
     const length = group[0]!.segments.length
     for (let index = 0; index < length; index++) {
       const alreadyParam = group.some(item => item.marks.has(index))
-      const candidates = group.filter(item => !item.marks.has(index) && isCandidate(item.segments[index]!))
+      const candidates = group.filter(item => !item.marks.has(index) && isCandidate(item.segments[index]!, index, item.segments))
       const distinct = new Set(candidates.map(item => item.segments[index]))
       if (candidates.length === 0 || (distinct.size < 2 && !alreadyParam))
         continue

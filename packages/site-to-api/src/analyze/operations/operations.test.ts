@@ -4,7 +4,7 @@ import { fakeHash, graphqlGet, graphqlPost } from '../../../test/graphql'
 import { exchange, jsonBody, textBody } from '../../../test/helpers'
 import { annotateGraphql } from '../graphql'
 import { createRedactor } from '../redact'
-import { isIdentifierLike, isStrongIdentifier } from './identifiers'
+import { isIdentifierLike, isRpcMethodAt, isStrongIdentifier } from './identifiers'
 import { operationIdFor, singular } from './naming'
 import { buildOperations } from './operations'
 
@@ -657,6 +657,116 @@ describe('buildOperations: a slug after an id (decision 0046)', () => {
   })
 })
 
+describe('buildOperations: method names in paths (decision 0052)', () => {
+  const post = (path: string, body: unknown): Exchange => exchange({
+    url: `https://shop.test${path}`,
+    method: 'POST',
+    responseBody: jsonBody(body),
+  })
+  const page = (path: string, html: string): Exchange => get(path, {
+    kind: 'page',
+    responseBody: textBody(html),
+  })
+
+  it('keeps camelCase, PascalCase, snake_case and dotted service names literal', () => {
+    expect(paths(build([
+      post('/api/v3/loadCachedPageChunkV2', { recordMap: {} }),
+      post('/api/v3/getAssetsJsonV2', { files: [] }),
+      post('/acme.registry.module.v1.ResourceService/GetResources', { resources: [] }),
+      post('/acme.alpha.registry.v1alpha1.DocService/GetResources', { docs: [] }),
+    ]))).toEqual([
+      'POST /acme.alpha.registry.v1alpha1.DocService/GetResources',
+      'POST /acme.registry.module.v1.ResourceService/GetResources',
+      'POST /api/v3/getAssetsJsonV2',
+      'POST /api/v3/loadCachedPageChunkV2',
+    ])
+  })
+
+  it('does not apply a code template to operation words of an RPC endpoint', () => {
+    expect(paths(build([
+      post('/tubei/v1/feedback', { feedbackResponses: [] }),
+      post('/tubei/v1/log_event', {}),
+    ], [
+      route('/tubei/v1/{endpoint}'),
+    ]))).toEqual(['POST /tubei/v1/feedback', 'POST /tubei/v1/log_event'])
+    // Without a code name, only values that start with a verb are operations.
+    expect(paths(build([
+      post('/tubei/v1/log_event', {}),
+      post('/tubei/v1/get_feed', { items: [] }),
+    ], [
+      route('/tubei/v1/{}'),
+    ]))).toEqual(['POST /tubei/v1/get_feed', 'POST /tubei/v1/log_event'])
+  })
+
+  it('undoes an operation-named code parameter, keeps an identity-named one, and templates alike pages', () => {
+    const shell = (body: string): string => `<html><head><title>t</title></head><body><nav class="top"></nav><main class="feed"><h1 class="name">${body}</h1><ul class="posts"><li class="post">p</li></ul></main></body></html>`
+    expect(paths(build([
+      page('/svc/events/preload-head', '<link rel="preload" href="/a.css">'),
+      page('/svc/shreddit/data-protection-consent', '<form class="consent"><button>ok</button></form>'),
+    ], [
+      route('/svc/{svc}/{slug}'),
+    ]))).toEqual(['GET /svc/events/{slug}', 'GET /svc/shreddit/{slug}'])
+    expect(paths(build([
+      page('/r/programming', shell('programming')),
+      page('/r/webdev', shell('webdev')),
+    ], [
+      route('/r/{subreddit}'),
+    ]))).toEqual(['GET /r/{subreddit}'])
+  })
+
+  it('keeps a code template\'s parameter whatever its values: usernames are data', () => {
+    const profile = (name: string): Exchange => get(`/api/users/${name}/profile`, {
+      responseBody: jsonBody({ name, bio: 'x' }),
+    })
+    expect(paths(build([
+      profile('john_smith'),
+      profile('jane_doe'),
+      profile('johnSmith'),
+      profile('JohnSmith'),
+    ], [
+      route('/api/users/{username}/profile'),
+    ]))).toEqual(['GET /api/users/{username}/profile'])
+  })
+
+  it('never undoes a code parameter named for identity, in an RPC position or with differing answers', () => {
+    const user = (method: string, name: string, body: unknown): Exchange => exchange({
+      url: `https://shop.test/api/v1/${name}`,
+      method,
+      responseBody: jsonBody(body),
+    })
+    expect(paths(build([
+      user('GET', 'jane_doe', { name: 'Jane', posts: [] }),
+      user('GET', 'johnSmith', { error: 'private' }),
+    ], [
+      route('/api/v1/{username}'),
+    ]))).toEqual(['GET /api/v1/{username}'])
+    expect(paths(build([
+      user('POST', 'JaneDoe', { ok: true }),
+      user('POST', 'johnSmith', { ok: true }),
+    ], [
+      route('/api/v1/{username}'),
+    ]))).toEqual(['POST /api/v1/{username}'])
+  })
+
+  it('keeps camelCase values outside RPC positions templated when they vary like ids', () => {
+    expect(paths(build([
+      get('/api/items/aB3dE5gH7jK9mN1pQ2xY', {
+        responseBody: jsonBody({ id: 1 }),
+      }),
+      get('/api/items/zX9yW8vU7tS6rQ5pO4nM', {
+        responseBody: jsonBody({ id: 2 }),
+      }),
+    ]))).toEqual(['GET /api/items/{itemId}'])
+  })
+
+  it('still templates ids and random tokens', () => {
+    expect(isIdentifierLike('aB3dE5gH7jK9mN1pQ2xY')).toBe(true)
+    expect(isRpcMethodAt(['api', 'v3', 'getAssetsJsonV2'], 2)).toBe(true)
+    expect(isRpcMethodAt(['api', 'users', 'johnSmith'], 2)).toBe(false)
+    expect(isIdentifierLike('iphone-15')).toBe(true)
+  })
+})
+
 describe('buildOperations: sibling paths (decision 0035)', () => {
   const article = (title: string): Parameters<typeof get>[1] => ({
     kind: 'page',
@@ -1011,6 +1121,36 @@ describe('buildOperations: sibling paths (decision 0035)', () => {
       responseBody: jsonBody({ ok: true, message: name }),
     })))
       .every(operation => operation.pathParams.length === 0)).toBe(true)
+  })
+
+  it('templates slug pages whose titles name their value, owner/repo pairs at the root too (decision 0052)', () => {
+    const titled = (title: string, body: string): Parameters<typeof get>[1] => ({
+      kind: 'page',
+      responseBody: textBody(`<html><head><title>${title}</title></head><body><header class="top"><nav class="menu"></nav></header><main class="feed"><h1 class="name">${body}</h1><ul class="posts"><li class="post">x</li></ul></main></body></html>`),
+    })
+    expect(paths(build([
+      get('/r/programming/', titled('programming - Forum', 'a')),
+      get('/r/webdev/', titled('webdev - Forum', 'b')),
+    ]))).toEqual(['GET /r/{r}/'])
+    expect(paths(build([
+      get('/acme-labs/text-base-uncased', titled('acme-labs/text-base-uncased · Hub', 'a')),
+      get('/openlab/speech-large-v3', titled('openlab/speech-large-v3 · Hub', 'b')),
+    ]))).toEqual(['GET /{param1}/{slug}'])
+  })
+
+  it('keeps slug pages literal when their titles do not name them, or a root pair of plain words', () => {
+    const titled = (title: string): Parameters<typeof get>[1] => ({
+      kind: 'page',
+      responseBody: textBody(`<html><head><title>${title}</title></head><body><main class="article"><h1 class="title">t</h1><p class="lead">x</p></main></body></html>`),
+    })
+    expect(paths(build([
+      get('/help/contact', titled('Help centre')),
+      get('/help/shipping', titled('Help centre - delivery')),
+    ]))).toEqual(['GET /help/contact', 'GET /help/shipping'])
+    expect(paths(build([
+      get('/docs/intro', titled('docs intro')),
+      get('/blog/post', titled('blog post')),
+    ]))).toEqual(['GET /blog/post', 'GET /docs/intro'])
   })
 
   it('keeps two different words in one session literal', () => {

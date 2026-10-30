@@ -1056,6 +1056,33 @@ describe('host sections follow the probe results', () => {
     expect(guide).not.toContain('let a real browser run it')
   })
 
+  it('lists no unknown-origin gap for an input another step of the same operation traced', () => {
+    expect(render(null)).toContain('`query.since` of `getApiOrders` has no known origin')
+    const guide = render(null, (analysis) => {
+      const flow = analysis.flows.flows[0]!
+      const orders = flow.steps.find(step => step.operationId === 'getApiOrders')!
+      flow.steps.push({
+        ...orders,
+        id: 's9',
+        inputs: {
+          'query.since': { kind: 'computed', computedId: 'c1' },
+        },
+      })
+    })
+    expect(guide).not.toContain('`query.since` of `getApiOrders` has no known origin')
+  })
+
+  it('says how many probed requests need a header when not all of them do', () => {
+    const guide = render(probeRun(), (analysis) => {
+      analysis.flows.session[0]!.requires = 'none'
+      analysis.flows.session[0]!.probed = true
+      for (const operation of analysis.operations.filter(item => item.host === analysis.flows.session[0]!.host))
+        operation.requires = []
+      analysis.operations[1]!.requires = ['header:x-client-id']
+    })
+    expect(guide).toMatch(/- Needs: plain HTTP works; 1 of \d+ probed requests need header `x-client-id` \(confirmed by probe\)\./)
+  })
+
   it('names the bot-protection headers when they are why a browser is needed', () => {
     const guide = render(probeRun(), (analysis) => {
       analysis.flows.session[0]!.probed = true
