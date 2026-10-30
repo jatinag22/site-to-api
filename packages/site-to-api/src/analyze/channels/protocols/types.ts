@@ -41,6 +41,11 @@ export interface DecodedMessage {
   wireKeys: string[]
   /** The message's data, read as JSON: what its schema is inferred from; undefined when none. */
   payload: unknown
+  /**
+   * Values that are credentials by their place in the protocol although their names do not say
+   * so (an SFS2X login's `un` and `pw`); the redactor scrubs them wherever they appear.
+   */
+  secrets: string[]
   /** True for messages only this protocol sends (`0{"sid":…}`, a STOMP frame); one is enough to detect it. */
   strong: boolean
 }
@@ -63,6 +68,11 @@ export interface DecoderSession {
 
 export interface ProtocolDecoder {
   id: ChannelProtocolId
+  /**
+   * Which frames carry the protocol: `text` (detection counts the text frames it understood) or
+   * `binary` (SFS2X: the binary frames).
+   */
+  content: 'text' | 'binary'
   /** Evidence from the URL or subprotocol (`URL path ends in /socket.io/`), or null. */
   hint: (handshake: Handshake) => string | null
   /** The version the handshake names (`EIO=4`), if any. */
@@ -93,12 +103,13 @@ export function argumentsPayload(args: readonly unknown[]): unknown {
     : [...args]
 }
 
-/** A text message with the usual defaults: no name separator, not binary. */
-export function message(init: Omit<DecodedMessage, 'separator' | 'binary' | 'wireKeys'> & Partial<Pick<DecodedMessage, 'separator' | 'binary' | 'wireKeys'>>): DecodedMessage {
+/** A message with the usual defaults: no name separator, not binary, no protocol secrets. */
+export function message(init: Omit<DecodedMessage, 'separator' | 'binary' | 'wireKeys' | 'secrets'> & Partial<Pick<DecodedMessage, 'separator' | 'binary' | 'wireKeys' | 'secrets'>>): DecodedMessage {
   return {
     separator: '',
     binary: false,
     wireKeys: [],
+    secrets: [],
     ...init,
   }
 }

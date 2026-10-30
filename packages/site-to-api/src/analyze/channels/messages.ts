@@ -286,8 +286,11 @@ function protocolGroup(direction: ChannelMessage['direction'], item: KeyedFrame,
     ? safeName(decoded.frame, redactor)
     : parts.join(decoded.separator)
   const frame = safeName(decoded.frame, redactor)
+  // A binary protocol message with a payload (an SFS2X packet) has a schema; other binary does not.
   const format: ChannelMessage['format'] = item.frame.binary
-    ? 'binary'
+    ? protocol === 'sfs2x' && item.frame.json !== undefined
+      ? 'sfs2x'
+      : 'binary'
     : item.frame.json === undefined
       ? 'text'
       : 'json'

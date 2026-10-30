@@ -52,6 +52,12 @@ interface RedactorInput {
   /** Every exchange of the build, used to find cross-session constants and known secrets. */
   exchanges: Exchange[]
   config: ResolvedConfig['redact']
+  /**
+   * Values a protocol decoder knows are credentials by where they sit, though their field names
+   * do not say so (an SFS2X login's `un` and `pw`, decision 0047). Redacted wherever they appear,
+   * whatever their length.
+   */
+  knownSecrets?: readonly string[]
 }
 
 /** Secrets shorter than this are only redacted where they sit, not searched for in other text. */
@@ -359,6 +365,7 @@ export function createRedactor(input: RedactorInput): Redactor {
   }
 
   const { sessionsByValue, always, unlessConstant, personal } = learnValues(input.exchanges, isAlwaysSecret)
+  const known = new Set((input.knownSecrets ?? []).filter(value => value !== ''))
 
   const isConstant = (value: string): boolean =>
     sessionCount >= 2 && (sessionsByValue.get(value)?.size ?? 0) === sessionCount
@@ -371,6 +378,7 @@ export function createRedactor(input: RedactorInput): Redactor {
   // they sit because their context (cookie, secret name) says so.
   const secrets = new Set([
     ...always,
+    ...known,
     ...[...unlessConstant].filter(value => !isConstant(value)),
   ]
     // As sent, percent-encoded, and percent-decoded (a cookie sent as `a%2Bb` is `a+b` in a page).
@@ -401,6 +409,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     if (verdict === undefined) {
       verdict = key !== '' && (inspectJwt(key) !== null
         || secrets.has(key)
+        || known.has(key)
         || personal.has(key)
         || ((isOpaqueBlob(key) || isOpaquePathSegment(key)) && !isConstant(key))
         || scanText(key) !== key)
@@ -471,7 +480,7 @@ export function createRedactor(input: RedactorInput): Redactor {
   function redactString(text: string, context: RedactContext, depth: number, personRecord = false): string {
     if (text === '')
       return text
-    if (isAlwaysSecret(context.in, context.name) || inspectJwt(text) || secrets.has(text))
+    if (isAlwaysSecret(context.in, context.name) || inspectJwt(text) || secrets.has(text) || known.has(text))
       return placeholder(text)
     // Without the previous segment only the context-free rule applies; the learnt secrets above
     // already cover `/reset/<token>` seen in the capture. An opaque segment never seen in the
@@ -500,7 +509,7 @@ export function createRedactor(input: RedactorInput): Redactor {
 
   function redactNumber(value: number, context: RedactContext, personRecord: boolean): number | string {
     const text = String(value)
-    if (isAlwaysSecret(context.in, context.name) || (isSecretName(context.name) && !keptAsPublicKey(text, context)))
+    if (isAlwaysSecret(context.in, context.name) || known.has(text) || (isSecretName(context.name) && !keptAsPublicKey(text, context)))
       return placeholder(text)
     if (isTrackingIdName(context.name) && !isConstant(text))
       return placeholder(text)

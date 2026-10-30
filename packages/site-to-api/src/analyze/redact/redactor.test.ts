@@ -311,6 +311,22 @@ describe('createRedactor: rules', () => {
     expect(masked).toContain('"openBetsCount":12')
   })
 
+  it('redacts values a protocol names as secrets, whatever their field name or length', () => {
+    const known = createRedactor({
+      exchanges: [],
+      config: CONFIG,
+      knownSecrets: ['bob', 'hunter2-hunter2', ''],
+    })
+    expect(known.json({ un: 'bob', pw: 'hunter2-hunter2', zn: 'zone' }, { in: 'body' })).toEqual({
+      un: expect.stringMatching(/^<redacted/) as unknown,
+      pw: expect.stringMatching(/^<redacted/) as unknown,
+      zn: 'zone',
+    })
+    // Long ones are also found inside other text.
+    expect(known.text('echo hunter2-hunter2 back')).not.toContain('hunter2-hunter2')
+    expect(known.value('', { in: 'body', name: 'pw' })).toBe('')
+  })
+
   it('keeps ordinary names and ids outside person records', () => {
     expect(r.json([
       { id: 7, name: 'Snacks', slug: 'snacks' },

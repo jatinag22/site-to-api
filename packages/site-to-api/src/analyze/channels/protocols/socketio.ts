@@ -328,6 +328,7 @@ function engineVersion(handshake: Handshake): string | null {
 
 export const socketIo: ProtocolDecoder = {
   id: 'socket.io',
+  content: 'text',
   hint: (handshake) => {
     if (/\/socket\.io\/?$/.test(handshake.path))
       // A fixed phrase: the rest of the path is the site's and may hold a token.

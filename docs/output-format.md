@@ -258,6 +258,13 @@ are written from the client's point of view: `send` is client → server, `recei
   Phoenix `topic:event` or Centrifugo channel (identifiers as `{id}`), and the payload schema
   is that of the message's data (event arguments, STOMP `{headers, body}`, graphql-ws
   `payload`). Engine.IO long-polling requests are part of the channel, not HTTP operations.
+- SmartFoxServer 2X (decision 0047): binary packets (often on `/BlueBox/websocket`) are decoded
+  in full, zlib-compressed ones included. A system message is named by its action (`Handshake`,
+  `Login`, `JoinRoom`, `PingPong`, `UserEnterRoom`, or `action <id>` when unpublished; frame
+  `system`), an extension message by its command `p.c` (frame `extension`). The payload schema
+  is that of the params (`p`, or `p.p` for an extension); `contentType` stays
+  `application/octet-stream`. Encrypted packets are one `encrypted` message, counted only. The
+  channel's version is the client API the handshake names (`client API 1.8.4`).
 - Binary frames that decode fully as MessagePack (`application/msgpack`) or as protobuf wire
   format (`application/x-protobuf`, fields named `field <n> (<wire type>)`) get schemas and
   examples like JSON messages, and MessagePack messages are grouped by discriminator.

@@ -8,6 +8,7 @@ import type { DecodedMessage, Handshake, ProtocolDecoder, RawFrame } from './typ
 import { centrifugo } from './centrifugo'
 import { graphqlWs } from './graphql-ws'
 import { phoenix } from './phoenix'
+import { sfs2x } from './sfs2x'
 import { signalr } from './signalr'
 import { socketIo } from './socketio'
 import { unwrapSockjs } from './sockjs'
@@ -25,9 +26,13 @@ const DECODERS: readonly ProtocolDecoder[] = [
   graphqlWs,
   phoenix,
   centrifugo,
+  sfs2x,
 ]
 
-/** Without a hint from the URL or subprotocol, this share of the text frames must decode. */
+/**
+ * Without a hint from the URL or subprotocol, this share of the frames the protocol travels in
+ * (text frames, or binary frames for SFS2X) must decode.
+ */
 const MIN_CONTENT_SHARE = 0.8
 /** With a hint, a smaller share is enough: the hint already names the protocol. */
 const MIN_HINTED_SHARE = 0.5
@@ -50,7 +55,10 @@ interface Attempt {
   decoder: ProtocolDecoder
   hint: string | null
   readings: Array<DecodedMessage[] | null>
+  /** Frames of the decoder's content kind that it understood. */
   understood: number
+  /** Frames of the decoder's content kind. */
+  carriers: number
   strong: boolean
   version: string | null
 }
@@ -58,24 +66,28 @@ interface Attempt {
 function attempt(decoder: ProtocolDecoder, frames: readonly RawFrame[], handshake: Handshake): Attempt {
   const session = decoder.start()
   const readings = frames.map(frame => session.read(frame))
+  const carries = (frame: RawFrame | undefined): boolean => frame?.binary === (decoder.content === 'binary')
   return {
     decoder,
     hint: decoder.hint(handshake),
     readings,
-    understood: readings.filter((reading, index) => reading !== null && frames[index]?.binary === false).length,
+    understood: readings.filter((reading, index) => reading !== null && carries(frames[index])).length,
+    carriers: frames.filter(frame => carries(frame)).length,
     strong: readings.some(reading => reading?.some(item => item.strong) === true),
     version: decoder.handshakeVersion(handshake) ?? session.version(),
   }
 }
 
 /**
- * Whether an attempt shows the protocol: with a hint, most text frames decode (or there are
- * none); without, at least one message only this protocol sends and nearly every text frame.
+ * Whether an attempt shows the protocol: with a hint, most of the frames it travels in decode
+ * (or there are none); without, at least one message only this protocol sends and nearly every
+ * such frame.
  */
-function accepted(candidate: Attempt, textFrames: number): boolean {
+function accepted(candidate: Attempt): boolean {
+  const frames = candidate.carriers
   if (candidate.hint !== null)
-    return textFrames === 0 || candidate.understood >= MIN_HINTED_SHARE * textFrames
-  return candidate.strong && textFrames > 0 && candidate.understood >= MIN_CONTENT_SHARE * textFrames
+    return frames === 0 || candidate.understood >= MIN_HINTED_SHARE * frames
+  return candidate.strong && frames > 0 && candidate.understood >= MIN_CONTENT_SHARE * frames
 }
 
 function byStrength(a: Attempt, b: Attempt): number {
@@ -93,10 +105,9 @@ function plain(frames: readonly RawFrame[]): DecodedConnection {
 
 /** The best decoder for these frames, or null when none is shown. */
 function detect(frames: readonly RawFrame[], handshake: Handshake): Attempt | null {
-  const textFrames = frames.filter(frame => !frame.binary).length
   return DECODERS
     .map(decoder => attempt(decoder, frames, handshake))
-    .filter(candidate => accepted(candidate, textFrames))
+    .filter(accepted)
     .sort(byStrength)[0] ?? null
 }
 

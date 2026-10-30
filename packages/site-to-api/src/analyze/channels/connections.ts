@@ -287,6 +287,21 @@ export function collectConnections(sessions: readonly LoadedSession[], exchanges
     })
 }
 
+/**
+ * Values the connections' protocols say are credentials (decision 0047), for the redactor:
+ * sorted, once each.
+ */
+export function protocolSecrets(connections: readonly Connection[]): string[] {
+  const values = new Set<string>()
+  for (const connection of connections) {
+    for (const frame of connection.frames) {
+      for (const value of frame.protocol?.secrets ?? [])
+        values.add(value)
+    }
+  }
+  return [...values].sort()
+}
+
 function frameBody(frame: Frame): Body {
   if (frame.json !== undefined) {
     // Decoded binary and protocol payloads are bodies the redactor and tracing can read.

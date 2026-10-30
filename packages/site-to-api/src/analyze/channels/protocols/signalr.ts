@@ -132,6 +132,7 @@ class SignalrSession implements DecoderSession {
 
 export const signalr: ProtocolDecoder = {
   id: 'signalr',
+  content: 'text',
   hint: () => null,
   handshakeVersion: () => null,
   start: () => new SignalrSession(),

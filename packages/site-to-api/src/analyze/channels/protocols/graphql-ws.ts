@@ -122,6 +122,7 @@ function subprotocolOf(handshake: Handshake): string | null {
 
 export const graphqlWs: ProtocolDecoder = {
   id: 'graphql-ws',
+  content: 'text',
   hint: (handshake) => {
     const subprotocol = subprotocolOf(handshake)
     return subprotocol === null

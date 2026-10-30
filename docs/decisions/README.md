@@ -54,3 +54,4 @@ or `Proposed`.
 | [0044](0044-check-api-drift.md) | `check` replays safe requests and compares the answers with the specs to detect API drift (builds on 0012, 0036) | Accepted |
 | [0045](0045-tracking-identifiers.md) | Visitor, device and client ids are redacted unless constant (refines 0004, 0015) | Accepted |
 | [0046](0046-real-site-verdicts-and-first-party-hosts.md) | Verdicts follow tested calls; trailing slugs; first-party hosts and build assets (refines 0033, 0035, 0036, 0037) | Accepted |
+| [0047](0047-smartfoxserver-2x.md) | SmartFoxServer 2X binary packets: a strict decoder, names from the published action table and extension commands, protocol-named secrets (refines 0038) | Accepted |

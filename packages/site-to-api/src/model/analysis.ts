@@ -197,7 +197,7 @@ export interface ChannelValueLink {
  * Framing protocols the channels stage decodes (decision 0038). `graphql-ws` covers both
  * `graphql-transport-ws` and the older `subscriptions-transport-ws` (see the channel's `version`).
  */
-export type ChannelProtocolId = 'socket.io' | 'signalr' | 'stomp' | 'graphql-ws' | 'phoenix' | 'centrifugo'
+export type ChannelProtocolId = 'socket.io' | 'signalr' | 'stomp' | 'graphql-ws' | 'phoenix' | 'centrifugo' | 'sfs2x'
 
 /** How each protocol is called in prose. */
 export const CHANNEL_PROTOCOL_LABELS: Readonly<Record<ChannelProtocolId, string>> = {
@@ -207,6 +207,7 @@ export const CHANNEL_PROTOCOL_LABELS: Readonly<Record<ChannelProtocolId, string>
   'graphql-ws': 'GraphQL over WebSocket',
   'phoenix': 'Phoenix',
   'centrifugo': 'Centrifugo',
+  'sfs2x': 'SmartFoxServer 2X',
 }
 
 /**
@@ -222,7 +223,7 @@ export interface ChannelMessageProtocol {
   /**
    * The protocol's frame type: `event`, `ack`, `connect`, `ping` (Socket.IO), `invocation`,
    * `completion` (SignalR), `SEND`, `MESSAGE` (STOMP), `subscribe`, `next` (graphql-ws), `push`
-   * (Phoenix), `publication` (Centrifugo).
+   * (Phoenix), `publication` (Centrifugo), `system`, `extension`, `encrypted` (SFS2X).
    */
   frame: string
   /**
@@ -250,10 +251,10 @@ export interface ChannelMessage {
   protocol: ChannelMessageProtocol | null
   /**
    * `json` for JSON text (or a protocol payload that is JSON), `text` for other text,
-   * `msgpack` and `protobuf` for binary frames that decoded fully (decision 0038), `binary` for
-   * the rest.
+   * `msgpack` and `protobuf` for binary frames that decoded fully (decision 0038), `sfs2x` for
+   * SmartFoxServer 2X packets (decision 0047), `binary` for the rest.
    */
-  format: 'json' | 'text' | 'binary' | 'msgpack' | 'protobuf'
+  format: 'json' | 'text' | 'binary' | 'msgpack' | 'protobuf' | 'sfs2x'
   /** Frames seen across all connections. */
   count: number
   /**
@@ -261,7 +262,7 @@ export interface ChannelMessage {
    * a field only later frames have can be missing. Null for text and binary frames.
    */
   schemaSamples: number | null
-  /** JSON Schema of the message, for JSON, MessagePack and protobuf messages; null otherwise. */
+  /** JSON Schema of the message, for JSON, MessagePack, protobuf and SFS2X messages; null otherwise. */
   schema: JsonSchema | null
   /** For text frames: value-free shape descriptions of the frames, most common first. */
   shapes: string[]
@@ -283,7 +284,8 @@ export interface ChannelProtocol {
   id: ChannelProtocolId
   /**
    * `Engine.IO 3` / `Engine.IO 4` (Socket.IO), `graphql-transport-ws` / `subscriptions-transport-ws`
-   * (graphql-ws), `json 1` (SignalR), `1.2` (STOMP), `2.0.0` (Phoenix); null when not shown.
+   * (graphql-ws), `json 1` (SignalR), `1.2` (STOMP), `2.0.0` (Phoenix), `client API 1.8.4`
+   * (SFS2X); null when not shown.
    */
   version: string | null
   /** What showed it, e.g. `URL path ends in /socket.io/`, `subprotocol graphql-transport-ws`, `frames`. */
