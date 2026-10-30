@@ -46,12 +46,22 @@ import { describeShape, inspectJwt } from '../shape'
 import { isOpaqueBlob } from './blobs'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
 import { isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
-import { CREDENTIAL_HEADERS, isAuthScheme, isPublishableKeyName, isSecretName } from './secret-names'
+import { CREDENTIAL_HEADERS, isPublicValue, isPublishableKeyName, isSecretName } from './secret-names'
 
 interface RedactorInput {
   /** Every exchange of the build, used to find cross-session constants and known secrets. */
   exchanges: Exchange[]
   config: ResolvedConfig['redact']
+}
+
+/**
+ * Learnt secrets the leak check looks for: long enough, and mixing letters and digits like tokens
+ * do, so a cookie such as `desktop-layout` or an epoch never matches ordinary output.
+ */
+const MIN_CHECKED_SECRET_LENGTH = 12
+
+function isCheckedSecret(value: string): boolean {
+  return value.length >= MIN_CHECKED_SECRET_LENGTH && /\d/.test(value) && /[a-z]/i.test(value)
 }
 
 /** Secrets shorter than this are only redacted where they sit, not searched for in other text. */
@@ -61,7 +71,12 @@ const MAX_DEPTH = 32
 const MAX_SCANNED_TEXT = 100_000
 const JWT_IN_TEXT = /eyJ[\w-]*\.eyJ[\w-]*\.[\w-]*/g
 const URLENCODED = /^[\w.%[\]-]+=[^&\s]*(?:&[\w.%[\]-]+=[^&\s]*)*$/
-const ABSOLUTE_URL = /^https?:\/\/\S+$/
+/** Web and WebSocket URLs: a `recoveryUrl: wss://...?t=<token>` carries tokens like any URL. */
+const ABSOLUTE_URL = /^(?:https?|wss?):\/\/\S+$/i
+/** URLs inside longer text (`reconnect to wss://...`, an HTML attribute, a log line). */
+const URL_IN_TEXT = /\b(?:https?|wss?):\/\/[^\s"'<>`\\]+/gi
+/** Punctuation that ends a sentence around a URL rather than belonging to it. */
+const URL_TRAILER = /[.,;:!?)\]}]+$/
 
 interface Located {
   value: string
@@ -205,6 +220,14 @@ function* jsonValues(value: unknown, where: RedactContext['in'], name: string | 
   }
 }
 
+/** The parameter-carrying parts of a URL: its query, its fragment and the fragment's own query. */
+function urlParameterParts(url: string): string[] {
+  const [beforeHash = '', hash] = url.split(/#(.*)/s)
+  const query = beforeHash.split(/\?(.*)/s)[1]
+  const hashQuery = hash?.split(/\?(.*)/s)[1]
+  return [query, hash, hashQuery].filter((part): part is string => part !== undefined && part !== '')
+}
+
 function* expand(item: Located, depth: number): Generator<Located> {
   yield item
   if (depth > MAX_DEPTH)
@@ -214,12 +237,25 @@ function* expand(item: Located, depth: number): Generator<Located> {
     yield* jsonValues(json, item.in, item.name, depth + 1)
     return
   }
-  const query = ABSOLUTE_URL.test(item.value)
-    ? item.value.split(/[?#]/)[1] ?? ''
-    : item.value
-  if (URLENCODED.test(query)) {
-    for (const [name, value] of new URLSearchParams(query))
+  const whole = ABSOLUTE_URL.test(item.value)
+  // A URL's query, its fragment (`#access_token=...`) and a hash router's own query
+  // (`#/cb?token=...`) all carry parameters; plain text may be URL-encoded itself.
+  const parts = whole
+    ? urlParameterParts(item.value)
+    : [item.value]
+  for (const part of parts.filter(candidate => URLENCODED.test(candidate))) {
+    for (const [name, value] of new URLSearchParams(part))
       yield* expand({ value, in: 'form', name }, depth + 1)
+  }
+  if (!whole && !URLENCODED.test(item.value)) {
+    // Tokens in URLs inside longer text are learnt too, so they are scrubbed everywhere.
+    for (const url of item.value.match(URL_IN_TEXT) ?? []) {
+      yield* expand({
+        value: url.replace(URL_TRAILER, ''),
+        in: item.in,
+        name: item.name,
+      }, depth + 1)
+    }
   }
 }
 
@@ -300,7 +336,7 @@ function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isA
   if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true) {
     forms.forEach(form => learnt.always.add(form))
   }
-  else if (isSecretName(item.name, isQueryLike(item.in)) && !isAuthScheme(item.value)) {
+  else if (isSecretName(item.name, isQueryLike(item.in)) && !isPublicValue(item.name, item.value)) {
     forms.forEach(form => (isPublishableKeyName(item.name, isQueryLike(item.in))
       ? learnt.unlessConstant
       : learnt.always).add(form))
@@ -417,28 +453,85 @@ export function createRedactor(input: RedactorInput): Redactor {
       const rawName = pair.slice(0, equals)
       const rawValue = pair.slice(equals + 1)
       const value = safeDecode(rawValue) ?? rawValue
-      const redacted = redactString(value, { in: 'form', name: safeDecode(rawName) ?? rawName }, depth + 1)
+      // A random value in a URL (a signed link's token under any name) is judged like an opaque
+      // path segment: secret unless the same in every session.
+      const redacted = isOpaquePathSegment(value) && !isConstant(value)
+        ? placeholder(value)
+        : redactString(value, { in: 'form', name: safeDecode(rawName) ?? rawName }, depth + 1)
       return redacted === value
         ? pair
         : `${rawName}=${redacted}`
     }).join('&')
   }
 
+  /**
+   * One absolute URL redacted like a request URL (decision 0047): user info in the authority,
+   * credential and opaque path segments, query values by name and by shape, and the fragment
+   * (which also carries tokens, as in OAuth implicit flows) like a query when it is one.
+   */
+  function redactUrl(url: string, depth: number): string {
+    const [beforeHash = '', hash] = url.split(/#(.*)/s)
+    const [base = '', query] = beforeHash.split(/\?(.*)/s)
+    const redactedQuery = query === undefined
+      ? ''
+      : `?${redactQuery(query, depth)}`
+    const redactedHash = hash === undefined
+      ? ''
+      : `#${redactFragment(hash, depth)}`
+    return `${redactUrlBase(base)}${redactedQuery}${redactedHash}`
+  }
+
+  /** `#access_token=...` like a query; `#/cb?token=...` (a hash router) with its own query. */
+  function redactFragment(hash: string, depth: number): string {
+    if (URLENCODED.test(hash))
+      return redactQuery(hash, depth)
+    const [route = '', query] = hash.split(/\?(.*)/s)
+    return query === undefined
+      ? scanText(hash)
+      : `${scanText(route)}?${redactQuery(query, depth)}`
+  }
+
+  function redactUrlBase(base: string): string {
+    // `scheme://user:pass@host/path`: `base` has no query or fragment left.
+    const start = base.indexOf('://') + 3
+    if (start < 3)
+      return scanText(base)
+    const slash = base.indexOf('/', start)
+    const end = slash === -1
+      ? base.length
+      : slash
+    const scheme = base.slice(0, start)
+    const authority = base.slice(start, end)
+    const path = base.slice(end)
+    const at = authority.lastIndexOf('@')
+    const host = at === -1
+      ? scanText(authority)
+      : `${placeholder(authority.slice(0, at))}@${scanText(authority.slice(at + 1))}`
+    const segments = path.split('/')
+    const redactedPath = segments.map((segment, index) => {
+      const decoded = decodePathSegment(segment)
+      return segment !== '' && (isSecretPathSegment(segment, segments[index - 1]) || (isOpaquePathSegment(segment) && !isConstant(decoded)))
+        ? placeholder(decoded)
+        : scanText(segment)
+    }).join('/')
+    return `${scheme}${host}${redactedPath}`
+  }
+
+  /** Every URL inside longer text redacted with {@link redactUrl}; the rest is left as it is. */
+  function redactUrlsInText(text: string, depth: number): string {
+    return text.replace(URL_IN_TEXT, (match) => {
+      const trailer = URL_TRAILER.exec(match)?.[0] ?? ''
+      const url = match.slice(0, match.length - trailer.length)
+      return `${redactUrl(url, depth)}${trailer}`
+    })
+  }
+
   function redactNested(text: string, context: RedactContext, depth: number): string | null {
     const json = parseJson(text)
     if (json !== undefined)
       return JSON.stringify(redactJson(json, context, depth + 1))
-    if (ABSOLUTE_URL.test(text)) {
-      const [beforeHash = '', hash] = text.split(/#(.*)/s)
-      const [base = '', query] = beforeHash.split(/\?(.*)/s)
-      const redactedQuery = query === undefined
-        ? ''
-        : `?${redactQuery(query, depth)}`
-      const redactedHash = hash === undefined
-        ? ''
-        : `#${scanText(hash)}`
-      return `${scanText(base)}${redactedQuery}${redactedHash}`
-    }
+    if (ABSOLUTE_URL.test(text))
+      return redactUrl(text, depth)
     if (URLENCODED.test(text) && text.includes('='))
       return redactQuery(text, depth)
     return /%[0-9a-f]{2}/i.test(text)
@@ -479,7 +572,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     if (context.in === 'path' && isOpaquePathSegment(text) && !isConstant(text))
       return placeholder(text)
     // `tokenType: "Bearer"` names the auth scheme; hiding it hides how to authenticate.
-    if (isSecretName(context.name, isQueryLike(context.in)) && !isAuthScheme(text) && !keptAsPublicKey(text, context))
+    if (isSecretName(context.name, isQueryLike(context.in)) && !isPublicValue(context.name, text) && !keptAsPublicKey(text, context))
       return placeholder(text)
     // A visitor, device or client id follows one person; only the site's own constant stays.
     if (isTrackingIdName(context.name) && !isConstant(text))
@@ -494,6 +587,7 @@ export function createRedactor(input: RedactorInput): Redactor {
       const nested = redactNested(text, context, depth)
       if (nested !== null)
         return nested
+      return scanText(redactUrlsInText(text, depth))
     }
     return scanText(text)
   }
@@ -575,6 +669,7 @@ export function createRedactor(input: RedactorInput): Redactor {
       ? redactString(value, context, 0)
       : redactJson(value, context, 0))(values),
     isSecretKey,
+    learntSecrets: () => [...secrets].filter(isCheckedSecret).sort(),
     browserOnly: {
       value: text => raw || text === ''
         ? text

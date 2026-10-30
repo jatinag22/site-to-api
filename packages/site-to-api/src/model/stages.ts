@@ -134,4 +134,10 @@ export interface Redactor extends ValueRedactor {
    * values with `examples: raw` and writes none with `none`.
    */
   browserOnly: ValueRedactor
+  /**
+   * The secret values learnt from the capture that look like credentials (cookie values, auth
+   * headers, tokens, secrets seen in bodies and WebSocket frames), in every encoding searched
+   * for, sorted. `build` checks the handoff folder for each after writing it (decision 0047).
+   */
+  learntSecrets: () => readonly string[]
 }

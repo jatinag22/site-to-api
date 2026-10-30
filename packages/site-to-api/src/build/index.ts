@@ -31,6 +31,7 @@ import { VERSION } from '../version'
 import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
 import { inHostFilter, unmatchedHostPatterns } from './hosts'
+import { assertOwnOutDir, discardLeakingOutput, filesUnder, findHandoffLeaks, leakError } from './leaks'
 import { buildRecordFor, writeBuildRecord } from './record'
 
 export { readBuildRecord, recordClientGenerated, stickyOptions } from './record'
@@ -349,6 +350,7 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
   const log = options.log ?? (() => {})
   const rawDir = resolve(options.cwd, options.config.rawDir)
   const outDir = resolve(options.cwd, options.config.outDir)
+  assertOwnOutDir(outDir, resolve(options.cwd), rawDir)
   const analyzed = await analyze(options.config, rawDir, outDir, log)
   // Matching is done on raw names; everything written from here on gets the redacted spelling.
   const analysis = withRedactedNames(analyzed.analysis, analyzed.redactor.text)
@@ -428,6 +430,20 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION)),
   )
   log(`Wrote ${files.length} files to ${outDir}`)
+  // The folder must hold no secret the capture had (decision 0047). With `examples: raw` it
+  // copies captured values on purpose, so the check would only restate that choice.
+  if (options.config.redact.examples !== 'raw') {
+    // What build wrote this run, plus what it manages across runs: a kept `client/` and
+    // `probe.json`. Never anything else in the folder.
+    const managed = [
+      ...files,
+      ...await filesUnder(join(outDir, 'client')),
+      join(outDir, 'probe.json'),
+    ]
+    const leaks = await findHandoffLeaks(outDir, managed, analyzed.redactor.learntSecrets())
+    if (leaks.length > 0)
+      throw leakError(outDir, leaks, await discardLeakingOutput(outDir, leaks))
+  }
   return { analysis, outDir, files, warnings }
 }
 
