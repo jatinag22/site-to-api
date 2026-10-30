@@ -464,12 +464,12 @@ describe('required cookies', () => {
       cookies: { __cf_bm: `bm-${sessionId}`, sid: `s-${sessionId}` },
       responseBody: jsonBody({ ok: true }),
     })
-    const cookiesOf = (requires: string[] | null) => {
+    const cookiesOf = (requires: string[] | null, probeTested: string[] = []) => {
       const analysis = analyse([
         page(),
         call('s1'),
         call('s2'),
-      ], NO_FLOWS, operations => operations.map(operation => ({ ...operation, requires })))
+      ], NO_FLOWS, operations => operations.map(operation => ({ ...operation, requires, probeTested })))
       const document = buildOpenApiDocuments(analysis).get('shop.test') as { paths: Record<string, Record<string, { parameters: Array<{ name: string, in: string, required: boolean }> }>> }
       return document.paths['/api/peer']!.get!.parameters
         .filter(parameter => parameter.in === 'cookie')
@@ -479,8 +479,14 @@ describe('required cookies', () => {
       ['__cf_bm', true],
       ['sid', true],
     ])
-    expect(cookiesOf(['cookie:sid'])).toEqual([
+    // Minimized: `__cf_bm` removed on its own and the answer still matched.
+    expect(cookiesOf(['cookie:sid'], ['cookie:__cf_bm', 'cookie:sid'])).toEqual([
       ['__cf_bm', false],
+      ['sid', true],
+    ])
+    // A bare request that worked removed nothing one by one: presence still decides.
+    expect(cookiesOf([], [])).toEqual([
+      ['__cf_bm', true],
       ['sid', true],
     ])
   })

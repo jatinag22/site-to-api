@@ -197,13 +197,16 @@ function headerRequired(operation: Operation, header: Operation['headers'][numbe
 }
 
 /**
- * What probe measured about one need (`cookie:__cf_bm`): needed or not when the operation was
- * minimized, `null` when it was not. A measurement beats "present in every sample": Cloudflare's
- * `__cf_bm` is sent with every request yet none of them needs it.
+ * What probe measured about one need (`cookie:__cf_bm`): needed when probe found it needed; not
+ * needed only when probe removed it on its own and the answer still matched; `null` otherwise
+ * (a bare answer that worked tested nothing one by one), when presence in every sample decides.
+ * Cloudflare's `__cf_bm` is sent with every request yet none of them needs it.
  */
 function probedRequired(operation: Operation, need: string): boolean | null {
-  return Array.isArray(operation.requires)
-    ? operation.requires.includes(need)
+  if (operation.requires?.includes(need) === true)
+    return true
+  return operation.probeTested?.includes(need) === true
+    ? false
     : null
 }
 

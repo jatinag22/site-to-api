@@ -170,8 +170,10 @@ same stem. Conventions:
 - Constant headers are parameters with `x-site-to-api-constant: true` and a `default`. A header
   is constant when it had one value in every request of the operation, and that value was seen
   in two or more sessions, in the operation itself or in every request to the host.
-- A header parameter is `required` only when `probe` proved it is needed
-  (`x-site-to-api-requires`); being sent in every captured request is not enough. Tracing
+- A cookie or header parameter is `required` when `probe` proved it is needed
+  (`x-site-to-api-requires`), and not required when probe removed it on its own and the answer
+  still matched (`tested` in `probe.json`); otherwise a cookie sent in every captured request is
+  required, a header is not unless every sample sent it. Tracing
   headers (`baggage`, `sentry-trace`, `traceparent`, `tracestate`, `b3`, `x-b3-*`,
   `x-datadog-*`) are never required and never get a default.
 - Query, form and path values that are all digits become `integer` unless they are codes:
@@ -407,7 +409,10 @@ captured request still works (`replay`), whether it works with no cookies or aut
 the cookies and headers it needs (`requires`, names only; `null` when not worked out). Finding
 `requires` costs one request per cookie and header, so it is done for at most
 `probe.minimizePerHost` operations per host (default 5, `--minimize-per-host <n>`), recorded as
-`minimizePerHost`. When neither the captured session nor a bare request was accepted,
+`minimizePerHost`. `tested` lists the cookies and headers removed one at a time; only these
+can make a spec parameter not required, and a bare request counts as working only when its
+answer also carries the captured content, not just its shape (decision 0052). When neither the
+captured session nor a bare request was accepted,
 `rejection` says why: `bot-protection`, `session` (401/403) or `other`, and `note` says what the
 site answered (decision 0036). Probe sends its own `user-agent` (`site-to-api/<version> (probe;
 automated)`), never the capture browser's. Names only.

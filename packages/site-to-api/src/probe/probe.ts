@@ -256,6 +256,11 @@ interface SendResult {
   difference: string | null
   /** Positive sign that the request was not logged in (login redirect, WWW-Authenticate…). */
   auth: string | null
+  /**
+   * For an `ok` answer: whether it carries the captured content too, not only its shape. `{"user":
+   * null}` where the capture had a user has the same keys but not the data a session gave.
+   */
+  full: boolean
 }
 
 /** A short, actionable reason for a network failure, e.g. `ECONNREFUSED` or `timed out`. */
@@ -347,6 +352,7 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
           blocked: null,
           difference: null,
           auth: null,
+          full: false,
         }
       }
       const { response, response: { text, contentType } } = fetched
@@ -365,6 +371,7 @@ function createRunner(options: Required<Pick<ProbeOptions, 'fetch' | 'now' | 'sl
         auth: difference === null
           ? null
           : authEvidence(exchange, response.status, response.headers, text),
+        full: difference === null && carriesCapturedContent(exchange, text),
       }
     },
   }
@@ -386,7 +393,39 @@ function blockEvidence(response: LiveResponse): string | null {
       : `challenge page (${marker}), status ${response.status}`)
 }
 
-async function minimize(runner: Runner, exchange: Exchange, full: Variant, maxVariants: number, statuses: number[]): Promise<string[]> {
+/**
+ * Whether a live body has the content the capture had, beyond its shape: not empty, and every
+ * top-level JSON key the capture had filled (a non-empty object, list or string, or any number
+ * or boolean) is filled again. Used before a bare answer may say no session is needed.
+ */
+function carriesCapturedContent(exchange: Exchange, text: string): boolean {
+  if (text.trim() === '')
+    return false
+  const captured = exchange.response.body?.json
+  if (captured === null || typeof captured !== 'object' || Array.isArray(captured))
+    return true
+  let live: unknown
+  try {
+    live = JSON.parse(text)
+  }
+  catch {
+    return false
+  }
+  if (live === null || typeof live !== 'object' || Array.isArray(live))
+    return false
+  const answered = new Map(Object.entries(live))
+  return Object.entries(captured).every(([key, value]) => !isFilled(value) || isFilled(answered.get(key)))
+}
+
+function isFilled(value: unknown): boolean {
+  if (value === null || value === undefined || value === '')
+    return false
+  if (Array.isArray(value))
+    return value.length > 0
+  return typeof value !== 'object' || Object.keys(value).length > 0
+}
+
+async function minimize(runner: Runner, exchange: Exchange, full: Variant, maxVariants: number, statuses: number[]): Promise<{ requires: string[], tested: string[] }> {
   const candidates = [
     ...full.cookies.map(([name]) => ({ kind: 'cookie' as const, name })),
     ...full.headers.filter(([name]) => !GENERIC.has(name)).map(([name]) => ({ kind: 'header' as const, name })),
@@ -406,10 +445,15 @@ async function minimize(runner: Runner, exchange: Exchange, full: Variant, maxVa
     const result = await runner.send(exchange, variant)
     if (result.status !== null)
       statuses.push(result.status)
-    if (result.outcome !== 'ok')
+    // Without it the answer must still match and still carry the captured content: `/api/me`
+    // without the session cookie answers `{"user": null}`, the right shape with no user.
+    if (result.outcome !== 'ok' || !result.full)
       required.push(`${candidate.kind}:${candidate.name}`)
   }
-  return required.sort()
+  return {
+    requires: required.sort(),
+    tested: candidates.map(candidate => `${candidate.kind}:${candidate.name}`).sort(),
+  }
 }
 
 const NO_SAMPLE = 'no successful response was captured'
@@ -491,7 +535,7 @@ async function probeOne(operation: Operation, exchange: Exchange, context: Probe
     return result
   }
   const replay = record(await context.runner.send(exchange, full))
-  const result = (bareOutcome: ProbeOutcome, requires: string[] | null, note: string | null, rejection?: OperationProbe['rejection']): OperationProbe => ({
+  const result = (bareOutcome: ProbeOutcome, requires: string[] | null, note: string | null, rejection?: OperationProbe['rejection'], tested?: string[]): OperationProbe => ({
     operationId: operation.operationId,
     host: operation.host,
     method: operation.method,
@@ -499,6 +543,9 @@ async function probeOne(operation: Operation, exchange: Exchange, context: Probe
     replay: replay.outcome,
     bare: bareOutcome,
     requires,
+    ...(tested === undefined
+      ? {}
+      : { tested }),
     statuses,
     note,
     ...(rejection
@@ -518,15 +565,18 @@ async function probeOne(operation: Operation, exchange: Exchange, context: Probe
   }
 
   const plain = record(await context.runner.send(exchange, bare(full)))
-  if (plain.outcome === 'ok')
-    return result(plain.outcome, [], null)
+  // A bare answer counts only when it also carries the captured content: `/api/me` answering
+  // `{"user": null}` without cookies has the shape, not the session's data.
+  if (plain.outcome === 'ok' && plain.full)
+    return result(plain.outcome, [], null, undefined, [])
   if (replay.outcome !== 'ok') {
     const rejected = rejectionOf(replay, plain)
     return result(plain.outcome, null, rejected.note, rejected.kind)
   }
   if (!context.takeMinimizeSlot(operation.host))
     return result(plain.outcome, null, `Not minimized: limit of ${context.minimizePerHost} operations per host reached (probe.minimizePerHost, --minimize-per-host).`)
-  return result(plain.outcome, await minimize(context.runner, exchange, full, context.maxVariants, statuses), null)
+  const minimized = await minimize(context.runner, exchange, full, context.maxVariants, statuses)
+  return result(plain.outcome, minimized.requires, null, undefined, minimized.tested)
 }
 
 /** Probes every operation that has a successful captured sample and is allowed by the config. */

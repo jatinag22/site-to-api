@@ -28,7 +28,7 @@ import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
 import { registrableHost } from '../hosts'
 import { failedNavigationsWarning, loadSessions } from '../load'
-import { alignProbeReport, applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation, writeProbeReport } from '../probe'
+import { alignProbeReport, applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation, testedByOperation, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
@@ -380,6 +380,7 @@ async function withStoredProbe(captured: CapturedAnalysis, outDir: string): Prom
   }
   if (probe) {
     const requires = requirementsByOperation(probe)
+    const tested = testedByOperation(probe)
     analysis.flows = {
       ...base.flows,
       session: applyProbeReport(base.flows.session, probe, base.operations, redactor.text),
@@ -389,6 +390,9 @@ async function withStoredProbe(captured: CapturedAnalysis, outDir: string): Prom
       requires: operation.kind === 'bot-protection'
         ? null
         : requires.get(`${operation.host} ${operation.operationId}`) ?? null,
+      probeTested: operation.kind === 'bot-protection'
+        ? []
+        : tested.get(`${operation.host} ${operation.operationId}`) ?? [],
     }))
   }
   return { analysis, probe, stored, redactor }

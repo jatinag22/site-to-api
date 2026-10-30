@@ -71,6 +71,13 @@ const ROUTES: Record<string, Handler> = {
     res.writeHead(200, { 'content-type': 'text/html' }).end('<form action="/session"><input name="user"><input type="password" name="pw"></form>')
   },
   '/api/open': json(200, '{"items":[1]}'),
+  // Without the session cookie the same shape comes back, but empty.
+  '/api/me': (req, res) => {
+    const signedIn = String(req.headers.cookie ?? '').includes('sid=abc')
+    res.writeHead(200, { 'content-type': 'application/json' }).end(signedIn
+      ? '{"user":{"id":7,"name":"Ada"}}'
+      : '{"user":null}')
+  },
   '/api/px': json(403, JSON.stringify({
     appId: 'PXabc123',
     jsClientSrc: '/abc/init.js',
@@ -192,6 +199,41 @@ describe('probeOperations', () => {
     })
     const open = report.operations.find(result => result.operationId === 'getOpen')
     expect(open).toMatchObject({ replay: 'ok', bare: 'ok', requires: [] })
+  })
+
+  it('does not take an empty bare answer for "no session needed": it minimizes instead (decision 0052)', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getApiMe', 'GET', '/api/me', {
+          url: `${origin}/api/me`,
+          cookies: { sid: 'abc', theme: 'dark' },
+          responseBody: jsonBody({
+            user: { id: 7, name: 'Ada' },
+          }),
+        }),
+      ],
+    })
+    expect(report.operations[0]).toMatchObject({
+      replay: 'ok',
+      bare: 'ok',
+      requires: ['cookie:sid'],
+    })
+    expect(report.operations[0]?.tested).toEqual(expect.arrayContaining(['cookie:sid', 'cookie:theme']))
+    const open = (await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getOpen', 'GET', '/api/open', {
+          url: `${origin}/api/open`,
+          responseBody: jsonBody({
+            items: [1],
+          }),
+        }),
+      ],
+    })).operations[0]
+    expect(open).toMatchObject({ bare: 'ok', requires: [], tested: [] })
   })
 
   it('treats a 200 challenge page as rejected when the capture had JSON', async () => {
