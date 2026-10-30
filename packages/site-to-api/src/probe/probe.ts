@@ -394,15 +394,17 @@ function blockEvidence(response: LiveResponse): string | null {
 }
 
 /**
- * Whether a live body has the content the capture had, beyond its shape: not empty, and every
- * top-level JSON key the capture had filled (a non-empty object, list or string, or any number
- * or boolean) is filled again. Used before a bare answer may say no session is needed.
+ * Whether a live body has the content the capture had, beyond its shape: not empty; for a JSON
+ * object, every top-level key the capture had filled (a non-empty object, list or string, or any
+ * number or boolean) filled again; for a JSON list, not empty when the captured one was not
+ * (`/api/notifications` answers `[]` without the session); for a JSON scalar, a value of the same
+ * kind. Used before a bare or minimized answer may say a cookie or header is not needed.
  */
 function carriesCapturedContent(exchange: Exchange, text: string): boolean {
   if (text.trim() === '')
     return false
   const captured = exchange.response.body?.json
-  if (captured === null || typeof captured !== 'object' || Array.isArray(captured))
+  if (captured === undefined)
     return true
   let live: unknown
   try {
@@ -411,10 +413,23 @@ function carriesCapturedContent(exchange: Exchange, text: string): boolean {
   catch {
     return false
   }
+  if (Array.isArray(captured))
+    return Array.isArray(live) && (captured.length === 0 || live.length > 0)
+  if (captured === null || typeof captured !== 'object')
+    return jsonKind(live) === jsonKind(captured) && (!isFilled(captured) || isFilled(live))
   if (live === null || typeof live !== 'object' || Array.isArray(live))
     return false
   const answered = new Map(Object.entries(live))
   return Object.entries(captured).every(([key, value]) => !isFilled(value) || isFilled(answered.get(key)))
+}
+
+/** `null`, `array`, `object`, `string`, `number` or `boolean`. */
+function jsonKind(value: unknown): string {
+  if (value === null)
+    return 'null'
+  return Array.isArray(value)
+    ? 'array'
+    : typeof value
 }
 
 function isFilled(value: unknown): boolean {
