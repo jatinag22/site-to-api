@@ -821,7 +821,7 @@ describe('real-time channels', () => {
     expect(section).toContain('- Opened by `src/widgets/ticker.ts:22 connectPriceTicker`.')
     expect(renderAgentGuide(withChannels([
       tickerChannel(),
-    ]), context)).toMatch(/^- `ws:\/\/shop\.test:8080\/ws\/ticker`: JSON \/ text; send `subscribe` after connecting; details in \[`hosts\/shop\.test_8080\.md`\]\(hosts\/shop\.test_8080\.md#real-time-channels\)\.$/m)
+    ]), context)).toMatch(/^- `ws:\/\/shop\.test:8080\/ws\/ticker`: JSON \/ text \/ binary; send `subscribe` after connecting; details in \[`hosts\/shop\.test_8080\.md`\]\(hosts\/shop\.test_8080\.md#real-time-channels\)\.$/m)
   })
 
   it('names the protocol, the upgrade facts and the first message, and the wire of each setup message', () => {
@@ -919,7 +919,7 @@ describe('real-time channels', () => {
       tickerChannel(),
     ]), 'current')
     const rows = map.split('## Real-time channels')[1]?.split('\n').filter(line => line.startsWith('| `')) ?? []
-    expect(rows).toEqual(['| `wsTicker` | `ws://shop.test:8080/ws/ticker` | JSON / text | `subscribe` | `subscribe` | `tick`, text frames, binary frames | `subscribe` `body./productId` ← `body./items/0/id` of `getApiProducts` | cookies: `sid` | `specs/shop.test_8080.asyncapi.yaml` |'])
+    expect(rows).toEqual(['| `wsTicker` | `ws://shop.test:8080/ws/ticker` | JSON / text / binary | `subscribe` | `subscribe` | `tick`, text frames, binary frames | `subscribe` `body./productId` ← `body./items/0/id` of `getApiProducts` | cookies: `sid` | `specs/shop.test_8080.asyncapi.yaml` |'])
   })
 
   const hostile = tickerChannel({

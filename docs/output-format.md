@@ -1,7 +1,8 @@
 # Handoff folder format
 
 What `build` (and `probe` and `gen`) write to `outDir`. Everything here is redacted under the
-default settings (decision 0004); review it before publishing. Output is deterministic: the same
+default settings (decision 0004), and `build` fails if any secret it learnt from the capture
+appears in a file it wrote (decision 0047); review it before publishing. Output is deterministic: the same
 captures, options and `probe.json` produce byte-identical files.
 
 ## `AGENT.md`

@@ -20,6 +20,32 @@ function channelUrl(channel: WebSocketChannel): string {
   return `${channel.scheme}://${channel.host}${channel.path}`
 }
 
+/** Frame formats in the order a label lists them, with their names. */
+const FORMAT_LABELS: ReadonlyArray<[ChannelMessage['format'], string]> = [
+  ['json', 'JSON'],
+  ['msgpack', 'MessagePack'],
+  ['protobuf', 'protobuf'],
+  ['text', 'text'],
+  ['binary', 'binary'],
+]
+
+/**
+ * The protocol column and summary label: the framing protocol when one was recognised, else the
+ * frame formats the messages have, from the same messages the host file lists. Plain JSON and
+ * text channels keep `JSON / text`; a channel of binary frames says `binary`.
+ */
+export function channelFormatLabel(channel: WebSocketChannel): string {
+  if (channel.protocol !== null)
+    return CHANNEL_PROTOCOL_LABELS[channel.protocol.id]
+  const formats = new Set(channel.messages.map(message => message.format))
+  if ([...formats].every(format => format === 'json' || format === 'text'))
+    return 'JSON / text'
+  return FORMAT_LABELS
+    .filter(([format]) => formats.has(format))
+    .map(([, label]) => label)
+    .join(' / ')
+}
+
 /** What each handshake role means, for a reader deciding what to send. */
 const ROLE_NOTES: Record<HandshakeRole, string> = {
   init: 'protocol start',
@@ -288,9 +314,7 @@ export function channelsSummary(channels: readonly WebSocketChannel[], link: Hos
   if (channels.length === 0)
     return []
   const lines = channels.slice(0, MAX_SUMMARY_LINES).map((channel) => {
-    const protocol = channel.protocol === null
-      ? 'JSON / text'
-      : CHANNEL_PROTOCOL_LABELS[channel.protocol.id]
+    const protocol = channelFormatLabel(channel)
     const handshake = channel.handshake.map((step) => {
       const message = channel.messages.find(candidate => candidate.id === step.message)
       return code(message
@@ -381,9 +405,7 @@ export function channelsTable(channels: readonly WebSocketChannel[], stems: Host
     ...channels.map(channel => `| ${[
       cellCode(channel.id),
       cellCode(channelUrl(channel)),
-      channel.protocol === null
-        ? 'JSON / text'
-        : CHANNEL_PROTOCOL_LABELS[channel.protocol.id],
+      channelFormatLabel(channel),
       handshakeCell(channel),
       messagesCell(channel, 'send'),
       messagesCell(channel, 'receive'),

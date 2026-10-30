@@ -22,6 +22,7 @@ import { EventWriter } from './events'
 import { harOmissionNote } from './har'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
+import { launchWithSandbox } from './sandbox'
 import { createStopper, DEFAULT_TIMEOUTS, saveSession, waitBounded, writeJsonAtomic } from './save'
 import { ScriptCollector } from './scripts'
 import { launchArgs, minimizes, minimizeWindow } from './window'
@@ -99,7 +100,12 @@ async function loadCaptureScript(file: string): Promise<CaptureScript> {
 
 type BrowserConfig = ResolvedConfig['capture']['browser']
 
-async function launchContext(browser: BrowserConfig, cwd: string, harPath: string): Promise<BrowserContext> {
+/** Starts the browser; with `sandbox`, a failed start is retried once without it (decision 0047). */
+async function launchContext(browser: BrowserConfig, cwd: string, harPath: string, warn: (message: string) => void): Promise<BrowserContext> {
+  return await launchWithSandbox(sandbox => launchOnce(browser, cwd, harPath, sandbox), browser.sandbox, warn)
+}
+
+async function launchOnce(browser: BrowserConfig, cwd: string, harPath: string, sandbox: boolean): Promise<BrowserContext> {
   const optional = {
     ...(browser.channel === null
       ? {}
@@ -121,6 +127,8 @@ async function launchContext(browser: BrowserConfig, cwd: string, harPath: strin
       : path.resolve(cwd, browser.userDataDir), {
       ...optional,
       headless: browser.headless,
+      // Playwright passes --no-sandbox unless this is set; Chrome then shows a warning bar too.
+      chromiumSandbox: sandbox,
       args: launchArgs(browser),
       // SIGINT and SIGTERM end the session through createStopper, which closes the context and so
       // flushes the HAR; Playwright closing the browser itself would lose it.
@@ -182,7 +190,10 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
 
   let context: BrowserContext
   try {
-    context = await launchContext(browser, options.cwd, harPath)
+    context = await launchContext(browser, options.cwd, harPath, (message) => {
+      warnings.push(message)
+      log(message)
+    })
   }
   catch (error) {
     stopper.dispose()

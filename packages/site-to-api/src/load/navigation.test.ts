@@ -12,6 +12,34 @@ describe('failedNavigationsWarning', () => {
     expect(warning).toContain('(--channel chrome, without --headless)')
   })
 
+  it('says the host could not be resolved when DNS failed, not that the site blocks automated browsers', () => {
+    const warning = failedNavigationsWarning([
+      { status: -1, failure: 'net::ERR_NAME_NOT_RESOLVED', host: 'www.chess.com' },
+      { status: -1, failure: 'net::ERR_NAME_NOT_RESOLVED', host: 'www.chess.com' },
+    ])
+    expect(warning).toContain('Every page load failed (net::ERR_NAME_NOT_RESOLVED; 2 of 2)')
+    expect(warning).toContain('www.chess.com could not be resolved (blocked by DNS')
+    expect(warning).not.toContain('automated browsers')
+    const mixed = failedNavigationsWarning([
+      { status: -1, failure: 'net::ERR_NAME_NOT_RESOLVED' },
+      { status: -1, failure: 'net::ERR_HTTP2_PROTOCOL_ERROR' },
+    ])
+    expect(mixed).toContain('probably blocks automated browsers')
+    expect(mixed).toContain('the host could not be resolved')
+  })
+
+  it('reads the page host from the HAR entry', () => {
+    expect(harNavigations([
+      {
+        _resourceType: 'document',
+        request: { url: 'https://www.chess.com/tv' },
+        response: { status: -1, _failureText: 'net::ERR_NAME_NOT_RESOLVED' },
+      },
+    ])).toEqual([
+      { status: -1, failure: 'net::ERR_NAME_NOT_RESOLVED', host: 'www.chess.com' },
+    ])
+  })
+
   it('warns when most failed and stays quiet when most loaded', () => {
     expect(failedNavigationsWarning([
       { status: 0, failure: null },

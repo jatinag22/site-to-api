@@ -878,6 +878,126 @@ describe('createRedactor: tracking identifiers (decision 0045)', () => {
   })
 })
 
+describe('createRedactor: URLs inside values (decision 0047)', () => {
+  const token = 'PH8DAQEIZW52aXJvbm1lbnQBCQAAAAZ3c3Rva2Vu'
+  const recovery = `wss://hermes.twitch.tv/a/v1?clientId=kimne78kx3ncx6brgo4mv6wki5h1ko&t=${token}`
+
+  function welcome(sessionId = 's1'): Exchange {
+    return exchange({
+      url: 'https://www.shop.test/api/socket-config',
+      sessionId,
+      responseBody: jsonBody({
+        type: 'welcome',
+        payload: { recoveryUrl: recovery },
+      }),
+    })
+  }
+
+  it('redacts query tokens of a WebSocket URL in a body value, by name', () => {
+    const r = redactor([
+      welcome(),
+    ])
+    const redacted = JSON.stringify(r.json({
+      payload: { recoveryUrl: recovery },
+    }, { in: 'response-body' }))
+    expect(redacted).not.toContain(token)
+    expect(redacted).toContain('t=<redacted: 40 base64 chars>')
+  })
+
+  it('learns the token, so it is scrubbed where it appears elsewhere', () => {
+    const r = redactor([
+      welcome(),
+    ])
+    expect(r.value(`resume ${token}`, { in: 'text' })).toBe('resume <redacted: 40 base64 chars>')
+  })
+
+  it('redacts URLs inside longer text and keeps the punctuation around them', () => {
+    const r = redactor([])
+    expect(r.value(`Reconnect to ${recovery}.`, { in: 'response-body', name: 'message' }))
+      .toBe('Reconnect to wss://hermes.twitch.tv/a/v1?clientId=<redacted: 30 base64 chars>&t=<redacted: 40 base64 chars>.')
+  })
+
+  it('redacts a Location header, path credentials, user info and random query values like request URLs', () => {
+    const r = redactor([])
+    expect(r.value('https://shop.test/cb?session=abc123def&page=2', { in: 'response-header', name: 'location' }))
+      .toBe('https://shop.test/cb?session=<redacted: 9 hex chars>&page=2')
+    expect(r.value('see https://shop.test/reset/Zq8xT2mLp4VwRk7YbN3c now', { in: 'body', name: 'note' }))
+      .toBe('see https://shop.test/reset/<redacted: 20 base64 chars> now')
+    expect(r.value('https://admin:hunter22@shop.test/x', { in: 'body', name: 'link' }))
+      .toBe('https://<redacted: 14 chars, separators ":">@shop.test/x')
+    expect(r.value('https://cdn.test/f?x-id=Zq8xT2mLp4VwRk7YbN3c', { in: 'body', name: 'href' }))
+      .toBe('https://cdn.test/f?x-id=<redacted: 20 base64 chars>')
+  })
+
+  it('redacts and learns tokens in fragments and in a hash router\'s query', () => {
+    const routed = 'https://shop.test/#/cb?token=Zq8xT2mLp4VwRk7YbN3c&page=2'
+    const implicit = 'https://shop.test/cb?a=1#access_token=hX7kQ2mZpL9vRt4WcB8n&state=ok'
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/a',
+        responseBody: jsonBody({ next: routed, back: implicit }),
+      }),
+    ])
+    expect(r.value(routed, { in: 'body', name: 'next' })).toBe('https://shop.test/#/cb?token=<redacted: 20 base64 chars>&page=2')
+    expect(r.value(implicit, { in: 'body', name: 'back' })).toBe('https://shop.test/cb?a=1#access_token=<redacted: 20 base64 chars>&state=ok')
+    // Learnt, so the tokens are removed from unrelated text too.
+    expect(r.value('a Zq8xT2mLp4VwRk7YbN3c b hX7kQ2mZpL9vRt4WcB8n', { in: 'text' }))
+      .toBe('a <redacted: 20 base64 chars> b <redacted: 20 base64 chars>')
+  })
+
+  it('keeps only Unix times and short offsets under t', () => {
+    const r = redactor([])
+    for (const value of [
+      '1700000000',
+      '1700000000123',
+      '90s',
+      '1m30s',
+      '1h2m3s',
+    ])
+      expect(r.value(value, { in: 'query', name: 't' }), value).toBe(value)
+    for (const value of [
+      '84736251908374',
+      '90',
+      '123456789',
+      'abc',
+    ])
+      expect(r.value(value, { in: 'query', name: 't' }), value).toMatch(/^<redacted: /)
+  })
+
+  it('keeps times and offsets under t, and ordinary URLs unchanged', () => {
+    const r = redactor([])
+    for (const url of [
+      'https://video.test/watch?v=abc&t=1m30s',
+      'https://api.test/poll?t=1700000000123',
+      'https://shop.test/products/masala-makhana-250-g?page=2#reviews',
+    ])
+      expect(r.value(url, { in: 'body', name: 'href' }), url).toBe(url)
+    expect(isSecretName('x-t-id', true)).toBe(false)
+    expect(isSecretName('t', true)).toBe(true)
+    expect(isSecretName('t')).toBe(false)
+  })
+})
+
+describe('createRedactor: learntSecrets (decision 0047)', () => {
+  it('lists token-like secrets from cookies, headers, bodies and URLs, never words or short values', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { sid: 'c0ffee00deadbeef0123', layout: 'desktop-layout-wide', n: 'a1b2' },
+        requestHeaders: { authorization: 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln' },
+        responseBody: jsonBody({ recoveryUrl: 'wss://h.test/a?t=PH8DAQEIZW52aXJvbm1lbnQ' }),
+      }),
+    ])
+    const secrets = r.learntSecrets()
+    expect(secrets).toContain('c0ffee00deadbeef0123')
+    expect(secrets).toContain('PH8DAQEIZW52aXJvbm1lbnQ')
+    expect(secrets.some(secret => secret.includes('eyJhbGciOiJIUzI1NiJ9'))).toBe(true)
+    expect(secrets).not.toContain('desktop-layout-wide')
+    expect(secrets).not.toContain('a1b2')
+    expect(secrets).toEqual([...secrets].sort())
+  })
+})
+
 describe('createRedactor: modes and examples', () => {
   const exchanges = fixtureExchanges()
 

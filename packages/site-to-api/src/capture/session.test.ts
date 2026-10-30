@@ -12,6 +12,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ConfigSchema } from '../config/schema'
 import { SiteToApiError } from '../errors'
@@ -318,7 +319,8 @@ afterAll(async () => {
 function headlessConfig(script: string | null): ReturnType<typeof ConfigSchema.parse> {
   return ConfigSchema.parse({
     capture: {
-      browser: { channel: null, headless: true },
+      // GitHub's Ubuntu runners cannot start Chromium's sandbox; locally it is on (decision 0047).
+      browser: { channel: null, headless: true, sandbox: process.env.CI !== 'true' },
       script,
     },
   })
