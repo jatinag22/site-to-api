@@ -117,7 +117,8 @@ function isIdentityName(name: string | null): boolean {
   return name !== null && nameWords(name).some(word => IDENTITY_NAME_WORDS.has(word))
 }
 
-function isCodeToken(value: string): boolean {
+/** A program token (`IN_STOCK`, `out-of-stock`, `order_created`), not free text. */
+export function isCodeToken(value: string): boolean {
   return CODE_TOKEN.some(pattern => pattern.test(value))
 }
 

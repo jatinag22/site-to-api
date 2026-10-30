@@ -1243,3 +1243,10 @@ describe('checksums and names', () => {
       expect(isSecretName(name), String(name)).toBe(false)
   })
 })
+
+describe('emails as Firebase keys', () => {
+  it('masks an email whose dots are written as commas', () => {
+    expect(maskPersonalData('/emails/quill.ferro@invented,co,uk/x', PERSONAL_DATA_PATTERNS)).not.toContain('quill')
+    expect(maskPersonalData('a,b,c and 1,2,3', PERSONAL_DATA_PATTERNS)).toBe('a,b,c and 1,2,3')
+  })
+})

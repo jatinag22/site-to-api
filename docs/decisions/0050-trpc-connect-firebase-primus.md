@@ -49,9 +49,14 @@ A run over real sites found four protocols the output did not understand:
       strictly: every byte consumed, wire types 0/1/2/5, lengths inside the data, at most 1 MiB,
       and the file name must end in `.proto`. `MethodOptions.idempotency_level` (field 34) is read.
     - protobuf-es v1 writes service objects with `idempotency: X.NoSideEffects`.
-  - A method declared `NO_SIDE_EFFECTS` is `readOnly`, and probe's and the MCP servers' shared
-    rules treat it as a safe read.
-  - The path rule stays: a method whose name says delete, cancel and so on is never sent.
+  - Only descriptors in the operation's own site's scripts count (same registrable domain as
+    the host the method is called on). A third-party or injected script must not vouch for a
+    site's method. A method that two of the site's files describe differently is left out.
+  - A method declared `NO_SIDE_EFFECTS` is `readOnly`, and probe treats it as a safe read.
+  - A method whose name says it writes (`Create…`, `Update…`, `Delete…`, `Transfer…`,
+    `Pay…`, `Send…`, `Cancel…` and so on) is never a read, whatever its descriptor says.
+  - The MCP servers send with the person's session, so for them only a Connect method the
+    page called with GET reads. A read declared only in a descriptor stays probe-only.
 - **Firebase Realtime Database** (`protocols/firebase.ts`), from the open-source JavaScript SDK:
   - Control frames (`h` hello, `p`/`o` ping and pong, `r` reset, `s` shutdown, `e` error) are
     named by their type.
@@ -59,7 +64,14 @@ A run over real sites found four protocols the output did not understand:
   - Server pushes are named by kind and path (`data v0/item/{id}`), and answers after the
     request they answer (`r`).
   - A message split across frames (a frame holding only the count, then the pieces) is put back
-    together, bounded at 1,000 frames and 10 MiB.
+    together, bounded at 1,000 frames and 10 MiB. Pieces are never written on their own: a
+    secret split over two pieces would be whole in neither, and the redactor would see it
+    nowhere. Pieces that make no Firebase message are dropped.
+  - Path segments that the redactor would change are `{id}` in names. That covers emails,
+    including Firebase's `user@example,com` key form, now a personal-data pattern, as well as
+    tokens and opaque ids. The rule applies to every protocol's names.
+  - The hello's session id `s` and the `ls` query parameter a client reconnects with are
+    protocol secrets. They follow one browser session across connections.
   - The hint is a `/.ws` path with `ns` and `v`. Without it, a hello or a known request is the
     strong message.
   - `auth`/`gauth` `cred` and App Check `token` are protocol secrets (0048).
@@ -67,8 +79,10 @@ A run over real sites found four protocols the output did not understand:
   plus Engine.IO control packets) or plain frames.
   - The `primus::ping::<ms>`/`pong` heartbeat is the strong message, and the hint is a `primus`
     path or the `_primuscb` query parameter.
-  - Data messages are named by their first string `type`, `event`, `action`, `method`, `op`,
-    `cmd`, `command`, `name` or `topic` field, else `message`.
+  - Data messages are named by their first code-like `type`, `event`, `action`, `method`, `op`,
+    `cmd`, `command` or `topic` value, else `message`. Code-like means a program token, or an
+    identifier starting in lower case with `.`, `:`, `/`, `-` or `_` parts. Not `name`, nor
+    capitalised or spaced text: those are as often a person's name.
 
 ## Consequences
 - tRPC procedures and Connect methods are one operation each, with input schemas and traced

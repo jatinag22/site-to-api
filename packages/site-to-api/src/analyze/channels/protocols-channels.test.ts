@@ -826,3 +826,83 @@ describe('firebase realtime database', () => {
     expect(JSON.stringify(channel)).not.toContain(credential)
   })
 })
+
+describe('firebase: secrets and people in split frames and paths', () => {
+  it('keeps a secret split over two pieces, emails in paths and session ids out of the output', () => {
+    const url = `wss://${HOST}/.ws?v=5&ns=demo-board&ls=InventedLastSess77`
+    const [channel] = channelsOf([
+      upgrade('s', url, 0),
+    ], [
+      loadedSession('s', socketEvents({
+        url,
+        socket: 0,
+        openedAt: T0,
+        frames: [
+          ['<', '{"t":"c","d":{"t":"h","d":{"ts":1700000000000,"v":"5","h":"demo-board.example","s":"InventedSess99"}}}'],
+          ['>', '{"t":"d","d":{"r":1,"a":"q","b":{"p":"/emails/quill@invented,test","h":""}}}'],
+          ['>', '{"t":"d","d":{"r":2,"a":"q","b":{"p":"/users/Qk7Lp2Mx9Wz4RtBn8Yc3/private","h":""}}}'],
+          ['<', '3'],
+          ['<', '{"t":"d","d":{"a":"d","b":{"p":"/x","d":{"secretKey":"'],
+          ['<', 'Zq8xT2mLp4VwRk7YbInvented'],
+          ['<', '"}}}}'],
+        ],
+      })),
+    ])
+    const written = JSON.stringify(channel) + (channel === undefined
+      ? ''
+      : channelsSection([channel], new Map()).join('\n'))
+    for (const value of [
+      'quill@invented',
+      'Qk7Lp2Mx9Wz4RtBn8Yc3',
+      'Zq8xT2mLp4VwRk7YbInvented',
+      'InventedSess99',
+      'InventedLastSess77',
+    ])
+      expect(written).not.toContain(value)
+    expect(channel?.messages.map(message => message.protocol?.name)).toEqual([
+      'listen /emails/{id}',
+      'listen /users/{id}/private',
+      'hello',
+      'data /x',
+    ])
+    expect(channel?.messages.some(message => message.protocol?.frame === 'fragment')).toBe(false)
+  })
+})
+
+describe('primus: people in messages', () => {
+  it('names no message after a person and templates ids in topics', () => {
+    const url = `wss://${HOST}/primus/?_primuscb=Inv3nted`
+    const [channel] = channelsOf([
+      upgrade('s', url, 0),
+    ], [
+      loadedSession('s', socketEvents({
+        url,
+        socket: 0,
+        openedAt: T0,
+        frames: [
+          ['<', '0{"sid":"InventedPrimusSid77","pingInterval":25000}'],
+          ['<', '4{"name":"Quill Ferro","score":3}'],
+          ['<', '4{"topic":"user:Qk7Lp2Mx9Wz4RtBn8Yc3","v":1}'],
+          ['<', '4{"type":"chat","from":"quill@invented.test"}'],
+          ['<', '4"primus::ping::123"'],
+        ],
+      })),
+    ])
+    expect(channel?.protocol?.id).toBe('primus')
+    expect(channel?.messages.map(message => message.id)).toEqual([
+      'receiveOpen',
+      'receiveMessage',
+      'receiveUserId',
+      'receiveChat',
+      'receivePing',
+    ])
+    const written = JSON.stringify(channel) + (channel === undefined
+      ? ''
+      : channelsSection([channel], new Map()).join('\n'))
+    // A bare `name` field is not personal by the redactor's rules (only inside a person's
+    // record), so the example keeps it; it must not name a message.
+    expect(JSON.stringify(channel?.messages.map(message => [message.id, message.protocol]))).not.toMatch(/Quill|Qk7Lp2Mx9Wz4RtBn8Yc3/)
+    for (const value of ['quill@invented.test', 'InventedPrimusSid77'])
+      expect(written).not.toContain(value)
+  })
+})

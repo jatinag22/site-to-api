@@ -77,7 +77,8 @@ export interface ProtocolDecoder {
   hint: (handshake: Handshake) => string | null
   /** The version the handshake names (`EIO=4`), if any. */
   handshakeVersion: (handshake: Handshake) => string | null
-  start: () => DecoderSession
+  /** A session for one connection; the handshake is there for decoders that need its values. */
+  start: (handshake?: Handshake) => DecoderSession
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

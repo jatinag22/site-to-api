@@ -164,6 +164,16 @@ interface Fragments {
 }
 
 class FirebaseSession implements DecoderSession {
+  /** The previous session id the client reconnects with (`ls` in the URL), until reported. */
+  private lastSession: string | null
+
+  constructor(handshake: Handshake | undefined) {
+    const ls = handshake?.query.find(param => param.name === 'ls')?.value
+    this.lastSession = ls === undefined || ls === ''
+      ? null
+      : ls
+  }
+
   /** The name of each request, by request number and the direction its answer comes from. */
   private readonly requests = new Map<string, string>()
   private readonly fragments: Partial<Record<RawFrame['direction'], Fragments>> = {}
@@ -172,32 +182,27 @@ class FirebaseSession implements DecoderSession {
   read(frame: RawFrame): DecodedMessage[] | null {
     if (frame.binary)
       return null
-    const text = this.reassembled(frame)
-    if (text === null)
+    const piece = this.reassembled(frame)
+    if (piece === null)
       return null
-    if (text === '') {
-      // A frame-count frame or a piece of a split message: understood, but no message yet.
-      return [
-        message({
-          data: frame.data,
-          frame: 'fragment',
-          name: ['fragment'],
-          role: 'data',
-          wire: '<number of frames> then <pieces>',
-          payload: undefined,
-          strong: false,
-        }),
-      ]
-    }
+    // A frame count or a piece of a split message is understood but holds no message of its
+    // own; the pieces count once, as the reassembled message. A piece is never written as it
+    // is: a secret split over two pieces would reach the output whole in neither.
+    if (piece.kind === 'piece')
+      return []
+    const text = piece.text
     const json = parseJson(text)
-    if (!isRecord(json) || Object.keys(json).length !== 2 || (json.t !== 'd' && json.t !== 'c'))
-      return null
-    const decoded = json.t === 'c'
-      ? this.control(text, json.d)
-      : this.data(frame, text, json.d)
-    return decoded === null
+    const decoded = !isRecord(json) || Object.keys(json).length !== 2 || (json.t !== 'd' && json.t !== 'c')
       ? null
-      : [decoded]
+      : json.t === 'c'
+        ? this.control(text, json.d)
+        : this.data(frame, text, json.d)
+    if (decoded !== null)
+      return [decoded]
+    // Pieces that do not make a Firebase message are dropped, not shown as their last piece.
+    return piece.kind === 'whole'
+      ? null
+      : []
   }
 
   version(): string | null {
@@ -207,10 +212,10 @@ class FirebaseSession implements DecoderSession {
   }
 
   /**
-   * The message text of a frame: its own JSON, `''` while a split message is being gathered,
-   * the whole JSON on its last piece, or null when the frame breaks the fragment rules.
+   * What a frame holds: a whole message, a piece (or the frame count) of a split one, the
+   * reassembled text on its last piece, or null when the frame breaks the fragment rules.
    */
-  private reassembled(frame: RawFrame): string | null {
+  private reassembled(frame: RawFrame): { kind: 'whole' | 'joined', text: string } | { kind: 'piece' } | null {
     const pending = this.fragments[frame.direction]
     if (pending !== undefined) {
       pending.parts.push(frame.data)
@@ -218,21 +223,24 @@ class FirebaseSession implements DecoderSession {
       pending.remaining--
       if (pending.length > MAX_REASSEMBLED) {
         this.fragments[frame.direction] = undefined
-        return null
+        return { kind: 'piece' }
       }
       if (pending.remaining > 0)
-        return ''
+        return { kind: 'piece' }
       this.fragments[frame.direction] = undefined
-      return pending.parts.join('')
+      return {
+        kind: 'joined',
+        text: pending.parts.join(''),
+      }
     }
     if (/^\d{1,4}$/.test(frame.data)) {
       const count = Number(frame.data)
       if (count < 1 || count > MAX_FRAGMENTS)
         return null
       this.fragments[frame.direction] = { remaining: count, parts: [], length: 0 }
-      return ''
+      return { kind: 'piece' }
     }
-    return frame.data
+    return { kind: 'whole', text: frame.data }
   }
 
   private control(data: string, body: unknown): DecodedMessage | null {
@@ -244,6 +252,15 @@ class FirebaseSession implements DecoderSession {
     const hello = body.t === 'h' && isRecord(body.d) && typeof body.d.ts === 'number' && typeof body.d.v === 'string'
     if (hello && isRecord(body.d) && typeof body.d.v === 'string' && /^\d{1,3}$/.test(body.d.v))
       this.protocolVersion = body.d.v
+    // The hello's session id `s` and the `ls` the client reconnected with follow one browser
+    // session from connection to connection: secrets for the redactor.
+    const session = hello && isRecord(body.d) && typeof body.d.s === 'string' && body.d.s !== ''
+      ? [body.d.s]
+      : []
+    const last = this.lastSession === null
+      ? []
+      : [this.lastSession]
+    this.lastSession = null
     return message({
       data,
       frame: control.frame,
@@ -252,6 +269,10 @@ class FirebaseSession implements DecoderSession {
       wire: `{"t":"c","d":{"t":"${body.t}","d":<payload>}}`,
       payload: body.d,
       strong: hello,
+      secrets: [
+        ...session,
+        ...last,
+      ],
     })
   }
 
@@ -353,5 +374,5 @@ export const firebase: ProtocolDecoder = {
       ? `v${version}`
       : null
   },
-  start: () => new FirebaseSession(),
+  start: handshake => new FirebaseSession(handshake),
 }

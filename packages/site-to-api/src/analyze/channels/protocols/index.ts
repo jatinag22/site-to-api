@@ -68,7 +68,7 @@ interface Attempt {
 }
 
 function attempt(decoder: ProtocolDecoder, frames: readonly RawFrame[], handshake: Handshake): Attempt {
-  const session = decoder.start()
+  const session = decoder.start(handshake)
   const readings = frames.map(frame => session.read(frame))
   const carries = (frame: RawFrame | undefined): boolean => frame?.binary === (decoder.content === 'binary')
   return {

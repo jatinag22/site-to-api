@@ -4,12 +4,14 @@
  * application's data. Primus runs over a transformer: with the Engine.IO one each frame is an
  * Engine.IO packet (`0{…}` open, `2`/`3` ping and pong, `5` upgrade, `4<json>` a Primus message),
  * with the plain WebSocket one each frame is the JSON itself. Primus messages have no name of
- * their own, so a data message is named by the first string among its `type`, `event`,
- * `action`, `method`, `op`, `cmd`, `command`, `name` and `topic` fields, else `message`.
+ * their own, so a data message is named by the first code-like string among its `type`,
+ * `event`, `action`, `method`, `op`, `cmd`, `command` and `topic` fields, else `message`.
  */
 import type { DecodedMessage, DecoderSession, Handshake, ProtocolDecoder, RawFrame } from './types'
+import { isCodeToken } from '../../schema'
 import { isRecord, message, parseJson } from './types'
 
+/** Fields whose value names a message. Not `name`: it is as often a person's (`"Alice Smith"`). */
 const NAME_FIELDS: readonly string[] = [
   'type',
   'event',
@@ -18,9 +20,18 @@ const NAME_FIELDS: readonly string[] = [
   'op',
   'cmd',
   'command',
-  'name',
   'topic',
 ]
+
+/**
+ * Code-like: a program token (`ORDER_CREATED`, `order-created`), or an identifier that starts in
+ * lower case, with dotted, colon or slash parts (`notification`, `chat.message`,
+ * `/api/v1/registerBatchSubscriptions`). A capitalised word or text with spaces may be a
+ * person's name, so it does not name a message.
+ */
+function isMessageName(value: string): boolean {
+  return value.length <= 100 && (isCodeToken(value) || /^\/?[a-z][a-zA-Z\d]*(?:[._:/-][a-zA-Z\d]+)*$/.test(value))
+}
 
 const HEARTBEAT = /^primus::(ping|pong)::\d{1,16}$/
 
@@ -30,7 +41,7 @@ function namedBy(json: unknown): { field: string, value: string } | null {
     return null
   for (const field of NAME_FIELDS) {
     const value = json[field]
-    if (typeof value === 'string' && value !== '' && value.length <= 200)
+    if (typeof value === 'string' && isMessageName(value))
       return { field, value }
   }
   return null

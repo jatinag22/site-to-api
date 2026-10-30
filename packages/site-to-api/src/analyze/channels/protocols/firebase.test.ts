@@ -69,7 +69,7 @@ describe('firebase decoder', () => {
     expect(reader.version()).toBe('v5')
   })
 
-  it('reassembles a message split over several frames', () => {
+  it('reassembles a split message and writes no piece on its own', () => {
     const reader = firebase.start()
     const pieces = rawFrames([
       ['<', '2'],
@@ -78,10 +78,30 @@ describe('firebase decoder', () => {
     ])
     const read = pieces.map(frame => reader.read(frame)?.map(item => `${item.frame} ${item.name.join(' ')}`))
     expect(read).toEqual([
-      ['fragment fragment'],
-      ['fragment fragment'],
+      [],
+      [],
       ['data data /v0/topstories'],
     ])
+    // Pieces that make no Firebase message are dropped too, never shown as the last piece.
+    const broken = rawFrames([
+      ['<', '2'],
+      ['<', '{"secretKey":"'],
+      ['<', 'invented-piece-value"}'],
+    ])
+    const fresh = firebase.start()
+    expect(broken.map(frame => fresh.read(frame))).toEqual([[], [], []])
+  })
+
+  it('names the hello session id and the reconnect `ls` as secrets', () => {
+    const reader = firebase.start({
+      ...HINTED,
+      query: [
+        ...HINTED.query,
+        { name: 'ls', value: 'invented-last-session' },
+      ],
+    })
+    const [hello] = reader.read(session[0] ?? { direction: 'received', data: '', binary: false }) ?? []
+    expect(hello?.secrets).toEqual(['sess-abc', 'invented-last-session'])
   })
 
   it('rejects frames that break the protocol and bounds fragments', () => {

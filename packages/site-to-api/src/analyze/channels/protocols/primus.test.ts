@@ -81,3 +81,25 @@ describe('primus decoder', () => {
     expect(reader.read({ direction: 'received', data: '9', binary: false })).toBeNull()
   })
 })
+
+describe('primus message names', () => {
+  it('names a message only by a code-like type, topic or event, never by `name` or free text', () => {
+    const reader = primus.start()
+    const frames = rawFrames([
+      ['<', '4{"name":"Quill Ferro","score":3}'],
+      ['<', '4{"type":"Quill Ferro"}'],
+      ['<', '4{"type":"Quill"}'],
+      ['<', '4{"topic":"user:Qk7Lp2Mx9Wz4RtBn8Yc3","v":1}'],
+      ['<', '4{"type":"ORDER_CREATED"}'],
+      ['<', '4{"event":"chat.message"}'],
+    ])
+    expect(frames.map(frame => reader.read(frame)?.[0]?.name.join(''))).toEqual([
+      'message',
+      'message',
+      'message',
+      'user:Qk7Lp2Mx9Wz4RtBn8Yc3',
+      'ORDER_CREATED',
+      'chat.message',
+    ])
+  })
+})
