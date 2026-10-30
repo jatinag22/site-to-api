@@ -47,13 +47,13 @@ and hands the result to you or your coding agent in a form that is easy to act o
 
 ## Install
 
-Requires Node 22.12+.
+Requires Node 22.12+ and pnpm (`corepack enable` turns it on if you have Node).
 
 ```sh
 # from source until the first npm release
 git clone https://github.com/jatinag22/site-to-api
 cd site-to-api && pnpm install && pnpm run build
-pnpm --filter site-to-api exec playwright install chromium   # only if you don't use your installed Chrome
+pnpm --filter site-to-api exec playwright install chromium   # bundled browser: the fixture walkthrough uses it
 # put the CLI on your PATH (works in scripts too, unlike a shell alias)
 mkdir -p ~/.local/bin && ln -sf "$PWD/packages/site-to-api/bin/site-to-api.mjs" ~/.local/bin/site-to-api
 site-to-api --version
@@ -90,7 +90,7 @@ pnpm --filter @site-to-api/e2e run fixture
 
 ```sh
 # terminal 2: three scripted browsing sessions, then build
-REPO=/path/to/site-to-api        # your clone
+REPO=~/site-to-api               # the folder you cloned into
 mkdir -p /tmp/pinewood && cd /tmp/pinewood
 site-to-api init
 for s in browse browse-again login; do
@@ -282,8 +282,9 @@ own workflows.
 ### Project setup
 
 The generated client is TypeScript that imports `@site-to-api/runtime` and `zod` 4. Your project
-is the folder that holds `api-handoff/` (the one you ran `init` in). Until the first npm release,
-install the runtime from your clone:
+is the folder that holds `api-handoff/` (the one you ran `init` in; `/tmp/pinewood` in the
+walkthrough). Until the first npm release, install the runtime from your clone (`/path/to/site-to-api`
+below):
 
 ```sh
 npm init -y && npm pkg set type=module          # ES modules
@@ -317,8 +318,8 @@ reading, so the compiler never sees them.
 
 This is the complete wrapper an agent would write from the handoff folder of the walkthrough
 above. The shop needs a browser session (bot protection), a CSRF token from the login page, a
-password encrypted in the browser, and a bearer token. It was run as written in a fresh project
-and prints `200 3 orders`:
+password encrypted in the browser, and a bearer token. In a fresh project with the setup above it
+type-checks under `strict` and prints `200 3 orders`:
 
 ```ts
 import { chromium } from 'playwright'
@@ -360,14 +361,16 @@ const { sdk } = createSiteClient({
 const loginPage = await sdk.getLogin({})
 const csrf = extractCsrfTokenFromGetLogin(String(loginPage.data))
 const { data: key } = await sdk.getApiAuthKey({})
+if (!key?.publicKey)
+  throw new Error('the login key endpoint returned no public key')
 const login = await sdk.postApiAuthLogin({
   headers: { 'x-csrf-token': csrf ?? '' },
-  body: { username: 'demo', password: await encryptPassword('demo-password', key!.publicKey) },
+  body: { username: 'demo', password: await encryptPassword('demo-password', key.publicKey) },
 })
 token = login.data?.token
 
 const orders = await sdk.getApiOrders({})
-console.log(orders.response?.status, orders.data?.orders.length, 'orders')
+console.log(orders.response?.status, orders.data?.orders?.length, 'orders')
 ```
 
 GraphQL operations get a function each, named after the operation, that sends the operation name,
