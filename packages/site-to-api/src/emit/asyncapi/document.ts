@@ -231,7 +231,7 @@ function hostDocument(host: string, channels: readonly WebSocketChannel[], sessi
     info: {
       title: `${host} real-time channels`,
       version: '0.0.0',
-      description: `WebSocket channels of ${host} as observed in ${sessions} capture session${sessions === 1
+      description: `Real-time channels of ${host} (WebSocket connections and server-sent event streams) as observed in ${sessions} capture session${sessions === 1
         ? ''
         : 's'} by site-to-api. Operations are written from the client's point of view: \`send\` is what a client sends, \`receive\` what the server pushes. \`x-site-to-api-handshake\` lists what to send right after connecting, \`x-site-to-api-connection\` how connections were opened, and \`x-site-to-api-protocol\` the framing protocol when one was detected. Example values are redacted.`,
     },

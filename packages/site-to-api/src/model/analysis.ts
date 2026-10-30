@@ -197,7 +197,7 @@ export interface ChannelValueLink {
  * Framing protocols the channels stage decodes (decision 0038). `graphql-ws` covers both
  * `graphql-transport-ws` and the older `subscriptions-transport-ws` (see the channel's `version`).
  */
-export type ChannelProtocolId = 'socket.io' | 'signalr' | 'stomp' | 'graphql-ws' | 'phoenix' | 'centrifugo' | 'sfs2x'
+export type ChannelProtocolId = 'socket.io' | 'signalr' | 'stomp' | 'graphql-ws' | 'phoenix' | 'centrifugo' | 'sfs2x' | 'sse'
 
 /** How each protocol is called in prose. */
 export const CHANNEL_PROTOCOL_LABELS: Readonly<Record<ChannelProtocolId, string>> = {
@@ -208,6 +208,7 @@ export const CHANNEL_PROTOCOL_LABELS: Readonly<Record<ChannelProtocolId, string>
   'phoenix': 'Phoenix',
   'centrifugo': 'Centrifugo',
   'sfs2x': 'SmartFoxServer 2X',
+  'sse': 'server-sent events',
 }
 
 /**
@@ -315,8 +316,11 @@ export interface ChannelConnectionFacts {
    * message), and the server's next message after it; the most common pair across connections.
    */
   firstMessage: { message: string, role: HandshakeRole, reply: string | null } | null
-  /** `websocket`, and `polling` when Engine.IO long-polling carried the same channel. */
-  transports: Array<'websocket' | 'polling'>
+  /**
+   * `websocket`, and `polling` when Engine.IO long-polling carried the same channel; `sse` for a
+   * server-sent event stream (decision 0049), which is a channel of its own.
+   */
+  transports: Array<'websocket' | 'polling' | 'sse'>
 }
 
 /** A WebSocket endpoint seen during capture, with its messages grouped by direction and type. */
@@ -324,7 +328,8 @@ export interface WebSocketChannel {
   /** Unique per host and usable as an AsyncAPI key, e.g. `wsTicker`. */
   id: string
   host: string
-  scheme: 'ws' | 'wss'
+  /** `ws` or `wss` for a WebSocket; `http` or `https` for a server-sent event stream (decision 0049). */
+  scheme: 'ws' | 'wss' | 'http' | 'https'
   /** Connection path with parameters, templated by the same rules as HTTP paths. */
   path: string
   pathParams: PathParam[]

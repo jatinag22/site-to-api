@@ -12,7 +12,7 @@ import { Buffer, isUtf8 } from 'node:buffer'
 export const MAX_RECORDED_BODY_BYTES = 2 * 1024 * 1024
 
 /** The HAR field that carries the raw request body, base64 encoded. */
-export const RAW_BODY_FIELD = '_base64'
+const RAW_BODY_FIELD = '_base64'
 
 const REPLACEMENT = '�'
 

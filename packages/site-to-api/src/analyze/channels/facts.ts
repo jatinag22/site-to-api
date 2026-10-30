@@ -60,7 +60,9 @@ function upgradeOf(connections: readonly Connection[]): ChannelConnectionFacts['
     const answered = connection.frames.some(frame => frame.direction === 'received')
     if (status !== undefined && status > 0)
       result.statuses.add(status)
-    const ok = connection.transports.length === 1 && connection.transports[0] === 'polling'
+    // Long-polling and event streams answer with plain HTTP; only a WebSocket switches protocols.
+    const http = connection.transports.length === 1 && (connection.transports[0] === 'polling' || connection.transports[0] === 'sse')
+    const ok = http
       ? status !== undefined && status >= 200 && status < 300
       : status === 101
     if (ok || answered)
@@ -155,6 +157,6 @@ export function connectionFacts(input: FactsInput): ChannelConnectionFacts {
     urlTokens: urlTokens(connections, redactor),
     upgrade: upgradeOf(connections),
     firstMessage: firstMessageOf(connections, input.messages, input.messageOf),
-    transports: sorted(connections.flatMap(connection => connection.transports)).filter(value => value === 'websocket' || value === 'polling'),
+    transports: sorted(connections.flatMap(connection => connection.transports)).filter(value => value === 'websocket' || value === 'polling' || value === 'sse'),
   }
 }

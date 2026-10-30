@@ -8,6 +8,7 @@ import type { DecodedMessage, FrameRecord, Handshake, RawFrame } from './protoco
 import { decodeBinaryFrame } from './binary'
 import { mergeUpgradedPolling, pollingConnections } from './polling'
 import { decodeConnection } from './protocols'
+import { eventStreamConnections } from './streams'
 
 /** One frame of a connection, in capture order (a frame that batches messages is one per message). */
 export interface Frame {
@@ -32,7 +33,8 @@ export interface Connection {
   id: string
   sessionId: string
   url: string
-  scheme: 'ws' | 'wss'
+  /** `ws`/`wss` for a socket, `http`/`https` for a server-sent event stream. */
+  scheme: 'ws' | 'wss' | 'http' | 'https'
   host: string
   path: string
   query: NameValue[]
@@ -41,9 +43,10 @@ export interface Connection {
   frames: Frame[]
   /**
    * How its frames travelled: `websocket`, `polling`, or both when an Engine.IO session started
-   * on long-polling and upgraded (one connection, frames in time order).
+   * on long-polling and upgraded (one connection, frames in time order); `sse` for a server-sent
+   * event stream, whose events are its received frames (decision 0049).
    */
-  transports: Array<'websocket' | 'polling'>
+  transports: Array<'websocket' | 'polling' | 'sse'>
   /**
    * The HAR request that opened it: the upgrade request (status 101 when accepted), or the
    * Engine.IO handshake request for long-polling. Null when the HAR has none.
@@ -227,6 +230,7 @@ function handshakeOf(connection: RawConnection): Handshake {
     path: connection.path,
     query: connection.query,
     subprotocols: subprotocolsOf(connection.upgrade?.request.headers ?? []),
+    eventStream: connection.transports.includes('sse'),
   }
 }
 
@@ -272,7 +276,8 @@ function decoded(connection: RawConnection): Connection {
 
 /**
  * Every connection of every session, ordered by session id, then sockets in opening order, then
- * Engine.IO long-polling sessions that never upgraded (one that did is part of its socket). `exchanges` (the HAR) gives each socket its upgrade request,
+ * Engine.IO long-polling sessions that never upgraded (one that did is part of its socket), then
+ * server-sent event streams (decision 0049). `exchanges` (the HAR) gives each socket its upgrade request,
  * which names the subprotocol, and holds the long-polling requests.
  */
 export function collectConnections(sessions: readonly LoadedSession[], exchanges: readonly Exchange[] = []): Connection[] {
@@ -282,8 +287,12 @@ export function collectConnections(sessions: readonly LoadedSession[], exchanges
       const sockets = sessionSockets(session)
       matchUpgrades(sockets, exchanges)
       const sessionId = session.meta.sessionId
-      const polling = pollingConnections(sessionId, exchanges.filter(exchange => exchange.sessionId === sessionId))
-      return mergeUpgradedPolling(sockets, polling).map(decoded)
+      const own = exchanges.filter(exchange => exchange.sessionId === sessionId)
+      const polling = pollingConnections(sessionId, own)
+      return [
+        ...mergeUpgradedPolling(sockets, polling),
+        ...eventStreamConnections(session, own),
+      ].map(decoded)
     })
 }
 

@@ -26,6 +26,7 @@ import { defaultSessionId, sanitizeSessionId } from './paths'
 import { launchWithSandbox } from './sandbox'
 import { createStopper, DEFAULT_TIMEOUTS, saveSession, waitBounded, writeJsonAtomic } from './save'
 import { ScriptCollector } from './scripts'
+import { EventStreamRecorder } from './streams'
 import { launchArgs, minimizes, minimizeWindow } from './window'
 
 /** Options for {@link runCapture}. */
@@ -221,6 +222,9 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     }
   })
   const ignoredFrames = new Map<string, number>()
+  const streams = capture.websockets
+    ? new EventStreamRecorder(context, event => events.write(event))
+    : null
   // Opened now, while the browser answers: the way to end it when closing does not work.
   const browserSession = await context.browser()?.newBrowserCDPSession().catch(() => null) ?? null
   const kill = async (): Promise<void> => {
@@ -234,6 +238,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     try {
       const page = await prepare({
         context,
+        streams,
         capture,
         options,
         events,
@@ -271,7 +276,10 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     const omitted = saved.har && harOmissionNote(saved.har, { websockets: capture.websockets, saveScripts: capture.saveScripts, eventsFile: EVENTS_FILE })
     if (omitted)
       log(omitted)
-    warnings.push(...collector.warnings, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
+    const dropped = streams?.warning() ?? null
+    warnings.push(...collector.warnings, ...(dropped === null
+      ? []
+      : [dropped]), ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
 
     const meta = SessionMetaSchema.parse({
       formatVersion: RAW_FORMAT_VERSION,
@@ -307,6 +315,8 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
 
 interface PrepareInput {
   context: BrowserContext
+  /** Records server-sent events per page; null when `capture.websockets` is off. */
+  streams: EventStreamRecorder | null
   capture: ResolvedConfig['capture']
   options: RunCaptureOptions
   events: EventWriter
@@ -316,7 +326,7 @@ interface PrepareInput {
 }
 
 /** Wires instrumentation, script collection and page watchers; returns the first page. */
-async function prepare({ context, capture, options, events, ignoredFrames, warnings, track }: PrepareInput): Promise<Page> {
+async function prepare({ context, streams, capture, options, events, ignoredFrames, warnings, track }: PrepareInput): Promise<Page> {
   const { browser } = capture
   // Every document can call the binding; only the site's own are listened to (frames.ts).
   const binding = capture.instrument
@@ -360,6 +370,8 @@ async function prepare({ context, capture, options, events, ignoredFrames, warni
     })
     if (capture.websockets)
       page.on('websocket', ws => recordWebSocket(ws, page, nextSocket++, event => events.write(event)))
+    if (streams !== null)
+      track(streams.attach(page))
     // Popups open their own window, so every new page is minimized, not only the first.
     if (minimizes(browser)) {
       track(minimizeWindow(page).then((warning) => {
@@ -372,6 +384,8 @@ async function prepare({ context, capture, options, events, ignoredFrames, warni
   context.on('page', watchPage)
 
   const page = context.pages()[0] ?? await context.newPage()
+  // Before the first navigation, so a stream the first page opens at once is recorded.
+  await streams?.attach(page)
   if (binding !== null) {
     // Attached before the first navigation, so the first page never misses an event.
     await binding.attach(page, true)
