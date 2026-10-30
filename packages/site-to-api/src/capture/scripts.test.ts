@@ -1,7 +1,7 @@
 import type { RefetchedScript } from './scripts'
 import { Buffer } from 'node:buffer'
 import { describe, expect, it } from 'vitest'
-import { decodeDataUri, isSkippedScriptHost, parseSourceMap, scriptBody, scriptFailureWarning, sourceMapCandidates } from './scripts'
+import { decodeDataUri, isSkippedScriptHost, parseSourceMap, refetchRefusal, scriptBody, scriptFailureWarning, sourceMapCandidates } from './scripts'
 import { WarningLog } from './warnings'
 
 describe('sourceMapCandidates', () => {
@@ -143,5 +143,32 @@ describe('scriptFailureWarning', () => {
       many.addGrouped('script-body', `https://a.test/${index}.js`, warning.single, warning.summary)
     }
     expect(many.list()).toEqual(['Could not save 150 scripts (first: https://a.test/1.js: Response body is unavailable); source analysis has no code for them.'])
+  })
+})
+
+describe('refetchRefusal', () => {
+  const addresses: Record<string, string[]> = {
+    'www.shop.test': ['93.184.216.34'],
+    'static.shop.test': ['93.184.216.35'],
+    'cdn.other.test': ['93.184.216.36'],
+    'internal.shop.test': ['10.0.0.5'],
+  }
+  const lookup = async (host: string): Promise<string[]> => addresses[host] ?? []
+
+  it('allows a script of the page\'s own site on a public address', async () => {
+    expect(await refetchRefusal(new URL('https://static.shop.test/app.js'), 'https://www.shop.test/', null, lookup)).toBeNull()
+  })
+
+  it('refuses a script of another site, which would get cookies the browser withheld', async () => {
+    expect(await refetchRefusal(new URL('https://cdn.other.test/app.js'), 'https://www.shop.test/', null, lookup))
+      .toContain('not on the page\'s own site (shop.test)')
+  })
+
+  it('refuses worker scripts, whose page is unknown', async () => {
+    expect(await refetchRefusal(new URL('https://static.shop.test/sw.js'), null, null, lookup)).toBe('the page that loaded it is unknown')
+  })
+
+  it('refuses a public page\'s script on a private address, like a sourcemap', async () => {
+    expect(await refetchRefusal(new URL('https://internal.shop.test/app.js'), 'https://www.shop.test/', null, lookup)).toMatch(/10\.0\.0\.5/)
   })
 })

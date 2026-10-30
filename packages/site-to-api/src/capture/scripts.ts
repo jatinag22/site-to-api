@@ -10,6 +10,7 @@ import { Buffer } from 'node:buffer'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
+import { registrableHost } from '../hosts'
 import { cachedLookup, localPageOf, pageOrigin, ServedAddresses, sourceMapRefusal } from './network'
 import { hostDir, safeJoin, scriptFilePath, sourceFilePath, sourceMapFilePath } from './paths'
 import { WarningLog } from './warnings'
@@ -246,6 +247,37 @@ export function scriptFailureWarning(url: string, reason: string): { single: str
   }
 }
 
+/**
+ * Why a script must not be fetched again because of its site, or `null` (decision 0047). A refetch carries
+ * the browser's cookies without the browser's own rules (SameSite, third-party cookie blocking),
+ * so only a script of the page's own site is fetched: a hostile page cannot make capture replay a
+ * cross-site GET with cookies the browser withheld. Worker scripts, whose page is unknown, are
+ * never fetched again.
+ */
+function siteRefusal(scriptUrl: URL, pageUrl: string | null): string | null {
+  if (pageUrl === null)
+    return 'the page that loaded it is unknown'
+  let page: URL
+  try {
+    page = new URL(pageUrl)
+  }
+  catch {
+    return 'the page that loaded it is unknown'
+  }
+  return registrableHost(scriptUrl.hostname) === registrableHost(page.hostname)
+    ? null
+    : `it is not on the page's own site (${registrableHost(page.hostname)}), so it is not fetched again with the browser's cookies`
+}
+
+/**
+ * {@link siteRefusal}, then the address check sourcemap fetches get ({@link sourceMapRefusal}):
+ * a public page's script on a private address is not fetched again either. `null` when the
+ * script may be fetched again.
+ */
+export async function refetchRefusal(scriptUrl: URL, pageUrl: string | null, localPage: URL | null, lookup: Lookup): Promise<string | null> {
+  return siteRefusal(scriptUrl, pageUrl) ?? await sourceMapRefusal(scriptUrl, scriptUrl, localPage, lookup)
+}
+
 /** Collects scripts and sourcemaps for one session. */
 export class ScriptCollector {
   private readonly seen = new Set<string>()
@@ -309,10 +341,16 @@ export class ScriptCollector {
     void task.finally(() => this.pending.delete(task))
   }
 
-  /** Fetches a script again, queued behind other refetches; redirects are not followed. */
-  private refetch(url: string): Promise<RefetchedScript> {
+  /**
+   * Fetches a script again, queued behind other refetches; redirects are not followed. Only a
+   * script {@link refetchRefusal} allows is fetched.
+   */
+  private refetch(url: URL, pageUrl: string | null): Promise<RefetchedScript> {
     const run = this.refetches.then(async (): Promise<RefetchedScript> => {
-      const response = await this.request.get(url, { timeout: REFETCH_TIMEOUT_MS, failOnStatusCode: false, maxRedirects: 0 })
+      const refusal = await refetchRefusal(url, pageUrl, await this.localPage(pageUrl), this.lookup)
+      if (refusal !== null)
+        throw new Error(`not fetched again: ${refusal}`)
+      const response = await this.request.get(url.href, { timeout: REFETCH_TIMEOUT_MS, failOnStatusCode: false, maxRedirects: 0 })
       const length = Number(response.headers()['content-length'])
       return {
         status: response.status(),
@@ -349,13 +387,14 @@ export class ScriptCollector {
   private async process(response: Response, url: URL): Promise<void> {
     if (response.status() >= 400)
       return
-    const body = (await scriptBody(() => response.body(), () => this.refetch(url.href))).toString('utf8')
+    const pageUrl = pageUrlOf(response)
+    const body = (await scriptBody(() => response.body(), () => this.refetch(url, pageUrl))).toString('utf8')
     const file = scriptFilePath(url.href)
     if (this.options.saveScripts)
       await writeInside(this.sessionDir, file, body)
     let sourceMap: ScriptRecord['sourceMap'] = null
     if (this.options.sourcemaps) {
-      const origin = { url, localPage: await this.localPage(pageUrlOf(response)) }
+      const origin = { url, localPage: await this.localPage(pageUrl) }
       const found = await this.findSourceMap(origin, response.headers(), body)
       if (found)
         sourceMap = await this.saveSourceMap(url, file, found)

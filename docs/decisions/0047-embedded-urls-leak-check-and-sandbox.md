@@ -37,6 +37,12 @@ Playwright passes unless `chromiumSandbox` is set, and that a capture whose page
   usable sandbox", a namespace that cannot be created, the setuid sandbox, the zygote), it is
   started once more without the sandbox and the capture warns; any other launch error is
   reported as it is. The repository's own browser tests turn the sandbox off on GitHub's runners only.
+- **Scripts the browser no longer has.** A script served from cache or evicted before its body
+  was read is fetched once more with the browser's cookies, one at a time, without redirects,
+  up to 10 MB, and only when it is on the page's own site and passes the sourcemap address
+  check: a refetch skips the browser's SameSite and third-party cookie rules, so a hostile page
+  must not be able to make capture send a cross-site request with cookies the browser withheld.
+  Scripts that still fail are reported in one line.
 - **DNS failures.** When failed page loads are all `net::ERR_NAME_NOT_RESOLVED`, the capture and
   AGENT.md warnings name the hosts that could not be resolved (a DNS blocklist or no network)
   instead of blaming bot protection; mixed failures keep the blocking advice and add the note.
