@@ -59,7 +59,7 @@ function readsAsWords(segment: string): boolean {
  * templating that position merges different endpoints. Random tokens never count. File names (`app.min.js`) have a dot
  * before an extension and are not matched as service names unless they have three or more parts.
  */
-export function isMethodName(segment: string): boolean {
+function isMethodName(segment: string): boolean {
   if (CAMEL_CASE.test(segment) || PASCAL_WORDS.test(segment) || SNAKE_WORDS.test(segment))
     return readsAsWords(segment)
   // A JWT is dotted too (`eyJ….eyJ….sig`), but random.
@@ -70,7 +70,7 @@ export function isMethodName(segment: string): boolean {
  * Segments after which an RPC-style API names the method: a version (`v1`, `v3`), `rpc`, `svc`,
  * `service`, `services`, or a dotted service name (`acme.registry.v1.ResourceService`).
  */
-export function isRpcPrefix(segment: string | undefined): boolean {
+function isRpcPrefix(segment: string | undefined): boolean {
   if (segment === undefined)
     return false
   return /^(?:v\d+(?:\.\d+)*|rpc|svc|services?)$/i.test(segment) || (DOTTED_NAME.test(segment) && isMethodName(segment))
