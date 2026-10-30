@@ -18,7 +18,7 @@ import { annotateGraphql, applyGraphqlTypes, graphqlTypeTargets } from '../analy
 import { createHtmlLocator, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
 import { createRedactor, probeReportWithRedactedNames, withRedactedNames } from '../analyze/redact'
-import { annotateRpc, applyConnectIdempotency } from '../analyze/rpc'
+import { annotateRpc, applyConnectIdempotency, combineIdempotency } from '../analyze/rpc'
 import { inferOperationSchemas } from '../analyze/schema'
 import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findConnectIdempotency, findGraphqlTypes, findOneTimeCodes, findSourceEndpoints, isOpaqueFrame, screenSourceRoutes } from '../analyze/source'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
@@ -26,6 +26,7 @@ import { writeFlows } from '../emit/flows'
 import { clientGap, handoffStems, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
 import { generateClient } from '../gen'
+import { registrableHost } from '../hosts'
 import { failedNavigationsWarning, loadSessions } from '../load'
 import { alignProbeReport, applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
@@ -260,7 +261,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
     .filter(operation => !operation.sourceOnly || (wanted(operation.host) && !pollingPaths.has(`${operation.host} ${operation.path}`)))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
   if (operations.some(operation => operation.rpc?.protocol === 'connect'))
-    operations = applyConnectIdempotency(operations, await findConnectIdempotency(loaded.sessions))
+    operations = applyConnectIdempotency(operations, combineIdempotency(await findConnectIdempotency(loaded.sessions)), host => registrableHost(host.replace(/:\d+$/, '')))
   operations = inferOperationSchemas(operations, redactor)
   const blocked = failedNavigationsWarning(loaded.navigations)
   const warnings = [

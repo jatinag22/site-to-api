@@ -270,7 +270,9 @@ function toEntry(context: EntryContext, path: string, method: string, pathItemPa
       : {}),
     ...(rpc
       ? {
-          rpc: { protocol: rpc.protocol, procedure: rpc.procedure, readOnly: rpc.readOnly },
+          // The MCP servers send with the person's session: a descriptor's word is enough for
+          // probe's own replay, but here only a call the page itself made with GET reads.
+          rpc: { protocol: rpc.protocol, procedure: rpc.procedure, readOnly: rpc.readOnly && method.toUpperCase() === 'GET' },
         }
       : {}),
     client: clientShape(facts, parameters),

@@ -1,9 +1,10 @@
 import type { Operation } from '../../model'
+import type { Idempotency } from './descriptor'
 import { describe, expect, it } from 'vitest'
 import { exchange, jsonBody } from '../../../test/helpers'
 import { buildOperations } from '../operations'
 import { annotateRpc } from './annotate'
-import { applyConnectIdempotency } from './operation'
+import { applyConnectIdempotency, combineIdempotency, rpcMethodWrites } from './operation'
 
 const HOST = 'https://registry.example'
 
@@ -69,11 +70,105 @@ describe('rPC operations', () => {
     expect(ops[1]?.rpc?.readOnly).toBe(false)
   })
 
-  it('marks Connect methods the descriptor declares NO_SIDE_EFFECTS as reads', () => {
+  it('marks Connect methods the site\'s own descriptor declares NO_SIDE_EFFECTS as reads', () => {
+    const site = (host: string): string => host.split('.').slice(-2).join('.')
     const marked = applyConnectIdempotency(operations(), new Map([
-      ['demo.web.v1.ResourceService/GetResources', 'no-side-effects'],
-      ['demo.registry.v1.ResourceService/GetResources', 'idempotent'],
-    ]))
+      [
+        'registry.example',
+        new Map<string, Idempotency>([
+          ['demo.web.v1.ResourceService/GetResources', 'no-side-effects'],
+          ['demo.registry.v1.ResourceService/GetResources', 'idempotent'],
+        ]),
+      ],
+    ]), site)
     expect(marked.map(operation => operation.rpc?.readOnlyEvidence ?? null)).toEqual(['called with GET', null, 'NO_SIDE_EFFECTS in the site\'s descriptor'])
+    // Another site's script cannot vouch for this site's method.
+    const elsewhere = applyConnectIdempotency(operations(), new Map([
+      [
+        'tracker.example',
+        new Map<string, Idempotency>([
+          ['demo.web.v1.ResourceService/GetResources', 'no-side-effects'],
+        ]),
+      ],
+    ]), site)
+    expect(elsewhere.map(operation => operation.rpc?.readOnly)).toEqual([true, false, false])
+  })
+
+  it('never marks a method whose name writes, whatever the descriptor says', () => {
+    const ops = buildOperations(annotateRpc([
+      connectPost('acme.v1.PaymentService', 'TransferFunds'),
+    ]), {
+      sourceRoutes: [],
+      isSecretKey: () => false,
+    })
+    const marked = applyConnectIdempotency(ops, new Map([
+      [
+        'registry.example',
+        new Map<string, Idempotency>([
+          ['acme.v1.PaymentService/TransferFunds', 'no-side-effects'],
+        ]),
+      ],
+    ]), () => 'registry.example')
+    expect(marked[0]?.rpc?.readOnly).toBe(false)
+    expect([
+      'pkg.S/CreateOrder',
+      'pkg.S/UpdateUser',
+      'pkg.S/DeleteItem',
+      'pkg.S/Transfer',
+      'pkg.S/PayInvoice',
+      'pkg.S/SendMessage',
+      'pkg.S/CancelBooking',
+    ].every(rpcMethodWrites)).toBe(true)
+    expect([
+      'pkg.S/GetItems',
+      'pkg.S/ListUsers',
+      'pkg.S/Search',
+      'pkg.S/GetSettings',
+    ].some(rpcMethodWrites)).toBe(false)
+  })
+
+  it('drops a method two files of one site describe differently, and keeps sites apart', () => {
+    const combined = combineIdempotency([
+      {
+        site: 'registry.example',
+        levels: new Map<string, Idempotency>([
+          ['p.S/A', 'no-side-effects'],
+          ['p.S/B', 'no-side-effects'],
+        ]),
+      },
+      {
+        site: 'registry.example',
+        levels: new Map<string, Idempotency>([
+          ['p.S/A', 'idempotent'],
+          ['p.S/B', 'no-side-effects'],
+        ]),
+      },
+      {
+        site: 'registry.example',
+        levels: new Map<string, Idempotency>([
+          ['p.S/A', 'no-side-effects'],
+        ]),
+      },
+      {
+        site: 'tracker.example',
+        levels: new Map<string, Idempotency>([
+          ['p.S/C', 'no-side-effects'],
+        ]),
+      },
+    ])
+    expect(combined).toEqual(new Map([
+      [
+        'registry.example',
+        new Map([
+          ['p.S/B', 'no-side-effects'],
+        ]),
+      ],
+      [
+        'tracker.example',
+        new Map([
+          ['p.S/C', 'no-side-effects'],
+        ]),
+      ],
+    ]))
   })
 })

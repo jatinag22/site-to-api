@@ -118,3 +118,15 @@ describe('rPC methods', () => {
     }))).toBe(true)
   })
 })
+
+describe('rPC method names', () => {
+  it('never treats a method whose name writes as a read, whatever its descriptor', () => {
+    const transfer = subject({
+      method: 'POST',
+      path: '/acme.v1.PaymentService/Transfer',
+      rpc: { protocol: 'connect', procedure: 'acme.v1.PaymentService/Transfer', readOnly: true },
+    })
+    expect(changesData(transfer)).toBe(true)
+    expect(replaySkipReason(transfer, false)).toMatch(/can change data/)
+  })
+})

@@ -3,16 +3,18 @@
  * (`analyze/rpc`); this only reads the files.
  */
 import type { LoadedSession } from '../../model'
-import type { Idempotency } from '../rpc'
+import type { DescribedFile } from '../rpc'
+import { registrableHost } from '../../hosts'
 import { connectIdempotencyInText } from '../rpc'
 import { readSessionFile, siteCodeFiles } from './files'
 
 /**
- * Idempotency of every Connect method the site's code describes, keyed `package.Service/Method`.
- * Files shared by sessions are read once per distinct content; files are read in a fixed order.
+ * The Connect method idempotency each code file describes, with the site (registrable domain)
+ * that served it, for {@link combineIdempotency}. Files shared by sessions are read once per
+ * distinct content; files are read in a fixed order.
  */
-export async function findConnectIdempotency(sessions: LoadedSession[]): Promise<Map<string, Idempotency>> {
-  const result = new Map<string, Idempotency>()
+export async function findConnectIdempotency(sessions: LoadedSession[]): Promise<DescribedFile[]> {
+  const result: DescribedFile[] = []
   const scanned = new Map<string, string>()
   for (const session of sessions) {
     for (const file of siteCodeFiles(session)) {
@@ -21,9 +23,12 @@ export async function findConnectIdempotency(sessions: LoadedSession[]): Promise
       if (text === null || scanned.get(key) === text)
         continue
       scanned.set(key, text)
-      for (const [method, level] of connectIdempotencyInText(text)) {
-        if (!result.has(method))
-          result.set(method, level)
+      const levels = connectIdempotencyInText(text)
+      if (levels.size > 0) {
+        result.push({
+          site: registrableHost(file.host.replace(/:\d+$/, '')),
+          levels,
+        })
       }
     }
   }

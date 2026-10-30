@@ -45,14 +45,128 @@ export function rpcSummary(rpc: RpcOperation, method: string): string {
     : 'mutation'} ${rpc.procedure}.`
 }
 
+/** The descriptors one code file holds, and the site (registrable domain) that served it. */
+export interface DescribedFile {
+  site: string
+  levels: ReadonlyMap<string, Idempotency>
+}
+
 /**
- * Marks Connect operations whose method the site's code declares `NO_SIDE_EFFECTS` as reads, so
- * probe and the MCP servers may send them; other operations are returned unchanged.
+ * Per site, the methods its own code files describe. A method two files describe differently
+ * is left out: which one the page used is not known, and a wrong `NO_SIDE_EFFECTS` would let
+ * probe send a write.
  */
-export function applyConnectIdempotency(operations: Operation[], levels: ReadonlyMap<string, Idempotency>): Operation[] {
+export function combineIdempotency(files: readonly DescribedFile[]): Map<string, Map<string, Idempotency>> {
+  const result = new Map<string, Map<string, Idempotency>>()
+  const conflicts = new Set<string>()
+  for (const file of files) {
+    const site = result.get(file.site) ?? new Map<string, Idempotency>()
+    result.set(file.site, site)
+    for (const [method, level] of file.levels) {
+      const key = `${file.site} ${method}`
+      const known = site.get(method)
+      if (conflicts.has(key))
+        continue
+      if (known !== undefined && known !== level) {
+        conflicts.add(key)
+        site.delete(method)
+        continue
+      }
+      site.set(method, level)
+    }
+  }
+  return result
+}
+
+/**
+ * Words in a method name that say it writes (`CreateOrder`, `TransferFunds`, `SendInvite`).
+ * Such a method is never a safe read, whatever a descriptor claims.
+ */
+const WRITE_WORDS: ReadonlySet<string> = new Set([
+  'add',
+  'apply',
+  'approve',
+  'archive',
+  'assign',
+  'buy',
+  'cancel',
+  'charge',
+  'checkout',
+  'claim',
+  'clear',
+  'close',
+  'commit',
+  'confirm',
+  'create',
+  'delete',
+  'disable',
+  'edit',
+  'enable',
+  'grant',
+  'insert',
+  'invite',
+  'join',
+  'leave',
+  'login',
+  'logout',
+  'merge',
+  'modify',
+  'move',
+  'order',
+  'patch',
+  'pay',
+  'post',
+  'publish',
+  'purchase',
+  'put',
+  'refund',
+  'register',
+  'reject',
+  'remove',
+  'rename',
+  'replace',
+  'reset',
+  'restore',
+  'revoke',
+  'save',
+  'send',
+  'set',
+  'submit',
+  'subscribe',
+  'transfer',
+  'unsubscribe',
+  'update',
+  'upload',
+  'upsert',
+  'verify',
+  'vote',
+  'withdraw',
+  'write',
+])
+
+/** Whether the method part of a procedure (`pkg.Service/TransferFunds`) names a write. */
+export function rpcMethodWrites(procedure: string): boolean {
+  const method = procedure.slice(procedure.lastIndexOf('/') + 1)
+  const words = method
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z\d]+/)
+  return words.some(word => WRITE_WORDS.has(word))
+}
+
+/**
+ * Marks Connect operations whose method the site's own code declares `NO_SIDE_EFFECTS` as reads,
+ * so probe may send them. Only descriptors served by the operation's own site count (a third
+ * party's script must not vouch for a site's method), and a method whose name says it writes is
+ * never marked. Other operations are returned unchanged.
+ */
+export function applyConnectIdempotency(operations: Operation[], bySite: ReadonlyMap<string, ReadonlyMap<string, Idempotency>>, siteOf: (host: string) => string): Operation[] {
   return operations.map((operation) => {
     const { rpc } = operation
-    if (rpc?.protocol !== 'connect' || rpc.readOnly || levels.get(rpc.procedure) !== 'no-side-effects')
+    if (rpc?.protocol !== 'connect' || rpc.readOnly || rpcMethodWrites(rpc.procedure))
+      return operation
+    if (bySite.get(siteOf(operation.host))?.get(rpc.procedure) !== 'no-side-effects')
       return operation
     return {
       ...operation,
