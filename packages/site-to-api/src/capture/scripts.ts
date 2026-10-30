@@ -45,6 +45,9 @@ const SKIPPED_SCRIPT_HOSTS = [
 ]
 
 const SOURCEMAP_TIMEOUT_MS = 8000
+/** A script fetched again because the browser no longer had its body: at most this large. */
+const MAX_REFETCHED_SCRIPT_BYTES = 10 * 1024 * 1024
+const REFETCH_TIMEOUT_MS = 15_000
 /** Redirects followed by hand, so each hop goes through the same address check as the first. */
 const SOURCEMAP_MAX_REDIRECTS = 3
 
@@ -186,6 +189,63 @@ interface FoundMap {
   map: SourceMapJson
 }
 
+/** A script fetched a second time, by {@link scriptBody}'s caller. */
+export interface RefetchedScript {
+  status: number
+  /** The `content-length` header, when sent. */
+  length: number | null
+  body: () => Promise<Buffer>
+  dispose: () => Promise<void>
+}
+
+/**
+ * The body of a script response. Bodies of scripts served from the browser cache, or evicted
+ * before they were read ("Response body is unavailable", "No resource with given identifier"),
+ * cannot be read from the response, so the script is fetched once more with the browser's
+ * cookies (`refetch`), up to {@link MAX_REFETCHED_SCRIPT_BYTES}. Throws with both reasons when
+ * neither works.
+ */
+export async function scriptBody(fromResponse: () => Promise<Buffer>, refetch: () => Promise<RefetchedScript>, maxBytes = MAX_REFETCHED_SCRIPT_BYTES): Promise<Buffer> {
+  let first: unknown
+  try {
+    return await fromResponse()
+  }
+  catch (error) {
+    first = error
+  }
+  let again: RefetchedScript
+  try {
+    again = await refetch()
+  }
+  catch (error) {
+    throw new Error(`${errorText(first)}; fetching it again failed: ${errorText(error)}`)
+  }
+  try {
+    if (again.status < 200 || again.status >= 300)
+      throw new Error(`${errorText(first)}; fetching it again returned HTTP ${again.status}`)
+    if (again.length !== null && again.length > maxBytes)
+      throw new Error(`${errorText(first)}; fetching it again was refused: ${again.length} bytes is over the ${maxBytes}-byte limit`)
+    const body = await again.body()
+    if (body.length > maxBytes)
+      throw new Error(`${errorText(first)}; fetching it again was refused: ${body.length} bytes is over the ${maxBytes}-byte limit`)
+    return body
+  }
+  finally {
+    await again.dispose()
+  }
+}
+
+/**
+ * The warning for a script that could not be saved: its own line when it is the only one, else
+ * one line for all of them with the count, the first URL and its reason.
+ */
+export function scriptFailureWarning(url: string, reason: string): { single: string, summary: (count: number, first: string) => string } {
+  return {
+    single: `Could not save script ${url}: ${reason}`,
+    summary: (count, first) => `Could not save ${count} scripts (first: ${first}: ${reason}); source analysis has no code for them.`,
+  }
+}
+
 /** Collects scripts and sourcemaps for one session. */
 export class ScriptCollector {
   private readonly seen = new Set<string>()
@@ -197,6 +257,8 @@ export class ScriptCollector {
   /** Address reads not yet in {@link served}, by origin, so a script waits for its page's. */
   private readonly pendingAddresses = new Map<string, Set<Promise<void>>>()
   private readonly lookup: Lookup
+  /** Refetches run one at a time, so a page whose cache held 150 scripts is not hit in a burst. */
+  private refetches: Promise<unknown> = Promise.resolve()
 
   constructor(
     private readonly sessionDir: string,
@@ -240,12 +302,29 @@ export class ScriptCollector {
       return
     this.seen.add(url)
     const task = this.process(response, parsed).catch((error: unknown) => {
-      this.warn(`Could not save script ${url}: ${error instanceof Error
-        ? error.message
-        : String(error)}`)
+      const warning = scriptFailureWarning(url, errorText(error))
+      this.warnGrouped('script-body', url, warning.single, warning.summary)
     })
     this.pending.add(task)
     void task.finally(() => this.pending.delete(task))
+  }
+
+  /** Fetches a script again, queued behind other refetches; redirects are not followed. */
+  private refetch(url: string): Promise<RefetchedScript> {
+    const run = this.refetches.then(async (): Promise<RefetchedScript> => {
+      const response = await this.request.get(url, { timeout: REFETCH_TIMEOUT_MS, failOnStatusCode: false, maxRedirects: 0 })
+      const length = Number(response.headers()['content-length'])
+      return {
+        status: response.status(),
+        length: Number.isFinite(length)
+          ? length
+          : null,
+        body: () => response.body(),
+        dispose: () => response.dispose(),
+      }
+    })
+    this.refetches = run.catch(() => {})
+    return run
   }
 
   private noteAddress(response: Response): void {
@@ -270,7 +349,7 @@ export class ScriptCollector {
   private async process(response: Response, url: URL): Promise<void> {
     if (response.status() >= 400)
       return
-    const body = (await response.body()).toString('utf8')
+    const body = (await scriptBody(() => response.body(), () => this.refetch(url.href))).toString('utf8')
     const file = scriptFilePath(url.href)
     if (this.options.saveScripts)
       await writeInside(this.sessionDir, file, body)
