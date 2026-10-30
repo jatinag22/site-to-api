@@ -5,7 +5,8 @@
  * - `meta.json`        {@link SessionMeta}
  * - `traffic.har`      HAR 1.2 recorded by Playwright with bodies embedded, compacted after the
  *                      session: no asset bodies (images, fonts, CSS, media, scripts; the scripts
- *                      are under `scripts/`) and no WebSocket frames (they are `ws` events), decision 0031
+ *                      are under `scripts/`) and no WebSocket frames (they are `ws` events), decision 0031;
+ *                      a request body that is not UTF-8 text is in `postData._base64` (decision 0050)
  * - `events.jsonl`     one {@link CaptureEvent} per line, from the injected instrumentation
  * - `scripts/<host>/<path>`   every JavaScript file the pages loaded (saved even without a sourcemap)
  * - `sourcemaps/<host>/<path>.map`  sourcemaps that were found
@@ -172,12 +173,30 @@ export const WebSocketEventSchema = z.object({
   socket: z.number().int().nonnegative().optional(),
 })
 
+/**
+ * One server-sent event an `EventSource` received (decision 0050), as Chrome reports it: the
+ * event name (`message` when the server named none), its `id` (empty when none) and its `data`
+ * (multi-line data joined with newlines, truncated to 64 KB). Recorded outside the page, so it has
+ * no `frameOrigin`. Additive: older captures have none and older readers never see one.
+ */
+export const ServerSentEventSchema = z.object({
+  ...base,
+  t: z.literal('sse'),
+  url: z.string(),
+  /** Which stream of the session the event belongs to (0, 1, ... in opening order). */
+  stream: z.number().int().nonnegative(),
+  event: z.string(),
+  id: z.string(),
+  data: z.string(),
+})
+
 export const CaptureEventSchema = z.discriminatedUnion('t', [
   RequestEventSchema,
   TransformEventSchema,
   ActionEventSchema,
   ResponseEventSchema,
   WebSocketEventSchema,
+  ServerSentEventSchema,
 ])
 export type CaptureEvent = z.infer<typeof CaptureEventSchema>
 export type RequestEvent = z.infer<typeof RequestEventSchema>
@@ -185,3 +204,4 @@ export type TransformEvent = z.infer<typeof TransformEventSchema>
 export type ActionEvent = z.infer<typeof ActionEventSchema>
 export type ResponseEvent = z.infer<typeof ResponseEventSchema>
 export type WebSocketEvent = z.infer<typeof WebSocketEventSchema>
+export type ServerSentEvent = z.infer<typeof ServerSentEventSchema>

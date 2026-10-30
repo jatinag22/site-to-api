@@ -529,7 +529,7 @@ function safeDecode(segment: string): string {
 
 /**
  * Query parameters that carry JSON: GraphQL `variables` and `extensions`, a tRPC `input`, a
- * Connect GET `message` (decision 0050).
+ * Connect GET `message` (decision 0051).
  */
 function jsonParams(operation: Operation): ReadonlySet<string> | undefined {
   if (operation.graphql)

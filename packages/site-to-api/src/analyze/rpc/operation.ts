@@ -1,5 +1,5 @@
 /**
- * What an RPC operation is (decision 0050): its protocol, procedure and whether it only reads.
+ * What an RPC operation is (decision 0051): its protocol, procedure and whether it only reads.
  */
 import type { Exchange, Operation, RpcOperation, RpcRequest } from '../../model'
 import type { Idempotency } from './descriptor'

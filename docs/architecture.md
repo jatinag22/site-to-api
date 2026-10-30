@@ -22,6 +22,10 @@
 | `config` | config sources | stdout | none |
 | `init` | nothing | `site-to-api.config.ts`, `.gitignore` entries | none |
 
+The capture browser starts muted (`--mute-audio`, `capture.browser.muteAudio`, default true;
+decision 0050): captured pages autoplay video and sound, and the person running the capture
+should not hear them.
+
 ## Stages of `build`
 
 All stages are pure functions over the data contracts in `packages/site-to-api/src/model/`.
@@ -43,7 +47,7 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    evidence of differing parameters or response shapes, becomes one operation per value at
    `<endpoint>#<value>` (decision 0039). tRPC procedures and Connect RPC methods, marked by
    `src/analyze/rpc` (tRPC batches split), are one operation each at their literal path
-   (decision 0050). Path parameters come from source route templates, value tracing, variation
+   (decision 0051). Path parameters come from source route templates, value tracing, variation
    across samples, ID-like segments (UUID, hex, base58, numbers, upper-case slugs) and sibling
    paths whose word values the capture shows are data (decision 0035).
 4. **schema** (`src/analyze/schema`): infers JSON Schema for query, headers, request bodies and
@@ -56,7 +60,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    navigate), turns each segment into a flow of steps with typed inputs and outputs, merges flows
    seen in several sessions, and derives per-host session requirements.
 7. **channels** (`src/analyze/channels`): rebuilds WebSocket connections from the `ws` capture
-   events and turns them into channels (decision 0023). Frames stand in as exchanges for the
+   events, and server-sent event streams from the `sse` events and `text/event-stream` bodies
+   (decision 0050), and turns them into channels (decision 0023). Frames stand in as exchanges for the
    redactor (so secrets sent over a socket are learnt and scrubbed everywhere) and for value
    tracing (so a client value such as `productId` links to the HTTP response it came from). The
    connection URL is templated by the operations stage's path and query rules; messages are
@@ -64,7 +69,7 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    HTTP upgrade request in the HAR, when present, gives the cookie names and the opening stack.
    Framing protocols (Socket.IO including Engine.IO long-polling, SignalR, STOMP, GraphQL over
    WebSocket, Phoenix, Centrifugo, SmartFoxServer 2X binary packets (decision 0048), Firebase
-   Realtime Database and Primus (decision 0050)) are
+   Realtime Database and Primus (decision 0051)) are
    detected per connection and name the messages instead, and other binary frames are read as
    MessagePack or protobuf wire format when they decode fully (decision 0038); each channel also gets its connection facts (origin, subprotocol, URL token
    names, upgrade answers, first auth message).

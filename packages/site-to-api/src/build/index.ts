@@ -227,7 +227,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   // GraphQL requests are marked and batches split before anything groups or traces them (0027).
   // Engine.IO long-polling requests are one channel's transport, documented with the channel
   // rather than as HTTP operations (0038).
-  // tRPC batches are split, and tRPC and Connect calls marked, the same way (0050).
+  // tRPC batches are split, and tRPC and Connect calls marked, the same way (0051).
   const exchanges = annotateRpc(annotateGraphql(classified.exchanges)).map(exchange => isEnginePolling(exchange)
     ? { ...exchange, kind: 'noise' as const, kindReason: 'Engine.IO long-polling: documented as a WebSocket channel' }
     : exchange)
@@ -337,6 +337,11 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 
   const analysis: Analysis = {
     sessions: loaded.sessions.map(session => session.meta.sessionId),
+    startUrls: [
+      ...new Set(loaded.sessions.flatMap(session => session.meta.startUrl === null
+        ? []
+        : [session.meta.startUrl])),
+    ].sort(),
     hosts: hostsOf(operations),
     operations,
     flows,

@@ -25,11 +25,16 @@ export function minimizes(browser: BrowserConfig): boolean {
   return browser.minimized && !browser.headless
 }
 
-/** Extra browser arguments for this configuration. */
+/** Extra browser arguments for this configuration: muted audio, and no throttling when minimized. */
 export function launchArgs(browser: BrowserConfig): string[] {
-  return minimizes(browser)
-    ? [...NO_BACKGROUNDING]
-    : []
+  return [
+    ...(browser.muteAudio
+      ? ['--mute-audio']
+      : []),
+    ...(minimizes(browser)
+      ? NO_BACKGROUNDING
+      : []),
+  ]
 }
 
 /**

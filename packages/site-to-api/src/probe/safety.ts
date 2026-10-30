@@ -22,7 +22,7 @@ export interface ReplaySubject {
   dispatch?: {
     value: string
   }
-  /** A tRPC procedure or Connect method (decision 0050); `readOnly` from GET or its descriptor. */
+  /** A tRPC procedure or Connect method (decision 0051); `readOnly` from GET or its descriptor. */
   rpc?: {
     protocol: 'trpc' | 'connect'
     procedure: string
@@ -39,7 +39,7 @@ export function isSafeMethod(method: string): boolean {
 
 /**
  * A GraphQL operation is safe when it is a query, whatever its method; a Connect method when it
- * was called with GET or its descriptor says `NO_SIDE_EFFECTS` (decision 0050); others by their
+ * was called with GET or its descriptor says `NO_SIDE_EFFECTS` (decision 0051); others by their
  * method.
  */
 export function isSafeOperation(operation: Pick<ReplaySubject, 'method' | 'graphql' | 'rpc'>): boolean {

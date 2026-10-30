@@ -366,7 +366,7 @@ function graphqlExtension(graphql: GraphqlOperation): Json {
 }
 
 /**
- * `x-site-to-api-rpc` (decision 0050): the tRPC procedure or Connect method this operation calls,
+ * `x-site-to-api-rpc` (decision 0051): the tRPC procedure or Connect method this operation calls,
  * and whether it only reads (which lets probe and the MCP servers send it).
  */
 function rpcExtension(rpc: RpcOperation): Json {

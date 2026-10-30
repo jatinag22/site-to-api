@@ -118,6 +118,8 @@ export interface SaveInput {
   scripted: boolean
   /** Ends the browser process when it does not close; must not throw. */
   kill: () => Promise<void>
+  /** Puts back request bodies the HAR could not hold (`RequestBodyRecorder.patch`). */
+  restoreBodies?: (entries: unknown[]) => number
 }
 
 export interface SaveResult {
@@ -160,23 +162,49 @@ interface ClosedBrowser {
 /** Closes pages, then the context; kills the browser when that times out or a second stop comes. */
 async function closeBrowser(input: SaveInput, warnings: string[]): Promise<ClosedBrowser> {
   const { closeMs } = input.timeouts
+  // waitBounded counts a rejected promise as finished, so each task records its own failure:
+  // a close that rejected wrote no HAR, and must never read as one that finished.
+  let pagesFailed = false
+  let closeError: string | null = null
   // Pages first, without beforeunload: closing the context waits forever on a page whose main
   // thread never yields, and the HAR is only written once the context has closed.
-  const pages = await waitBounded(Promise.all(input.context.pages().map(page => page.close({ runBeforeUnload: false }))), closeMs, input.stopper.forced)
+  const closingPages = Promise.all(input.context.pages().map(page => page.close({ runBeforeUnload: false }))).then(() => {}, () => {
+    pagesFailed = true
+  })
+  const pages = await waitBounded(closingPages, closeMs, input.stopper.forced)
   const closing = pages === 'stopped'
     ? null
-    : input.context.close()
+    : input.context.close().then(() => {}, (error: unknown) => {
+        closeError = error instanceof Error
+          ? error.message
+          : String(error)
+      })
   const closed = closing === null
     ? 'stopped'
     : await waitBounded(closing, closeMs, input.stopper.forced)
-  if (closed === 'done')
+  if (closed === 'done' && closeError === null)
     return { closed: true, incomplete: null }
   await waitBounded(input.kill(), KILL_MS, null)
   // Playwright writes the HAR when the context's close finishes, which ending the browser lets
   // happen: wait for it (bounded) so the HAR is checked as it ends up, not before it is written.
   // On Amazon the check ran first and reported "0 requests" for a 718-request HAR.
-  if (closing !== null)
-    await waitBounded(closing, closeMs, input.stopper.forced)
+  const flushed = closing === null
+    ? 'stopped'
+    : await waitBounded(closing, closeMs, input.stopper.forced)
+  // Every page had closed and Playwright then finished closing, so the HAR holds everything the
+  // pages did: only the browser process lingered (YouTube kept it busy past the wait). The
+  // session is complete; ending the browser is worth a note, not an incomplete mark.
+  if (closed === 'timeout' && pages === 'done' && !pagesFailed && flushed === 'done' && closeError === null) {
+    warnings.push(`The browser did not close within ${seconds(closeMs)} after its pages had closed, so it was ended; the HAR was written in full afterwards.`)
+    return { closed: false, incomplete: null }
+  }
+  if (closeError !== null) {
+    warnings.push(`Closing the browser failed (${closeError}), so it was ended and the HAR may be missing or incomplete.`)
+    return {
+      closed: false,
+      incomplete: { reason: 'error', error: `closing the browser failed: ${closeError}` },
+    }
+  }
   if (closed === 'stopped') {
     warnings.push('Stopped waiting for the browser: a second stop signal arrived, so the browser was ended and the HAR may be missing.')
     return {
@@ -206,7 +234,7 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
   const incomplete = browser.incomplete ?? settled ?? interrupted
   let har: FinishedHar
   try {
-    har = await finishHar(input.harPath)
+    har = await finishHar(input.harPath, undefined, input.restoreBodies)
   }
   catch (error) {
     const reason = error instanceof Error

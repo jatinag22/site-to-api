@@ -1,5 +1,5 @@
 /**
- * Primus (decision 0050): a socket wrapper whose messages are JSON values. Its own heartbeat is
+ * Primus (decision 0051): a socket wrapper whose messages are JSON values. Its own heartbeat is
  * the JSON strings `"primus::ping::<ms>"` and `"primus::pong::<ms>"`; everything else is the
  * application's data. Primus runs over a transformer: with the Engine.IO one each frame is an
  * Engine.IO packet (`0{…}` open, `2`/`3` ping and pong, `5` upgrade, `4<json>` a Primus message),

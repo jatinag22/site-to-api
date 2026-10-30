@@ -40,7 +40,7 @@ export interface Initiator {
 }
 
 /**
- * A remote procedure call read from an exchange by `analyze/rpc` (decision 0050): a tRPC
+ * A remote procedure call read from an exchange by `analyze/rpc` (decision 0051): a tRPC
  * procedure (`/api/trpc/<procedure>`, batched calls split into one exchange each) or a Connect
  * RPC method (`/<package.Service>/<Method>`).
  */
@@ -125,7 +125,7 @@ export interface Exchange {
   kind: ExchangeKind
   /** Filled in by `analyze/graphql` when the request is a GraphQL request (decision 0027). */
   graphql?: GraphqlRequest
-  /** Filled in by `analyze/rpc` for tRPC and Connect calls (decision 0050). */
+  /** Filled in by `analyze/rpc` for tRPC and Connect calls (decision 0051). */
   rpc?: RpcRequest
   /** Why the classifier chose `kind`, for debugging and the `--explain` output. */
   kindReason: string
@@ -136,7 +136,7 @@ export type ValueLocation
   = | { in: 'path', index: number }
     /**
      * `pointer` (RFC 6901) is set for a value inside a query parameter that holds JSON, such as
-     * a tRPC `input` (decision 0050).
+     * a tRPC `input` (decision 0051).
      */
     | { in: 'query', name: string, pointer?: string }
     | { in: 'header', name: string }

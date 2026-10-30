@@ -1,4 +1,4 @@
-# 0050 tRPC and Connect RPC operations; Firebase Realtime Database and Primus channels
+# 0051 tRPC and Connect RPC operations; Firebase Realtime Database and Primus channels
 
 Status: Accepted (2026-10-30). Refines 0027, 0038, 0039.
 

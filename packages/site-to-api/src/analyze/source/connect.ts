@@ -1,5 +1,5 @@
 /**
- * Reads the site's code for Connect RPC method idempotency (decision 0050). The matching is pure
+ * Reads the site's code for Connect RPC method idempotency (decision 0051). The matching is pure
  * (`analyze/rpc`); this only reads the files.
  */
 import type { LoadedSession } from '../../model'

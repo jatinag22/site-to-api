@@ -265,13 +265,26 @@ function templateFor(segments: string[], names: Map<number, string>): string {
 }
 
 /**
- * Operation kind of a group: `api` when any member is a data call, then `page`. A group is a
- * bot-protection step only when every member is: a page or API call that was challenged once
- * (`x-amzn-waf-action: challenge`, `cf-mitigated`) and then answered normally is still that page
- * or call, and must keep its client method.
+ * A call that fetched the same HTML a navigation loads, or got no body: a service worker serving
+ * the page (YouTube, Reddit) or a prefetch of it. Next to a navigation it is that page, not data.
+ */
+function copiesPage(member: Classified): boolean {
+  const body = member.exchange.response.body
+  return body === null || body.mimeType === 'text/html'
+}
+
+/**
+ * Operation kind of a group: `api` when any member is a data call, then `page`. A top-level
+ * navigation keeps the group a page when the only calls beside it fetched the same HTML (a
+ * service worker answering the navigation) or nothing. A group is a bot-protection step only
+ * when every member is: a page or API call that was challenged once (`x-amzn-waf-action:
+ * challenge`, `cf-mitigated`) and then answered normally is still that page or call, and must
+ * keep its client method.
  */
 function kindOf(members: Classified[]): OperationKind {
   const kinds = new Set(members.map(member => member.exchange.kind))
+  if (kinds.has('page') && members.every(member => member.exchange.kind !== 'api' || copiesPage(member)))
+    return 'page'
   if (kinds.has('api'))
     return 'api'
   if (kinds.has('page'))
@@ -336,7 +349,7 @@ function graphqlOperations(exchanges: Exchange[], isSecretKey: (key: string) => 
 }
 
 /**
- * One operation per tRPC procedure or Connect method (decision 0050) at its literal path: the
+ * One operation per tRPC procedure or Connect method (decision 0051) at its literal path: the
  * procedure is in the path, so templating would merge `/a.v1.X/GetResources` with
  * `/b.v1.Y/GetResources` into `/{param1}/GetResources`.
  */
@@ -436,7 +449,7 @@ function templateOperations(method: string, group: Classified[], names: Map<numb
 
 function observedOperations(exchanges: Exchange[], routes: SourceRoute[], isSecretKey: (key: string) => boolean): Operation[] {
   // GraphQL requests get their own operations; templating their paths would merge them.
-  // RPC calls too: their procedure is in the path (decision 0050).
+  // RPC calls too: their procedure is in the path (decision 0051).
   const relevant = exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind) && !isGraphqlExchange(exchange) && !isRpcExchange(exchange))
   // 1. Parameter positions per host + method.
   const byHostMethod = new Map<string, Exchange[]>()

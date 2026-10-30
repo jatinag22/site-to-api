@@ -92,6 +92,98 @@ describe('saveSession', () => {
     const result = await saveSession(save)
     expect(result).toMatchObject({ closed: false, entries: 2 })
     expect(result.warnings.some(warning => warning.includes('without writing'))).toBe(false)
+    // Every page closed and the HAR was written in full: the session is complete (YouTube).
+    expect(result.incomplete).toBeNull()
+    expect(result.warnings.some(warning => warning.includes('the HAR was written in full afterwards'))).toBe(true)
+  })
+
+  it('never takes a rejected close for a finished one: the session stays incomplete', async () => {
+    // Rejects only after the wait, once the browser was ended: no "written in full" note.
+    let reject = (): void => {}
+    const late = new Promise<void>((_resolve, fail) => {
+      reject = () => fail(new Error('Target page, context or browser has been closed'))
+    })
+    const result = await saveSession(input({
+      pages: () => [],
+      close: () => late,
+    }, {
+      kill: async () => {
+        reject()
+      },
+    }))
+    expect(result.incomplete).toEqual({ reason: 'error', error: 'closing the browser failed: Target page, context or browser has been closed' })
+    expect(result.warnings.some(warning => warning.includes('written in full'))).toBe(false)
+    // Rejecting at once is not a clean close either.
+    const failing = input({
+      pages: () => [],
+      close: async () => { throw new Error('boom') },
+    })
+    const immediate = await saveSession(failing)
+    expect(immediate).toMatchObject({
+      closed: false,
+      incomplete: { reason: 'error', error: 'closing the browser failed: boom' },
+    })
+    expect(failing.killed()).toBe(1)
+  })
+
+  it('keeps the session incomplete when a page failed to close, even if the HAR is written after the end', async () => {
+    const late = path.join(dir, 'late-failed-page.har')
+    let release = (): void => {}
+    const closing = new Promise<void>((resolve) => {
+      release = () => {
+        void writeFile(late, JSON.stringify({
+          log: {
+            entries: [
+              { request: {} },
+            ],
+          },
+        })).then(resolve)
+      }
+    })
+    const save = input({
+      pages: () => [
+        {
+          close: async () => { throw new Error('page crashed') },
+        },
+      ],
+      close: () => new Promise<void>(resolve => setTimeout(resolve, 600)).then(async () => await closing),
+    }, {
+      harPath: late,
+      kill: async () => {
+        release()
+      },
+    })
+    const result = await saveSession(save)
+    expect(result.incomplete).toMatchObject({ reason: 'timeout' })
+  })
+
+  it('keeps the session incomplete when a page never closed, even if the HAR is written after the end', async () => {
+    const late = path.join(dir, 'late-pages.har')
+    let release = (): void => {}
+    const closing = new Promise<void>((resolve) => {
+      release = () => {
+        void writeFile(late, JSON.stringify({
+          log: {
+            entries: [
+              { request: {} },
+            ],
+          },
+        })).then(resolve)
+      }
+    })
+    const save = input({
+      pages: () => [
+        { close: never },
+      ],
+      close: () => closing,
+    }, {
+      harPath: late,
+      kill: async () => {
+        release()
+      },
+    })
+    const result = await saveSession(save)
+    expect(result.incomplete).toMatchObject({ reason: 'timeout' })
   })
 
   it('says the HAR was not readable yet, not that it was never written, after a forced end', async () => {

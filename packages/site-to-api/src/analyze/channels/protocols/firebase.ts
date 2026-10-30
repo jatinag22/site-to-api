@@ -1,5 +1,5 @@
 /**
- * The Firebase Realtime Database wire protocol (decision 0050), as the open-source JavaScript SDK
+ * The Firebase Realtime Database wire protocol (decision 0051), as the open-source JavaScript SDK
  * speaks it (`PersistentConnection`, `WebSocketConnection`). Every frame is `{"t": "d" | "c",
  * "d": …}`: `c` frames are the transport's control messages (`h` server hello, `p`/`o` ping and
  * pong, `r` reset to another host, `s` shutdown, `e` error), `d` frames carry data:

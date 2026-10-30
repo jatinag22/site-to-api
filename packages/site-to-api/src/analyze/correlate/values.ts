@@ -22,6 +22,8 @@ const BROWSER_REQUEST_HEADERS = new Set([
   'accept-language',
   'cache-control',
   'connection',
+  // Names how the body was compressed; load decodes the body and drops it (decision 0050).
+  'content-encoding',
   'content-length',
   'content-type',
   'cookie',
@@ -135,7 +137,7 @@ function safeDecode(segment: string): string {
 
 /**
  * The query string's values. A tRPC `input` or Connect `message` is JSON: its fields are the
- * values, at `query.<name>./<pointer>` (decision 0050).
+ * values, at `query.<name>./<pointer>` (decision 0051).
  */
 function queryValues(exchange: Exchange): LocatedValue[] {
   return exchange.request.query.flatMap(({ name, value }): LocatedValue[] => {
