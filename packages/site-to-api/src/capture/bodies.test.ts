@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { gzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
-import { MAX_RECORDED_BODY_BYTES, RequestBodyRecorder } from './bodies'
+import { MAX_BODIES_PER_URL, MAX_RECORDED_BODY_BYTES, MAX_SESSION_BODY_BYTES, RequestBodyRecorder } from './bodies'
 
 const URL = 'https://example.test/youtubei/v1/search?prettyPrint=false'
 
@@ -84,5 +84,31 @@ describe('requestBodyRecorder', () => {
       { request: null },
     ])).toBe(0)
     expect(postDataOf(other)._base64).toBeUndefined()
+  })
+
+  it('keeps at most a fixed number of bodies per URL and warns once', () => {
+    const recorder = new RequestBodyRecorder()
+    const body = gzipSync('{"event":"tick"}')
+    for (let i = 0; i < MAX_BODIES_PER_URL + 5; i++)
+      recorder.record('POST', URL, body)
+    recorder.record('POST', 'https://example.test/other', body)
+    const entries = Array.from({ length: MAX_BODIES_PER_URL + 5 }, () => harEntry('\uFFFD', body.length))
+    expect(recorder.patch(entries)).toBe(MAX_BODIES_PER_URL)
+    expect(recorder.warning()).toMatch(/^Did not keep the raw bytes of 5 compressed or binary request bodies/)
+  })
+
+  it('stops recording once the session budget is spent, also for new URLs', () => {
+    const recorder = new RequestBodyRecorder()
+    const body = Buffer.alloc(MAX_RECORDED_BODY_BYTES, 0xFF)
+    const fit = MAX_SESSION_BODY_BYTES / MAX_RECORDED_BODY_BYTES
+    for (let i = 0; i < fit + 2; i++)
+      recorder.record('POST', `https://example.test/upload/${i}`, body)
+    // Once full, even a small body to a fresh URL is not kept.
+    recorder.record('POST', 'https://example.test/small', gzipSync('x'))
+    expect(recorder.warning()).toMatch(/^Did not keep the raw bytes of 3 /)
+    expect(recorder.patch([
+      harEntry('\uFFFD', gzipSync('x').length, 'https://example.test/small'),
+    ])).toBe(0)
+    expect(new RequestBodyRecorder().warning()).toBeNull()
   })
 })

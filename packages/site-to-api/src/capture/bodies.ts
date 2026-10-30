@@ -11,6 +11,11 @@ import { Buffer, isUtf8 } from 'node:buffer'
 /** Larger bodies are not kept: an upload is not API documentation, and the HAR stays readable. */
 export const MAX_RECORDED_BODY_BYTES = 2 * 1024 * 1024
 
+/** Raw bytes kept for the whole session; past it nothing more is recorded (a page uploading in a loop). */
+export const MAX_SESSION_BODY_BYTES = 64 * 1024 * 1024
+/** Bodies kept per method and URL: gzipped telemetry posts the same URL hundreds of times. */
+export const MAX_BODIES_PER_URL = 200
+
 /** The HAR field that carries the raw request body, base64 encoded. */
 const RAW_BODY_FIELD = '_base64'
 
@@ -37,15 +42,43 @@ function lostInHar(text: unknown, size: unknown): boolean {
  */
 export class RequestBodyRecorder {
   private readonly bodies = new Map<string, Buffer[]>()
+  /** Bodies seen per key, kept or not, so the per-URL cap holds after `patch` takes some. */
+  private readonly seen = new Map<string, number>()
+  private bytes = 0
+  private full = false
+  private dropped = 0
 
-  /** Records one request's body; text bodies, empty ones and oversized ones are ignored. */
+  /**
+   * Records one request's body; text bodies, empty ones and oversized ones are ignored. Stops
+   * once the session has kept {@link MAX_SESSION_BODY_BYTES}, and skips a URL past
+   * {@link MAX_BODIES_PER_URL}; {@link warning} says how many were left out.
+   */
   record(method: string, url: string, body: Buffer | null): void {
     if (body === null || body.length === 0 || body.length > MAX_RECORDED_BODY_BYTES || isUtf8(body))
       return
     const key = keyOf(method, url)
+    const count = (this.seen.get(key) ?? 0) + 1
+    this.seen.set(key, count)
+    if (this.full || this.bytes + body.length > MAX_SESSION_BODY_BYTES) {
+      this.full = true
+      this.dropped++
+      return
+    }
+    if (count > MAX_BODIES_PER_URL) {
+      this.dropped++
+      return
+    }
+    this.bytes += body.length
     const list = this.bodies.get(key) ?? []
     list.push(Buffer.from(body))
     this.bodies.set(key, list)
+  }
+
+  /** The capture warning about bodies left out by the limits, or null when none were. */
+  warning(): string | null {
+    return this.dropped === 0
+      ? null
+      : `Did not keep the raw bytes of ${this.dropped} compressed or binary request bodies (limits: ${MAX_BODIES_PER_URL} per URL, ${MAX_SESSION_BODY_BYTES / 1024 / 1024} MB per session); their HAR text stays garbled.`
   }
 
   /** The recorded body for one garbled HAR request, removed from the queue; null when none fits. */
