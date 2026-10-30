@@ -59,6 +59,18 @@ export function isVerhoeffValid(digits: string): boolean {
 
 const onlyDigits = (value: string): string => value.replace(/\D/g, '')
 
+const OCTET = '(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)'
+
+/** Address blocks that are not one person's public address: private, loopback, link-local, CGNAT, multicast. */
+function isPublicIpv4(address: string): boolean {
+  const [a = 0, b = 0, , d = 0] = address.split('.').map(Number)
+  if (d === 0 || a === 0 || a === 10 || a === 127 || a >= 224)
+    return false
+  if ((a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127))
+    return false
+  return true
+}
+
 export interface PersonalDataPattern {
   name: string
   regex: RegExp
@@ -92,6 +104,14 @@ export const PERSONAL_DATA_PATTERNS: readonly PersonalDataPattern[] = [
       const digits = onlyDigits(match)
       return digits.length >= 13 && digits.length <= 19 && isLuhnValid(digits)
     },
+  },
+  {
+    // A public IPv4 address, such as the visitor's own, which sites echo into page data and
+    // request bodies (YouTube, decision 0049). Not after `/`, `.`, `v` or a word character, so
+    // `Chrome/156.0.0.0` and `v1.2.3.4` stay; an address ending in `.0` is a network, not a person.
+    name: 'ipv4',
+    regex: new RegExp(`(?<![\\w./-])${OCTET}(?:\\.${OCTET}){3}(?![\\w.]*\\d)`, 'g'),
+    accept: isPublicIpv4,
   },
   {
     // International phone numbers written with a leading +.
@@ -218,6 +238,15 @@ const PERSONAL_NAME_ENDINGS: readonly string[] = [
   'avatar',
   'avatars',
   'avatarurl',
+  // The person's own network address, which sites echo into request bodies (YouTube's
+  // `context.client.remoteHost`, decision 0049).
+  'ip',
+  'ipaddress',
+  'ipaddr',
+  'remotehost',
+  'remoteaddr',
+  'remoteaddress',
+  'remoteip',
 ]
 
 /**

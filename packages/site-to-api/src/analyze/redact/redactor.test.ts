@@ -198,6 +198,35 @@ describe('createRedactor: rules', () => {
     expect(r.value('ID EMP-123456 here', { in: 'body' })).toBe('ID XXX-000000 here')
   })
 
+  it('masks the person\'s IP address fields, as YouTube echoes it in every request body', () => {
+    expect(r.json({
+      context: {
+        client: { remoteHost: '203.0.113.94', clientName: 'WEB' },
+      },
+      client_ip: '198.51.100.7',
+      zip: 'x',
+    }, { in: 'body' })).toEqual({
+      context: {
+        client: { remoteHost: '000.0.000.00', clientName: 'WEB' },
+      },
+      client_ip: '000.00.000.0',
+      zip: 'x',
+    })
+  })
+
+  it('masks public IPv4 addresses anywhere, but not versions, networks or private addresses', () => {
+    expect(r.json([
+      ['en-GB', 'IN', null, '203.0.113.94'],
+    ], { in: 'response-body' })).toEqual([
+      ['en-GB', 'IN', null, '000.0.000.00'],
+    ])
+    expect(r.value('Mozilla/5.0 Chrome/156.0.0.0 Safari/537.36', { in: 'header', name: 'user-agent' })).toBe('Mozilla/5.0 Chrome/156.0.0.0 Safari/537.36')
+    expect(r.value('v1.2.3.4', { in: 'body' })).toBe('v1.2.3.4')
+    expect(r.value('2.20261029.00.00', { in: 'body' })).toBe('2.20261029.00.00')
+    expect(r.value('10.0.0.5 and 192.168.1.20 and 172.16.4.4', { in: 'body' })).toBe('10.0.0.5 and 192.168.1.20 and 172.16.4.4')
+    expect(r.value('from 8.8.8.8, via 1.1.1.1.', { in: 'body' })).toBe('from 0.0.0.0, via 0.0.0.0.')
+  })
+
   it('masks personal and account fields by name, keeping their format', () => {
     // The shapes of a shop's `GET /api/me` and login responses.
     const me = {

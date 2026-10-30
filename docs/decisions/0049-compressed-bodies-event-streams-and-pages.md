@@ -60,6 +60,12 @@ A matrix run on fourteen real sites found three gaps.
   complete, with a warning that the browser had to be ended. A page that never closed keeps the
   session incomplete.
 
+- **The person's IP address.** Decoded innertube bodies carry the visitor's public IP
+  (`context.client.remoteHost`), and YouTube's `sw.js_data` array holds it without a field
+  name. Fields named `ip`, `ipAddress`, `remoteHost`, `remoteAddr`, `remoteIp` are personal
+  fields (masked keeping their format), and a public IPv4 address is masked wherever it appears
+  as text (not after `/`, `.`, `v` or a word character, so `Chrome/156.0.0.0` and `v1.2.3.4`
+  stay; private, loopback, link-local, CGNAT and multicast addresses and `.0` networks stay).
 - **Muted capture browser.** Captures of YouTube and similar sites played sound on the machine
   running them. The browser now starts with Chrome's `--mute-audio` unless
   `capture.browser.muteAudio` is false. Muting changes no network traffic: media still loads and
