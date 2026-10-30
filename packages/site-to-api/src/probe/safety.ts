@@ -5,7 +5,7 @@
  * operation has both in the analysis and in a spec written by `build`.
  */
 import type { GraphqlOperationType } from '../model'
-import { rpcMethodWrites } from '../analyze/rpc'
+import { rpcMethodReads } from '../analyze/rpc'
 
 /** What the rules read about an operation. */
 export interface ReplaySubject {
@@ -45,8 +45,8 @@ export function isSafeMethod(method: string): boolean {
 export function isSafeOperation(operation: Pick<ReplaySubject, 'method' | 'graphql' | 'rpc'>): boolean {
   if (operation.graphql)
     return operation.graphql.operationType === 'query'
-  // A method whose name says it writes is never a read, whatever its descriptor claims.
-  if (operation.rpc?.readOnly === true && !rpcMethodWrites(operation.rpc.procedure))
+  // Only a method whose name says it reads is a read on its descriptor's word.
+  if (operation.rpc?.readOnly === true && rpcMethodReads(operation.rpc.procedure))
     return true
   return isSafeMethod(operation.method)
 }

@@ -50,11 +50,16 @@ A run over real sites found four protocols the output did not understand:
       and the file name must end in `.proto`. `MethodOptions.idempotency_level` (field 34) is read.
     - protobuf-es v1 writes service objects with `idempotency: X.NoSideEffects`.
   - Only descriptors in the operation's own site's scripts count (same registrable domain as
-    the host the method is called on). A third-party or injected script must not vouch for a
+    the host the method is called on; tenants of cloud hosts such as `run.app`,
+    `cloudfunctions.net`, `amazonaws.com`, `azurestaticapps.net`, `ngrok-free.app` and
+    `supabase.co` are separate sites). A third-party or injected script must not vouch for a
     site's method. A method that two of the site's files describe differently is left out.
   - A method declared `NO_SIDE_EFFECTS` is `readOnly`, and probe treats it as a safe read.
-  - A method whose name says it writes (`Create…`, `Update…`, `Delete…`, `Transfer…`,
-    `Pay…`, `Send…`, `Cancel…` and so on) is never a read, whatever its descriptor says.
+  - A descriptor's `NO_SIDE_EFFECTS` counts only for a method whose name says it reads: its
+    first word (after `Batch`) is a read verb (`Get`, `List`, `Search`, `Find`, `Fetch`, `Read`,
+    `Query`, `Count`, `Lookup`, `Describe`, `Check`, `Watch`, `Stream` and a few more) and no
+    word names a write (`GetOrCreate…`). Writes have too many names (`Payout`, `BookFlight`,
+    `ToggleFeature`, `Mint`) for a list of them to be complete, so reads are listed instead.
   - The MCP servers send with the person's session, so for them only a Connect method the
     page called with GET reads. A read declared only in a descriptor stays probe-only.
 - **Firebase Realtime Database** (`protocols/firebase.ts`), from the open-source JavaScript SDK:

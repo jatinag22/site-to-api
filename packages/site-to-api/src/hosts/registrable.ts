@@ -24,6 +24,13 @@ const SHARED_SUFFIXES = [
   'blogspot.com',
   'onrender.com',
   'fly.dev',
+  'a.run.app',
+  'run.app',
+  'cloudfunctions.net',
+  'amazonaws.com',
+  'azurestaticapps.net',
+  'ngrok-free.app',
+  'supabase.co',
 ]
 
 /** Second-level labels that act as public suffixes under country TLDs (`co.uk`, `com.au`). */

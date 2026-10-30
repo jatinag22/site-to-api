@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { exchange, jsonBody } from '../../../test/helpers'
 import { buildOperations } from '../operations'
 import { annotateRpc } from './annotate'
-import { applyConnectIdempotency, combineIdempotency, rpcMethodWrites } from './operation'
+import { applyConnectIdempotency, combineIdempotency, rpcMethodReads } from './operation'
 
 const HOST = 'https://registry.example'
 
@@ -110,21 +110,51 @@ describe('rPC operations', () => {
       ],
     ]), () => 'registry.example')
     expect(marked[0]?.rpc?.readOnly).toBe(false)
-    expect([
-      'pkg.S/CreateOrder',
-      'pkg.S/UpdateUser',
-      'pkg.S/DeleteItem',
-      'pkg.S/Transfer',
-      'pkg.S/PayInvoice',
-      'pkg.S/SendMessage',
-      'pkg.S/CancelBooking',
-    ].every(rpcMethodWrites)).toBe(true)
-    expect([
-      'pkg.S/GetItems',
-      'pkg.S/ListUsers',
-      'pkg.S/Search',
-      'pkg.S/GetSettings',
-    ].some(rpcMethodWrites)).toBe(false)
+    const writes = [
+      'CreateOrder',
+      'UpdateUser',
+      'DeleteItem',
+      'Transfer',
+      'Transfers',
+      'PayInvoice',
+      'SendMessage',
+      'CancelBooking',
+      'DoPayment',
+      'Payout',
+      'DepositFunds',
+      'DestroyAccount',
+      'TerminateSession',
+      'BookFlight',
+      'ExecuteTrade',
+      'PlaceBid',
+      'FollowUser',
+      'Unfollow',
+      'BlockUser',
+      'RedeemCode',
+      'ToggleFeature',
+      'MarkRead',
+      'Mint',
+      'Drop',
+      'Start',
+      'Stop',
+      'Run',
+      'Ack',
+      'GetOrCreateUser',
+      'BatchDeleteUsers',
+    ]
+    expect(writes.filter(name => rpcMethodReads(`pkg.S/${name}`))).toEqual([])
+    const reads = [
+      'GetUser',
+      'ListOrders',
+      'SearchItems',
+      'BatchGetUsers',
+      'LookUpAddress',
+      'FindNearby',
+      'WatchPrices',
+      'CountUnread',
+      'ListTransfers',
+    ]
+    expect(reads.filter(name => !rpcMethodReads(`pkg.S/${name}`))).toEqual([])
   })
 
   it('drops a method two files of one site describe differently, and keeps sites apart', () => {
