@@ -10,7 +10,7 @@ import type { ProbeReport } from '../model/probe'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'pathe'
-import { buildChannels, channelExchanges, collectConnections, isEnginePolling } from '../analyze/channels'
+import { buildChannels, channelExchanges, collectConnections, isEnginePolling, protocolSecrets } from '../analyze/channels'
 import { classifyExchanges, createChannelScope } from '../analyze/classify'
 import { traceValues } from '../analyze/correlate'
 import { buildFlows } from '../analyze/flows'
@@ -240,13 +240,16 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 
   // WebSocket frames stand in as exchanges, so the redactor learns secrets sent over a socket and
   // tracing finds where the client's frame values came from (decision 0023).
-  const sockets = channelExchanges(collectConnections(loaded.sessions, loaded.exchanges))
+  const connections = collectConnections(loaded.sessions, loaded.exchanges)
+  const sockets = channelExchanges(connections)
   const redactor = createRedactor({
     exchanges: [
       ...exchanges,
       ...sockets.exchanges,
     ],
     config: config.redact,
+    // An SFS2X login's `un` and `pw` say nothing by name; the protocol says they are secrets.
+    knownSecrets: protocolSecrets(connections),
   })
   const wanted = inHostFilter(config.hosts)
   // The page's own calls to a long-polling path are the channel's transport, not unused endpoints.

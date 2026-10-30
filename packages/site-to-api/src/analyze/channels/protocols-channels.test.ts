@@ -9,7 +9,8 @@ import { traceValues } from '../correlate'
 import { buildOperations } from '../operations'
 import { createRedactor } from '../redact'
 import { inferOperationSchemas } from '../schema'
-import { buildChannels, channelExchanges, collectConnections, isEnginePolling } from './index'
+import { extensionPacket, packet, sfs } from './binary/sfs2x-test-packets'
+import { buildChannels, channelExchanges, collectConnections, isEnginePolling, protocolSecrets } from './index'
 
 const HOST = 'live.test'
 const T0 = 1_700_000_000_000
@@ -37,13 +38,15 @@ function channelsOf(input: Exchange[], sessions: LoadedSession[]): WebSocketChan
   const http = classified.exchanges.map(item => isEnginePolling(item)
     ? { ...item, kind: 'noise' as const }
     : item)
-  const sockets = channelExchanges(collectConnections(sessions, exchanges))
+  const connections = collectConnections(sessions, exchanges)
+  const sockets = channelExchanges(connections)
   const redactor = createRedactor({
     exchanges: [
       ...http,
       ...sockets.exchanges,
     ],
     config: REDACT,
+    knownSecrets: protocolSecrets(connections),
   })
   const operations = inferOperationSchemas(buildOperations(http, { sourceRoutes: [], isSecretKey: redactor.isSecretKey }), redactor)
   const traces = traceValues({
@@ -482,5 +485,306 @@ describe('binary frames', () => {
     })
     expect(channel?.messages[1]?.schema?.properties).toHaveProperty(['field 1 (varint)'])
     expect(JSON.stringify(channel)).not.toContain(TOKEN)
+  })
+})
+
+describe('smartFoxServer 2X', () => {
+  const SESSION_TOKEN = '0123456789abcdef0123456789abcdef'
+  const player = (id: string, name: string, image: string): number[] => sfs.object({
+    player_id: sfs.string(id),
+    username: sfs.string(name),
+    profileImage: sfs.string(image),
+    multiplier: sfs.double(1.5),
+  })
+  const cashOuts = (): Uint8Array => extensionPacket('updateCurrentCashOuts', {
+    code: sfs.int(200),
+    openBetsCount: sfs.int(12),
+    cashouts: sfs.array([
+      player('40001&&demo', 'demo_90001', 'av-1.png'),
+      player('40002&&demo', 'demo_40002', 'av-2.png'),
+    ]),
+    topPlayerProfileImages: sfs.stringArray(['av-3.png']),
+  }, { compress: true })
+
+  function sfsChannel(): WebSocketChannel | undefined {
+    const url = `wss://${HOST}/BlueBox/websocket`
+    return channelsOf([
+      upgrade('s', url, 0),
+    ], [
+      loadedSession('s', socketEvents({
+        url,
+        socket: 0,
+        openedAt: T0,
+        frames: [
+          [
+            '>',
+            packet(0, 0, {
+              api: sfs.string('1.8.4'),
+              cl: sfs.string('JavaScript'),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 0, {
+              tk: sfs.string(SESSION_TOKEN),
+              ct: sfs.int(1024),
+            }),
+          ],
+          [
+            '>',
+            packet(0, 1, {
+              zn: sfs.string('game_zone'),
+              un: sfs.string('gambler7'),
+              pw: sfs.string('hunter2'),
+              p: sfs.object({
+                token: sfs.string(TOKEN),
+                k: sfs.string('kq9-launch-key'),
+                ticket: sfs.string('t1'),
+              }),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 1, {
+              zn: sfs.string('game_zone'),
+              un: sfs.string('gambler7'),
+              id: sfs.int(123_456),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 4, {
+              r: sfs.array([
+                sfs.int(3),
+                sfs.string('lobby'),
+              ]),
+              ul: sfs.array([
+                sfs.array([
+                  sfs.int(1000),
+                  sfs.string('rival_anna'),
+                  sfs.short(0),
+                  sfs.short(1),
+                  sfs.array([]),
+                ]),
+                sfs.array([
+                  sfs.int(1001),
+                  sfs.string('rival_ben'),
+                  sfs.short(0),
+                  sfs.short(2),
+                  sfs.array([]),
+                ]),
+              ]),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 1000, {
+              r: sfs.int(3),
+              u: sfs.array([
+                sfs.int(1002),
+                sfs.string('rival_cleo'),
+                sfs.short(0),
+                sfs.short(3),
+                sfs.array([
+                  sfs.array([
+                    sfs.string('nick'),
+                    sfs.byte(8),
+                    sfs.string('VarNickZed'),
+                  ]),
+                ]),
+              ]),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 12, {
+              u: sfs.int(1002),
+              vl: sfs.array([
+                sfs.array([
+                  sfs.string('realName'),
+                  sfs.byte(8),
+                  sfs.string('Quill Ferro'),
+                ]),
+              ]),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 7, {
+              t: sfs.byte(0),
+              r: sfs.int(3),
+              u: sfs.int(1000),
+              m: sfs.string('meet me at table nine'),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 28, {
+              fu: sfs.array([
+                sfs.array([
+                  sfs.int(1003),
+                  sfs.string('rival_dora'),
+                  sfs.short(0),
+                  sfs.short(0),
+                  sfs.array([]),
+                ]),
+              ]),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 200, {
+              bl: sfs.array([
+                sfs.array([
+                  sfs.int(1004),
+                  sfs.string('buddy_emil'),
+                  sfs.bool(false),
+                  sfs.array([]),
+                ]),
+              ]),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 205, {
+              bn: sfs.string('buddy_emil'),
+              bi: sfs.int(1004),
+              o: sfs.byte(0),
+            }),
+          ],
+          [
+            '<',
+            extensionPacket('lobbyStats', {
+              tables: sfs.int(1000),
+            }),
+          ],
+          [
+            '<',
+            cashOuts(),
+          ],
+          [
+            '<',
+            cashOuts(),
+          ],
+        ],
+      })),
+    ])[0]
+  }
+
+  it('names messages by system action and extension command, with schemas of their params', () => {
+    const channel = sfsChannel()
+    expect(channel?.protocol).toMatchObject({
+      id: 'sfs2x',
+      version: 'client API 1.8.4',
+      evidence: ['URL path contains /BlueBox/', 'frames'],
+    })
+    expect(channel?.messages.map(message => [
+      message.id,
+      message.format,
+      message.count,
+      message.protocol?.role,
+    ])).toEqual([
+      ['sendHandshake', 'sfs2x', 1, 'init'],
+      ['sendLogin', 'sfs2x', 1, 'auth'],
+      ['receiveHandshake', 'sfs2x', 1, 'data'],
+      ['receiveLogin', 'sfs2x', 1, 'data'],
+      ['receiveJoinRoom', 'sfs2x', 1, 'data'],
+      [
+        'receiveUserEnterRoom',
+        'sfs2x',
+        1,
+        'data',
+      ],
+      [
+        'receiveSetUserVariables',
+        'sfs2x',
+        1,
+        'data',
+      ],
+      [
+        'receiveGenericMessage',
+        'sfs2x',
+        1,
+        'data',
+      ],
+      ['receiveFindUsers', 'sfs2x', 1, 'data'],
+      [
+        'receiveInitBuddyList',
+        'sfs2x',
+        1,
+        'data',
+      ],
+      ['receiveGoOnline', 'sfs2x', 1, 'data'],
+      [
+        'receiveLobbyStats',
+        'sfs2x',
+        1,
+        'data',
+      ],
+      [
+        'receiveUpdateCurrentCashOuts',
+        'sfs2x',
+        2,
+        'data',
+      ],
+    ])
+    const cash = channel?.messages.find(message => message.id === 'receiveUpdateCurrentCashOuts')
+    expect(cash?.protocol).toMatchObject({ frame: 'extension', name: 'updateCurrentCashOuts', wire: 'SFS2X {c:1,a:13,p:{c:"updateCurrentCashOuts",p:<payload>}}' })
+    expect(cash?.schema?.properties).toMatchObject({
+      code: { type: 'integer' },
+      cashouts: { type: 'array' },
+    })
+    expect(channel?.handshake.map(step => [step.message, step.role])).toEqual([
+      ['sendHandshake', 'init'],
+      ['sendLogin', 'auth'],
+    ])
+    const section = channel === undefined
+      ? ''
+      : channelsSection([channel], new Map()).join('\n')
+    expect(section).toContain('`updateCurrentCashOuts` (`extension`) (SFS2X binary, 2×)')
+  })
+
+  it('redacts the login, the session token and other players\' identities', () => {
+    const channel = sfsChannel()
+    const written = JSON.stringify(channel) + (channel === undefined
+      ? ''
+      : channelsSection([channel], new Map()).join('\n'))
+    for (const secret of [
+      'gambler7',
+      'hunter2',
+      'kq9-launch-key',
+      'rival_anna',
+      'rival_ben',
+      'rival_cleo',
+      'rival_dora',
+      'buddy_emil',
+      'table nine',
+      'VarNickZed',
+      'Quill Ferro',
+      '123456',
+      SESSION_TOKEN,
+      TOKEN,
+      'demo_90001',
+      'demo_40002',
+      '40001',
+      '40002',
+      'av-1.png',
+      'av-2.png',
+      'av-3.png',
+    ])
+      expect(written).not.toContain(secret)
+    expect(written).not.toContain('"ticket":"t1"')
+    // User ids sit at known positions: masked to 0 there, and a short one is not hunted elsewhere.
+    const join = channel?.messages.find(message => message.id === 'receiveJoinRoom')
+    expect(join?.examples[0]).toMatchObject({
+      ul: [
+        [0, 'xxxxx_xxxx', 0, 1, []],
+        [0, 'xxxxx_xxx', 0, 2, []],
+      ],
+    })
+    expect(written).toContain('"tables":1000')
+    // Public game data stays.
+    expect(written).toContain('game_zone')
+    expect(written).toContain('"openBetsCount":12')
   })
 })

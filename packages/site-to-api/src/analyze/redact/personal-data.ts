@@ -208,13 +208,23 @@ const PERSONAL_NAME_ENDINGS: readonly string[] = [
   'customerid',
   'accountid',
   'memberid',
+  // Other players in a game feed (decision 0048): their ids, names and chosen pictures.
+  'playerid',
+  'playername',
+  'profileimage',
+  'profileimages',
+  'profilepicture',
+  'profilephoto',
+  'avatar',
+  'avatars',
+  'avatarurl',
 ]
 
 /**
  * Field names whose values are a person's name, account or address, wherever they appear:
  * `username`, `user_name`, `login`, `displayName`, `firstName`, `lastName`, `fullName`,
- * `address`, `street`, `city`, `postcode`, `zip`, `dob`, `birthDate`, and account ids
- * (`userId`). Phone fields have their own rule ({@link isPhoneField}).
+ * `address`, `street`, `city`, `postcode`, `zip`, `dob`, `birthDate`, account and player ids
+ * (`userId`, `player_id`) and profile pictures (`profileImage`, `avatarUrl`). Phone fields have their own rule ({@link isPhoneField}).
  */
 export function isPersonalField(name: string | null | undefined): boolean {
   if (name === null || name === undefined || name === '')
@@ -224,6 +234,35 @@ export function isPersonalField(name: string | null | undefined): boolean {
   const parts = words(name)
   const tails = parts.map((_, index) => parts.slice(index).join(''))
   return tails.some(tail => PERSONAL_NAME_ENDINGS.includes(tail))
+}
+
+/** Whole names (separators removed) of fields holding the browser's identity. */
+const FINGERPRINT_NAMES: ReadonlySet<string> = new Set([
+  'ua',
+  'useragent',
+  'deviceinfo',
+  'browserinfo',
+])
+
+/** Last words of such names: `navigatorUserAgent`, `client_device_info`. */
+const FINGERPRINT_NAME_ENDINGS: readonly string[] = [
+  'useragent',
+  'deviceinfo',
+  'browserinfo',
+]
+
+/**
+ * Body, query and form fields that hold the browser's user agent or device description
+ * (`userAgent`, `ua`, `deviceInfo`): together with the rest of a capture they fingerprint the
+ * person who captured it (decision 0048). The `User-Agent` header has its own rules.
+ */
+export function isFingerprintField(name: string | null | undefined): boolean {
+  if (name === null || name === undefined || name === '')
+    return false
+  if (FINGERPRINT_NAMES.has(compactName(name)))
+    return true
+  const parts = words(name)
+  return parts.map((_, index) => parts.slice(index).join('')).some(tail => FINGERPRINT_NAME_ENDINGS.includes(tail))
 }
 
 /** Words of a property name that say the object under it describes a person or their account. */

@@ -19,6 +19,7 @@ const CONTENT_TYPES: Record<ChannelMessage['format'], string> = {
   binary: 'application/octet-stream',
   msgpack: 'application/msgpack',
   protobuf: 'application/x-protobuf',
+  sfs2x: 'application/octet-stream',
 }
 
 /** The name of a message: its protocol-level name, its discriminator value, or its id. */
@@ -40,6 +41,7 @@ function originsExtension(links: readonly ChannelValueLink[]): Json {
 
 const DECODED: Partial<Record<ChannelMessage['format'], string>> = {
   msgpack: 'Binary frames decoded as MessagePack.',
+  sfs2x: 'SmartFoxServer 2X binary packets, decoded: the schema is of the packet\'s params (`p`, or `p.p` for an extension command). LONG values beyond 2^53 are decimal strings, byte arrays `<n bytes>`.',
   protobuf: 'Binary frames read as protobuf wire format without a schema: fields are named by number and wire type (`field 3 (varint)`), not by their real names.',
 }
 

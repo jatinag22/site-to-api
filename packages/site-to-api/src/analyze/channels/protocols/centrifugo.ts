@@ -225,6 +225,7 @@ class CentrifugoSession implements DecoderSession {
 
 export const centrifugo: ProtocolDecoder = {
   id: 'centrifugo',
+  content: 'text',
   hint: (handshake: Handshake) => {
     const subprotocol = handshake.subprotocols.find(value => value === 'centrifuge-json')
     if (subprotocol !== undefined)

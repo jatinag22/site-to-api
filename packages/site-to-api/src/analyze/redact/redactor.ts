@@ -45,13 +45,19 @@ import { isBotProtectionHeader } from '../classify'
 import { describeShape, inspectJwt } from '../shape'
 import { isOpaqueBlob } from './blobs'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
-import { isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
+import { isFingerprintField, isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { CREDENTIAL_HEADERS, isPublicValue, isPublishableKeyName, isSecretName } from './secret-names'
 
 interface RedactorInput {
   /** Every exchange of the build, used to find cross-session constants and known secrets. */
   exchanges: Exchange[]
   config: ResolvedConfig['redact']
+  /**
+   * Values a protocol decoder knows are credentials by where they sit, though their field names
+   * do not say so (an SFS2X login's `pw`, decision 0048). Redacted wherever they appear as text,
+   * whatever their length; as a number only with 6 digits or more.
+   */
+  knownSecrets?: readonly string[]
 }
 
 /**
@@ -67,6 +73,11 @@ function isCheckedSecret(value: string): boolean {
 /** Secrets shorter than this are only redacted where they sit, not searched for in other text. */
 const MIN_SEARCHED_SECRET_LENGTH = 6
 const MAX_DEPTH = 32
+/**
+ * A known secret that is a number shorter than this is not matched in numbers: a user id of
+ * 1000 would otherwise blank out every 1000 in the output (decision 0048).
+ */
+const MIN_KNOWN_NUMBER_DIGITS = 6
 /** Larger text bodies (HTML pages) are not searched for secrets; they never become examples. */
 const MAX_SCANNED_TEXT = 100_000
 const JWT_IN_TEXT = /eyJ[\w-]*\.eyJ[\w-]*\.[\w-]*/g
@@ -98,7 +109,8 @@ function isQueryLike(where: RedactContext['in']): boolean {
   return where === 'query' || where === 'form'
 }
 
-function placeholder(value: string): string {
+/** The stand-in written for a secret: `<redacted: 32 hex chars>`. */
+export function placeholder(value: string): string {
   return `<redacted: ${describeShape(value)}>`
 }
 
@@ -261,15 +273,19 @@ function* expand(item: Located, depth: number): Generator<Located> {
 
 /**
  * Masks a value whose field name says it is personal: a phone number, a person's name, account
- * or address, or `name`/`id` inside a person's record. `null` when the name says nothing.
+ * or address, `name`/`id` inside a person's record, or the capturing browser's user agent.
+ * `null` when the name says nothing.
  */
-function maskByName(text: string, name: string | null | undefined, personRecord: boolean): string | null {
+function maskByName(text: string, name: string | null | undefined, personRecord: boolean, where: RedactContext['in']): string | null {
   if (isPhoneField(name)) {
     const masked = maskPhoneField(text)
     if (masked !== null)
       return masked
   }
-  return isPersonalField(name) || (personRecord && isPersonRecordField(name))
+  // A user agent or device description in a body fingerprints whoever captured it (0048); the
+  // `User-Agent` header has its own rules.
+  const fingerprint = isFingerprintField(name) && where !== 'header' && where !== 'response-header'
+  return fingerprint || isPersonalField(name) || (personRecord && isPersonRecordField(name))
     ? maskKeepingFormat(text)
     : null
 }
@@ -331,7 +347,7 @@ function learnKey(key: string, learnt: Learnt): void {
 
 /** Records which secret set a non-empty value belongs to, if any. */
 function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean): void {
-  if (item.value.length >= MIN_SEARCHED_SECRET_LENGTH && maskByName(item.value, item.name, item.person === true) !== null)
+  if (item.value.length >= MIN_SEARCHED_SECRET_LENGTH && maskByName(item.value, item.name, item.person === true, item.in) !== null)
     learnt.personal.add(item.value)
   if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true) {
     forms.forEach(form => learnt.always.add(form))
@@ -395,6 +411,7 @@ export function createRedactor(input: RedactorInput): Redactor {
   }
 
   const { sessionsByValue, always, unlessConstant, personal } = learnValues(input.exchanges, isAlwaysSecret)
+  const known = new Set((input.knownSecrets ?? []).filter(value => value !== ''))
 
   const isConstant = (value: string): boolean =>
     sessionCount >= 2 && (sessionsByValue.get(value)?.size ?? 0) === sessionCount
@@ -407,6 +424,7 @@ export function createRedactor(input: RedactorInput): Redactor {
   // they sit because their context (cookie, secret name) says so.
   const secrets = new Set([
     ...always,
+    ...known,
     ...[...unlessConstant].filter(value => !isConstant(value)),
   ]
     // As sent, percent-encoded, and percent-decoded (a cookie sent as `a%2Bb` is `a+b` in a page).
@@ -437,6 +455,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     if (verdict === undefined) {
       verdict = key !== '' && (inspectJwt(key) !== null
         || secrets.has(key)
+        || known.has(key)
         || personal.has(key)
         || ((isOpaqueBlob(key) || isOpaquePathSegment(key)) && !isConstant(key))
         || scanText(key) !== key)
@@ -564,7 +583,7 @@ export function createRedactor(input: RedactorInput): Redactor {
   function redactString(text: string, context: RedactContext, depth: number, personRecord = false): string {
     if (text === '')
       return text
-    if (isAlwaysSecret(context.in, context.name) || inspectJwt(text) || secrets.has(text))
+    if (isAlwaysSecret(context.in, context.name) || inspectJwt(text) || secrets.has(text) || known.has(text))
       return placeholder(text)
     // Without the previous segment only the context-free rule applies; the learnt secrets above
     // already cover `/reset/<token>` seen in the capture. An opaque segment never seen in the
@@ -577,7 +596,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     // A visitor, device or client id follows one person; only the site's own constant stays.
     if (isTrackingIdName(context.name) && !isConstant(text))
       return placeholder(text)
-    const byName = maskByName(text, context.name, personRecord)
+    const byName = maskByName(text, context.name, personRecord, context.in)
     if (byName !== null)
       return byName
     // A sensor payload or encrypted blob (`a13: <5572 base64 chars>`) says nothing as an example.
@@ -594,7 +613,7 @@ export function createRedactor(input: RedactorInput): Redactor {
 
   function redactNumber(value: number, context: RedactContext, personRecord: boolean): number | string {
     const text = String(value)
-    if (isAlwaysSecret(context.in, context.name) || (isSecretName(context.name) && !keptAsPublicKey(text, context)))
+    if (isAlwaysSecret(context.in, context.name) || (known.has(text) && text.length >= MIN_KNOWN_NUMBER_DIGITS) || (isSecretName(context.name) && !keptAsPublicKey(text, context)))
       return placeholder(text)
     if (isTrackingIdName(context.name) && !isConstant(text))
       return placeholder(text)

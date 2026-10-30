@@ -231,6 +231,7 @@ function describeMessages(messages: readonly ChannelMessage[], direction: Channe
       binary: 'binary frames',
       msgpack: 'MessagePack frames',
       protobuf: 'protobuf frames',
+      sfs2x: 'SFS2X packets',
     }[message.format]
   })
   return names.length > 0

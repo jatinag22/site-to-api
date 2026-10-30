@@ -285,6 +285,82 @@ describe('createRedactor: rules', () => {
     expect(r.value('demo', { in: 'form', name: 'login' })).toBe('xxxx')
   })
 
+  it('masks other players in a game feed: ids, names and profile pictures', () => {
+    const feed = {
+      cashouts: [
+        {
+          player_id: '40001&&demo',
+          username: 'demo_90001',
+          profileImage: 'av-1.png',
+          avatarUrl: 'https://cdn.example/a/40001.png',
+          multiplier: 1.5,
+        },
+      ],
+      topPlayerProfileImages: ['av-3.png'],
+      openBetsCount: 12,
+    }
+    const masked = JSON.stringify(r.json(feed, { in: 'response-body' }))
+    for (const value of [
+      '40001',
+      'demo_90001',
+      'av-1.png',
+      'av-3.png',
+    ])
+      expect(masked).not.toContain(value)
+    expect(masked).toContain('"multiplier":1.5')
+    expect(masked).toContain('"openBetsCount":12')
+  })
+
+  it('masks user agents and device descriptions in bodies, not the User-Agent header', () => {
+    const agent = 'Mozilla/5.0 (Plan9; Glenda) Fakekit/999.1 Exampler/42.0'
+    const body = {
+      platform: {
+        userAgent: agent,
+        deviceInfo: JSON.stringify({ userAgent: agent, os: 'Plan9' }),
+        deviceType: 'desktop',
+      },
+      ua: agent,
+    }
+    const masked = JSON.stringify(r.json(body, { in: 'body' }))
+    for (const value of [
+      'Plan9',
+      'Glenda',
+      'Fakekit',
+      'Exampler',
+    ])
+      expect(masked).not.toContain(value)
+    expect(masked).toContain('"deviceType":"desktop"')
+    expect(r.value(agent, { in: 'header', name: 'user-agent' })).toBe(agent)
+  })
+
+  it('redacts values a protocol names as secrets, whatever their field name or length', () => {
+    const known = createRedactor({
+      exchanges: [],
+      config: CONFIG,
+      knownSecrets: ['bob', 'hunter2-hunter2', ''],
+    })
+    expect(known.json({ un: 'bob', pw: 'hunter2-hunter2', zn: 'zone' }, { in: 'body' })).toEqual({
+      un: expect.stringMatching(/^<redacted/) as unknown,
+      pw: expect.stringMatching(/^<redacted/) as unknown,
+      zn: 'zone',
+    })
+    // Long ones are also found inside other text.
+    expect(known.text('echo hunter2-hunter2 back')).not.toContain('hunter2-hunter2')
+    expect(known.value('', { in: 'body', name: 'pw' })).toBe('')
+  })
+
+  it('matches a numeric known secret in numbers only with 6 digits or more', () => {
+    const known = createRedactor({
+      exchanges: [],
+      config: CONFIG,
+      knownSecrets: ['1000', '123456'],
+    })
+    expect(known.json({ tables: 1000, id: 123_456 }, { in: 'response-body' })).toEqual({
+      tables: 1000,
+      id: expect.stringMatching(/^<redacted/) as unknown,
+    })
+  })
+
   it('keeps ordinary names and ids outside person records', () => {
     expect(r.json([
       { id: 7, name: 'Snacks', slug: 'snacks' },

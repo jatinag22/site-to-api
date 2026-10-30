@@ -110,6 +110,7 @@ class PhoenixSession implements DecoderSession {
 
 export const phoenix: ProtocolDecoder = {
   id: 'phoenix',
+  content: 'text',
   hint: (handshake: Handshake) => {
     const vsn = handshake.query.find(param => param.name === 'vsn')?.value
     return /\/websocket$/.test(handshake.path) && vsn !== undefined && /^\d+\.\d+\.\d+$/.test(vsn)

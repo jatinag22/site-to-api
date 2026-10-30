@@ -211,9 +211,10 @@ function pinDiscriminator(schema: JsonSchema, path: readonly string[], value: st
   }
 }
 
-function enumGuard(redactor: Redactor, context: RedactContext): { allowEnumValue: (value: string) => boolean, isMapKey: (key: string) => boolean } {
+function enumGuard(redactor: Redactor, context: RedactContext): { allowEnumValue: (value: string, name: string | null) => boolean, isMapKey: (key: string) => boolean } {
   return {
-    allowEnumValue: value => redactor.value(value, context) === value,
+    // Judged under the field's own name, so a `username` enum is refused like its examples.
+    allowEnumValue: (value, name) => redactor.value(value, { ...context, name: name ?? context.name }) === value,
     // Frames keyed by a session or user id describe a map, not fields named after the capture.
     isMapKey: key => redactor.isSecretKey(key),
   }
@@ -285,8 +286,11 @@ function protocolGroup(direction: ChannelMessage['direction'], item: KeyedFrame,
     ? safeName(decoded.frame, redactor)
     : parts.join(decoded.separator)
   const frame = safeName(decoded.frame, redactor)
+  // A binary protocol message with a payload (an SFS2X packet) has a schema; other binary does not.
   const format: ChannelMessage['format'] = item.frame.binary
-    ? 'binary'
+    ? protocol === 'sfs2x' && item.frame.json !== undefined
+      ? 'sfs2x'
+      : 'binary'
     : item.frame.json === undefined
       ? 'text'
       : 'json'

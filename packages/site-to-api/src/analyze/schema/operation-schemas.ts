@@ -75,7 +75,7 @@ function isBrowserIdentityHeader(name: string): boolean {
 
 function enumGuard(redactor: ValueRedactor, context: RedactContext): InferOptions {
   return {
-    allowEnumValue: value => redactor.value(value, context) === value,
+    allowEnumValue: (value, name) => redactor.value(value, { ...context, name: name ?? context.name }) === value,
     isMapKey: key => redactor.isSecretKey(key),
     name: context.name ?? null,
   }

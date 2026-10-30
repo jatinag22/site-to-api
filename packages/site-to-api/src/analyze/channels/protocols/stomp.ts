@@ -172,6 +172,7 @@ class StompSession implements DecoderSession {
 
 export const stomp: ProtocolDecoder = {
   id: 'stomp',
+  content: 'text',
   hint: (handshake: Handshake) => {
     const subprotocol = handshake.subprotocols.find(value => /^v1\d\.stomp$|^stomp$/i.test(value))
     return subprotocol === undefined
