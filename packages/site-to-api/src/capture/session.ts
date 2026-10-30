@@ -523,7 +523,7 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
       })
     }
     log('Browser open. Use the site the way a person would: log in, search, open the pages you want covered.')
-    log('When you are done, close the browser window (or press Ctrl+C here). The capture is saved on exit.')
+    log('When you are done, close the last tab or window, quit the browser, or press Ctrl+C here. The capture is saved on exit.')
     await done
     // Ending an interactive session is the normal way to finish it, not an interruption.
     return null

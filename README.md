@@ -68,7 +68,7 @@ mkdir my-wrapper && cd my-wrapper
 site-to-api init                       # config file + gitignore for raw captures
 site-to-api capture https://example.com
 #   a Chrome window opens: use the site the way your wrapper will (log in, search, open pages),
-#   then close the window
+#   then finish by closing the last tab or window, quitting the browser, or pressing Ctrl+C here
 site-to-api capture https://example.com --session second-pass
 #   optional but recommended: a second pass over the same pages gives the tool two samples
 site-to-api build                      # writes api-handoff/
@@ -172,7 +172,7 @@ The full format is specified in [docs/output-format.md](docs/output-format.md).
 | Command | What it does |
 |---|---|
 | `init` | Writes `site-to-api.config.ts` and gitignores `.site-to-api/` |
-| `capture [url]` | Opens a browser and records everything until you close it. `--script <file>` drives it from code instead (a failing script or Ctrl+C still saves the session, marked incomplete, and exits 1); `--headless`; `--channel chrome\|msedge\|bundled`; `--user-data-dir` keeps logins |
+| `capture [url]` | Opens a browser and records everything until you finish: close the last tab or window, quit the browser, or press Ctrl+C (all save a complete session). `--script <file>` drives it from code instead (a failing script or Ctrl+C still saves the session, marked incomplete, and exits 1); `--headless`; `--channel chrome\|msedge\|bundled`; `--user-data-dir` keeps logins |
 | `build` | Analyses every capture and writes the handoff folder, including the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client`, `--mcp [read\|write]` |
 | `probe` | Replays captured requests against the live site, rate limited, safe methods (and GraphQL queries) only unless `--unsafe-methods`; works out the needed cookies and headers for up to `--minimize-per-host <n>` operations per host (default 5); rebuilds the handoff folder with the flags of the last `build` (from `build.json`) and prints a summary |
 | `check` | Replays safe requests (same runner and limits as `probe`, never unsafe methods) and compares each live answer with the operation's response schema: status changes, added fields, missing required fields, type changes. Writes `check.json`, prints a summary. Exit code 0 no drift, 1 drift, 2 error or nothing could be checked. `--include/--exclude <host>`, `--operations <ids>`, `--json` |

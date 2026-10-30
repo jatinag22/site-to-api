@@ -35,10 +35,16 @@ The real-site recheck after 0050 and 0052 found two wrong verdicts on YouTube.
   stop signal came, or (interactive mode) the person closed the last page and the context was
   still open 50 ms later. A browser that closed its context before any of those exited on its
   own (a crash, an out-of-memory kill): its HAR is still read in full, but the session is
-  incomplete with `the browser exited during the capture`. Playwright closes every page before
-  the context also when the browser crashes, so a last page closing with the context closing
-  right after is a crash, and in script mode a last page closing is never the end. Quitting the
-  whole browser by hand (Cmd+Q) in interactive mode looks the same as a crash.
+  incomplete (script mode) with `the browser exited during the capture`. Playwright closes every
+  page before the context also when the browser crashes, so a last page closing with the context
+  closing right after is a crash or a quit, and in script mode a last page closing is never the
+  end.
+- In interactive mode those same signs are also how quitting the browser (Cmd+Q) looks, a normal
+  way to finish: the session is complete with the note "The browser closed all at once (quit or
+  crash); everything up to then was recorded", unless the HAR is missing or invalid. Only in
+  script mode, where the script had not finished, is a browser closing first incomplete. An
+  interactive capture is finished by closing the last tab or window, quitting the browser, or
+  pressing Ctrl+C.
 - Error answers (that keep a difference drift) are objects holding only `error`, `errors`,
   `message` or `reason`, or saying they failed: `ok: false`, `success: false`,
   `status: "fail" | "error"`, a numeric `code` of 400 or more.

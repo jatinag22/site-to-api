@@ -132,6 +132,37 @@ describe('saveSession', () => {
     expect(result.warnings.some(warning => warning.includes('already closed when the capture closed it'))).toBe(false)
   })
 
+  it('keeps an interactive session complete when the browser closed all at once (Cmd+Q), with a note', async () => {
+    const result = await saveSession(input({
+      pages: () => [],
+      close: async () => {
+        throw new Error('Target page, context or browser has been closed')
+      },
+    }, {
+      scripted: false,
+      exitedEarly: () => true,
+    }))
+    expect(result.incomplete).toBeNull()
+    expect(result.entries).toBe(1)
+    expect(result.warnings).toContain('The browser closed all at once (quit or crash); everything up to then was recorded.')
+    expect(result.warnings.some(warning => warning.startsWith('The browser exited on its own'))).toBe(false)
+  })
+
+  it('keeps an interactive session that closed all at once incomplete when its HAR is missing', async () => {
+    const result = await saveSession(input({
+      pages: () => [],
+      close: async () => {
+        throw new Error('Target page, context or browser has been closed')
+      },
+    }, {
+      scripted: false,
+      exitedEarly: () => true,
+      harPath: path.join(dir, 'quit-without-har.har'),
+    }))
+    expect(result.incomplete).toMatchObject({ reason: 'error' })
+    expect(result.har).toBeNull()
+  })
+
   it('marks a gone browser incomplete when it left no readable HAR', async () => {
     const result = await saveSession(input({
       pages: () => [],

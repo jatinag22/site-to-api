@@ -186,7 +186,10 @@ export interface SaveInput {
   kill: () => Promise<void>
   /** Puts back request bodies the HAR could not hold (`RequestBodyRecorder.patch`). */
   restoreBodies?: (entries: unknown[]) => number
-  /** True when the browser exited on its own before the session was ended ({@link SessionEnd}). */
+  /**
+   * True when the browser closed before the session was ended ({@link SessionEnd}): incomplete in
+   * script mode; in interactive mode the person quitting the browser, so only a note.
+   */
   exitedEarly?: () => boolean
 }
 
@@ -310,6 +313,35 @@ async function closeBrowser(input: SaveInput, warnings: string[]): Promise<Close
   }
 }
 
+interface HarReadInput {
+  browser: ClosedBrowser
+  exited: Incomplete | null
+  allAtOnce: boolean
+  scripted: boolean
+  incomplete: Incomplete | null
+  /** What else made the session incomplete: pages that did not settle, an interrupted script. */
+  rest: Incomplete | null
+}
+
+/**
+ * The session's final state once its HAR was read: a browser that was gone before capture closed
+ * it lost nothing, so only the close's own error is dropped (a timeout or interruption still
+ * counts); and the note that says how the browser ended, when it ended on its own.
+ */
+function afterReadableHar(input: HarReadInput, warnings: string[]): Incomplete | null {
+  let incomplete = input.incomplete
+  if (input.browser.alreadyGone && input.exited === null && incomplete === input.browser.incomplete) {
+    incomplete = input.rest
+    if (!input.allAtOnce)
+      warnings.push('The browser had already closed when the capture closed it; the HAR was read in full.')
+  }
+  if (input.exited !== null)
+    warnings.push('The browser exited on its own during the capture (a crash or the system ended it); what it recorded until then was read, but the session is incomplete.')
+  else if (input.allAtOnce && !input.scripted)
+    warnings.push('The browser closed all at once (quit or crash); everything up to then was recorded.')
+  return incomplete
+}
+
 /**
  * Waits (bounded) for page work and scripts being saved, closes the browser so Playwright writes
  * the HAR, and checks and compacts it (`finishHar`). Never throws: whatever happens, the caller writes meta.json.
@@ -322,9 +354,11 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
   const interrupted: Incomplete | null = input.scripted && input.stopper.signal.aborted
     ? { reason: 'interrupted', error: null }
     : null
-  // A browser that exited on its own lost what the person would have done next, whatever it
-  // wrote: the session is incomplete even when its HAR is read in full below.
-  const exited: Incomplete | null = input.exitedEarly?.() === true
+  // A script that had not finished lost the rest of its run when the browser exited: incomplete
+  // even when the HAR is read in full below. In interactive mode the same signs are how quitting
+  // the browser looks (Cmd+Q), the person's way to finish: complete, with a note.
+  const allAtOnce = input.exitedEarly?.() === true
+  const exited: Incomplete | null = allAtOnce && input.scripted
     ? { reason: 'error', error: 'the browser exited during the capture' }
     : null
   let incomplete = exited ?? browser.incomplete ?? settled ?? interrupted
@@ -348,14 +382,14 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
       closed: browser.closed,
     }
   }
-  // The browser was gone before capture closed it, and the HAR it left is there and valid: nothing
-  // is missing. Only the close's own error is dropped; a timeout or interruption still counts.
-  if (browser.alreadyGone && exited === null && incomplete === browser.incomplete) {
-    incomplete = settled ?? interrupted
-    warnings.push('The browser had already closed when the capture closed it; the HAR was read in full.')
-  }
-  if (exited !== null)
-    warnings.push('The browser exited on its own during the capture (a crash or the system ended it); what it recorded until then was read, but the session is incomplete.')
+  incomplete = afterReadableHar({
+    browser,
+    exited,
+    allAtOnce,
+    scripted: input.scripted,
+    incomplete,
+    rest: settled ?? interrupted,
+  }, warnings)
   warnings.push(...har.warnings)
   if (har.entries === 0)
     warnings.push('The HAR has no requests. Did the page load?')
