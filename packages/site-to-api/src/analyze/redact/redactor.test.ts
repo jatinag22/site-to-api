@@ -998,6 +998,64 @@ describe('createRedactor: learntSecrets (decision 0047)', () => {
   })
 })
 
+describe('createRedactor: short secrets and public labels', () => {
+  it('never learns a plain word or a host label sent under a key name, and keeps it in place', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://www.pagebook.so/api/v3/getSpaces',
+        method: 'POST',
+        requestBody: jsonBody({ api_key: 'pagebook', apiKey: 'web-app' }),
+      }),
+    ])
+    expect(r.value('https://www.pagebook.so/api', { in: 'text' })).toBe('https://www.pagebook.so/api')
+    expect(r.value('x-pagebook-client-version', { in: 'text' })).toBe('x-pagebook-client-version')
+    expect(r.value('Open pagebook to continue', { in: 'text' })).toBe('Open pagebook to continue')
+    expect(r.value('pagebook', { in: 'body', name: 'api_key' })).toBe('pagebook')
+    expect(r.learntSecrets()).toEqual([])
+  })
+
+  it('still treats a real key under a key name as a secret unless constant', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://www.pagebook.so/api/x',
+        method: 'POST',
+        requestBody: jsonBody({ api_key: 'pk_9f3a7c21e8b4' }),
+      }),
+    ])
+    expect(r.value('pk_9f3a7c21e8b4', { in: 'body', name: 'api_key' })).toBe('<redacted: 15 chars>')
+    expect(r.value('use pk_9f3a7c21e8b4 here', { in: 'text' })).toBe('use <redacted: 15 chars> here')
+  })
+
+  it('replaces short learnt secrets only as whole tokens, never inside names or hosts', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { sid: 'k7q2z9' },
+      }),
+    ])
+    expect(r.value('sid k7q2z9 and "k7q2z9". end k7q2z9.', { in: 'text' })).toBe('sid <redacted: 6 chars> and "<redacted: 6 chars>". end <redacted: 6 chars>.')
+    for (const text of [
+      'xk7q2z9',
+      'k7q2z9-client',
+      'k7q2z9.shop.test',
+      'a.k7q2z9',
+      'k7q2z9_id',
+    ])
+      expect(r.value(text, { in: 'text' }), text).toBe(text)
+  })
+
+  it('replaces long learnt secrets anywhere, also inside other text', () => {
+    const long = 'c0ffee00deadbeef0123'
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { sid: long },
+      }),
+    ])
+    expect(r.value(`prefix${long}suffix`, { in: 'text' })).toBe('prefix<redacted: 20 hex chars>suffix')
+  })
+})
+
 describe('createRedactor: modes and examples', () => {
   const exchanges = fixtureExchanges()
 

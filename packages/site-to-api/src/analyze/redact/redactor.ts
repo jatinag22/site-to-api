@@ -72,6 +72,27 @@ function isCheckedSecret(value: string): boolean {
 
 /** Secrets shorter than this are only redacted where they sit, not searched for in other text. */
 const MIN_SEARCHED_SECRET_LENGTH = 6
+/**
+ * Learnt secrets shorter than this are replaced elsewhere only as whole tokens, never inside a
+ * name, key or host (`<redacted>-client-version`, `www.<redacted>.so`): short values collide with
+ * ordinary words. Longer ones are random enough to replace wherever they occur, encoded forms
+ * included.
+ */
+const MIN_ANYWHERE_SECRET_LENGTH = 16
+/** Letters, optionally joined by `-`, `_` or `.`: a label (`notion`, `web-app`), never a key. */
+const PLAIN_WORD = /^[a-z]+(?:[-_.][a-z]+)*$/i
+const MAX_PLAIN_WORD_LENGTH = 32
+
+/**
+ * True when a value under a publishable-key name (`api_key`, `clientId`) is a public label rather
+ * than a key: a plain word, or a label of the host it was sent to (`notion` to `www.notion.so`).
+ * Real keys mix letters and digits; Notion sends `api_key: "notion"`.
+ */
+function isPublicLabel(value: string, host: string | null): boolean {
+  if (value.length <= MAX_PLAIN_WORD_LENGTH && PLAIN_WORD.test(value))
+    return true
+  return host !== null && host.toLowerCase().split('.').includes(value.toLowerCase())
+}
 const MAX_DEPTH = 32
 /**
  * A known secret that is a number shorter than this is not matched in numbers: a user id of
@@ -346,14 +367,18 @@ function learnKey(key: string, learnt: Learnt): void {
 }
 
 /** Records which secret set a non-empty value belongs to, if any. */
-function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean): void {
+function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean, host: string): void {
   if (item.value.length >= MIN_SEARCHED_SECRET_LENGTH && maskByName(item.value, item.name, item.person === true, item.in) !== null)
     learnt.personal.add(item.value)
   if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true) {
     forms.forEach(form => learnt.always.add(form))
   }
   else if (isSecretName(item.name, isQueryLike(item.in)) && !isPublicValue(item.name, item.value)) {
-    forms.forEach(form => (isPublishableKeyName(item.name, isQueryLike(item.in))
+    const publishable = isPublishableKeyName(item.name, isQueryLike(item.in))
+    // A label under a key name is public and too common to hunt for in other text.
+    if (publishable && isPublicLabel(item.value, host))
+      return
+    forms.forEach(form => (publishable
       ? learnt.unlessConstant
       : learnt.always).add(form))
   }
@@ -383,7 +408,7 @@ function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: Red
       if (item.key === true)
         learnKey(item.value, learnt)
       else
-        learnValue(item, forms, learnt, isAlwaysSecret)
+        learnValue(item, forms, learnt, isAlwaysSecret, exchange.request.host)
     }
   }
   return learnt
@@ -418,7 +443,7 @@ export function createRedactor(input: RedactorInput): Redactor {
   // Only a publishable key (embedded in the page for everyone) survives by being constant; a
   // password typed the same way in two captures is still the person's password.
   const keptAsPublicKey = (value: string, context: RedactContext): boolean =>
-    isPublishableKeyName(context.name, isQueryLike(context.in)) && isConstant(value)
+    isPublishableKeyName(context.name, isQueryLike(context.in)) && (isConstant(value) || isPublicLabel(value, null))
 
   // Short values ("1", "en") are too common to hunt for elsewhere; they are still redacted where
   // they sit because their context (cookie, secret name) says so.
@@ -434,14 +459,22 @@ export function createRedactor(input: RedactorInput): Redactor {
       percentDecoded(value),
     ])
     .filter(value => value.length >= MIN_SEARCHED_SECRET_LENGTH))
-  const secretPattern = secrets.size === 0
-    ? null
-    : new RegExp([...secrets].sort((a, b) => b.length - a.length || a.localeCompare(b)).map(escapeRegExp).join('|'), 'g')
+  const alternation = (values: readonly string[]): string => [...values].sort((a, b) => b.length - a.length || a.localeCompare(b)).map(escapeRegExp).join('|')
+  const longSecrets = [...secrets].filter(value => value.length >= MIN_ANYWHERE_SECRET_LENGTH)
+  const shortSecrets = [...secrets].filter(value => value.length < MIN_ANYWHERE_SECRET_LENGTH)
+  const secretPatterns = [
+    longSecrets.length === 0
+      ? null
+      : new RegExp(alternation(longSecrets), 'g'),
+    // Whole tokens only: not after a letter, digit, `_`, `-` or `.`, and not before one (a `.`
+    // ending a sentence is fine, a `.` starting a host label is not).
+    shortSecrets.length === 0
+      ? null
+      : new RegExp(`(?<![\\w.-])(?:${alternation(shortSecrets)})(?![\\w-]|\\.\\w)`, 'g'),
+  ].filter((pattern): pattern is RegExp => pattern !== null)
 
   function scanText(text: string): string {
-    let result = secretPattern
-      ? text.replace(secretPattern, placeholder)
-      : text
+    let result = secretPatterns.reduce((current, pattern) => current.replace(pattern, placeholder), text)
     result = result.replace(JWT_IN_TEXT, match => inspectJwt(match)
       ? placeholder(match)
       : match)
