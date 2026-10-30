@@ -23,12 +23,7 @@ const HAS_LETTER = /[a-z]/i
  * tells `/reset/<token>` apart from a slug.
  */
 export function isStrongIdentifier(segment: string, previous?: string | null): boolean {
-  if (isSecretPathSegment(segment, previous))
-    return true
-  // `loadCachedPageChunkV2` is long, mixed-case and has a digit, like a token; it names a method.
-  if (isMethodName(segment))
-    return false
-  if (isRandomPathSegment(segment))
+  if (isSecretPathSegment(segment, previous) || isRandomPathSegment(segment))
     return true
   if (UUID.test(segment))
     return true
@@ -67,17 +62,41 @@ function readsAsWords(segment: string): boolean {
 export function isMethodName(segment: string): boolean {
   if (CAMEL_CASE.test(segment) || PASCAL_WORDS.test(segment) || SNAKE_WORDS.test(segment))
     return readsAsWords(segment)
-  return DOTTED_NAME.test(segment) && /[a-z]{3,}/i.test(segment) && !/^\d/.test(segment)
+  // A JWT is dotted too (`eyJ….eyJ….sig`), but random.
+  return DOTTED_NAME.test(segment) && /[a-z]{3,}/i.test(segment) && !/^\d/.test(segment) && !isRandomPathSegment(segment)
+}
+
+/**
+ * Segments after which an RPC-style API names the method: a version (`v1`, `v3`), `rpc`, `svc`,
+ * `service`, `services`, or a dotted service name (`acme.registry.v1.ResourceService`).
+ */
+export function isRpcPrefix(segment: string | undefined): boolean {
+  if (segment === undefined)
+    return false
+  return /^(?:v\d+(?:\.\d+)*|rpc|svc|services?)$/i.test(segment) || (DOTTED_NAME.test(segment) && isMethodName(segment))
+}
+
+/**
+ * True when the segment at `index` is the method of an RPC-style path, never a value: a dotted
+ * service name (`/acme.registry.v1.ResourceService/GetResources`), or a method name
+ * (`loadCachedPageChunkV2`, `log_event`, `GetResources`) right after a version, `rpc`, `svc` or a
+ * service segment. A `john_smith` after `/users/` is a value like any other.
+ */
+export function isRpcMethodAt(segments: readonly string[], index: number): boolean {
+  const segment = segments[index] ?? ''
+  if (!isMethodName(segment))
+    return false
+  return DOTTED_NAME.test(segment) || isRpcPrefix(segments[index - 1])
 }
 
 /**
  * Values that may be parameters when they vary: integers, UUIDs, hex (≥ 8), base58/base64url
  * tokens (≥ 10, with a digit), UPPER_CASE slugs (`RELIANCE`, `NIFTY_50`) and mixed alphanumeric
- * slugs with digits (`iphone-15`). Plain words (`disclaimer`), method names (`marketStatus`,
- * `getAssetsJsonV2`, see {@link isMethodName}) and versions (`v1`) are not.
+ * slugs with digits (`iphone-15`). Plain words (`disclaimer`) and versions (`v1`) are not; method
+ * names in RPC positions are left out by {@link isRpcMethodAt}.
  */
 export function isIdentifierLike(segment: string): boolean {
-  if (segment === '' || VERSION.test(segment) || isMethodName(segment))
+  if (segment === '' || VERSION.test(segment))
     return false
   if (INTEGER.test(segment) || UUID.test(segment))
     return true

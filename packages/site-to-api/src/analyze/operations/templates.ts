@@ -3,7 +3,7 @@
  */
 import type { PathParam, SourceRoute } from '../../model'
 import type { SiblingFacts } from './siblings'
-import { isIdentifierLike, isMethodName, isSlug, isStrongIdentifier } from './identifiers'
+import { isIdentifierLike, isMethodName, isRpcMethodAt, isRpcPrefix, isSlug, isStrongIdentifier } from './identifiers'
 import { alike, markSiblingPositions } from './siblings'
 
 export type Evidence = PathParam['evidence'][number]
@@ -51,7 +51,7 @@ export function templateMatches(template: ParsedTemplate, segments: string[]): b
  * from `${base}/${token}`) is anchored to nothing, so it only applies where every parameter falls
  * on a segment that could be one: otherwise it would turn `/stream` on any host into `/{token}`.
  */
-function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCandidate: (segment: string) => boolean): ParsedTemplate | null {
+function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCandidate: (segment: string, index: number, segments: readonly string[]) => boolean): ParsedTemplate | null {
   const matching = templates
     .filter(template => templateMatches(template, segments)
       && (template.literals > 0 || segments.every(isCandidate)))
@@ -79,7 +79,9 @@ function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCand
 export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set(), siblings: SiblingFacts | null = null, titled: ReadonlySet<string> = new Set()): Map<string, Marks> {
   // A hyphenated slug (`pine-hill`) only counts when another response links to it: plain-word
   // endpoint names (`/api/all-upcoming-issues`) appear in bundles, never as links in data.
-  const isCandidate = (segment: string): boolean => isIdentifierLike(segment) || linkedSlugs.has(segment)
+  // A method name in an RPC position (`/api/v3/getAssetsJsonV2`) is never a value.
+  const isCandidate = (segment: string, index: number, segments: readonly string[]): boolean =>
+    !isRpcMethodAt(segments, index) && (isIdentifierLike(segment) || linkedSlugs.has(segment))
   const templates = routes.map(parseTemplate)
   const result = new Map<string, Marks>()
   const free: Array<{ path: string, segments: string[], marks: Marks }> = []
@@ -91,9 +93,9 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
     const source = bestSourceMatch(templates, segments, isCandidate)
     if (source) {
       source.segments.forEach((part, index) => {
-        // A method name in a parameter position (`/youtubei/v1/${endpoint}` sent `log_event`) is
-        // an operation of an RPC endpoint, not a value: it stays literal.
-        if ('param' in part && !isMethodName(segments[index] ?? '')) {
+        // A position the code marks as a parameter stays one whatever its value (`john_smith`
+        // in `/users/${username}`); RPC method positions are undone below, from all their values.
+        if ('param' in part) {
           marks.set(index, {
             evidence: ['source-template'],
             sourceName: part.param,
@@ -110,7 +112,7 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
       continue
     }
     segments.forEach((segment, index) => {
-      if (isStrongIdentifier(segment, segments[index - 1])) {
+      if (isStrongIdentifier(segment, segments[index - 1]) && !isRpcMethodAt(segments, index)) {
         marks.set(index, {
           evidence: ['looks-like-id'],
           sourceName: null,
@@ -129,16 +131,20 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
   return result
 }
 
+/** More distinct values than this at one position are data, not an RPC endpoint's methods. */
+const MAX_RPC_METHODS = 12
+
 /** Requests that only read: the methods whose word values can be data rather than operations. */
 const SAFE_READS = new Set(['GET', 'HEAD'])
 
 /**
- * Undoes source-template parameters whose observed values are plain words that name different
- * endpoints (decision 0052): `/svc/${svc}/${slug}` sent `events/preload-head` and
- * `shreddit/data-protection-consent`, two unrelated partials. With two or more distinct word
- * values at a position (none of them id-like), the position stays a parameter only for a safe
- * read whose responses all share one structure, as `/r/${subreddit}` pages do. Writes and RPC
- * calls with word values are different operations.
+ * Undoes source-template parameters in RPC positions (after a version, `rpc`, `svc` or a service
+ * name, see {@link isRpcPosition}) whose values name methods (decision 0052): `/svc/${svc}/${slug}`
+ * sent `events/preload-head` and `shreddit/data-protection-consent`, two unrelated partials, and
+ * `/youtubei/v1/${endpoint}` sent `feedback` and `log_event`. With a few word values there (two
+ * or more, or one method name; none id-like), the position stays a parameter only for a safe
+ * read whose responses all share one structure. Any other position a code template marks stays
+ * a parameter whatever its values: `john_smith` and `JohnSmith` in `/users/${username}`.
  */
 function unmarkWordOperations(sourced: Array<{ path: string, segments: string[], marks: Marks, template: ParsedTemplate }>, siblings: SiblingFacts | null): void {
   const byTemplate = new Map<ParsedTemplate, typeof sourced>()
@@ -152,11 +158,12 @@ function unmarkWordOperations(sourced: Array<{ path: string, segments: string[],
     template.segments.forEach((part, index) => {
       if (!('param' in part))
         return
-      // Every value the template matched there, including method names already left literal.
+      if (!isRpcPosition(template, index))
+        return
       const values = [
         ...new Set(items.map(item => item.segments[index] ?? '')),
       ]
-      if (values.length < 2 || values.some(isIdentifierLike))
+      if (values.length > MAX_RPC_METHODS || values.some(isIdentifierLike) || (values.length < 2 && !values.some(isMethodName)))
         return
       if (siblings !== null && SAFE_READS.has(siblings.method) && oneStructure(items.map(item => item.path), siblings))
         return
@@ -164,6 +171,19 @@ function unmarkWordOperations(sourced: Array<{ path: string, segments: string[],
         item.marks.delete(index)
     })
   }
+}
+
+/**
+ * True when the nearest literal before a template parameter is where RPC-style APIs name the
+ * method: `/youtubei/v1/${endpoint}`, `/svc/${svc}/${slug}`. `/api/users/${username}` is not.
+ */
+function isRpcPosition(template: ParsedTemplate, index: number): boolean {
+  for (let position = index - 1; position >= 0; position--) {
+    const part = template.segments[position]
+    if (part !== undefined && 'literal' in part)
+      return isRpcPrefix(part.literal)
+  }
+  return false
 }
 
 /** True when every path has a readable response and all of them are alike. */
@@ -180,10 +200,10 @@ function oneStructure(paths: readonly string[], siblings: SiblingFacts): boolean
  * candidate positions differ, so every such position with two or more distinct values (or one,
  * when a strong identifier already made it a parameter) becomes a parameter.
  */
-function markVaryingPositions(free: Array<{ segments: string[], marks: Marks }>, isCandidate: (segment: string) => boolean): void {
+function markVaryingPositions(free: Array<{ segments: string[], marks: Marks }>, isCandidate: (segment: string, index: number, segments: readonly string[]) => boolean): void {
   const groups = new Map<string, typeof free>()
   for (const item of free) {
-    const key = `${item.segments.length}|${item.segments.map((segment, index) => item.marks.has(index) || isCandidate(segment)
+    const key = `${item.segments.length}|${item.segments.map((segment, index) => item.marks.has(index) || isCandidate(segment, index, item.segments)
       ? '*'
       : segment).join('/')}`
     groups.set(key, [
@@ -195,7 +215,7 @@ function markVaryingPositions(free: Array<{ segments: string[], marks: Marks }>,
     const length = group[0]!.segments.length
     for (let index = 0; index < length; index++) {
       const alreadyParam = group.some(item => item.marks.has(index))
-      const candidates = group.filter(item => !item.marks.has(index) && isCandidate(item.segments[index]!))
+      const candidates = group.filter(item => !item.marks.has(index) && isCandidate(item.segments[index]!, index, item.segments))
       const distinct = new Set(candidates.map(item => item.segments[index]))
       if (candidates.length === 0 || (distinct.size < 2 && !alreadyParam))
         continue

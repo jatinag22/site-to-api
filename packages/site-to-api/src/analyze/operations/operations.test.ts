@@ -4,7 +4,7 @@ import { fakeHash, graphqlGet, graphqlPost } from '../../../test/graphql'
 import { exchange, jsonBody, textBody } from '../../../test/helpers'
 import { annotateGraphql } from '../graphql'
 import { createRedactor } from '../redact'
-import { isIdentifierLike, isStrongIdentifier } from './identifiers'
+import { isIdentifierLike, isRpcMethodAt, isStrongIdentifier } from './identifiers'
 import { operationIdFor, singular } from './naming'
 import { buildOperations } from './operations'
 
@@ -707,9 +707,35 @@ describe('buildOperations: method names in paths (decision 0052)', () => {
     ]))).toEqual(['GET /r/{subreddit}'])
   })
 
+  it('keeps a code template\'s parameter whatever its values: usernames are data', () => {
+    const profile = (name: string): Exchange => get(`/api/users/${name}/profile`, {
+      responseBody: jsonBody({ name, bio: 'x' }),
+    })
+    expect(paths(build([
+      profile('john_smith'),
+      profile('jane_doe'),
+      profile('johnSmith'),
+      profile('JohnSmith'),
+    ], [
+      route('/api/users/{username}/profile'),
+    ]))).toEqual(['GET /api/users/{username}/profile'])
+  })
+
+  it('keeps camelCase values outside RPC positions templated when they vary like ids', () => {
+    expect(paths(build([
+      get('/api/items/aB3dE5gH7jK9mN1pQ2xY', {
+        responseBody: jsonBody({ id: 1 }),
+      }),
+      get('/api/items/zX9yW8vU7tS6rQ5pO4nM', {
+        responseBody: jsonBody({ id: 2 }),
+      }),
+    ]))).toEqual(['GET /api/items/{itemId}'])
+  })
+
   it('still templates ids and random tokens', () => {
     expect(isIdentifierLike('aB3dE5gH7jK9mN1pQ2xY')).toBe(true)
-    expect(isIdentifierLike('getAssetsJsonV2')).toBe(false)
+    expect(isRpcMethodAt(['api', 'v3', 'getAssetsJsonV2'], 2)).toBe(true)
+    expect(isRpcMethodAt(['api', 'users', 'johnSmith'], 2)).toBe(false)
     expect(isIdentifierLike('iphone-15')).toBe(true)
   })
 })
