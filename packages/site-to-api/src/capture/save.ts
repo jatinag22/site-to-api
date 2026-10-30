@@ -102,7 +102,7 @@ export async function writeJsonAtomic(file: string, value: unknown): Promise<voi
 }
 
 /**
- * Who ended the session (decision 0054): the person or the script (the script returned, a stop
+ * Who ended the session (decision 0055): the person or the script (the script returned, a stop
  * signal came, or the last page was closed), or the browser itself, by closing its context
  * before any of those (a crash, an out-of-memory kill). A browser that exits on its own leaves
  * the session incomplete, even when the HAR it wrote is read in full.

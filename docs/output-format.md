@@ -469,7 +469,7 @@ and names only, never values, so it is safe to commit. `build` does not read or 
   own hosts are checked unless `--include` names others.
 - `unchecked` also covers a difference on an operation whose request carries a computed or
   time-based input (a TOTP): the replayed value is stale, so the difference is not drift.
-- `varies` (decision 0054): the answer differs from the schema, but the captured answers already
+- `varies` (decision 0055): the answer differs from the schema, but the captured answers already
   differ from each other at every drifting path (present in some and not others, or of
   different types) and the live answer looks like one of them there, so the answer changes by
   request by nature. A shape no captured answer had, or captured answers that include an error

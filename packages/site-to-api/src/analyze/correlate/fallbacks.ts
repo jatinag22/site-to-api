@@ -2,8 +2,9 @@
  * Origins for values that no captured response produced: computed by the page, typed by the
  * person, constant, or set by a script in the browser.
  */
-import type { CaptureEvent } from '../../model'
+import type { CaptureEvent, Exchange } from '../../model'
 import type { MatchTransform, Variant } from './variants'
+import { requestValues } from './values'
 import { TRANSFORM_RANK } from './variants'
 
 /**
@@ -102,6 +103,30 @@ const SEARCH_PARAMETERS = new Set([
 const SEARCH_WORDS = /search|query|find/i
 
 type ActionEvent = Extract<CaptureEvent, { t: 'action' }>
+
+/**
+ * Text a person searched for in the capture: values of search parameters (`q`, `query`,
+ * `search_query`…) in queries, forms and JSON bodies, three characters or more, with `+` and
+ * percent-encoded forms. Extraction patterns must not anchor on them (decision 0054).
+ */
+export function searchedTexts(exchanges: readonly Exchange[]): string[] {
+  const texts = new Set<string>()
+  for (const exchange of exchanges) {
+    for (const sent of requestValues(exchange)) {
+      if (sent.name === null || sent.location.in === 'path' || !isSearchName(sent.name) || sent.value.trim().length < 3)
+        continue
+      texts.add(sent.value)
+      texts.add(sent.value.replace(/ /g, '+'))
+      texts.add(encodeURIComponent(sent.value))
+    }
+  }
+  return [...texts].sort()
+}
+
+function isSearchName(name: string): boolean {
+  const wanted = normalizeField(name)
+  return SEARCH_PARAMETERS.has(wanted) || SEARCH_WORDS.test(name)
+}
 
 /** The changed field is the request field: same name, or a search box for a search parameter. */
 function isFieldFor(event: ActionEvent, wanted: string, searchParameter: boolean): boolean {

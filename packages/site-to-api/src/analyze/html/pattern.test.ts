@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createHtmlLocator } from './locate'
 import { anchoredPattern, capture } from './pattern'
 
 describe('anchoredPattern', () => {
@@ -14,5 +15,19 @@ describe('anchoredPattern', () => {
     expect(anchoredPattern(input, input.indexOf('node-77'), 'node-77')).toBeNull()
     const id = 'ref=order-1234567;next=abc-value'
     expect(anchoredPattern(id, id.indexOf('abc-value'), 'abc-value')).toBe('next=([\\w-]+)')
+  })
+})
+
+describe('createHtmlLocator: patterns never embed searched text (decision 0054)', () => {
+  it('rejects a pattern anchored on what the person searched for, or on sizes', () => {
+    const text = 'window.ac.h(["lofi",0,[512,433]],["lofi hip hop",0])'
+    expect(createHtmlLocator(() => {}, {
+      avoid: anchor => anchor.includes('lofi'),
+    })(text, 'lofi hip hop')).toBeNull()
+    expect(anchoredPattern(text, text.indexOf('lofi hip hop'), 'lofi hip hop')).toBeNull()
+    const plain = 'cfg = {"token":"t0k3n-value"}'
+    expect(createHtmlLocator(() => {}, {
+      avoid: anchor => anchor.includes('lofi'),
+    })(plain, 't0k3n-value')).not.toBeNull()
   })
 })

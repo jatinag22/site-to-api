@@ -60,7 +60,7 @@ A matrix run on fourteen real sites found three gaps.
   complete, with a warning that the browser had to be ended. A page that never closed, or a close
   that rejected, keeps the session incomplete, except a rejection that only says the browser
   had already closed ("Target page, context or browser has been closed"): then the HAR decides,
-  and a HAR that is there and valid keeps the session complete, with a note (decision 0054).
+  and a HAR that is there and valid keeps the session complete, with a note (decision 0055).
 
 - **The person's IP address.** Decoded innertube bodies carry the visitor's public IP
   (`context.client.remoteHost`), and YouTube's `sw.js_data` array holds it without a field

@@ -118,9 +118,12 @@ function locateInText(document: string, value: string): HtmlLocation | null {
  * `content` and `data-*` first), an element whose text is the value, an inline `<script>` that
  * contains it (selector of the script plus a pattern), text that contains it, and finally an
  * attribute that contains it. Each answer is read back from the document before it is returned.
- * Text documents get `selector: ''` (the whole document) and a pattern.
+ * Text documents get `selector: ''` (the whole document) and a pattern. `avoid` rejects a
+ * pattern whose text holds data from the capture (typed or sent values, see build), so no
+ * extraction rule embeds one.
  */
-export function createHtmlLocator(onError: (error: unknown) => void = () => {}): HtmlLocator {
+export function createHtmlLocator(onError: (error: unknown) => void = () => {}, options: { avoid?: (text: string) => boolean } = {}): HtmlLocator {
+  const avoid = options.avoid ?? (() => false)
   // Tracing asks about the same value in the same page again and again (an id sent by every
   // request): the answer is remembered per page, so each page is parsed once per distinct value
   // at most, and not at all for values it does not contain.
@@ -156,6 +159,10 @@ export function createHtmlLocator(onError: (error: unknown) => void = () => {}):
       onError(error)
       found = null
     }
+    // A pattern anchored on what the person typed or a request sent (`"lofi",0,…` before a
+    // suggestion, `Brandenburger+Tor&viewbox=` before a result) only works for that one search.
+    if (found !== null && found.pattern !== null && avoid(found.pattern.replace(/\\(.)/g, '$1')))
+      found = null
     const byValue = answers.get(document) ?? new Map<string, HtmlLocation | null>()
     byValue.set(value, found)
     answers.set(document, byValue)

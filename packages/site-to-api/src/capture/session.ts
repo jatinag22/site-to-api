@@ -536,7 +536,7 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
 /** Runs the capture script; a failure or interruption is returned, so the session is still saved. */
 /**
  * Records whether the person or the script ended the session before the browser closed
- * (decision 0054). Playwright closes every page before the context also on a crash, so a last
+ * (decision 0055). Playwright closes every page before the context also on a crash, so a last
  * page closing ends the session only in interactive mode, where the person closed it.
  */
 function trackSessionEnd(context: BrowserContext, stop: AbortSignal, interactive: boolean): SessionEnd {

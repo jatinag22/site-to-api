@@ -1,4 +1,4 @@
-# 0054 Answers that vary by request; a browser that was already gone
+# 0055 Answers that vary by request; a browser that was already gone
 
 Status: Accepted (2026-10-30). Refines 0044, 0050.
 

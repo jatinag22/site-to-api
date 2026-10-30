@@ -29,7 +29,7 @@ const OperationCheckSchema = z.object({
    * `rejection`). `unreachable`: no answer. `unchecked`: answered, but the capture documents no
    * response for that status, so there is nothing to compare with. The last three say nothing
    * about drift. `varies`: the answer differs, but the captured answers already differ from each
-   * other in the same fields, so it changes by request by nature (decision 0054); not drift.
+   * other in the same fields, so it changes by request by nature (decision 0055); not drift.
    */
   verdict: z.enum([
     'ok',

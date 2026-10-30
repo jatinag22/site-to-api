@@ -12,7 +12,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'pathe'
 import { buildChannels, channelExchanges, collectConnections, isEnginePolling, protocolSecrets } from '../analyze/channels'
 import { classifyExchanges, createChannelScope } from '../analyze/classify'
-import { traceValues, untracedCodeLiterals } from '../analyze/correlate'
+import { searchedTexts, traceValues, untracedCodeLiterals } from '../analyze/correlate'
 import { buildFlows } from '../analyze/flows'
 import { annotateGraphql, applyGraphqlTypes, graphqlTypeTargets } from '../analyze/graphql'
 import { createHtmlLocator, inferExtraction } from '../analyze/html'
@@ -260,7 +260,11 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
   const sourceRoutes = screened.routes
   const staticStrings = await collectStaticStrings(loaded.sessions)
   const locatorErrors: string[] = []
-  const htmlLocator = createHtmlLocator(error => locatorErrors.push(errorMessage(error)))
+  // What the person searched for never anchors an extraction pattern (decision 0054).
+  const searched = searchedTexts(loaded.exchanges)
+  const htmlLocator = createHtmlLocator(error => locatorErrors.push(errorMessage(error)), {
+    avoid: text => searched.some(value => text.includes(value)),
+  })
 
   // WebSocket frames stand in as exchanges, so the redactor learns secrets sent over a socket and
   // tracing finds where the client's frame values came from (decision 0023).
