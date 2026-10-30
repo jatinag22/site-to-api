@@ -1219,6 +1219,19 @@ describe('createRedactor: escaped and protocol-relative URLs', () => {
   })
 })
 
+describe('createRedactor: ad-click signatures (decision 0054)', () => {
+  it('redacts sigh, sig and signature query values, also inside URLs in other values', () => {
+    const r = redactor([
+      exchange({ url: 'https://ads.test/pagead/interaction/?ai=Bx7kQ2m9&sigh=Ab3dE5gH7jK&label=view' }),
+    ])
+    for (const name of ['sigh', 'sig', 'signature'])
+      expect(r.value('Ab3dE5gH7jK', { in: 'query', name }), name).toBe('<redacted: 11 chars>')
+    expect(r.value('https://ads.test/pagead/interaction/?ai=x&sigh=Zz9yX8wV7uT&label=view', { in: 'body', name: 'clickUrl' }))
+      .toBe('https://ads.test/pagead/interaction/?ai=x&sigh=<redacted: 11 chars>&label=view')
+    expect(r.value('link Ab3dE5gH7jK', { in: 'text' })).toBe('link <redacted: 11 chars>')
+  })
+})
+
 describe('createRedactor: modes and examples', () => {
   const exchanges = fixtureExchanges()
 

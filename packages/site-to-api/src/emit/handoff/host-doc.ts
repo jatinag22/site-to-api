@@ -23,7 +23,11 @@ const ROLE_TEXT: Record<HostRole, string> = {
   'first-party': 'One of the site\'s own hosts.',
   'pages': 'Serves pages only.',
   'third-party': 'A third-party host the site\'s pages called.',
+  'telemetry': 'A consent, analytics or telemetry host: it takes reports from the pages, which a wrapper rarely needs, so this file only summarises it.',
 }
+
+/** Operations listed in a telemetry host's file; the rest are counted. */
+const MAX_TELEMETRY_OPERATIONS = 10
 
 function requestText(operation: Operation): string {
   return operation.sourceOnly && operation.methodUnknown === true
@@ -45,15 +49,43 @@ function kindText(operation: Operation): string {
     : operation.kind
 }
 
-function operationsSection(operations: readonly Operation[]): string[] {
+function operationsSection(operations: readonly Operation[], limit = Number.POSITIVE_INFINITY): string[] {
   if (operations.length === 0)
     return []
+  const shown = operations.slice(0, limit)
   return [
     '## Operations',
     '',
     `This host has ${counted(operations.length, 'operation')}; \`API_MAP.md\` has their inputs, origins, needs and client names.`,
     '',
-    ...operations.map(operation => `- ${code(operation.operationId)}: ${code(requestText(operation))} (${kindText(operation)})`),
+    ...shown.map(operation => `- ${code(operation.operationId)}: ${code(requestText(operation))} (${kindText(operation)})`),
+    ...(operations.length > shown.length
+      ? [`- and ${operations.length - shown.length} more`]
+      : []),
+    '',
+  ]
+}
+
+/** Gaps a telemetry host's file still lists: its session (probe) and inputs with no known origin. */
+const LISTED_TELEMETRY_GAPS: ReadonlySet<GapGroup['kind']> = new Set(['probe-failure', 'not-minimized', 'unknown-origin'])
+
+/**
+ * A telemetry host's gaps: session and required-input gaps listed as for any host, the rest
+ * counted, since they rarely matter to a wrapper.
+ */
+function telemetryGapsSection(groups: readonly GapGroup[]): string[] {
+  const listed = groups.filter(group => LISTED_TELEMETRY_GAPS.has(group.kind))
+  const hidden = groups.filter(group => !LISTED_TELEMETRY_GAPS.has(group.kind)).reduce((sum, group) => sum + group.count, 0)
+  const section = gapsSection(listed)
+  if (hidden === 0)
+    return section
+  const note = `- ${counted(hidden, 'other gap')} not listed: this host only takes reports. \`API_MAP.md\` still has every operation.`
+  const lines = section.slice(0, -1)
+  return [
+    ...(lines.at(-1) === 'None found for this host.'
+      ? lines.slice(0, -1)
+      : lines),
+    note,
     '',
   ]
 }
@@ -120,13 +152,17 @@ export function renderHostDoc(ranked: RankedHost, analysis: Analysis, context: A
     '',
     ...needs,
     '',
-    ...operationsSection(analysis.operations.filter(operation => operation.host === host)),
+    ...operationsSection(analysis.operations.filter(operation => operation.host === host), role === 'telemetry'
+      ? MAX_TELEMETRY_OPERATIONS
+      : Number.POSITIVE_INFINITY),
     ...flowsSection(host, analysis, resolver),
     ...graphqlSection(analysis, host),
     ...dispatchSection(analysis, host),
     ...channelsSection((analysis.channels ?? []).filter(channel => channel.host === host), stems),
     ...computedSection(host, analysis, resolver),
-    ...gapsSection(groups),
+    ...(role === 'telemetry'
+      ? telemetryGapsSection(groups)
+      : gapsSection(groups)),
   ]
   return `${lines.join('\n').trimEnd()}\n`
 }
