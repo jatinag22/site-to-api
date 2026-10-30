@@ -57,3 +57,4 @@ or `Proposed`.
 | [0047](0047-embedded-urls-leak-check-and-sandbox.md) | URLs inside values are redacted like request URLs; `build` checks its output for learnt secrets; captures use Chromium's sandbox (refines 0004, 0019, 0020) | Accepted |
 | [0048](0048-smartfoxserver-2x.md) | SmartFoxServer 2X binary packets: a strict decoder, names from the published action table and extension commands, protocol-named secrets (refines 0038) | Accepted |
 | [0049](0049-labels-short-secrets-challenges-device-signals.md) | Public labels and short secrets in redaction; shared challenge scripts; stray challenge answers; device and ad signals (refines 0004, 0015, 0033, 0047, 0048) | Accepted |
+| [0050](0050-trpc-connect-firebase-primus.md) | tRPC and Connect RPC operations (batches split, JSON inputs traced, read-only Connect methods probed); Firebase Realtime Database and Primus channels (refines 0027, 0038, 0039) | Accepted |
