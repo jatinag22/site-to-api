@@ -17,8 +17,12 @@ The real-site recheck after 0050 and 0052 found two wrong verdicts on YouTube.
 - `check` reads a live body the way `load` does: an XSSI prefix (`)]}'`, `while(1);`) is
   dropped before parsing.
 - A difference is `varies`, not `drift`, when the status is the captured one, at least two
-  captured answers with that status exist, and they already differ from each other at every
-  drifting path (presence, or the set of JSON types there). The paths are listed with a note;
+  captured answers with that status exist, they already differ from each other at every
+  drifting path (presence, or the set of JSON types there), and at each such path the live answer
+  looks like one of them (the same types, or the field absent). A live shape the capture never
+  had is drift, and so is any difference when one of the captured answers is an error answer
+  (an object with only `error`, `errors` or `message`): an error captured with the data's status
+  would otherwise make any error look normal. The paths are listed with a note;
   `varies` does not change the exit code. A path that cannot be followed (a map key written as
   its shape) never counts as varying.
 - A close that rejects only because the browser was already gone (`has been closed`,
@@ -32,5 +36,4 @@ The real-site recheck after 0050 and 0052 found two wrong verdicts on YouTube.
 ## Consequences
 - `check.json` has one more verdict value, `varies`; readers that list the verdicts need it.
   `CHECK_FORMAT_VERSION` stays 1: no field changed, and nothing in the tool reads the file back.
-- A field that varies in the capture and also really changed (a type it never had) is still
-  reported as `varies` when the capture shows several types there; the listed paths say where.
+- A field that varies in the capture and then takes a type it never had is drift.

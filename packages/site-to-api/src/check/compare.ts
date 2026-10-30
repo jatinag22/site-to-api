@@ -132,7 +132,7 @@ export function compareLive(operation: Operation, live: Answered, redactPath?: (
   }
   const drift = changed || added.length > 0 || removed.length > 0 || typeChanged.length > 0
   // The capture's own answers already differ where the live one does: it changes by request.
-  if (drift && !changed && variesInCapture(capturedTexts(operation, live.status), body)) {
+  if (drift && !changed && variesInCapture(capturedTexts(operation, live.status), live.text, body)) {
     return {
       ...base(operation),
       verdict: 'varies',

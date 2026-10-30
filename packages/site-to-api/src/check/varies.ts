@@ -103,19 +103,37 @@ function driftPaths(diff: SchemaDiff): string[] {
   ]
 }
 
+/** Keys an error answer has instead of data: `{"error": "rate"}`, `{"errors": [...]}`, `{"message": "..."}`. */
+const ERROR_KEYS = new Set(['error', 'errors', 'message'])
+
+/** True for a JSON object that holds only error keys: an error answered with the data's status. */
+function isErrorShaped(read: Read): boolean {
+  if (read === NOT_JSON || read.json === null || typeof read.json !== 'object' || Array.isArray(read.json))
+    return false
+  const keys = Object.keys(read.json)
+  return keys.length > 0 && keys.every(key => ERROR_KEYS.has(key))
+}
+
 /**
- * True when at least two captured bodies exist and they already disagree at every path the
- * live answer drifted on, so the drift is how this answer varies between requests.
+ * True when the drift is how this answer varies between requests: at least two captured bodies
+ * exist, none of them is an error answer (an error captured with the data's status would make
+ * any error look normal), and at every drifting path the captured bodies already differ from
+ * each other and the live body looks like one of them there (the same types, or the field
+ * absent). A live value of a shape the capture never had is drift.
  */
-export function variesInCapture(captured: readonly string[], diff: SchemaDiff): boolean {
+export function variesInCapture(captured: readonly string[], live: string, diff: SchemaDiff): boolean {
   const paths = driftPaths(diff)
   if (captured.length < 2 || paths.length === 0)
     return false
   const reads = captured.map(readJsonBody)
+  if (reads.some(isErrorShaped))
+    return false
+  const now = readJsonBody(live)
   return paths.every((path) => {
     const steps = stepsOf(path)
     if (steps === null)
       return false
-    return new Set(reads.map(read => signature(read, steps))).size > 1
+    const seen = new Set(reads.map(read => signature(read, steps)))
+    return seen.size > 1 && seen.has(signature(now, steps))
   })
 }

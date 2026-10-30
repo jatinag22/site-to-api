@@ -147,7 +147,7 @@ describe('compareLive: answers that change by request', () => {
     const thing = operation([
       jsonResponse(200, objectSchema),
     ])
-    // One captured answer has `token`, another has it as null, a third lacks it.
+    // One captured answer has `token` as a string, another has it as null.
     thing.exchanges = [
       exchange({
         url: 'https://shop.test/thing',
@@ -158,7 +158,7 @@ describe('compareLive: answers that change by request', () => {
         responseBody: jsonBody({ token: null, count: 2 }),
       }),
     ]
-    const live = compareLive(thing, answer({ text: '{"token":5,"count":3}' }))
+    const live = compareLive(thing, answer({ text: '{"token":null,"count":3}' }))
     expect(live).toMatchObject({
       verdict: 'varies',
       typeChanged: [
@@ -166,6 +166,8 @@ describe('compareLive: answers that change by request', () => {
       ],
     })
     expect(live.note).toMatch(/^Varies by request/)
+    // A type the captured answers never had there is drift, even though they differ.
+    expect(compareLive(thing, answer({ text: '{"token":5,"count":3}' })).verdict).toBe('drift')
   })
 
   it('is still drift when the captured answers agree where the live one differs, or when the status changed', () => {

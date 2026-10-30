@@ -471,7 +471,9 @@ and names only, never values, so it is safe to commit. `build` does not read or 
   time-based input (a TOTP): the replayed value is stale, so the difference is not drift.
 - `varies` (decision 0054): the answer differs from the schema, but the captured answers already
   differ from each other at every drifting path (present in some and not others, or of
-  different types), so the answer changes by request by nature. The paths are listed; it is not
+  different types) and the live answer looks like one of them there, so the answer changes by
+  request by nature. A shape no captured answer had, or captured answers that include an error
+  answer (only `error`, `errors` or `message`), stay drift. The paths are listed; it is not
   drift and does not change the exit code. Bodies behind an XSSI prefix (`)]}'`) are read as
   JSON, as `load` reads them.
 - Paths: `$` is the body, `.name` a field, `[]` any array element, `.*` any value of a map.
