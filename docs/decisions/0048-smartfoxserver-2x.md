@@ -49,10 +49,29 @@ credentials under names the redactor cannot recognise.
   their role from their words (0030). The channel's version is the client API the handshake
   names (`client API 1.8.4`). The wire form is `SFS2X {c:1,a:13,p:{c:"<name>",p:<payload>}}`.
 - **Protocol-named secrets.** A decoded message can carry `secrets`: values that are credentials
-  by their place in the protocol (Handshake `tk` and `rt`, Login `un` and `pw`, the room password
-  `p` of JoinRoom). The build passes them to the redactor (`knownSecrets`), which redacts them
-  wherever they appear, whatever their length. Values under credential names inside the login's
-  custom params (`token`, `sessionToken`) are redacted by the usual name rules.
+  by their place in the protocol (Handshake `tk` and `rt`, Login `pw`, the room password `p` of
+  JoinRoom). The build passes them to the redactor (`knownSecrets`), which redacts them wherever
+  they appear as text, whatever their length. A known secret that is a number is matched in
+  numbers only with 6 digits or more: a user id of 1000 must not blank out every 1000 in the
+  output. Restricting numbers to the fields they came from would need the redactor to know
+  where each value sat; the length rule is simpler and the positional masking below already
+  covers the ids where they sit.
+- **The login's custom params.** Login `p` is the site's own credential bag (`token`, `k`,
+  `ticket`), so every string in it is a credential whatever its name. Strings of 6 characters
+  or more stay in the payload as known secrets: the redactor hides them everywhere, and value
+  tracing still finds where they came from (a launch URL). Shorter ones are replaced in the
+  payload by the redactor's placeholder, since hunting `en` or `t1` through the whole output
+  would hide ordinary values.
+- **People in system messages.** SFS2X sends users as positional arrays (`[id, name,
+  privilegeId, playerId, variables]`), buddies as `[id, name, blocked, variables]`, and chat as
+  `m`, so no field name tells the redactor what they are. The decoder masks the slots the
+  client API defines before the payload is built: JoinRoom `ul`, UserEnterRoom/UserExitRoom/
+  UserLost/SetUserVariables/spectator switches/KickUser/BanUser `u`, GenericMessage `u`, `rc`,
+  `sd` and the text `m`, FindUsers `fu`, SetUserPosition `p` and `m`, the buddy-list actions
+  (`bl`, `bn`, `bd`, `bi`), invitations (`u`, `ui`, `iu`, `ee`) and the login's `un` and `id`.
+  Ids become 0 (still integers in the schema); names and text are masked keeping their format.
+  Names and ids of 6 digits or more also go to the redactor as secrets. This masking happens in
+  the decoder, so it applies even with `redact.examples: raw`.
 - **Other players.** Game feeds list other players. Their ids, names and pictures are personal
   data of third parties: `player_id`, `playerName`, `profileImage(s)`, `profilePicture`,
   `avatar`, `avatarUrl` join the personal field names (`username` already was), and enum values

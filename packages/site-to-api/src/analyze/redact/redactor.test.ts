@@ -349,6 +349,18 @@ describe('createRedactor: rules', () => {
     expect(known.value('', { in: 'body', name: 'pw' })).toBe('')
   })
 
+  it('matches a numeric known secret in numbers only with 6 digits or more', () => {
+    const known = createRedactor({
+      exchanges: [],
+      config: CONFIG,
+      knownSecrets: ['1000', '123456'],
+    })
+    expect(known.json({ tables: 1000, id: 123_456 }, { in: 'response-body' })).toEqual({
+      tables: 1000,
+      id: expect.stringMatching(/^<redacted/) as unknown,
+    })
+  })
+
   it('keeps ordinary names and ids outside person records', () => {
     expect(r.json([
       { id: 7, name: 'Snacks', slug: 'snacks' },

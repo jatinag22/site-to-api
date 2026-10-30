@@ -11,6 +11,7 @@ import type { Sfs2xPacket } from '../binary/sfs2x'
 import type { DecodedMessage, DecoderSession, Handshake, ProtocolDecoder, RawFrame } from './types'
 import { base64Bytes } from '../binary'
 import { decodeSfs2xPacket } from '../binary/sfs2x'
+import { maskSystemParams } from './sfs2x-privacy'
 import { isRecord, message } from './types'
 
 const SYSTEM_CONTROLLER = 0
@@ -87,9 +88,9 @@ const CLIENT_ROLES: ReadonlyMap<string, MessageRole> = new Map([
 
 /**
  * Params that are credentials by their place in the protocol, whatever their short names say:
- * the handshake's session token (`tk`) and reconnection token (`rt`), the login's user name
- * (`un`) and password (`pw`), the user id the server answers the login with (`id`), a room
- * password (`p` of JoinRoom).
+ * the handshake's session token (`tk`) and reconnection token (`rt`), the login's password
+ * (`pw`), a room password (`p` of JoinRoom). People's names and ids are masked by
+ * {@link maskSystemParams}.
  */
 const SECRET_PARAMS: ReadonlyMap<string, readonly string[]> = new Map([
   [
@@ -98,7 +99,7 @@ const SECRET_PARAMS: ReadonlyMap<string, readonly string[]> = new Map([
   ],
   [
     'Login',
-    ['un', 'pw', 'id'],
+    ['pw'],
   ],
   [
     'JoinRoom',
@@ -106,19 +107,13 @@ const SECRET_PARAMS: ReadonlyMap<string, readonly string[]> = new Map([
   ],
 ])
 
-/**
- * A numeric secret (the login's user id) shorter than this is not one: every `7` in the output
- * would be redacted with it.
- */
-const MIN_NUMBER_DIGITS = 4
-
 /** Values the protocol says are secrets, as text, so the redactor can scrub them everywhere. */
 function secretsOf(name: string, params: Record<string, unknown>): string[] {
   return (SECRET_PARAMS.get(name) ?? []).flatMap((key) => {
     const value = params[key]
-    return (typeof value === 'string' && value !== '') || (typeof value === 'number' && String(value).length >= MIN_NUMBER_DIGITS)
+    return typeof value === 'string' && value !== ''
       ? [
-          String(value),
+          value,
         ]
       : []
   })
@@ -130,6 +125,9 @@ const VERSION = /^[\w .-]{1,32}$/
 type Message = Extract<Sfs2xPacket, { kind: 'message' }>
 
 function systemMessage(data: string, frame: RawFrame, packet: Message): DecodedMessage {
+  const masked = packet.controller === SYSTEM_CONTROLLER
+    ? maskSystemParams(SYSTEM_ACTIONS.get(packet.action) ?? '', packet.params)
+    : { params: packet.params, secrets: [] }
   const name = packet.controller === SYSTEM_CONTROLLER
     ? SYSTEM_ACTIONS.get(packet.action) ?? `action ${packet.action}`
     : `action ${packet.action}`
@@ -147,9 +145,12 @@ function systemMessage(data: string, frame: RawFrame, packet: Message): DecodedM
     name: [name],
     role,
     wire: `SFS2X {c:${packet.controller},a:${packet.action},p:<payload>}`,
-    payload: packet.params,
+    payload: masked.params,
     strong: true,
-    secrets: secretsOf(name, packet.params),
+    secrets: [
+      ...secretsOf(name, packet.params),
+      ...masked.secrets,
+    ],
   })
 }
 

@@ -538,6 +538,8 @@ describe('smartFoxServer 2X', () => {
               pw: sfs.string('hunter2'),
               p: sfs.object({
                 token: sfs.string(TOKEN),
+                k: sfs.string('kq9-launch-key'),
+                ticket: sfs.string('t1'),
               }),
             }),
           ],
@@ -547,6 +549,94 @@ describe('smartFoxServer 2X', () => {
               zn: sfs.string('game_zone'),
               un: sfs.string('gambler7'),
               id: sfs.int(123_456),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 4, {
+              r: sfs.array([
+                sfs.int(3),
+                sfs.string('lobby'),
+              ]),
+              ul: sfs.array([
+                sfs.array([
+                  sfs.int(1000),
+                  sfs.string('rival_anna'),
+                  sfs.short(0),
+                  sfs.short(1),
+                  sfs.array([]),
+                ]),
+                sfs.array([
+                  sfs.int(1001),
+                  sfs.string('rival_ben'),
+                  sfs.short(0),
+                  sfs.short(2),
+                  sfs.array([]),
+                ]),
+              ]),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 1000, {
+              r: sfs.int(3),
+              u: sfs.array([
+                sfs.int(1002),
+                sfs.string('rival_cleo'),
+                sfs.short(0),
+                sfs.short(3),
+                sfs.array([]),
+              ]),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 7, {
+              t: sfs.byte(0),
+              r: sfs.int(3),
+              u: sfs.int(1000),
+              m: sfs.string('meet me at table nine'),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 28, {
+              fu: sfs.array([
+                sfs.array([
+                  sfs.int(1003),
+                  sfs.string('rival_dora'),
+                  sfs.short(0),
+                  sfs.short(0),
+                  sfs.array([]),
+                ]),
+              ]),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 200, {
+              bl: sfs.array([
+                sfs.array([
+                  sfs.int(1004),
+                  sfs.string('buddy_emil'),
+                  sfs.bool(false),
+                  sfs.array([]),
+                ]),
+              ]),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 205, {
+              bn: sfs.string('buddy_emil'),
+              bi: sfs.int(1004),
+              o: sfs.byte(0),
+            }),
+          ],
+          [
+            '<',
+            extensionPacket('lobbyStats', {
+              tables: sfs.int(1000),
             }),
           ],
           [
@@ -579,6 +669,33 @@ describe('smartFoxServer 2X', () => {
       ['sendLogin', 'sfs2x', 1, 'auth'],
       ['receiveHandshake', 'sfs2x', 1, 'data'],
       ['receiveLogin', 'sfs2x', 1, 'data'],
+      ['receiveJoinRoom', 'sfs2x', 1, 'data'],
+      [
+        'receiveUserEnterRoom',
+        'sfs2x',
+        1,
+        'data',
+      ],
+      [
+        'receiveGenericMessage',
+        'sfs2x',
+        1,
+        'data',
+      ],
+      ['receiveFindUsers', 'sfs2x', 1, 'data'],
+      [
+        'receiveInitBuddyList',
+        'sfs2x',
+        1,
+        'data',
+      ],
+      ['receiveGoOnline', 'sfs2x', 1, 'data'],
+      [
+        'receiveLobbyStats',
+        'sfs2x',
+        1,
+        'data',
+      ],
       [
         'receiveUpdateCurrentCashOuts',
         'sfs2x',
@@ -610,6 +727,13 @@ describe('smartFoxServer 2X', () => {
     for (const secret of [
       'gambler7',
       'hunter2',
+      'kq9-launch-key',
+      'rival_anna',
+      'rival_ben',
+      'rival_cleo',
+      'rival_dora',
+      'buddy_emil',
+      'table nine',
       '123456',
       SESSION_TOKEN,
       TOKEN,
@@ -622,6 +746,16 @@ describe('smartFoxServer 2X', () => {
       'av-3.png',
     ])
       expect(written).not.toContain(secret)
+    expect(written).not.toContain('"ticket":"t1"')
+    // User ids sit at known positions: masked to 0 there, and a short one is not hunted elsewhere.
+    const join = channel?.messages.find(message => message.id === 'receiveJoinRoom')
+    expect(join?.examples[0]).toMatchObject({
+      ul: [
+        [0, 'xxxxx_xxxx', 0, 1, []],
+        [0, 'xxxxx_xxx', 0, 2, []],
+      ],
+    })
+    expect(written).toContain('"tables":1000')
     // Public game data stays.
     expect(written).toContain('game_zone')
     expect(written).toContain('"openBetsCount":12')

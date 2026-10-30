@@ -112,15 +112,14 @@ describe('sfs2x decoder', () => {
     expect(reader.version()).toBe('client API 1.8.4')
   })
 
-  it('names the login user name, password and user id, the session token and a room password as secrets', () => {
+  it('names the session token, the password, user names and a room password as secrets', () => {
     const reader = sfs2x.start()
     const secrets = session.flatMap(frame => reader.read(frame)?.flatMap(item => item.secrets) ?? [])
     expect(secrets).toEqual([
       '0123456789abcdef0123456789abcdef',
-      'bob',
       'hunter2',
       'bob',
-      '70001',
+      'bob',
       'room-pass',
     ])
   })

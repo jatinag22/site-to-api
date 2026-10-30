@@ -54,8 +54,8 @@ interface RedactorInput {
   config: ResolvedConfig['redact']
   /**
    * Values a protocol decoder knows are credentials by where they sit, though their field names
-   * do not say so (an SFS2X login's `un` and `pw`, decision 0048). Redacted wherever they appear,
-   * whatever their length.
+   * do not say so (an SFS2X login's `pw`, decision 0048). Redacted wherever they appear as text,
+   * whatever their length; as a number only with 6 digits or more.
    */
   knownSecrets?: readonly string[]
 }
@@ -63,6 +63,11 @@ interface RedactorInput {
 /** Secrets shorter than this are only redacted where they sit, not searched for in other text. */
 const MIN_SEARCHED_SECRET_LENGTH = 6
 const MAX_DEPTH = 32
+/**
+ * A known secret that is a number shorter than this is not matched in numbers: a user id of
+ * 1000 would otherwise blank out every 1000 in the output (decision 0048).
+ */
+const MIN_KNOWN_NUMBER_DIGITS = 6
 /** Larger text bodies (HTML pages) are not searched for secrets; they never become examples. */
 const MAX_SCANNED_TEXT = 100_000
 const JWT_IN_TEXT = /eyJ[\w-]*\.eyJ[\w-]*\.[\w-]*/g
@@ -89,7 +94,8 @@ function isQueryLike(where: RedactContext['in']): boolean {
   return where === 'query' || where === 'form'
 }
 
-function placeholder(value: string): string {
+/** The stand-in written for a secret: `<redacted: 32 hex chars>`. */
+export function placeholder(value: string): string {
   return `<redacted: ${describeShape(value)}>`
 }
 
@@ -513,7 +519,7 @@ export function createRedactor(input: RedactorInput): Redactor {
 
   function redactNumber(value: number, context: RedactContext, personRecord: boolean): number | string {
     const text = String(value)
-    if (isAlwaysSecret(context.in, context.name) || known.has(text) || (isSecretName(context.name) && !keptAsPublicKey(text, context)))
+    if (isAlwaysSecret(context.in, context.name) || (known.has(text) && text.length >= MIN_KNOWN_NUMBER_DIGITS) || (isSecretName(context.name) && !keptAsPublicKey(text, context)))
       return placeholder(text)
     if (isTrackingIdName(context.name) && !isConstant(text))
       return placeholder(text)
