@@ -24,6 +24,25 @@ listed under each decision below.
   (`/r/programming` titled "programming - …"). An `owner/repo` pair may then sit at the root
   (`/{owner}/{repo}`) when each repository value has a `-` or a digit.
 
+- **No client without API operations.** When no spec has an API operation (every operation a
+  bot-protection step), `gen` writes no client and removes an old one; `AGENT.md` and
+  `API_MAP.md` say why. A client of no hosts does not type-check.
+- **Static files and pixel sandboxes.** Requests whose file name says they are static (scripts,
+  styles, sourcemaps, fonts, images, media) are assets unless they answered with data; web app
+  manifests always are. Shopify's web-pixel sandbox frames (`/wpm@…/…/sandbox/…`) are noise.
+  Neither becomes an operation, so probe never replays them.
+- **Origins.**
+  - An operation input seen in several steps gets one origin in the spec: the first that names a
+    source beats unknown, and a constant holds only when every step sent the same constant.
+  - An input another step of the same operation traced is not an unknown-origin gap.
+  - "Requests need header X" says how many probed requests did, when not all of them.
+  - A cookie or header probe measured is required exactly when probe found it needed.
+  - A plain word sent under a name is not traced to a field of an unrelated name that several
+    items of one listing share (`type=model` and every model's `repoType`).
+  - Extraction patterns never anchor on data numbers (five or more digits, or three or more
+    decimal places).
+  - A `change` up to two seconds after a page navigation credits the typed value to the field.
+
 ## Consequences
 Two endpoint words whose pages happen to be titled with the word are merged; a site's chrome
 alone does not name the path, so this needs the page to be about the value.

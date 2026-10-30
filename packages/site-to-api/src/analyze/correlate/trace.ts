@@ -243,11 +243,33 @@ function producerCandidate(producer: Producer, sent: LocatedValue, transform: Ma
   }
 }
 
+/** A JSON pointer through an array: `/models/3/repoType`. */
+const IN_ARRAY = /\/\d+(?:\/|$)/
+
+/**
+ * A plain word sent under a name (`type=model`) that several items of one listing hold under an
+ * unrelated name (`repoType: "model"` on every model): a category the items share, not the item
+ * the request picked, so the match is a coincidence. A word only one item holds (a category's
+ * `slug`), a word from a single field (`username` → `owner`), a field of the same or a related
+ * name, and a word in a path segment, which has no name, still count.
+ */
+function isCoincidentalWord(candidate: Candidate, sent: LocatedValue, producers: readonly Producer[]): boolean {
+  if (sent.name === null || !PLAIN_WORD.test(sent.value) || candidate.sameName || candidate.relatedName)
+    return false
+  if (candidate.location.in !== 'body' || !IN_ARRAY.test(candidate.location.pointer))
+    return false
+  return producers.filter(producer => producer.exchange === candidate.exchange && producer.location.in === 'body' && IN_ARRAY.test(producer.location.pointer)).length >= 2
+}
+
 function* exactCandidates(consumer: Exchange, sent: LocatedValue, variants: readonly Variant[], index: SessionIndex): Generator<Candidate> {
   for (const variant of variants) {
-    for (const producer of index.byValue.get(variant.value) ?? []) {
-      if (isBefore(producer.exchange, consumer))
-        yield producerCandidate(producer, sent, variant.transform)
+    const producers = index.byValue.get(variant.value) ?? []
+    for (const producer of producers) {
+      if (!isBefore(producer.exchange, consumer))
+        continue
+      const candidate = producerCandidate(producer, sent, variant.transform)
+      if (!isCoincidentalWord(candidate, sent, producers))
+        yield candidate
     }
   }
 }
@@ -486,6 +508,7 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
           ? null
           : findUserInputField(index.events, fieldName, exchange.startedAt, {
               stillTyping: typing.has(sent),
+              navigation: exchange.resourceType === 'document',
             })
         const sessions = seenIn.get(constantKey(exchange, sent.location, sent.value))?.size ?? 0
         const evidence: ConstantEvidence = {

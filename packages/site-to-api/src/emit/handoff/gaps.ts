@@ -122,15 +122,31 @@ function operationGaps(analysis: Analysis, resolver: StepResolver, groups: Map<s
   }
 }
 
+/**
+ * Inputs (`host`, operation, input) that some step traced. An input another step of the same
+ * operation traced (a computed `_rsc`) is not a gap of that operation.
+ */
+function tracedInputs(analysis: Analysis, resolver: StepResolver): Set<string> {
+  const known = new Set<string>()
+  for (const step of analysis.flows.flows.flatMap(flow => flow.steps)) {
+    for (const [input, origin] of Object.entries(step.inputs)) {
+      if (origin.kind !== 'unknown')
+        known.add(`${resolver.operation(step)?.host ?? ''}\u0000${step.operationId}\u0000${input}`)
+    }
+  }
+  return known
+}
+
 function unknownOriginGaps(analysis: Analysis, resolver: StepResolver, groups: Map<string, GapGroup>, link: HostLinker): void {
   const shapes = new Map<string, string[]>()
   // Host → flow id → `input of operation (shape)`, for one nested list per flow in the host file.
   const nested = new Map<string, Map<string, string[]>>()
+  const known = tracedInputs(analysis, resolver)
   for (const flow of analysis.flows.flows) {
     for (const step of flow.steps) {
       const host = resolver.operation(step)?.host ?? null
       for (const [input, origin] of Object.entries(step.inputs)) {
-        if (origin.kind !== 'unknown')
+        if (origin.kind !== 'unknown' || known.has(`${host ?? ''}\u0000${step.operationId}\u0000${input}`))
           continue
         // A step whose operation is gone has no host file: its gap goes under the empty host,
         // which AGENT.md lists in full.

@@ -116,10 +116,23 @@ function neededHeaders(tested: string[][]): string[] {
   ].sort()
 }
 
+/**
+ * Who needs the headers: `requests` when every probed request did, else `3 of 13 probed
+ * requests`. One Next.js data request needing `rsc` does not make every request on the host
+ * need it.
+ */
+function headerNeeders(tested: string[][]): string {
+  const needing = tested.filter(requires => requires.some(item => item.startsWith('header:'))).length
+  return needing === tested.length
+    ? 'requests'
+    : `${needing} of ${tested.length} probed requests`
+}
+
 /** The Needs line: the verdict, headers probe found necessary, and where the verdict comes from. */
-function needsLine(entry: SessionRequirement, headers: string[], context: AgentGuideContext, analysis: Analysis): string {
+function needsLine(entry: SessionRequirement, tested: string[][], context: AgentGuideContext, analysis: Analysis): string {
+  const headers = neededHeaders(tested)
   const withHeaders = headers.length > 0
-    ? `; requests need ${plural(headers.length, 'header', 'headers')} ${headers.map(code).join(', ')}`
+    ? `; ${headerNeeders(tested)} need ${plural(headers.length, 'header', 'headers')} ${headers.map(code).join(', ')}`
     : ''
   // Probe can find a browser needed for a header a bot-protection script computes, with no cookie
   // involved; say that instead of the cookie advice.
@@ -158,11 +171,10 @@ export function onlyVendorSteps(host: string, analysis: Analysis): boolean {
  */
 export function sessionLines(entry: SessionRequirement, analysis: Analysis, context: AgentGuideContext, pageOnly: boolean, stems: HostStems): string[] {
   const tested = probedRequires(entry, analysis)
-  const headers = neededHeaders(tested)
   const lines: string[] = []
   if (pageOnly)
     lines.push('- Serves pages only: no API calls to this host were captured.')
-  lines.push(needsLine(entry, headers, context, analysis))
+  lines.push(needsLine(entry, tested, context, analysis))
   // Probe measured that plain requests work: say so instead of contradicting the verdict.
   // `probed` is false whenever a probed call on the host failed, so this never claims too much.
   const answered = entry.probed && entry.requires !== 'browser'
@@ -211,9 +223,10 @@ function shortFinding(finding: SessionRequirement['botProtection'][number]): str
 export function shortVerdict(entry: SessionRequirement | null, analysis: Analysis, context: AgentGuideContext): string {
   if (entry === null)
     return 'no session requirements recorded'
-  const headers = neededHeaders(probedRequires(entry, analysis))
+  const tested = probedRequires(entry, analysis)
+  const headers = neededHeaders(tested)
   const verdict = entry.requires === 'none' && headers.length > 0
-    ? `plain HTTP; requests need ${plural(headers.length, 'header', 'headers')} ${headers.slice(0, MAX_NAMES).map(code).join(', ')}${headers.length > MAX_NAMES
+    ? `plain HTTP; ${headerNeeders(tested)} need ${plural(headers.length, 'header', 'headers')} ${headers.slice(0, MAX_NAMES).map(code).join(', ')}${headers.length > MAX_NAMES
       ? ` and ${headers.length - MAX_NAMES} more`
       : ''}`
     : tokenText(entry, analysis, false) ?? SHORT_REQUIREMENT[entry.requires]
