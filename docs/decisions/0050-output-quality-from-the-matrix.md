@@ -47,6 +47,14 @@ listed under each decision below.
   in the summary and does not make `check` exit 2; `2` is for replayed operations that could not
   be judged, or when nothing was replayed.
 
+- **Build speed.** Value tracing filters the producers a sent value may contain once per
+  session instead of testing every producer for every value; the HTML locator remembers its
+  answer per page and value; personal-data patterns skip text that cannot match (no `@`, no
+  digit); HTML extraction infers layouts from the first eight samples and checks the spec on the
+  rest. `probe` hands the analysis it replayed from to its rebuild, which only applies the new
+  `probe.json` instead of analysing every capture again.
+
 ## Consequences
-Two endpoint words whose pages happen to be titled with the word are merged; a site's chrome
+A layout that only the ninth or later sample shows is not inferred; the spec is still checked on
+every sample, and a field the later samples cannot read lowers the confidence. Two endpoint words whose pages happen to be titled with the word are merged; a site's chrome
 alone does not name the path, so this needs the page to be about the value.

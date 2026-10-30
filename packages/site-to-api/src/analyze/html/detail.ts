@@ -176,7 +176,8 @@ function varyingFields(samples: Document[], used: Set<Element>): DetailField[] {
   const fields: DetailField[] = []
   const points = contentElements(first).filter(element => holdsText(element) && !used.has(element)).slice(0, MAX_POSITIONS)
   for (const element of points) {
-    const selector = selectorCandidates(element, first).find(candidate => uniqueEverywhere(candidate, samples) && select(candidate, first)[0] === element)
+    // The first sample is checked first: most candidates fail there, before every page is searched.
+    const selector = selectorCandidates(element, first).find(candidate => select(candidate, first)[0] === element && uniqueEverywhere(candidate, samples))
     if (selector === undefined)
       continue
     const raw = samples.map(sample => readRaw(sample, selector, null, null))

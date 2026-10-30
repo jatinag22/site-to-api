@@ -399,10 +399,20 @@ export function isPersonRecordField(name: string | null | undefined): boolean {
   return name !== null && name !== undefined && PERSON_RECORD_FIELDS.has(compactName(name))
 }
 
+/** Built-in patterns that only match text with a digit. */
+const BUILT_IN_DIGIT_PATTERNS: ReadonlySet<string> = new Set(['pan', 'aadhaar', 'card', 'phone'])
+
 /** Masks every personal-data match in a text. */
 export function maskPersonalData(text: string, patterns: readonly PersonalDataPattern[]): string {
   let result = text
+  // Most values have no `@` and no digit: the built-in patterns cannot match them, and running
+  // every regex over every example value was a hot spot on large captures.
+  const hasAt = text.includes('@')
+  const hasDigit = /\d/.test(text)
   for (const pattern of patterns) {
+    const builtIn = PERSONAL_DATA_PATTERNS.includes(pattern)
+    if (builtIn && ((pattern.name === 'email' && !hasAt) || (BUILT_IN_DIGIT_PATTERNS.has(pattern.name) && !hasDigit)))
+      continue
     result = result.replace(pattern.regex, match =>
       (pattern.accept === undefined || pattern.accept(match))
         ? maskKeepingFormat(match)

@@ -151,6 +151,23 @@ describe('inferExtraction: tables', () => {
     expect(applyExtractSpec(garden, spec)).toHaveLength(2)
   })
 
+  it('infers from the first eight pages and checks the spec on the rest (decision 0050)', () => {
+    const many = Array.from({ length: 10 }, (_, index) => html(index % 2 === 0
+      ? kitchen
+      : garden))
+    const result = inferExtraction(many, { minSamples: 2 })
+    expect(result?.samples).toBe(10)
+    expect(result?.confidence).toBe('high')
+    expect(htmlSpec(result?.spec).fields.price?.type).toBe('number')
+    // A later page the inferred price pattern cannot read lowers the confidence.
+    const odd = kitchen.replaceAll('₹1,299.00', 'on request')
+    const late = inferExtraction([
+      ...many.slice(0, 9),
+      html(odd),
+    ], { minSamples: 2 })
+    expect(late?.confidence).toBe('low')
+  })
+
   it('accepts a single table sample with low confidence', () => {
     const result = inferExtraction([
       html(kitchen),

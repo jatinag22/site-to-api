@@ -35,6 +35,12 @@ interface Producer extends LocatedValue {
 interface SessionIndex {
   /** Structured response values in capture order. */
   producers: Producer[]
+  /**
+   * The producers a sent value may contain or be contained in: long enough and not a plain word
+   * or date. Filtered once here; testing every producer for every sent value was quadratic in
+   * regex calls on large captures.
+   */
+  substringProducers: Producer[]
   byValue: Map<string, Producer[]>
   texts: Array<{ exchange: Exchange, text: string }>
   counts: Map<string, number>
@@ -82,6 +88,7 @@ function isBetter(a: Candidate, b: Candidate): boolean {
 function buildIndex(exchanges: readonly Exchange[], events: readonly CaptureEvent[]): SessionIndex {
   const index: SessionIndex = {
     producers: [],
+    substringProducers: [],
     byValue: new Map(),
     texts: [],
     counts: new Map(),
@@ -91,6 +98,8 @@ function buildIndex(exchanges: readonly Exchange[], events: readonly CaptureEven
     for (const value of responseValues(exchange)) {
       const producer: Producer = { ...value, exchange }
       index.producers.push(producer)
+      if (value.value.length >= SUBSTRING_MIN_LENGTH && !isWeakValue(value.value))
+        index.substringProducers.push(producer)
       const list = index.byValue.get(value.value)
       if (list)
         list.push(producer)
@@ -344,11 +353,13 @@ function* substringCandidates(consumer: Exchange, sent: LocatedValue, index: Ses
   // A plain word or a date inside a longer text (a description, a sentence) is a coincidence, not a copy.
   if (isWeakValue(value))
     return
-  for (const producer of index.producers) {
+  for (const producer of index.substringProducers) {
+    if (!isBefore(producer.exchange, consumer))
+      continue
     const other = producer.value
-    const related = other.length >= SUBSTRING_MIN_LENGTH && other !== value && !isWeakValue(other)
+    const related = other !== value
       && ((value.includes(other) && containsAsPart(value, other)) || (other.includes(value) && containsAsPart(other, value)))
-    if (related && isBefore(producer.exchange, consumer))
+    if (related)
       yield producerCandidate(producer, sent, 'substring')
   }
 }
