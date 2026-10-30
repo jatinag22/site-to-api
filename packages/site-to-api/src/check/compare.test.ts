@@ -115,3 +115,84 @@ describe('compareLive', () => {
     expect(check.note).toContain('real browser')
   })
 })
+
+describe('compareLive: answers that change by request', () => {
+  const schema: ResponseInfo['schema'] = {
+    type: 'array',
+    items: {
+      anyOf: [
+        { type: 'string' },
+        { type: 'null' },
+      ],
+    },
+  }
+
+  it('reads a body behind an XSSI prefix as JSON, as load does (YouTube sw.js_data)', () => {
+    const swData = operation([
+      jsonResponse(200, schema),
+    ])
+    const check = compareLive(swData, answer({ text: ')]}\'\n["a",null]' }))
+    expect(check).toMatchObject({ verdict: 'ok', typeChanged: [] })
+  })
+
+  it('says varies by request, not drift, when the captured answers already differ in the drifting fields', () => {
+    const objectSchema: ResponseInfo['schema'] = {
+      type: 'object',
+      properties: {
+        token: { type: 'string' },
+        count: { type: 'integer' },
+      },
+      required: ['count'],
+    }
+    const thing = operation([
+      jsonResponse(200, objectSchema),
+    ])
+    // One captured answer has `token`, another has it as null, a third lacks it.
+    thing.exchanges = [
+      exchange({
+        url: 'https://shop.test/thing',
+        responseBody: jsonBody({ token: 'a', count: 1 }),
+      }),
+      exchange({
+        url: 'https://shop.test/thing',
+        responseBody: jsonBody({ token: null, count: 2 }),
+      }),
+    ]
+    const live = compareLive(thing, answer({ text: '{"token":5,"count":3}' }))
+    expect(live).toMatchObject({
+      verdict: 'varies',
+      typeChanged: [
+        { path: '$.token' },
+      ],
+    })
+    expect(live.note).toMatch(/^Varies by request/)
+  })
+
+  it('is still drift when the captured answers agree where the live one differs, or when the status changed', () => {
+    const objectSchema: ResponseInfo['schema'] = {
+      type: 'object',
+      properties: {
+        token: { type: 'string' },
+        count: { type: 'integer' },
+      },
+      required: ['count'],
+    }
+    const thing = operation([
+      jsonResponse(200, objectSchema),
+    ])
+    thing.exchanges = [
+      exchange({
+        url: 'https://shop.test/thing',
+        responseBody: jsonBody({ token: 'a', count: 1 }),
+      }),
+      exchange({
+        url: 'https://shop.test/thing',
+        responseBody: jsonBody({ token: 'b', count: 2 }),
+      }),
+    ]
+    expect(compareLive(thing, answer({ text: '{"token":5,"count":3}' })).verdict).toBe('drift')
+    // Only one sample: nothing shows the answer varies.
+    thing.exchanges = thing.exchanges.slice(0, 1)
+    expect(compareLive(thing, answer({ text: '{"token":5,"count":3}' })).verdict).toBe('drift')
+  })
+})

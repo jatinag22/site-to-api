@@ -25,15 +25,22 @@ function isTextualMimeType(mimeType: string): boolean {
     || /json|xml|javascript|ecmascript|x-www-form-urlencoded|graphql|ndjson|csv|yaml/.test(mimeType)
 }
 
+/**
+ * Text without the prefix a site puts in front of JSON so it cannot be loaded as a script
+ * (`)]}'`, `while(1);`), leading whitespace dropped; the text itself when it has none.
+ */
+export function withoutXssiPrefix(text: string): string {
+  const candidate = text.trimStart()
+  for (const prefix of XSSI_PREFIXES) {
+    if (candidate.startsWith(prefix))
+      return candidate.slice(prefix.length).trimStart()
+  }
+  return candidate
+}
+
 /** Parses JSON, also when the content type is wrong or an XSSI prefix precedes it. */
 function parseJsonLoose(text: string, mimeType: string): unknown {
-  let candidate = text.trimStart()
-  for (const prefix of XSSI_PREFIXES) {
-    if (candidate.startsWith(prefix)) {
-      candidate = candidate.slice(prefix.length).trimStart()
-      break
-    }
-  }
+  const candidate = withoutXssiPrefix(text)
   const looksLikeJson = candidate.startsWith('{') || candidate.startsWith('[')
   if (!looksLikeJson && !mimeType.includes('json'))
     return undefined

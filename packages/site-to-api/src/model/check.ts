@@ -28,11 +28,13 @@ const OperationCheckSchema = z.object({
    * `blocked`: bot protection or a refused session answered instead of the site (see
    * `rejection`). `unreachable`: no answer. `unchecked`: answered, but the capture documents no
    * response for that status, so there is nothing to compare with. The last three say nothing
-   * about drift.
+   * about drift. `varies`: the answer differs, but the captured answers already differ from each
+   * other in the same fields, so it changes by request by nature (decision 0054); not drift.
    */
   verdict: z.enum([
     'ok',
     'drift',
+    'varies',
     'blocked',
     'unreachable',
     'unchecked',

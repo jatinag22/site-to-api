@@ -61,3 +61,4 @@ or `Proposed`.
 | [0051](0051-trpc-connect-firebase-primus.md) | tRPC and Connect RPC operations (batches split, JSON inputs traced, read-only Connect methods probed); Firebase Realtime Database and Primus channels (refines 0027, 0038, 0039) | Accepted |
 | [0052](0052-output-quality-from-the-matrix.md) | Output quality from the real-site matrix: method names, slug pages, static files, origins, check exit code, build speed (refines 0035, 0044, 0046) | Accepted |
 | [0053](0053-code-literals-name-endpoints.md) | A code route's parameter names endpoints only when its values are untraced code literals (refines 0052) | Accepted |
+| [0054](0054-varies-by-request-and-gone-browser.md) | `check` reads XSSI-prefixed JSON and reports answers that vary by request as `varies`; a browser already gone leaves a complete session when its HAR is valid (refines 0044, 0050) | Accepted |

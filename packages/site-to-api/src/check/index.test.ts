@@ -518,7 +518,7 @@ describe('summarizeCheck', () => {
       '/api/drifted': json(200, { id: '1', name: 'a', extra: true }),
     })
     const lines = summarizeCheck(report)
-    expect(lines[0]).toBe('Checked 3 operations: 1 ok, 1 drifted, 0 blocked, 1 unreachable, 0 unchecked; 0 skipped.')
+    expect(lines[0]).toBe('Checked 3 operations: 1 ok, 1 drifted, 0 varying by request, 0 blocked, 1 unreachable, 0 unchecked; 0 skipped.')
     expect(lines).toContain('DRIFT GET shop.test/api/drifted (drifted)')
     expect(lines).toContain('  added: $.extra')
     expect(lines).toContain('  type: $.id integer -> string')
