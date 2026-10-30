@@ -13,6 +13,7 @@ import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { classifyExchanges } from '../../analyze/classify'
 import { buildOperations } from '../../analyze/operations'
 import { createRedactor } from '../../analyze/redact'
+import { annotateRpc } from '../../analyze/rpc'
 import { inferOperationSchemas } from '../../analyze/schema'
 import { FLOWS_FORMAT_VERSION } from '../../model'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from './index'
@@ -422,7 +423,7 @@ describe('operation ids shared by two hosts', () => {
   })
 })
 
-describe('origins of an input seen in several steps (decision 0050)', () => {
+describe('origins of an input seen in several steps (decision 0052)', () => {
   const originOfLang = (second: ValueOrigin): unknown => {
     const analysis = twoHostAnalysis()
     const flow = analysis.flows.flows[0]!
@@ -746,5 +747,91 @@ describe('dispatcher functions (decision 0039)', () => {
     const schema = ajax.requestBody.content['application/x-www-form-urlencoded'].schema
     expect(schema.properties.action).toEqual({ type: 'string', const: 'load_more', default: 'load_more' })
     expect(schema.required).toContain('action')
+  })
+})
+
+describe('tRPC and Connect operations', () => {
+  it('writes x-site-to-api-rpc, the tRPC input as a JSON parameter and origins of its fields', () => {
+    const input = {
+      json: { slug: 'demo-event', days: 7 },
+    }
+    const raw = ['s1', 's2'].flatMap(sessionId => [
+      {
+        ...exchange({
+          sessionId,
+          url: 'https://book.test/',
+          resourceType: 'document',
+          responseBody: textBody('<html></html>'),
+        }),
+        pageUrl: null,
+      },
+      exchange({
+        sessionId,
+        url: `https://book.test/api/trpc/slots.list?input=${encodeURIComponent(JSON.stringify(input))}`,
+        responseBody: jsonBody({
+          result: {
+            data: {
+              json: {
+                starts: [1],
+              },
+            },
+          },
+        }),
+      }),
+    ])
+    const { exchanges: classified, botProtection } = classifyExchanges(raw, { include: [], exclude: [] })
+    const exchanges = annotateRpc(classified)
+    const redactor = createRedactor({ exchanges, config: CONFIG })
+    const operations = inferOperationSchemas(buildOperations(exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey }), redactor)
+    const operationId = operations.find(operation => operation.rpc !== undefined)?.operationId ?? ''
+    const flows: FlowsDocument = {
+      ...NO_FLOWS,
+      flows: [
+        {
+          id: 'f1',
+          name: 'book',
+          trigger: { kind: 'navigate', label: 'Book', pageUrl: 'https://book.test/' },
+          seenInSessions: 2,
+          steps: [
+            {
+              id: 's1',
+              operationId,
+              kind: 'api',
+              browserOnly: false,
+              summary: 'slots',
+              sentFrom: null,
+              inputs: {
+                'query.input./json/slug': { kind: 'user-input', field: 'event' },
+              },
+              outputs: {},
+              observedIn: [],
+            },
+          ],
+        },
+      ],
+    }
+    const document = asRecord(parse(toYaml(buildOpenApiDocuments({
+      sessions: ['s1', 's2'],
+      hosts: ['book.test'],
+      operations,
+      flows,
+      botProtection,
+      excerpts: new Map(),
+      warnings: [],
+    }).get('book.test') ?? {})))
+    const get = asRecord(asRecord(asRecord(document.paths)['/api/trpc/slots.list']).get)
+    expect(get['x-site-to-api-rpc']).toEqual({
+      protocol: 'trpc',
+      procedure: 'slots.list',
+      readOnly: true,
+      readOnlyEvidence: 'called with GET',
+    })
+    const params: unknown = get.parameters
+    const param: unknown = Array.isArray(params)
+      ? params.find(item => asRecord(item).name === 'input')
+      : undefined
+    const schema = asRecord(asRecord(asRecord(asRecord(param).content)['application/json']).schema)
+    const json = asRecord(asRecord(schema.properties).json)
+    expect(asRecord(asRecord(json.properties).slug)['x-site-to-api-origin']).toEqual({ kind: 'user-input', field: 'event' })
   })
 })

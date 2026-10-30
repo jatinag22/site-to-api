@@ -35,7 +35,7 @@ function kinds(list: Exchange[], include: string[] = [], exclude: string[] = [])
   return classify(list, include, exclude).exchanges.map(item => item.kind)
 }
 
-describe('classifyExchanges: static files and pixel sandboxes (decision 0050)', () => {
+describe('classifyExchanges: static files and pixel sandboxes (decision 0052)', () => {
   it('labels icons, manifests and named scripts and styles assets, whatever their resource type', () => {
     expect(kinds([
       page(),

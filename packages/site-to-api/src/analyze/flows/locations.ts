@@ -3,7 +3,8 @@ import type { ValueLocation } from '../../model'
 import { redactPathTokens } from '../redact'
 
 /**
- * A location as text: `path.0`, `query.symbol`, `header.x-csrf-token`, `cookie.session`,
+ * A location as text: `path.0`, `query.symbol`, `query.input./json/id` (a field of JSON in a
+ * query parameter), `header.x-csrf-token`, `cookie.session`,
  * `body./password`, `form.user` for requests; `body./token`, `set-cookie.session`,
  * `header.x-token`, `html.meta[name="csrf"]@content` for responses.
  */
@@ -15,6 +16,10 @@ export function formatLocation(location: ValueLocation): string {
       return `body.${location.pointer}`
     case 'response-header':
       return `header.${location.name}`
+    case 'query':
+      return location.pointer === undefined
+        ? `query.${location.name}`
+        : `query.${location.name}.${location.pointer}`
     case 'html': {
       const attr = location.attr === null
         ? ''
@@ -50,6 +55,13 @@ export function keySafeLocation(location: ValueLocation, isSecretKey: (key: stri
   if (location.in === 'body') {
     return {
       in: 'body',
+      pointer: keySafePointer(location.pointer, isSecretKey),
+    }
+  }
+  if (location.in === 'query' && location.pointer !== undefined) {
+    return {
+      in: 'query',
+      name: location.name,
       pointer: keySafePointer(location.pointer, isSecretKey),
     }
   }

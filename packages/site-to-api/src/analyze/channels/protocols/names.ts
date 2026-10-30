@@ -29,10 +29,17 @@ export function templateName(name: string): string {
 }
 
 /**
- * The name as written to the output: templated, then redacted. When the redactor would change
- * it, the name carried a value that must not be shown, so its redacted form is used.
+ * The name as written to the output: templated, each path or word segment the redactor would
+ * change (an email, a token, an opaque id: `/emails/alice@example,com`) replaced by `{id}`, then
+ * redacted as a whole. When the redactor would still change it, the name carried a value that
+ * must not be shown, so its redacted form is used.
  */
 export function safeName(name: string, redactor: Redactor): string {
   const templated = templateName(name)
+    .split(/([\s/]+)/)
+    .map((segment, index) => index % 2 === 1 || segment === '' || segment === '{id}' || redactor.value(segment, { in: 'path' }) === segment
+      ? segment
+      : '{id}')
+    .join('')
   return redactor.value(templated, { in: 'text' })
 }

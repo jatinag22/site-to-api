@@ -15,7 +15,12 @@ import { MAX_SUMMARY_LINES, moreLine } from './summary'
 /** Examples longer than this are left to the AsyncAPI file instead of filling a Markdown line. */
 const MAX_INLINE_EXAMPLE = 400
 
-/** `ws://host/path`, the address a client connects to. */
+/** True for a server-sent event stream, which a client opens with a plain GET (decision 0050). */
+function isEventStream(channel: WebSocketChannel): boolean {
+  return channel.connection.transports.includes('sse')
+}
+
+/** `ws://host/path` (or `https://` for an event stream), the address a client connects to. */
 function channelUrl(channel: WebSocketChannel): string {
   return `${channel.scheme}://${channel.host}${channel.path}`
 }
@@ -78,6 +83,9 @@ const PROTOCOL_NAMES: Record<ChannelProtocolId, string> = {
   'phoenix': 'Phoenix `topic:event`',
   'centrifugo': 'Centrifugo channel',
   'sfs2x': 'SFS2X system action or extension command (`p.c`)',
+  'sse': 'event name (the `event:` field; `message` when the server sent none)',
+  'firebase': 'Firebase action and database path',
+  'primus': 'Primus message `type` (or another field that names it)',
 }
 
 const FORMAT_WORDS: Partial<Record<ChannelMessage['format'], string>> = {
@@ -129,6 +137,33 @@ function upgradeSentence(upgrade: ChannelConnectionFacts['upgrade'], polling: bo
     : ''}`
 }
 
+/** The first connect or authentication message and the server's reply, when one was recognised. */
+function firstMessageLine(channel: WebSocketChannel): string | null {
+  const first = channel.connection.firstMessage
+  if (first === null)
+    return null
+  const message = channel.messages.find(candidate => candidate.id === first.message)
+  const reply = first.reply === null
+    ? undefined
+    : channel.messages.find(candidate => candidate.id === first.reply)
+  const name = message
+    ? describedName(message, code)
+    : code(first.message)
+  return `- First ${first.role === 'auth'
+    ? 'authentication'
+    : 'connect'} message: ${name}; the server's next message was ${reply
+    ? describedName(reply, code)
+    : 'none'}.`
+}
+
+/** How an event stream is opened and read (decision 0050), in place of a WebSocket upgrade. */
+function streamRequestLines(facts: ChannelConnectionFacts, origin: string, tokens: string): string[] {
+  return [
+    `- Stream request: a \`GET\` the server answers with \`text/event-stream\`; ${origin}; ${tokens}; ${upgradeSentence(facts.upgrade, false).replace('connection', 'stream')}.`,
+    '- Read it with `EventSource` or any HTTP client that reads the response as it arrives; it never ends on its own. After a drop, reconnect with the last event\'s `id` in a `Last-Event-ID` header.',
+  ]
+}
+
 /** The facts of the upgrade request: origin, subprotocol, URL tokens and the server's answer. */
 function connectionLines(channel: WebSocketChannel): string[] {
   const facts = channel.connection
@@ -143,25 +178,16 @@ function connectionLines(channel: WebSocketChannel): string[] {
   const tokens = facts.urlTokens.length > 0
     ? `tokens in the URL (names only): ${facts.urlTokens.map(code).join(', ')}`
     : 'no token in the URL'
-  const lines = [
-    `- Upgrade request: ${origin}; ${requested}; ${tokens}; ${upgradeSentence(facts.upgrade, facts.transports.includes('polling'))}.`,
-  ]
+  const lines = isEventStream(channel)
+    ? streamRequestLines(facts, origin, tokens)
+    : [
+        `- Upgrade request: ${origin}; ${requested}; ${tokens}; ${upgradeSentence(facts.upgrade, facts.transports.includes('polling'))}.`,
+      ]
   if (facts.transports.includes('polling'))
     lines.push('- Also carried over Engine.IO long-polling: HTTP requests to the same path with `transport=polling`, whose bodies hold the same packets.')
-  if (facts.firstMessage !== null) {
-    const message = channel.messages.find(candidate => candidate.id === facts.firstMessage?.message)
-    const reply = facts.firstMessage.reply === null
-      ? undefined
-      : channel.messages.find(candidate => candidate.id === facts.firstMessage?.reply)
-    const name = message
-      ? describedName(message, code)
-      : code(facts.firstMessage.message)
-    lines.push(`- First ${facts.firstMessage.role === 'auth'
-      ? 'authentication'
-      : 'connect'} message: ${name}; the server's next message was ${reply
-      ? describedName(reply, code)
-      : 'none'}.`)
-  }
+  const first = firstMessageLine(channel)
+  if (first !== null)
+    lines.push(first)
   return lines
 }
 
@@ -204,7 +230,9 @@ function cookieLine(channel: WebSocketChannel): string {
     case 'none':
       return '- The browser sent no cookies when connecting.'
     case 'unknown':
-      return '- Whether the connection needs cookies is unknown: the capture has no record of the upgrade request.'
+      return isEventStream(channel)
+        ? '- Whether the stream needs cookies is unknown: the capture has no record of its request.'
+        : '- Whether the connection needs cookies is unknown: the capture has no record of the upgrade request.'
   }
 }
 
@@ -329,7 +357,7 @@ export function channelsSummary(channels: readonly WebSocketChannel[], link: Hos
   return [
     '## Real-time channels',
     '',
-    'WebSocket connections the pages opened; `specs/<host>.asyncapi.yaml` has each message\'s schema and redacted examples.',
+    'WebSocket connections and server-sent event streams the pages opened; `specs/<host>.asyncapi.yaml` has each message\'s schema and redacted examples.',
     '',
     ...lines,
     ...moreLine(channels.length - lines.length, 'channel', 'the host files'),
@@ -344,7 +372,7 @@ export function channelsSection(channels: readonly WebSocketChannel[], stems: Ho
   return [
     '## Real-time channels',
     '',
-    'WebSocket connections the pages opened. Messages are grouped by direction and by their protocol-level name when a framing protocol (Socket.IO, SignalR, STOMP, GraphQL over WebSocket, Phoenix, Centrifugo, SmartFoxServer 2X) was detected, otherwise by the field that names their type; the AsyncAPI file has the schema and redacted examples of each. The upgrade lines are facts from the capture: names only for cookies and URL tokens.',
+    'WebSocket connections and server-sent event streams the pages opened. Messages are grouped by direction and by their protocol-level name when a framing protocol (Socket.IO, SignalR, STOMP, GraphQL over WebSocket, Phoenix, Centrifugo, SmartFoxServer 2X, Firebase Realtime Database, Primus, server-sent events) was detected, otherwise by the field that names their type; the AsyncAPI file has the schema and redacted examples of each. The upgrade lines are facts from the capture: names only for cookies and URL tokens.',
     '',
     ...channels.flatMap(channel => channelLines(channel, stems)),
   ]

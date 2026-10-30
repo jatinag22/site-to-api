@@ -134,7 +134,7 @@ const SAFE_READS = new Set(['GET', 'HEAD'])
 
 /**
  * Undoes source-template parameters whose observed values are plain words that name different
- * endpoints (decision 0050): `/svc/${svc}/${slug}` sent `events/preload-head` and
+ * endpoints (decision 0052): `/svc/${svc}/${slug}` sent `events/preload-head` and
  * `shreddit/data-protection-consent`, two unrelated partials. With two or more distinct word
  * values at a position (none of them id-like), the position stays a parameter only for a safe
  * read whose responses all share one structure, as `/r/${subreddit}` pages do. Writes and RPC

@@ -166,6 +166,34 @@ describe('buildAsyncApiDocuments', () => {
     })
   })
 
+  it('writes a valid document with an https server for a server-sent event stream', async () => {
+    const stream = tickerChannel({
+      id: 'v2Stream',
+      host: 'stream.example.test',
+      scheme: 'https',
+      path: '/v2/stream',
+      handshake: [],
+      protocol: {
+        id: 'sse',
+        version: null,
+        evidence: ['response type text/event-stream'],
+        wrapper: null,
+      },
+      messages: [
+        message({ id: 'receiveMessage', direction: 'receive' }),
+      ],
+    })
+    const document = buildAsyncApiDocuments([stream], 1).get('stream.example.test')
+    if (document === undefined)
+      throw new Error('no document')
+    expect(document).toMatchObject({
+      servers: {
+        https: { host: 'stream.example.test', protocol: 'https' },
+      },
+    })
+    expect(await validate(document)).toEqual([])
+  }, 30_000)
+
   it('describes a path parameter by the evidence that made it one', () => {
     const describe = (evidence: Array<'source-template' | 'value-trace' | 'varies' | 'looks-like-id'>, connections: number): unknown => {
       const channel = {

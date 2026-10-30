@@ -3,6 +3,7 @@
  */
 import type { Body, NameValue } from '../model'
 import { Buffer } from 'node:buffer'
+import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync } from 'node:zlib'
 
 /** Prefixes sites put in front of JSON to stop it being loaded as a script (XSSI protection). */
 const XSSI_PREFIXES = [
@@ -112,6 +113,57 @@ function decodeText(raw: RawBody, mimeType: string): { text: string | null, base
     // Not UTF-8: it is binary.
   }
   return { text: null, base64: content }
+}
+
+/**
+ * Decoded request bodies larger than this are not decoded: a few kilobytes of gzip can expand to
+ * gigabytes (a zip bomb), and no API request body worth documenting is this large.
+ */
+export const MAX_DECODED_BODY_BYTES = 8 * 1024 * 1024
+
+function decodeOne(bytes: Buffer, coding: string): Buffer | null {
+  const limit = { maxOutputLength: MAX_DECODED_BODY_BYTES }
+  switch (coding) {
+    case 'identity':
+      return bytes
+    case 'gzip':
+    case 'x-gzip':
+      return gunzipSync(bytes, limit)
+    case 'deflate':
+      // Servers and clients disagree on whether `deflate` has the zlib wrapper; accept both.
+      try {
+        return inflateSync(bytes, limit)
+      }
+      catch {
+        return inflateRawSync(bytes, limit)
+      }
+    case 'br':
+      return brotliDecompressSync(bytes, limit)
+    default:
+      return null
+  }
+}
+
+/**
+ * Undoes a `content-encoding` (decision 0050): `gzip`, `deflate`, `br` or `identity`, several
+ * in the order they were applied (`gzip, br`). Null when a coding is unknown, the data is
+ * corrupt, or the result would pass {@link MAX_DECODED_BODY_BYTES}.
+ */
+export function decodeContentEncoding(bytes: Buffer, contentEncoding: string): Buffer | null {
+  const codings = contentEncoding.split(',').map(coding => coding.trim().toLowerCase()).filter(coding => coding !== '')
+  let current: Buffer | null = bytes
+  try {
+    for (const coding of codings.reverse()) {
+      current = decodeOne(current, coding)
+      if (current === null)
+        return null
+    }
+  }
+  catch {
+    // Corrupt data, or output past the limit (zlib throws `ERR_BUFFER_TOO_LARGE`).
+    return null
+  }
+  return current
 }
 
 /** Builds a {@link Body} from HAR data, or `null` when there is no body at all. */

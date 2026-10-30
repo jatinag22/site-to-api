@@ -3,7 +3,7 @@
  * AGENT.md) and the `gen` step reads from {@link Analysis}; none of them look at raw HAR data.
  */
 import type { ExtractSpec } from '@site-to-api/runtime'
-import type { Exchange, ExchangeKind, GraphqlOperationType } from './exchange'
+import type { Exchange, ExchangeKind, GraphqlOperationType, RpcRequest } from './exchange'
 import type { FlowsDocument, SourceRef } from './flows'
 
 /** The subset of JSON Schema 2020-12 the inference stage produces. */
@@ -161,6 +161,22 @@ export interface Operation {
   graphql?: GraphqlOperation
   /** Set when the operation is one function of a dispatcher endpoint (decision 0039). */
   dispatch?: DispatchOperation
+  /** Set when the operation is one tRPC procedure or Connect RPC method (decision 0051). */
+  rpc?: RpcOperation
+}
+
+/** A tRPC procedure or Connect RPC method, one per operation (decision 0051). */
+export interface RpcOperation {
+  protocol: 'trpc' | 'connect'
+  /** As in {@link RpcRequest.procedure}. */
+  procedure: string
+  /**
+   * True when the method only reads: a tRPC query (sent with GET), a Connect method called with
+   * GET, or one whose descriptor in the site's code says `idempotency_level = NO_SIDE_EFFECTS`.
+   */
+  readOnly: boolean
+  /** Why `readOnly` is true (`called with GET`, `NO_SIDE_EFFECTS in the site's descriptor`); null when false. */
+  readOnlyEvidence: string | null
 }
 
 /** Where a value that a WebSocket client sends came from (decision 0023). */
@@ -197,7 +213,7 @@ export interface ChannelValueLink {
  * Framing protocols the channels stage decodes (decision 0038). `graphql-ws` covers both
  * `graphql-transport-ws` and the older `subscriptions-transport-ws` (see the channel's `version`).
  */
-export type ChannelProtocolId = 'socket.io' | 'signalr' | 'stomp' | 'graphql-ws' | 'phoenix' | 'centrifugo' | 'sfs2x'
+export type ChannelProtocolId = 'socket.io' | 'signalr' | 'stomp' | 'graphql-ws' | 'phoenix' | 'centrifugo' | 'sfs2x' | 'sse' | 'firebase' | 'primus'
 
 /** How each protocol is called in prose. */
 export const CHANNEL_PROTOCOL_LABELS: Readonly<Record<ChannelProtocolId, string>> = {
@@ -208,6 +224,9 @@ export const CHANNEL_PROTOCOL_LABELS: Readonly<Record<ChannelProtocolId, string>
   'phoenix': 'Phoenix',
   'centrifugo': 'Centrifugo',
   'sfs2x': 'SmartFoxServer 2X',
+  'sse': 'server-sent events',
+  'firebase': 'Firebase Realtime Database',
+  'primus': 'Primus',
 }
 
 /**
@@ -315,8 +334,11 @@ export interface ChannelConnectionFacts {
    * message), and the server's next message after it; the most common pair across connections.
    */
   firstMessage: { message: string, role: HandshakeRole, reply: string | null } | null
-  /** `websocket`, and `polling` when Engine.IO long-polling carried the same channel. */
-  transports: Array<'websocket' | 'polling'>
+  /**
+   * `websocket`, and `polling` when Engine.IO long-polling carried the same channel; `sse` for a
+   * server-sent event stream (decision 0050), which is a channel of its own.
+   */
+  transports: Array<'websocket' | 'polling' | 'sse'>
 }
 
 /** A WebSocket endpoint seen during capture, with its messages grouped by direction and type. */
@@ -324,7 +346,8 @@ export interface WebSocketChannel {
   /** Unique per host and usable as an AsyncAPI key, e.g. `wsTicker`. */
   id: string
   host: string
-  scheme: 'ws' | 'wss'
+  /** `ws` or `wss` for a WebSocket; `http` or `https` for a server-sent event stream (decision 0050). */
+  scheme: 'ws' | 'wss' | 'http' | 'https'
   /** Connection path with parameters, templated by the same rules as HTTP paths. */
   path: string
   pathParams: PathParam[]
@@ -368,6 +391,12 @@ export interface BotProtectionFinding {
 
 export interface Analysis {
   sessions: string[]
+  /**
+   * The URLs the capture sessions started at (`meta.json` `startUrl`), sorted, once each. When no
+   * page was browsed (every navigation was answered by a script, or the capture had none), their
+   * site is the site's own (decision 0050). Optional and additive.
+   */
+  startUrls?: string[]
   hosts: string[]
   operations: Operation[]
   flows: FlowsDocument

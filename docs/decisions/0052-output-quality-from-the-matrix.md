@@ -1,4 +1,4 @@
-# 0050 Output quality from the real-site matrix
+# 0052 Output quality from the real-site matrix
 
 Status: Accepted (2026-10-30). Refines 0035, 0044 and 0046.
 

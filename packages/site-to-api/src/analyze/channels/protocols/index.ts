@@ -6,16 +6,20 @@
 import type { ChannelProtocol } from '../../../model'
 import type { DecodedMessage, Handshake, ProtocolDecoder, RawFrame } from './types'
 import { centrifugo } from './centrifugo'
+import { firebase } from './firebase'
 import { graphqlWs } from './graphql-ws'
 import { phoenix } from './phoenix'
+import { primus } from './primus'
 import { sfs2x } from './sfs2x'
 import { signalr } from './signalr'
 import { socketIo } from './socketio'
 import { unwrapSockjs } from './sockjs'
+import { sse } from './sse'
 import { stomp } from './stomp'
 
 export { safeName } from './names'
 export { pollingPackets } from './socketio'
+export { eventWire, parseEventStream } from './sse'
 export type { DecodedMessage, Handshake, RawFrame } from './types'
 
 /** In this order on a tie, so detection never depends on anything but the frames. */
@@ -27,6 +31,8 @@ const DECODERS: readonly ProtocolDecoder[] = [
   phoenix,
   centrifugo,
   sfs2x,
+  firebase,
+  primus,
 ]
 
 /**
@@ -64,7 +70,7 @@ interface Attempt {
 }
 
 function attempt(decoder: ProtocolDecoder, frames: readonly RawFrame[], handshake: Handshake): Attempt {
-  const session = decoder.start()
+  const session = decoder.start(handshake)
   const readings = frames.map(frame => session.read(frame))
   const carries = (frame: RawFrame | undefined): boolean => frame?.binary === (decoder.content === 'binary')
   return {
@@ -105,7 +111,10 @@ function plain(frames: readonly RawFrame[]): DecodedConnection {
 
 /** The best decoder for these frames, or null when none is shown. */
 function detect(frames: readonly RawFrame[], handshake: Handshake): Attempt | null {
-  return DECODERS
+  // An event stream's frames are its events: no WebSocket protocol applies to them.
+  return (handshake.eventStream === true
+    ? [sse]
+    : DECODERS)
     .map(decoder => attempt(decoder, frames, handshake))
     .filter(accepted)
     .sort(byStrength)[0] ?? null
@@ -143,7 +152,9 @@ function records(frame: RawFrame, reading: DecodedMessage[] | null): FrameRecord
  * understand stay as they were (plain JSON, text or binary). SockJS framing is unwrapped first.
  */
 export function decodeConnection(frames: readonly RawFrame[], handshake: Handshake): DecodedConnection {
-  const sockjs = unwrapSockjs(frames, handshake)
+  const sockjs = handshake.eventStream === true
+    ? null
+    : unwrapSockjs(frames, handshake)
   if (sockjs === null) {
     const best = detect(frames, handshake)
     return best === null

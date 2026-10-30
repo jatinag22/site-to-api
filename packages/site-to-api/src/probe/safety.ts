@@ -5,6 +5,7 @@
  * operation has both in the analysis and in a spec written by `build`.
  */
 import type { GraphqlOperationType } from '../model'
+import { rpcMethodReads } from '../analyze/rpc'
 
 /** What the rules read about an operation. */
 export interface ReplaySubject {
@@ -21,6 +22,12 @@ export interface ReplaySubject {
   dispatch?: {
     value: string
   }
+  /** A tRPC procedure or Connect method (decision 0051); `readOnly` from GET or its descriptor. */
+  rpc?: {
+    protocol: 'trpc' | 'connect'
+    procedure: string
+    readOnly: boolean
+  }
 }
 
 const SAFE_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS'])
@@ -30,10 +37,17 @@ export function isSafeMethod(method: string): boolean {
   return SAFE_METHODS.has(method.toUpperCase())
 }
 
-/** A GraphQL operation is safe when it is a query, whatever its method; others by their method. */
-export function isSafeOperation(operation: Pick<ReplaySubject, 'method' | 'graphql'>): boolean {
+/**
+ * A GraphQL operation is safe when it is a query, whatever its method; a Connect method when it
+ * was called with GET or its descriptor says `NO_SIDE_EFFECTS` (decision 0051); others by their
+ * method.
+ */
+export function isSafeOperation(operation: Pick<ReplaySubject, 'method' | 'graphql' | 'rpc'>): boolean {
   if (operation.graphql)
     return operation.graphql.operationType === 'query'
+  // Only a method whose name says it reads is a read on its descriptor's word.
+  if (operation.rpc?.readOnly === true && rpcMethodReads(operation.rpc.procedure))
+    return true
   return isSafeMethod(operation.method)
 }
 

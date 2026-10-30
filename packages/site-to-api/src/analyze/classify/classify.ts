@@ -54,7 +54,7 @@ const HASHED_BUNDLE = /[.-][0-9a-f]{8,}(?:\.chunk)?\.(?:m?js|css)(?:\.map)?$/i
  * Static files by name: scripts, styles, sourcemaps, fonts, images, media and web app manifests
  * (`/favicon.ico`, `/apple-touch-icon.png`, `/manifest.json`, `…/polyfills.Cu6fUfaP.worker.js`).
  * A page fetches them like data, so their resource type alone would make them operations, and
- * probe would replay them (decision 0050).
+ * probe would replay them (decision 0052).
  */
 const STATIC_FILE = /\.(?:m?js|cjs|css|map|woff2?|ttf|otf|eot|png|jpe?g|gif|svg|ico|webp|avif|bmp|mp4|webm|mp3|ogg|wav|webmanifest)$/i
 const MANIFEST = /(?:^|\/)(?:manifest|site\.webmanifest|browserconfig)\.(?:json|xml)$/i

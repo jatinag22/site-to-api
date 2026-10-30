@@ -335,7 +335,7 @@ describe('exit code with skipped operations', () => {
     expect(report.exitCode).toBe(0)
   })
 
-  it('is 0 with a note when an operation only lacked a captured success (decision 0050)', async () => {
+  it('is 0 with a note when an operation only lacked a captured success (decision 0052)', async () => {
     const { report } = await run([
       op('ok'),
       noSample(),

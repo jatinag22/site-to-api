@@ -218,6 +218,13 @@ same stem. Conventions:
   - `x-site-to-api-kind`: `api` | `page` | `bot-protection`
   - `x-site-to-api-dispatch`: on a dispatcher function, `{ endpoint, parameter, in (query | form
     | json), value }`
+  - `x-site-to-api-rpc`: on a tRPC procedure or Connect RPC method (decision 0051), `{ protocol
+    (trpc | connect), procedure, readOnly, readOnlyEvidence }`. Each procedure is its own
+    operation at its literal path (a tRPC batch is split into one unbatched call per
+    procedure); a tRPC `input` and a Connect GET `message` are JSON query parameters
+    (`content: application/json`), and flow inputs inside them read `query.input./json/slug`.
+    `readOnly` (a GET, or `NO_SIDE_EFFECTS` in the site's protobuf descriptor) lets probe and
+    the MCP servers send the call.
   - `x-site-to-api-graphql`: on a GraphQL operation, `{ endpoint, operationName, operationType
     (query | mutation | subscription | unknown), operationTypeFrom (document | get | source |
     null), persistedQuery ({ version, sha256Hash } | null), hashes (only when more than one was
@@ -238,11 +245,12 @@ same stem. Conventions:
 
 ## `specs/<host>.asyncapi.yaml`
 
-AsyncAPI 3.0, one file per host that has WebSocket channels (decision 0023), named like the
+AsyncAPI 3.0, one file per host that has WebSocket channels or server-sent event streams
+(decisions 0023, 0050), named like the
 OpenAPI file with `.asyncapi.yaml` (`localhost:4173` → `localhost_4173.asyncapi.yaml`). Operations
 are written from the client's point of view: `send` is client → server, `receive` server → client.
 
-- One server per scheme (`ws`, `wss`); one channel per connection path template, with path
+- One server per scheme (`ws`, `wss`, and `http`/`https` for event streams); one channel per connection path template, with path
   parameters (`/rooms/{roomId}`) and query parameters as the `ws` binding's `query` schema.
 - Messages are grouped per direction by a discriminator: a string field, top level or one object
   down (`type`, `stream`, `data.e`), on at least 80% of that direction's JSON messages, with at
@@ -259,6 +267,9 @@ are written from the client's point of view: `send` is client → server, `recei
   Phoenix `topic:event` or Centrifugo channel (identifiers as `{id}`), and the payload schema
   is that of the message's data (event arguments, STOMP `{headers, body}`, graphql-ws
   `payload`). Engine.IO long-polling requests are part of the channel, not HTTP operations.
+- Server-sent event streams (decision 0050) are channels whose messages the server sends: one
+  per `event:` name (`message` when none), with the event's `data` as the payload (its JSON
+  when it is JSON), and the protocol `sse`.
 - SmartFoxServer 2X (decision 0048): binary packets (often on `/BlueBox/websocket`) are decoded
   in full, zlib-compressed ones included. A system message is named by its action (`Handshake`,
   `Login`, `JoinRoom`, `PingPong`, `UserEnterRoom`, or `action <id>` when unpublished; frame
@@ -266,6 +277,11 @@ are written from the client's point of view: `send` is client → server, `recei
   is that of the params (`p`, or `p.p` for an extension); `contentType` stays
   `application/octet-stream`. Encrypted packets are one `encrypted` message, counted only. The
   channel's version is the client API the handshake names (`client API 1.8.4`).
+- Firebase Realtime Database (`/.ws?v=5&ns=…`) and Primus (decision 0051): Firebase messages
+  are named by action and templated database path (`listen /v0/item/{id}`, pushes `data
+  /v0/item/{id}`, answers after their request), control frames by type (`hello`, `ping`);
+  Primus data messages by their `type`-like field, its heartbeat `ping`/`pong`, over Engine.IO
+  or plain frames.
 - Binary frames that decode fully as MessagePack (`application/msgpack`) or as protobuf wire
   format (`application/x-protobuf`, fields named `field <n> (<wire type>)`) get schemas and
   examples like JSON messages, and MessagePack messages are grouped by discriminator.
@@ -456,7 +472,7 @@ and names only, never values, so it is safe to commit. `build` does not read or 
 - `exitCode` is what the command exits with: `0` no drift in what was replayed, `1` any drift,
   `2` a replayed operation could not be judged (blocked, unreachable, unchecked) or nothing was
   replayed. Operations skipped by the safety rules, or because the capture holds no success to
-  replay, were never replayed and do not count; the summary notes the latter (decision 0050).
+  replay, were never replayed and do not count; the summary notes the latter (decision 0052).
   A usage error also exits 2.
   An error before the check ran (no captures, an unknown `--operations` id) also exits 2 and
   writes no file.

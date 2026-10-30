@@ -126,6 +126,22 @@ describe('rankHosts', () => {
     const analysis: Analysis = twoHostAnalysis()
     expect(rankHosts(analysis, []).every(entry => entry.role === 'first-party')).toBe(true)
   })
+
+  it('uses the start URL\'s site when no page was captured, so a font host is not the site (YouTube)', () => {
+    const analysis: Analysis = twoHostAnalysis()
+    const api = analysis.operations.find(entry => entry.host === API)
+    if (!api)
+      throw new Error('fixture changed')
+    analysis.operations.push(
+      { ...api, host: 'fonts.static.test', operationId: 'getIcon1' },
+      { ...api, host: 'fonts.static.test', operationId: 'getIcon2' },
+      { ...api, host: 'fonts.static.test', operationId: 'getIcon3' },
+    )
+    analysis.startUrls = [`https://${WWW}/`]
+    const ranked = rankHosts(analysis, [])
+    expect(ranked.at(-1)).toMatchObject({ host: 'fonts.static.test', role: 'third-party' })
+    expect(ranked.filter(entry => entry.role === 'first-party').map(entry => entry.host).sort()).toEqual([API, WWW].sort())
+  })
 })
 
 describe('rankedComputedValues', () => {

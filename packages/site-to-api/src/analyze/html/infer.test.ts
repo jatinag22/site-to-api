@@ -151,7 +151,7 @@ describe('inferExtraction: tables', () => {
     expect(applyExtractSpec(garden, spec)).toHaveLength(2)
   })
 
-  it('infers from the first eight pages and checks the spec on the rest (decision 0050)', () => {
+  it('infers from the first eight pages and checks the spec on the rest (decision 0052)', () => {
     const many = Array.from({ length: 10 }, (_, index) => html(index % 2 === 0
       ? kitchen
       : garden))

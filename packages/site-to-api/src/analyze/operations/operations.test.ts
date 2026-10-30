@@ -261,6 +261,47 @@ describe('buildOperations: grouping, ids and summaries', () => {
     ])
   })
 
+  it('keeps a navigation a page when a service worker fetched the same HTML (YouTube)', () => {
+    const operations = build([
+      get('/watch', {
+        kind: 'page',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+      get('/watch', {
+        kind: 'api',
+        resourceType: 'fetch',
+        responseBody: textBody('<html>'),
+      }),
+      get('/feed', {
+        kind: 'page',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+      get('/feed', { kind: 'api', resourceType: 'other' }),
+    ])
+    expect(operations.map(operation => [operation.operationId, operation.kind])).toEqual([
+      ['getFeed', 'page'],
+      ['getWatch', 'page'],
+    ])
+  })
+
+  it('still makes a path an API operation when a call beside its navigation returned data', () => {
+    const operations = build([
+      get('/results', {
+        kind: 'page',
+        resourceType: 'document',
+        responseBody: textBody('<html>'),
+      }),
+      get('/results', {
+        kind: 'api',
+        resourceType: 'fetch',
+        responseBody: jsonBody({ items: [] }),
+      }),
+    ])
+    expect(operations.map(operation => operation.kind)).toEqual(['api'])
+  })
+
   it('makes code-only operations only from request calls, on the pages that loaded the script', () => {
     const pageOn = (host: string): Exchange => exchange({
       url: `https://${host}/`,
@@ -616,7 +657,7 @@ describe('buildOperations: a slug after an id (decision 0046)', () => {
   })
 })
 
-describe('buildOperations: method names in paths (decision 0050)', () => {
+describe('buildOperations: method names in paths (decision 0052)', () => {
   const post = (path: string, body: unknown): Exchange => exchange({
     url: `https://shop.test${path}`,
     method: 'POST',
@@ -1029,7 +1070,7 @@ describe('buildOperations: sibling paths (decision 0035)', () => {
       .every(operation => operation.pathParams.length === 0)).toBe(true)
   })
 
-  it('templates slug pages whose titles name their value, owner/repo pairs at the root too (decision 0050)', () => {
+  it('templates slug pages whose titles name their value, owner/repo pairs at the root too (decision 0052)', () => {
     const titled = (title: string, body: string): Parameters<typeof get>[1] => ({
       kind: 'page',
       responseBody: textBody(`<html><head><title>${title}</title></head><body><header class="top"><nav class="menu"></nav></header><main class="feed"><h1 class="name">${body}</h1><ul class="posts"><li class="post">x</li></ul></main></body></html>`),
