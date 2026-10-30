@@ -3,8 +3,9 @@
  */
 import type { PathParam, SourceRoute } from '../../model'
 import type { SiblingFacts } from './siblings'
-import { isIdentifierLike, isMethodName, isRpcMethodAt, isRpcPrefix, isSlug, isStrongIdentifier } from './identifiers'
-import { alike, markSiblingPositions } from './siblings'
+import { isPersonalField } from '../redact'
+import { isIdentifierLike, isRpcMethodAt, isSlug, isStrongIdentifier } from './identifiers'
+import { markSiblingPositions } from './siblings'
 
 export type Evidence = PathParam['evidence'][number]
 
@@ -123,7 +124,7 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
     result.set(path, marks)
   }
 
-  unmarkWordOperations(sourced, siblings)
+  unmarkWordOperations(sourced)
   markVaryingPositions(free, isCandidate)
   markTrailingSlugs(free, titled)
   if (siblings)
@@ -131,22 +132,115 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
   return result
 }
 
-/** More distinct values than this at one position are data, not an RPC endpoint's methods. */
-const MAX_RPC_METHODS = 12
+/** Words of a code name: `userName` → `user`, `name`; `rpc_method` → `rpc`, `method`. */
+function codeWords(name: string): string[] {
+  return name.replace(/([a-z\d])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z\d]+/).filter(word => word !== '')
+}
 
-/** Requests that only read: the methods whose word values can be data rather than operations. */
-const SAFE_READS = new Set(['GET', 'HEAD'])
+/** Code names of a parameter that identifies something: its values are data, never operations. */
+const IDENTITY_WORDS: ReadonlySet<string> = new Set([
+  'user',
+  'username',
+  'handle',
+  'name',
+  'slug',
+  'id',
+  'account',
+  'owner',
+  'profile',
+  'login',
+  'email',
+  'member',
+  'customer',
+])
+/** Code names of a parameter that names an operation: `/youtubei/v1/${endpoint}`, `/svc/${svc}/…`. */
+const OPERATION_WORDS: ReadonlySet<string> = new Set([
+  'endpoint',
+  'method',
+  'action',
+  'op',
+  'operation',
+  'rpc',
+  'svc',
+  'service',
+  'procedure',
+  'fn',
+  'func',
+  'function',
+  'command',
+])
+/** First words of operation names (`getAssets`, `log_event`, `loadCachedPageChunk`). */
+const VERBS: ReadonlySet<string> = new Set([
+  'get',
+  'list',
+  'load',
+  'fetch',
+  'create',
+  'update',
+  'delete',
+  'remove',
+  'set',
+  'add',
+  'search',
+  'query',
+  'find',
+  'log',
+  'send',
+  'submit',
+  'track',
+  'save',
+  'sync',
+  'check',
+  'init',
+  'start',
+  'stop',
+  'edit',
+  'read',
+  'write',
+  'subscribe',
+  'unsubscribe',
+  'upload',
+  'download',
+  'post',
+  'put',
+  'patch',
+  'report',
+  'record',
+  'register',
+  'validate',
+  'verify',
+  'refresh',
+  'resolve',
+  'lookup',
+  'batch',
+])
+/** More distinct values than this at one position are data, not an endpoint's operations. */
+const MAX_OPERATION_VALUES = 12
 
 /**
- * Undoes source-template parameters in RPC positions (after a version, `rpc`, `svc` or a service
- * name, see {@link isRpcPosition}) whose values name methods (decision 0052): `/svc/${svc}/${slug}`
- * sent `events/preload-head` and `shreddit/data-protection-consent`, two unrelated partials, and
- * `/youtubei/v1/${endpoint}` sent `feedback` and `log_event`. With a few word values there (two
- * or more, or one method name; none id-like), the position stays a parameter only for a safe
- * read whose responses all share one structure. Any other position a code template marks stays
- * a parameter whatever its values: `john_smith` and `JohnSmith` in `/users/${username}`.
+ * Whether a code template's parameter may be undone: its code name says it names an operation
+ * (`endpoint`, `method`, `action`, `svc`…), or it has no code name and every value starts with a
+ * verb (`log_event`, `getAssetsJsonV2`). A name that says identity (`username`, `handle`, `slug`,
+ * `id`, `owner`, or any personal field name) never is, and neither is any other name.
  */
-function unmarkWordOperations(sourced: Array<{ path: string, segments: string[], marks: Marks, template: ParsedTemplate }>, siblings: SiblingFacts | null): void {
+function namesOperations(name: string, values: readonly string[]): boolean {
+  const words = codeWords(name)
+  if (words.some(word => IDENTITY_WORDS.has(word)) || isPersonalField(name))
+    return false
+  if (words.some(word => OPERATION_WORDS.has(word)))
+    return true
+  // `{param}`, `{param2}`: a position the code gave no name.
+  return /^param\d*$/.test(name) && values.every(value => VERBS.has(codeWords(value)[0] ?? ''))
+}
+
+/**
+ * Undoes code-template parameters that name operations (decision 0052): `/youtubei/v1/${endpoint}`
+ * sent `feedback` and `log_event`, and `/svc/${svc}/${slug}` sent `events` and `shreddit`,
+ * different endpoints each. Only {@link namesOperations} parameters with a few values (twelve at
+ * most, none id-like) are undone; every other position a code template marks stays a parameter
+ * whatever its values: `john_smith` and `JohnSmith` in `/api/v1/${username}`.
+ */
+function unmarkWordOperations(sourced: Array<{ path: string, segments: string[], marks: Marks, template: ParsedTemplate }>): void {
   const byTemplate = new Map<ParsedTemplate, typeof sourced>()
   for (const item of sourced) {
     byTemplate.set(item.template, [
@@ -158,41 +252,15 @@ function unmarkWordOperations(sourced: Array<{ path: string, segments: string[],
     template.segments.forEach((part, index) => {
       if (!('param' in part))
         return
-      if (!isRpcPosition(template, index))
-        return
       const values = [
         ...new Set(items.map(item => item.segments[index] ?? '')),
       ]
-      if (values.length > MAX_RPC_METHODS || values.some(isIdentifierLike) || (values.length < 2 && !values.some(isMethodName)))
-        return
-      if (siblings !== null && SAFE_READS.has(siblings.method) && oneStructure(items.map(item => item.path), siblings))
+      if (values.length > MAX_OPERATION_VALUES || values.some(isIdentifierLike) || !namesOperations(part.param, values))
         return
       for (const item of items)
         item.marks.delete(index)
     })
   }
-}
-
-/**
- * True when the nearest literal before a template parameter is where RPC-style APIs name the
- * method: `/youtubei/v1/${endpoint}`, `/svc/${svc}/${slug}`. `/api/users/${username}` is not.
- */
-function isRpcPosition(template: ParsedTemplate, index: number): boolean {
-  for (let position = index - 1; position >= 0; position--) {
-    const part = template.segments[position]
-    if (part !== undefined && 'literal' in part)
-      return isRpcPrefix(part.literal)
-  }
-  return false
-}
-
-/** True when every path has a readable response and all of them are alike. */
-function oneStructure(paths: readonly string[], siblings: SiblingFacts): boolean {
-  const structures = [
-    ...new Set(paths),
-  ].map(path => siblings.structures.get(path))
-  const [first] = structures
-  return first !== undefined && structures.every(structure => structure !== undefined && alike(first, structure))
 }
 
 /**

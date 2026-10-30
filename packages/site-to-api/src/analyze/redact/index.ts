@@ -1,5 +1,5 @@
 export { probeReportWithRedactedNames, redactRequirement, withRedactedNames } from './names'
 export { isRandomPathSegment, isSecretPathSegment, redactPathTokens } from './path-tokens'
-export { maskKeepingFormat } from './personal-data'
+export { isPersonalField, maskKeepingFormat } from './personal-data'
 export { createRedactor, placeholder } from './redactor'
 export { isAuthScheme, isSecretName } from './secret-names'

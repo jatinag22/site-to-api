@@ -687,18 +687,25 @@ describe('buildOperations: method names in paths (decision 0052)', () => {
       post('/tubei/v1/feedback', { feedbackResponses: [] }),
       post('/tubei/v1/log_event', {}),
     ], [
-      route('/tubei/v1/{qsa}'),
+      route('/tubei/v1/{endpoint}'),
     ]))).toEqual(['POST /tubei/v1/feedback', 'POST /tubei/v1/log_event'])
+    // Without a code name, only values that start with a verb are operations.
+    expect(paths(build([
+      post('/tubei/v1/log_event', {}),
+      post('/tubei/v1/get_feed', { items: [] }),
+    ], [
+      route('/tubei/v1/{}'),
+    ]))).toEqual(['POST /tubei/v1/get_feed', 'POST /tubei/v1/log_event'])
   })
 
-  it('keeps word values of a code template literal when their responses differ, and templates alike pages', () => {
+  it('undoes an operation-named code parameter, keeps an identity-named one, and templates alike pages', () => {
     const shell = (body: string): string => `<html><head><title>t</title></head><body><nav class="top"></nav><main class="feed"><h1 class="name">${body}</h1><ul class="posts"><li class="post">p</li></ul></main></body></html>`
     expect(paths(build([
       page('/svc/events/preload-head', '<link rel="preload" href="/a.css">'),
       page('/svc/shreddit/data-protection-consent', '<form class="consent"><button>ok</button></form>'),
     ], [
       route('/svc/{svc}/{slug}'),
-    ]))).toEqual(['GET /svc/events/preload-head', 'GET /svc/shreddit/data-protection-consent'])
+    ]))).toEqual(['GET /svc/events/{slug}', 'GET /svc/shreddit/{slug}'])
     expect(paths(build([
       page('/r/programming', shell('programming')),
       page('/r/webdev', shell('webdev')),
@@ -719,6 +726,26 @@ describe('buildOperations: method names in paths (decision 0052)', () => {
     ], [
       route('/api/users/{username}/profile'),
     ]))).toEqual(['GET /api/users/{username}/profile'])
+  })
+
+  it('never undoes a code parameter named for identity, in an RPC position or with differing answers', () => {
+    const user = (method: string, name: string, body: unknown): Exchange => exchange({
+      url: `https://shop.test/api/v1/${name}`,
+      method,
+      responseBody: jsonBody(body),
+    })
+    expect(paths(build([
+      user('GET', 'jane_doe', { name: 'Jane', posts: [] }),
+      user('GET', 'johnSmith', { error: 'private' }),
+    ], [
+      route('/api/v1/{username}'),
+    ]))).toEqual(['GET /api/v1/{username}'])
+    expect(paths(build([
+      user('POST', 'JaneDoe', { ok: true }),
+      user('POST', 'johnSmith', { ok: true }),
+    ], [
+      route('/api/v1/{username}'),
+    ]))).toEqual(['POST /api/v1/{username}'])
   })
 
   it('keeps camelCase values outside RPC positions templated when they vary like ids', () => {
