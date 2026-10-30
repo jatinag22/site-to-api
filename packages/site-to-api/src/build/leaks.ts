@@ -4,8 +4,9 @@
  * new shapes (a token in a WebSocket URL inside a frame), so the tool checks what it wrote
  * instead of trusting the rules.
  */
+import { existsSync } from 'node:fs'
 import { readdir, readFile, rm } from 'node:fs/promises'
-import { dirname, join, relative } from 'pathe'
+import { isAbsolute, join, relative } from 'pathe'
 import { SiteToApiError } from '../errors'
 
 /** One learnt secret found in one output file. */
@@ -52,45 +53,63 @@ export function findLeaks(files: ReadonlyArray<{ path: string, content: string }
   return leaks
 }
 
-/** Text files of the handoff folder, relative paths sorted; dependencies installed into it are skipped. */
-async function handoffFiles(outDir: string): Promise<Array<{ path: string, content: string }>> {
-  const entries = await readdir(outDir, { recursive: true, withFileTypes: true })
-  const paths = entries
-    .filter(entry => entry.isFile())
-    .map(entry => relative(outDir, join(entry.parentPath, entry.name)))
-    .filter(path => !path.split('/').includes('node_modules'))
-    .sort()
-  return Promise.all(paths.map(async path => ({ path, content: await readFile(join(outDir, path), 'utf8') })))
-}
-
-/** {@link findLeaks} over every file of the handoff folder. */
-export async function findHandoffLeaks(outDir: string, secrets: readonly string[]): Promise<Leak[]> {
-  return findLeaks(await handoffFiles(outDir), secrets)
-}
-
 /** True when `dir` is `other` or contains it. */
 function containsOrEquals(dir: string, other: string): boolean {
   const path = relative(dir, other)
-  return path === '' || (!path.startsWith('..') && !path.startsWith('/'))
+  return path === '' || (!path.startsWith('..') && !isAbsolute(path))
 }
 
 /**
- * Removes what a failed leak check found, so no leaking file stays on disk: the whole handoff
- * folder when it is a folder of its own, else only the files with a leak (when it is the working
- * directory, the filesystem root, or holds a `protect`ed folder such as the raw captures).
- * Returns what was removed, for the error.
+ * Throws unless `outDir` is a folder of its own: not the working directory or a folder holding
+ * it, and not holding the raw captures. The leak check reads and deletes only what `build` wrote,
+ * but a handoff folder mixed with the project's own files invites committing everything in it.
  */
-export async function discardLeakingOutput(outDir: string, leaks: readonly Leak[], protect: readonly string[]): Promise<string> {
-  const ownFolder = dirname(outDir) !== outDir && protect.every(dir => !containsOrEquals(outDir, dir))
-  if (ownFolder) {
-    await rm(outDir, { recursive: true, force: true })
-    return `The handoff folder was deleted so the values cannot be shared; fix the cause and run build again.`
-  }
+export function assertOwnOutDir(outDir: string, cwd: string, rawDir: string): void {
+  if (containsOrEquals(outDir, cwd))
+    throw new SiteToApiError(`outDir ${outDir} is the project folder (or holds it). Set outDir to a folder of its own, such as "api-handoff".`)
+  if (containsOrEquals(outDir, rawDir))
+    throw new SiteToApiError(`outDir ${outDir} holds the raw captures (${rawDir}), which must never be shared. Set outDir to a folder of its own, such as "api-handoff", outside rawDir.`)
+}
+
+/** Files under `dir`, absolute; dependencies installed into it are skipped. A missing folder has none. */
+export async function filesUnder(dir: string): Promise<string[]> {
+  if (!existsSync(dir))
+    return []
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true })
+  return entries
+    .filter(entry => entry.isFile())
+    .map(entry => join(entry.parentPath, entry.name))
+    .filter(path => !relative(dir, path).split('/').includes('node_modules'))
+}
+
+/**
+ * {@link findLeaks} over `written`, the absolute paths `build` wrote or manages in `outDir`,
+ * reported relative to it. Nothing else is read: the user's own files are neither the tool's
+ * output nor its business.
+ */
+export async function findHandoffLeaks(outDir: string, written: readonly string[], secrets: readonly string[]): Promise<Leak[]> {
+  const paths = [
+    ...new Set(written),
+  ]
+    .filter(path => containsOrEquals(outDir, path) && existsSync(path))
+    .sort()
+  const files = await Promise.all(paths.map(async path => ({
+    path: relative(outDir, path),
+    content: await readFile(path, 'utf8'),
+  })))
+  return findLeaks(files, secrets)
+}
+
+/**
+ * Deletes the files the leak check found, so no leaking file stays on disk. Only those files:
+ * they are all files `build` wrote ({@link findHandoffLeaks}). Returns what was done, for the error.
+ */
+export async function discardLeakingOutput(outDir: string, leaks: readonly Leak[]): Promise<string> {
   const files = [
     ...new Set(leaks.map(leak => leak.file)),
   ]
   await Promise.all(files.map(file => rm(join(outDir, file), { force: true })))
-  return `The ${files.length} file(s) listed were deleted (the handoff folder ${outDir} also holds other things, so it was kept); fix the cause and run build again.`
+  return `The ${files.length} file(s) listed were deleted so the values cannot be shared; the rest of ${outDir} is incomplete until build runs again after the fix.`
 }
 
 /** The error that fails `build` when the check found anything; `removed` says what was deleted. */

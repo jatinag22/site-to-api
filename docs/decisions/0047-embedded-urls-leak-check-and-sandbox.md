@@ -24,17 +24,17 @@ Playwright passes unless `chromiumSandbox` is set, and that a capture whose page
   same token is scrubbed everywhere.
 - **`t` in URLs.** A query parameter named exactly `t` is a secret name, unless its value is a
   10- or 13-digit Unix time or a short offset with units (`t=1700000000`, `t=1m30s`). It is never matched as a word (`x-t-id`).
-- **Leak check.** After `build` (and the rebuild `probe` runs) writes the handoff folder, every
-  file in it is searched for every secret the redactor learnt from the capture (cookie values,
-  auth headers, tokens and other learnt secrets from requests, responses and WebSocket frames,
-  in each encoding searched for). Only values of 12+ characters that mix letters and digits are
-  checked, so a cookie such as `desktop-layout` never matches ordinary text. Any hit fails the
-  build with the file and a masked hint (`PH8…Q= (40 chars)`), never the value, and deletes the
-  output so no leaking file stays on disk: the whole handoff folder when it is a folder of its
-  own, else only the listed files (when the folder is the working directory or holds the raw
-  captures). The only
-  opt-out is `redact.examples: raw`, which copies captured values on purpose; the check is
-  skipped then.
+- **Leak check.** After `build` (and the rebuild `probe` runs) writes the handoff folder, the
+  files it wrote in that run, plus the `client/` and `probe.json` it manages across runs, are
+  searched for every secret the redactor learnt from the capture (cookie values, auth headers,
+  tokens and other learnt secrets from requests, responses and WebSocket frames, in each
+  encoding searched for). Nothing else in the folder is read or touched. Only values of 12+
+  characters that mix letters and digits are checked, so a cookie such as `desktop-layout` never
+  matches ordinary text. Any hit fails the build with the file and a masked hint
+  (`PH8…Q= (40 chars)`), never the value, and deletes exactly the files listed. The only opt-out
+  is `redact.examples: raw`, which copies captured values on purpose; the check is skipped then.
+- **A handoff folder of its own.** `build` refuses an `outDir` that is the working directory,
+  holds it, or holds `rawDir`, and says to use a folder such as `api-handoff`.
 - **Sandbox.** Captures launch Chromium with its sandbox (`capture.browser.sandbox`, default
   true). Only on Linux, and only when the launch error is Chromium's own sandbox failure ("No
   usable sandbox", a namespace that cannot be created, the setuid sandbox, the zygote), it is
@@ -54,5 +54,6 @@ Playwright passes unless `chromiumSandbox` is set, and that a capture whose page
 A random file name in an image URL inside an example is now masked when it changes between
 sessions, as it already was in request paths. The leak check costs one pass over the folder and
 can fail a build the redactor considered clean; that is the point, and the message says what
-was deleted and asks for the shapes to be reported. Secrets that are short or letters-only (an OTP, a
+was deleted and asks for the shapes to be reported. A leak in a file the user put in the folder
+is not the tool's to find. Secrets that are short or letters-only (an OTP, a
 word-like cookie) are still redacted but not checked.

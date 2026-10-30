@@ -310,30 +310,42 @@ describe('handoff folder', () => {
       expect(again.get(name), name).toBe(content)
   }, 120_000)
 
-  it('fails the build when a secret learnt from the capture is in the folder (decision 0047)', async () => {
+  it('fails the build when a secret learnt from the capture is in a file it manages, and deletes only that file (decision 0047)', async () => {
     const session = analysis.operations
       .flatMap(op => op.exchanges)
       .flatMap(exchange => exchange.request.cookies)
       .find(cookie => cookie.name === 'pm_session')
       ?.value ?? ''
     expect(session.length).toBeGreaterThan(11)
-    const planted = join(outDir, 'notes', 'planted.md')
+    // With --no-client build keeps client/ and checks it: a file there stands in for a leak an
+    // emitter let through.
+    const planted = join(outDir, 'client', 'planted.md')
+    // The user's own file in the folder is neither scanned nor touched.
+    const own = join(outDir, 'notes', 'own.md')
     await mkdir(join(outDir, 'notes'), { recursive: true })
     await writeFile(planted, `copied by hand: ${session}\n`)
+    await writeFile(own, `my note: ${session}\n`)
     try {
-      const error = await buildHandoff({ config, cwd: work }).then(() => null, (failure: unknown) => failure)
+      const keepClient = {
+        ...config,
+        gen: { ...config.gen, client: false },
+      }
+      const error = await buildHandoff({ config: keepClient, cwd: work }).then(() => null, (failure: unknown) => failure)
       expect(error).toBeInstanceOf(Error)
       const message = error instanceof Error
         ? error.message
         : ''
       expect(message).toContain('Leak check failed: 1 secret value(s) learnt from the capture appear in')
-      expect(message).toContain(`notes/planted.md: ${session.slice(0, 3)}…${session.slice(-2)} (${session.length} chars)`)
+      expect(message).toContain(`client/planted.md: ${session.slice(0, 3)}…${session.slice(-2)} (${session.length} chars)`)
+      expect(message).not.toContain('notes/own.md')
       expect(message).not.toContain(session)
-      expect(message).toContain('The handoff folder was deleted so the values cannot be shared')
+      expect(message).toContain('The 1 file(s) listed were deleted')
       expect(existsSync(planted)).toBe(false)
-      expect(existsSync(outDir)).toBe(false)
+      expect(existsSync(own)).toBe(true)
+      expect(existsSync(join(outDir, 'AGENT.md'))).toBe(true)
     }
     finally {
+      await rm(planted, { force: true })
       await rm(join(outDir, 'notes'), { recursive: true, force: true })
     }
     await buildHandoff({ config, cwd: work })
