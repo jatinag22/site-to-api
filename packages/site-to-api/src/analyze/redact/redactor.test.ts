@@ -311,6 +311,28 @@ describe('createRedactor: rules', () => {
     expect(masked).toContain('"openBetsCount":12')
   })
 
+  it('masks user agents and device descriptions in bodies, not the User-Agent header', () => {
+    const agent = 'Mozilla/5.0 (Plan9; Glenda) Fakekit/999.1 Exampler/42.0'
+    const body = {
+      platform: {
+        userAgent: agent,
+        deviceInfo: JSON.stringify({ userAgent: agent, os: 'Plan9' }),
+        deviceType: 'desktop',
+      },
+      ua: agent,
+    }
+    const masked = JSON.stringify(r.json(body, { in: 'body' }))
+    for (const value of [
+      'Plan9',
+      'Glenda',
+      'Fakekit',
+      'Exampler',
+    ])
+      expect(masked).not.toContain(value)
+    expect(masked).toContain('"deviceType":"desktop"')
+    expect(r.value(agent, { in: 'header', name: 'user-agent' })).toBe(agent)
+  })
+
   it('redacts values a protocol names as secrets, whatever their field name or length', () => {
     const known = createRedactor({
       exchanges: [],

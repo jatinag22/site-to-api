@@ -236,6 +236,35 @@ export function isPersonalField(name: string | null | undefined): boolean {
   return tails.some(tail => PERSONAL_NAME_ENDINGS.includes(tail))
 }
 
+/** Whole names (separators removed) of fields holding the browser's identity. */
+const FINGERPRINT_NAMES: ReadonlySet<string> = new Set([
+  'ua',
+  'useragent',
+  'deviceinfo',
+  'browserinfo',
+])
+
+/** Last words of such names: `navigatorUserAgent`, `client_device_info`. */
+const FINGERPRINT_NAME_ENDINGS: readonly string[] = [
+  'useragent',
+  'deviceinfo',
+  'browserinfo',
+]
+
+/**
+ * Body, query and form fields that hold the browser's user agent or device description
+ * (`userAgent`, `ua`, `deviceInfo`): together with the rest of a capture they fingerprint the
+ * person who captured it (decision 0048). The `User-Agent` header has its own rules.
+ */
+export function isFingerprintField(name: string | null | undefined): boolean {
+  if (name === null || name === undefined || name === '')
+    return false
+  if (FINGERPRINT_NAMES.has(compactName(name)))
+    return true
+  const parts = words(name)
+  return parts.map((_, index) => parts.slice(index).join('')).some(tail => FINGERPRINT_NAME_ENDINGS.includes(tail))
+}
+
 /** Words of a property name that say the object under it describes a person or their account. */
 const PERSON_OBJECT_WORDS: ReadonlySet<string> = new Set([
   'user',

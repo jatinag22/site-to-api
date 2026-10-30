@@ -57,6 +57,11 @@ credentials under names the redactor cannot recognise.
   data of third parties: `player_id`, `playerName`, `profileImage(s)`, `profilePicture`,
   `avatar`, `avatarUrl` join the personal field names (`username` already was), and enum values
   are judged under their field's own name, so a `username` enum is refused like its examples.
+- **The capturing browser.** An SFS2X login sends the browser's user agent and a device
+  description (`platform.userAgent`, `platform.deviceInfo`). Body, query and form fields named
+  `userAgent`, `ua`, `deviceInfo` or `browserInfo` (or ending in them) are a fingerprint of
+  whoever captured the site, and are masked keeping their format. The `User-Agent` header keeps
+  its own rules.
 
 ## Consequences
 An agent sees an SFS2X channel as named game messages with schemas, the handshake and login that

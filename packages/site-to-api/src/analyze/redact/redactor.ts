@@ -45,7 +45,7 @@ import { isBotProtectionHeader } from '../classify'
 import { describeShape, inspectJwt } from '../shape'
 import { isOpaqueBlob } from './blobs'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
-import { isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
+import { isFingerprintField, isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { CREDENTIAL_HEADERS, isAuthScheme, isPublishableKeyName, isSecretName } from './secret-names'
 
 interface RedactorInput {
@@ -231,15 +231,19 @@ function* expand(item: Located, depth: number): Generator<Located> {
 
 /**
  * Masks a value whose field name says it is personal: a phone number, a person's name, account
- * or address, or `name`/`id` inside a person's record. `null` when the name says nothing.
+ * or address, `name`/`id` inside a person's record, or the capturing browser's user agent.
+ * `null` when the name says nothing.
  */
-function maskByName(text: string, name: string | null | undefined, personRecord: boolean): string | null {
+function maskByName(text: string, name: string | null | undefined, personRecord: boolean, where: RedactContext['in']): string | null {
   if (isPhoneField(name)) {
     const masked = maskPhoneField(text)
     if (masked !== null)
       return masked
   }
-  return isPersonalField(name) || (personRecord && isPersonRecordField(name))
+  // A user agent or device description in a body fingerprints whoever captured it (0048); the
+  // `User-Agent` header has its own rules.
+  const fingerprint = isFingerprintField(name) && where !== 'header' && where !== 'response-header'
+  return fingerprint || isPersonalField(name) || (personRecord && isPersonRecordField(name))
     ? maskKeepingFormat(text)
     : null
 }
@@ -301,7 +305,7 @@ function learnKey(key: string, learnt: Learnt): void {
 
 /** Records which secret set a non-empty value belongs to, if any. */
 function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean): void {
-  if (item.value.length >= MIN_SEARCHED_SECRET_LENGTH && maskByName(item.value, item.name, item.person === true) !== null)
+  if (item.value.length >= MIN_SEARCHED_SECRET_LENGTH && maskByName(item.value, item.name, item.person === true, item.in) !== null)
     learnt.personal.add(item.value)
   if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true) {
     forms.forEach(form => learnt.always.add(form))
@@ -493,7 +497,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     // A visitor, device or client id follows one person; only the site's own constant stays.
     if (isTrackingIdName(context.name) && !isConstant(text))
       return placeholder(text)
-    const byName = maskByName(text, context.name, personRecord)
+    const byName = maskByName(text, context.name, personRecord, context.in)
     if (byName !== null)
       return byName
     // A sensor payload or encrypted blob (`a13: <5572 base64 chars>`) says nothing as an example.
