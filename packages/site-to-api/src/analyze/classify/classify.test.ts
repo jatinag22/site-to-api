@@ -35,6 +35,52 @@ function kinds(list: Exchange[], include: string[] = [], exclude: string[] = [])
   return classify(list, include, exclude).exchanges.map(item => item.kind)
 }
 
+describe('classifyExchanges: static files and pixel sandboxes (decision 0050)', () => {
+  it('labels icons, manifests and named scripts and styles assets, whatever their resource type', () => {
+    expect(kinds([
+      page(),
+      on({ url: 'https://shop.test/favicon.ico', resourceType: 'other' }),
+      on({ url: 'https://shop.test/apple-touch-icon-180.png', resourceType: 'fetch' }),
+      on({
+        url: 'https://shop.test/manifest.json',
+        resourceType: 'fetch',
+        responseBody: jsonBody({ name: 'Shop' }),
+      }),
+      on({ url: 'https://shop.test/site.webmanifest', resourceType: 'other' }),
+      on({ url: 'https://shop.test/cloud/checkout-web/assets/c1/polyfills-entry-modern.Ab12Cd.worker.js', resourceType: 'fetch' }),
+      on({ url: 'https://shop.test/cloud/checkout-web/assets/c1/app.css', resourceType: 'other' }),
+      on({
+        url: 'https://shop.test/api/cart.json',
+        resourceType: 'fetch',
+        responseBody: jsonBody({ items: [] }),
+      }),
+    ])).toEqual([
+      'page',
+      'asset',
+      'asset',
+      'asset',
+      'asset',
+      'asset',
+      'asset',
+      'api',
+    ])
+  })
+
+  it('treats Shopify web-pixel sandbox iframes as noise, not pages', () => {
+    const frame = (path: string): Exchange => on({
+      url: `https://shop.test${path}`,
+      resourceType: 'document',
+      responseBody: textBody('<html><body></body></html>'),
+    })
+    expect(kinds([
+      page(),
+      frame('/wpm@a1b2c3d4e5/app/web-pixel-12345@abcdef/sandbox/modern/products/shoe'),
+      frame('/wpm@a1b2c3d4e5/custom/web-pixel-67890@2/sandbox/modern/'),
+      frame('/products/sandbox'),
+    ])).toEqual(['page', 'noise', 'noise', 'page'])
+  })
+})
+
 describe('classifyExchanges: front-end build files and ad networks (decision 0046)', () => {
   it('labels prefetched build chunks assets, whatever their resource type', () => {
     expect(kinds([

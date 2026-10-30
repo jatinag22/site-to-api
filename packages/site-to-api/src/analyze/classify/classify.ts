@@ -50,6 +50,25 @@ const ASSET_MEDIA = /^(?:image|font|audio|video)\/|^text\/css$|javascript|ecmasc
 const BUILD_ASSET_DIR = /^\/(?:_next\/static|static\/(?:js|css|chunks|media))\//
 const HASHED_BUNDLE = /[.-][0-9a-f]{8,}(?:\.chunk)?\.(?:m?js|css)(?:\.map)?$/i
 
+/**
+ * Static files by name: scripts, styles, sourcemaps, fonts, images, media and web app manifests
+ * (`/favicon.ico`, `/apple-touch-icon.png`, `/manifest.json`, `…/polyfills.Cu6fUfaP.worker.js`).
+ * A page fetches them like data, so their resource type alone would make them operations, and
+ * probe would replay them (decision 0050).
+ */
+const STATIC_FILE = /\.(?:m?js|cjs|css|map|woff2?|ttf|otf|eot|png|jpe?g|gif|svg|ico|webp|avif|bmp|mp4|webm|mp3|ogg|wav|webmanifest)$/i
+const MANIFEST = /(?:^|\/)(?:manifest|site\.webmanifest|browserconfig)\.(?:json|xml)$/i
+
+/**
+ * True for a request of a static file (see {@link STATIC_FILE}): a manifest always, another file
+ * name unless it answered with data (`/api/widget.js` returning JSON is an API).
+ */
+function isStaticFile(path: string, response: Body | null): boolean {
+  if (MANIFEST.test(path))
+    return true
+  return STATIC_FILE.test(path.slice(path.lastIndexOf('/') + 1)) && !isDataBody(response)
+}
+
 /** True for a path a front-end build serves as a static file, never an API. */
 export function isBuildAsset(path: string): boolean {
   return BUILD_ASSET_DIR.test(path) || (HASHED_BUNDLE.test(path) && /\d/.test(path.slice(path.lastIndexOf('/'))))
@@ -103,14 +122,25 @@ function defaultScope(exchanges: Exchange[]): Set<string> {
   return scope
 }
 
+/** Why an exchange is a static asset by its resource type or path, or `null`. */
+function assetReason(exchange: Exchange): string | null {
+  const { resourceType, request, response } = exchange
+  if (ASSET_TYPES.has(resourceType))
+    return `resource type ${resourceType}`
+  if (isBuildAsset(request.path))
+    return 'front-end build file'
+  return resourceType !== 'document' && isStaticFile(request.path, response.body)
+    ? 'static file'
+    : null
+}
+
 function classifyByType(exchange: Exchange): { kind: ExchangeKind, reason: string } {
   const { resourceType, request, response } = exchange
   if (request.method === 'OPTIONS')
     return { kind: 'noise', reason: 'CORS preflight' }
-  if (ASSET_TYPES.has(resourceType))
-    return { kind: 'asset', reason: `resource type ${resourceType}` }
-  if (isBuildAsset(request.path))
-    return { kind: 'asset', reason: 'front-end build file' }
+  const asset = assetReason(exchange)
+  if (asset !== null)
+    return { kind: 'asset', reason: asset }
   if (resourceType === 'document')
     return { kind: 'page', reason: 'document' }
   if (resourceType === 'websocket')
