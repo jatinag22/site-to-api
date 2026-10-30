@@ -348,6 +348,16 @@ function containsAsPart(whole: string, part: string): boolean {
   return false
 }
 
+/**
+ * Whether the shorter of two values can be a copy inside the longer one: not a path (`/_tree`
+ * inside Next.js' `x-matched-path`, which is route structure), and with some entropy (a digit or
+ * an upper-case letter), as ids and tokens have. Lower-case words joined by punctuation are
+ * structure or prose more often than copies.
+ */
+function isCopiedPart(part: string): boolean {
+  return !part.startsWith('/') && /[\dA-Z]/.test(part)
+}
+
 function* substringCandidates(consumer: Exchange, sent: LocatedValue, index: SessionIndex): Generator<Candidate> {
   const value = sent.value
   // A plain word or a date inside a longer text (a description, a sentence) is a coincidence, not a copy.
@@ -358,7 +368,8 @@ function* substringCandidates(consumer: Exchange, sent: LocatedValue, index: Ses
       continue
     const other = producer.value
     const related = other !== value
-      && ((value.includes(other) && containsAsPart(value, other)) || (other.includes(value) && containsAsPart(other, value)))
+      && ((value.includes(other) && containsAsPart(value, other) && isCopiedPart(other))
+        || (other.includes(value) && containsAsPart(other, value) && isCopiedPart(value)))
     if (related)
       yield producerCandidate(producer, sent, 'substring')
   }

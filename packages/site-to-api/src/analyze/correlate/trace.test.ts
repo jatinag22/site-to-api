@@ -890,6 +890,33 @@ describe('traceValues: values no response produced', () => {
     expect(origin).toEqual({ kind: 'user-input', field: 'search_query' })
   })
 
+  it('does not take a path inside a header for the source of a path-like value (decision 0054)', () => {
+    const page = exchange({
+      url: 'https://x.example.test/docs',
+      startedAt: 1,
+      responseHeaders: { 'x-matched-path': '/!KG5leHQtc2l0ZSk/__PAGE__/layout' },
+      responseBody: jsonBody({ ok: true }),
+    })
+    const prefetch = exchange({
+      url: 'https://x.example.test/docs?_rsc=1',
+      startedAt: 2,
+      requestHeaders: { 'next-router-segment-prefetch': '/!KG5leHQtc2l0ZSk/__PAGE__' },
+    })
+    expect(originAt(trace([page, prefetch]), prefetch, '{"in":"header","name":"next-router-segment-prefetch"}')?.kind).not.toBe('response')
+    // A token inside a longer value is still a copy.
+    const token = exchange({
+      url: 'https://x.example.test/api/session',
+      startedAt: 3,
+      responseBody: jsonBody({ token: 'Zq8xT2mLp4VwRk7YbN3c' }),
+    })
+    const call = exchange({
+      url: 'https://x.example.test/api/feed',
+      startedAt: 4,
+      requestHeaders: { authorization: 'Bearer Zq8xT2mLp4VwRk7YbN3c' },
+    })
+    expect(originAt(trace([token, call]), call, '{"in":"header","name":"authorization"}')).toMatchObject({ kind: 'response', transform: 'substring' })
+  })
+
   it('does not credit typing that happened after the request', () => {
     const events: CaptureEvent[] = [
       {
