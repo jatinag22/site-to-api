@@ -1,6 +1,6 @@
 # 0050 Output quality from the real-site matrix
 
-Status: Accepted (2026-10-30). Refines 0035 and 0046.
+Status: Accepted (2026-10-30). Refines 0035, 0044 and 0046.
 
 ## Context
 A run over a matrix of real sites showed output a coding agent cannot rely on: different
@@ -42,6 +42,10 @@ listed under each decision below.
   - Extraction patterns never anchor on data numbers (five or more digits, or three or more
     decimal places).
   - A `change` up to two seconds after a page navigation credits the typed value to the field.
+
+- **`check` exit code** (refines 0044). An operation with no captured success to replay is noted
+  in the summary and does not make `check` exit 2; `2` is for replayed operations that could not
+  be judged, or when nothing was replayed.
 
 ## Consequences
 Two endpoint words whose pages happen to be titled with the word are merged; a site's chrome

@@ -453,10 +453,11 @@ and names only, never values, so it is safe to commit. `build` does not read or 
   `enum` (`expected: "enum"`, the value is never written), or a body that is no longer JSON
   (`expected: "JSON"`). A status that differs from the captured one is `drift` with both statuses
   and a note.
-- `exitCode` is what the command exits with: `0` no drift and every selected operation checked,
-  `1` any drift, `2` something selected could not be checked (blocked, unreachable, unchecked, an
-  operation with no captured sample, or nothing replayed). Operations skipped by the safety rules
-  do not count. A usage error also exits 2.
+- `exitCode` is what the command exits with: `0` no drift in what was replayed, `1` any drift,
+  `2` a replayed operation could not be judged (blocked, unreachable, unchecked) or nothing was
+  replayed. Operations skipped by the safety rules, or because the capture holds no success to
+  replay, were never replayed and do not count; the summary notes the latter (decision 0050).
+  A usage error also exits 2.
   An error before the check ran (no captures, an unknown `--operations` id) also exits 2 and
   writes no file.
 - `skipped` lists operations that were not replayed and why, by the rules of `probe`. `cause` is

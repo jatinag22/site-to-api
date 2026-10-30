@@ -42,16 +42,16 @@ export interface CheckOptions {
 }
 
 /**
- * `1` when anything drifted (a finding beats a gap). Else `2` when something selected could not be
- * checked: blocked, unreachable, no documented response, or no captured sample; or when nothing
- * was replayed at all, since "no drift" would then claim more than was looked at. Operations
- * skipped by probe's safety rules are expected and do not count. Else `0`.
+ * `1` when anything drifted (a finding beats a gap). Else `2` when a replayed operation could not
+ * be judged: blocked, unreachable, or answered with a status the capture documents nothing for;
+ * or when nothing was replayed at all, since "no drift" would then claim more than was looked at.
+ * Operations skipped by probe's safety rules, or because the capture holds no success to replay
+ * (decision 0050), were never replayed: the summary notes them, and they do not count. Else `0`.
  */
-export function exitCodeFor(operations: readonly OperationCheck[], skipped: CheckReport['skipped'] = []): 0 | 1 | 2 {
+export function exitCodeFor(operations: readonly OperationCheck[]): 0 | 1 | 2 {
   if (operations.some(entry => entry.verdict === 'drift'))
     return 1
-  const unchecked = operations.some(entry => entry.verdict !== 'ok') || skipped.some(entry => entry.cause === 'no-sample')
-  return operations.length === 0 || unchecked
+  return operations.length === 0 || operations.some(entry => entry.verdict !== 'ok')
     ? 2
     : 0
 }
@@ -113,7 +113,7 @@ export async function checkOperations(options: CheckOptions): Promise<CheckRepor
     skippedHosts: [
       ...options.skippedHosts ?? [],
     ].sort(),
-    exitCode: exitCodeFor(operations, skipped),
+    exitCode: exitCodeFor(operations),
     operations,
     skipped,
   }

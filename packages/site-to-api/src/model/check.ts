@@ -58,7 +58,10 @@ export const CheckReportSchema = z.object({
   generatedBy: z.string(),
   checkedAt: z.string(),
   maxRps: z.number(),
-  /** `0` no drift and everything selected was checked, `1` drift, `2` something selected could not be checked. */
+  /**
+   * `0` no drift in what was replayed, `1` drift, `2` a replayed operation could not be judged or
+   * nothing was replayed. Operations with no captured success are noted, not counted.
+   */
   exitCode: z.union([
     z.literal(0),
     z.literal(1),
