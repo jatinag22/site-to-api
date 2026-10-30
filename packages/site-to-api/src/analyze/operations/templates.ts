@@ -3,8 +3,8 @@
  */
 import type { PathParam, SourceRoute } from '../../model'
 import type { SiblingFacts } from './siblings'
-import { isIdentifierLike, isSlug, isStrongIdentifier } from './identifiers'
-import { markSiblingPositions } from './siblings'
+import { isIdentifierLike, isMethodName, isSlug, isStrongIdentifier } from './identifiers'
+import { alike, markSiblingPositions } from './siblings'
 
 export type Evidence = PathParam['evidence'][number]
 
@@ -83,6 +83,7 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
   const templates = routes.map(parseTemplate)
   const result = new Map<string, Marks>()
   const free: Array<{ path: string, segments: string[], marks: Marks }> = []
+  const sourced: Array<{ path: string, segments: string[], marks: Marks, template: ParsedTemplate }> = []
 
   for (const path of paths) {
     const segments = segmentsOf(path)
@@ -90,7 +91,9 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
     const source = bestSourceMatch(templates, segments, isCandidate)
     if (source) {
       source.segments.forEach((part, index) => {
-        if ('param' in part) {
+        // A method name in a parameter position (`/youtubei/v1/${endpoint}` sent `log_event`) is
+        // an operation of an RPC endpoint, not a value: it stays literal.
+        if ('param' in part && !isMethodName(segments[index] ?? '')) {
           marks.set(index, {
             evidence: ['source-template'],
             sourceName: part.param,
@@ -98,6 +101,12 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
         }
       })
       result.set(path, marks)
+      sourced.push({
+        path,
+        segments,
+        marks,
+        template: source,
+      })
       continue
     }
     segments.forEach((segment, index) => {
@@ -112,11 +121,58 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
     result.set(path, marks)
   }
 
+  unmarkWordOperations(sourced, siblings)
   markVaryingPositions(free, isCandidate)
   markTrailingSlugs(free, titled)
   if (siblings)
     markSiblingPositions(free, siblings)
   return result
+}
+
+/** Requests that only read: the methods whose word values can be data rather than operations. */
+const SAFE_READS = new Set(['GET', 'HEAD'])
+
+/**
+ * Undoes source-template parameters whose observed values are plain words that name different
+ * endpoints (decision 0050): `/svc/${svc}/${slug}` sent `events/preload-head` and
+ * `shreddit/data-protection-consent`, two unrelated partials. With two or more distinct word
+ * values at a position (none of them id-like), the position stays a parameter only for a safe
+ * read whose responses all share one structure, as `/r/${subreddit}` pages do. Writes and RPC
+ * calls with word values are different operations.
+ */
+function unmarkWordOperations(sourced: Array<{ path: string, segments: string[], marks: Marks, template: ParsedTemplate }>, siblings: SiblingFacts | null): void {
+  const byTemplate = new Map<ParsedTemplate, typeof sourced>()
+  for (const item of sourced) {
+    byTemplate.set(item.template, [
+      ...(byTemplate.get(item.template) ?? []),
+      item,
+    ])
+  }
+  for (const [template, items] of byTemplate) {
+    template.segments.forEach((part, index) => {
+      if (!('param' in part))
+        return
+      // Every value the template matched there, including method names already left literal.
+      const values = [
+        ...new Set(items.map(item => item.segments[index] ?? '')),
+      ]
+      if (values.length < 2 || values.some(isIdentifierLike))
+        return
+      if (siblings !== null && SAFE_READS.has(siblings.method) && oneStructure(items.map(item => item.path), siblings))
+        return
+      for (const item of items)
+        item.marks.delete(index)
+    })
+  }
+}
+
+/** True when every path has a readable response and all of them are alike. */
+function oneStructure(paths: readonly string[], siblings: SiblingFacts): boolean {
+  const structures = [
+    ...new Set(paths),
+  ].map(path => siblings.structures.get(path))
+  const [first] = structures
+  return first !== undefined && structures.every(structure => structure !== undefined && alike(first, structure))
 }
 
 /**

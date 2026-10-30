@@ -23,7 +23,12 @@ const HAS_LETTER = /[a-z]/i
  * tells `/reset/<token>` apart from a slug.
  */
 export function isStrongIdentifier(segment: string, previous?: string | null): boolean {
-  if (isSecretPathSegment(segment, previous) || isRandomPathSegment(segment))
+  if (isSecretPathSegment(segment, previous))
+    return true
+  // `loadCachedPageChunkV2` is long, mixed-case and has a digit, like a token; it names a method.
+  if (isMethodName(segment))
+    return false
+  if (isRandomPathSegment(segment))
     return true
   if (UUID.test(segment))
     return true
@@ -34,14 +39,45 @@ export function isStrongIdentifier(segment: string, previous?: string | null): b
   return TOKEN.test(segment) && segment.length >= 20 && HAS_DIGIT.test(segment) && /[a-z]/.test(segment) && /[A-Z]/.test(segment)
 }
 
+const CAMEL_CASE = /^[a-z][a-z\d]*(?:[A-Z][a-z\d]*)+$/
+const PASCAL_WORDS = /^[A-Z][a-z\d]+(?:[A-Z][a-z\d]*)+$/
+const SNAKE_WORDS = /^[a-z]+(?:_[a-z]+)+$/
+/** `buf.registry.module.v1.ResourceService`: a package path, three or more dotted parts. */
+const DOTTED_NAME = /^[a-z][\w-]*(?:\.[\w-]+){2,}$/i
+
+/** A word part of a name: two or more letters with a vowel, or a version suffix (`V2`). */
+const WORD_PART = /^(?:[BCDFGHJ-NP-TVWXZ]*[AEIOUY][A-Z]*|[a-z]\d+)$/i
+
+/**
+ * True when every camelCase, PascalCase or snake_case part reads as a word (`load`, `Cached`,
+ * `V2`). Random tokens are mixed-case too (`aB3dE5gH7jK9`) but their parts are not words.
+ */
+function readsAsWords(segment: string): boolean {
+  const parts = segment.split(/_|(?=[A-Z])/).filter(part => part !== '')
+  return parts.length >= 2 && parts.every(part => part.length >= 2 && WORD_PART.test(part))
+}
+
+/**
+ * Names of methods and operations rather than values: camelCase (`loadCachedPageChunkV2`),
+ * PascalCase words (`GetResources`), snake_case words (`log_event`) and dotted service names
+ * (`buf.registry.module.v1.ResourceService`). RPC-style APIs put the operation in the path, and
+ * templating that position merges different endpoints. Random tokens never count. File names (`app.min.js`) have a dot
+ * before an extension and are not matched as service names unless they have three or more parts.
+ */
+export function isMethodName(segment: string): boolean {
+  if (CAMEL_CASE.test(segment) || PASCAL_WORDS.test(segment) || SNAKE_WORDS.test(segment))
+    return readsAsWords(segment)
+  return DOTTED_NAME.test(segment) && /[a-z]{3,}/i.test(segment) && !/^\d/.test(segment)
+}
+
 /**
  * Values that may be parameters when they vary: integers, UUIDs, hex (≥ 8), base58/base64url
  * tokens (≥ 10, with a digit), UPPER_CASE slugs (`RELIANCE`, `NIFTY_50`) and mixed alphanumeric
- * slugs with digits (`iphone-15`). Plain words (`marketStatus`, `disclaimer`) and versions
- * (`v1`) are not.
+ * slugs with digits (`iphone-15`). Plain words (`disclaimer`), method names (`marketStatus`,
+ * `getAssetsJsonV2`, see {@link isMethodName}) and versions (`v1`) are not.
  */
 export function isIdentifierLike(segment: string): boolean {
-  if (segment === '' || VERSION.test(segment))
+  if (segment === '' || VERSION.test(segment) || isMethodName(segment))
     return false
   if (INTEGER.test(segment) || UUID.test(segment))
     return true

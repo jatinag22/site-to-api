@@ -616,6 +616,63 @@ describe('buildOperations: a slug after an id (decision 0046)', () => {
   })
 })
 
+describe('buildOperations: method names in paths (decision 0050)', () => {
+  const post = (path: string, body: unknown): Exchange => exchange({
+    url: `https://shop.test${path}`,
+    method: 'POST',
+    responseBody: jsonBody(body),
+  })
+  const page = (path: string, html: string): Exchange => get(path, {
+    kind: 'page',
+    responseBody: textBody(html),
+  })
+
+  it('keeps camelCase, PascalCase, snake_case and dotted service names literal', () => {
+    expect(paths(build([
+      post('/api/v3/loadCachedPageChunkV2', { recordMap: {} }),
+      post('/api/v3/getAssetsJsonV2', { files: [] }),
+      post('/acme.registry.module.v1.ResourceService/GetResources', { resources: [] }),
+      post('/acme.alpha.registry.v1alpha1.DocService/GetResources', { docs: [] }),
+    ]))).toEqual([
+      'POST /acme.alpha.registry.v1alpha1.DocService/GetResources',
+      'POST /acme.registry.module.v1.ResourceService/GetResources',
+      'POST /api/v3/getAssetsJsonV2',
+      'POST /api/v3/loadCachedPageChunkV2',
+    ])
+  })
+
+  it('does not apply a code template to operation words of an RPC endpoint', () => {
+    expect(paths(build([
+      post('/tubei/v1/feedback', { feedbackResponses: [] }),
+      post('/tubei/v1/log_event', {}),
+    ], [
+      route('/tubei/v1/{qsa}'),
+    ]))).toEqual(['POST /tubei/v1/feedback', 'POST /tubei/v1/log_event'])
+  })
+
+  it('keeps word values of a code template literal when their responses differ, and templates alike pages', () => {
+    const shell = (body: string): string => `<html><head><title>t</title></head><body><nav class="top"></nav><main class="feed"><h1 class="name">${body}</h1><ul class="posts"><li class="post">p</li></ul></main></body></html>`
+    expect(paths(build([
+      page('/svc/events/preload-head', '<link rel="preload" href="/a.css">'),
+      page('/svc/shreddit/data-protection-consent', '<form class="consent"><button>ok</button></form>'),
+    ], [
+      route('/svc/{svc}/{slug}'),
+    ]))).toEqual(['GET /svc/events/preload-head', 'GET /svc/shreddit/data-protection-consent'])
+    expect(paths(build([
+      page('/r/programming', shell('programming')),
+      page('/r/webdev', shell('webdev')),
+    ], [
+      route('/r/{subreddit}'),
+    ]))).toEqual(['GET /r/{subreddit}'])
+  })
+
+  it('still templates ids and random tokens', () => {
+    expect(isIdentifierLike('aB3dE5gH7jK9mN1pQ2xY')).toBe(true)
+    expect(isIdentifierLike('getAssetsJsonV2')).toBe(false)
+    expect(isIdentifierLike('iphone-15')).toBe(true)
+  })
+})
+
 describe('buildOperations: sibling paths (decision 0035)', () => {
   const article = (title: string): Parameters<typeof get>[1] => ({
     kind: 'page',
@@ -970,6 +1027,36 @@ describe('buildOperations: sibling paths (decision 0035)', () => {
       responseBody: jsonBody({ ok: true, message: name }),
     })))
       .every(operation => operation.pathParams.length === 0)).toBe(true)
+  })
+
+  it('templates slug pages whose titles name their value, owner/repo pairs at the root too (decision 0050)', () => {
+    const titled = (title: string, body: string): Parameters<typeof get>[1] => ({
+      kind: 'page',
+      responseBody: textBody(`<html><head><title>${title}</title></head><body><header class="top"><nav class="menu"></nav></header><main class="feed"><h1 class="name">${body}</h1><ul class="posts"><li class="post">x</li></ul></main></body></html>`),
+    })
+    expect(paths(build([
+      get('/r/programming/', titled('programming - Forum', 'a')),
+      get('/r/webdev/', titled('webdev - Forum', 'b')),
+    ]))).toEqual(['GET /r/{r}/'])
+    expect(paths(build([
+      get('/acme-labs/text-base-uncased', titled('acme-labs/text-base-uncased · Hub', 'a')),
+      get('/openlab/speech-large-v3', titled('openlab/speech-large-v3 · Hub', 'b')),
+    ]))).toEqual(['GET /{param1}/{slug}'])
+  })
+
+  it('keeps slug pages literal when their titles do not name them, or a root pair of plain words', () => {
+    const titled = (title: string): Parameters<typeof get>[1] => ({
+      kind: 'page',
+      responseBody: textBody(`<html><head><title>${title}</title></head><body><main class="article"><h1 class="title">t</h1><p class="lead">x</p></main></body></html>`),
+    })
+    expect(paths(build([
+      get('/help/contact', titled('Help centre')),
+      get('/help/shipping', titled('Help centre - delivery')),
+    ]))).toEqual(['GET /help/contact', 'GET /help/shipping'])
+    expect(paths(build([
+      get('/docs/intro', titled('docs intro')),
+      get('/blog/post', titled('blog post')),
+    ]))).toEqual(['GET /blog/post', 'GET /docs/intro'])
   })
 
   it('keeps two different words in one session literal', () => {
