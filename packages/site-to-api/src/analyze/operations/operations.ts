@@ -8,6 +8,7 @@ import type { Evidence, Marks } from './templates'
 import { isUsableFunctionName } from '../../emit/naming'
 import { isChallengeAnswer } from '../classify'
 import { graphqlGroupKey, graphqlOperationId, graphqlOperationOf, graphqlSpecPath, graphqlSummary, isGraphqlExchange } from '../graphql'
+import { isRpcExchange, rpcGroupKey, rpcOperationOf, rpcSummary } from '../rpc'
 import { inferStringSchema } from '../schema'
 import { detectDispatcher } from './dispatch'
 import { isSlug } from './identifiers'
@@ -282,7 +283,7 @@ function capitalize(phrase: string): string {
   return phrase.charAt(0).toUpperCase() + phrase.slice(1)
 }
 
-function emptyOperation(init: Pick<Operation, 'host' | 'method' | 'path' | 'kind' | 'pathParams' | 'summary' | 'exchanges' | 'sourceOnly' | 'methodUnknown' | 'graphql'>): Operation {
+function emptyOperation(init: Pick<Operation, 'host' | 'method' | 'path' | 'kind' | 'pathParams' | 'summary' | 'exchanges' | 'sourceOnly' | 'methodUnknown' | 'graphql' | 'rpc'>): Operation {
   return {
     operationId: '',
     query: [],
@@ -329,6 +330,45 @@ function graphqlOperations(exchanges: Exchange[], isSecretKey: (key: string) => 
         exchanges: group,
         sourceOnly: false,
         graphql,
+      }),
+    ]
+  })
+}
+
+/**
+ * One operation per tRPC procedure or Connect method (decision 0050) at its literal path: the
+ * procedure is in the path, so templating would merge `/a.v1.X/GetResources` with
+ * `/b.v1.Y/GetResources` into `/{param1}/GetResources`.
+ */
+function rpcOperations(exchanges: Exchange[], isSecretKey: (key: string) => boolean): Operation[] {
+  const groups = new Map<string, Array<Exchange & { rpc: NonNullable<Exchange['rpc']> }>>()
+  for (const exchange of exchanges) {
+    if (!isRpcExchange(exchange))
+      continue
+    const key = rpcGroupKey(exchange)
+    groups.set(key, [
+      ...(groups.get(key) ?? []),
+      exchange,
+    ])
+  }
+  return [
+    ...groups.values(),
+  ].flatMap((group) => {
+    const first = group[0]
+    const rpc = rpcOperationOf(group)
+    if (first === undefined || rpc === null)
+      return []
+    return [
+      emptyOperation({
+        host: first.request.host,
+        method: first.request.method,
+        path: first.request.path,
+        kind: 'api',
+        pathParams: [],
+        summary: withResponseFields(rpcSummary(rpc, first.request.method), group, isSecretKey),
+        exchanges: group,
+        sourceOnly: false,
+        rpc,
       }),
     ]
   })
@@ -396,7 +436,8 @@ function templateOperations(method: string, group: Classified[], names: Map<numb
 
 function observedOperations(exchanges: Exchange[], routes: SourceRoute[], isSecretKey: (key: string) => boolean): Operation[] {
   // GraphQL requests get their own operations; templating their paths would merge them.
-  const relevant = exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind) && !isGraphqlExchange(exchange))
+  // RPC calls too: their procedure is in the path (decision 0050).
+  const relevant = exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind) && !isGraphqlExchange(exchange) && !isRpcExchange(exchange))
   // 1. Parameter positions per host + method.
   const byHostMethod = new Map<string, Exchange[]>()
   for (const exchange of relevant) {
@@ -709,6 +750,7 @@ export function buildOperations(exchanges: Exchange[], options: BuildOperationsO
   const observed = [
     ...observedOperations(kept, options.sourceRoutes, options.isSecretKey),
     ...graphqlOperations(kept.filter(exchange => OPERATION_KINDS.has(exchange.kind)), options.isSecretKey),
+    ...rpcOperations(kept.filter(exchange => OPERATION_KINDS.has(exchange.kind)), options.isSecretKey),
   ].map(operation => withChallengeNote(operation, challenged))
   return assignOperationIds([
     ...observed,

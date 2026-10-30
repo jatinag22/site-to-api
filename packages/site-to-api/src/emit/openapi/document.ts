@@ -2,7 +2,7 @@
  * Builds one OpenAPI 3.1 document per host from an {@link Analysis} (docs/output-format.md).
  * Objects are built with a fixed key order so the YAML is byte-identical for the same analysis.
  */
-import type { Analysis, DispatchOperation, GraphqlOperation, JsonSchema, Operation, ParamInfo, ResponseInfo, SourceRef, ValueOrigin } from '../../model'
+import type { Analysis, DispatchOperation, GraphqlOperation, JsonSchema, Operation, ParamInfo, ResponseInfo, RpcOperation, SourceRef, ValueOrigin } from '../../model'
 import { isTelemetryHeader } from '../../analyze/schema'
 import { createStepResolver, operationKey } from '../steps'
 
@@ -131,12 +131,13 @@ function parameter(where: 'path' | 'query' | 'header' | 'cookie', param: ParamIn
     required: where === 'path'
       ? true
       : param.required,
-    // JSON text in a query string (GraphQL `variables`): OpenAPI describes it as a media type.
+    // JSON text in a query string (GraphQL `variables`, a tRPC `input`): OpenAPI describes it
+    // as a media type, and origins of its fields (`query.input./json/id`) mark its properties.
     ...(param.json === true
       ? {
           content: {
             'application/json': {
-              schema: schemaObject(param.schema),
+              schema: annotateJson(schemaObject(param.schema), origins, `${where}.${param.name}.`),
             },
           },
         }
@@ -225,8 +226,20 @@ function propertyAt(schema: Json, pointer: string[]): Json | undefined {
 
 /** Marks computed body properties (`body./password`) and other origins on the request body schema. */
 function annotateBody(schema: Json, origins: Map<string, ValueOrigin>): Json {
+  return annotateJson(schema, origins, null)
+}
+
+/**
+ * Marks origins on a JSON schema: the request body's (`body./a`, `form.a`) when `prefix` is
+ * null, else a JSON query parameter's (`query.input./a` with prefix `query.input.`).
+ */
+function annotateJson(schema: Json, origins: Map<string, ValueOrigin>, prefix: string | null): Json {
   for (const [input, origin] of [...origins].sort(([a], [b]) => a.localeCompare(b))) {
-    const pointer = bodyPointer(input)
+    const pointer = prefix === null
+      ? bodyPointer(input)
+      : input.startsWith(`${prefix}/`)
+        ? bodyPointer(`body.${input.slice(prefix.length)}`)
+        : null
     const target = pointer
       ? propertyAt(schema, pointer)
       : undefined
@@ -353,6 +366,21 @@ function graphqlExtension(graphql: GraphqlOperation): Json {
 }
 
 /**
+ * `x-site-to-api-rpc` (decision 0050): the tRPC procedure or Connect method this operation calls,
+ * and whether it only reads (which lets probe and the MCP servers send it).
+ */
+function rpcExtension(rpc: RpcOperation): Json {
+  return {
+    'x-site-to-api-rpc': {
+      protocol: rpc.protocol,
+      procedure: rpc.procedure,
+      readOnly: rpc.readOnly,
+      readOnlyEvidence: rpc.readOnlyEvidence,
+    },
+  }
+}
+
+/**
  * `x-site-to-api-dispatch` (decision 0039): the dispatcher parameter this operation sends, where,
  * and with which value; the path is `<endpoint>#<value>`, and the request goes to the endpoint.
  */
@@ -390,6 +418,9 @@ function operationObject(operation: Operation, origins: Map<string, ValueOrigin>
       : {}),
     ...(operation.dispatch
       ? dispatchExtension(operation.dispatch)
+      : {}),
+    ...(operation.rpc
+      ? rpcExtension(operation.rpc)
       : {}),
     ...sourceExtension(operation.sentFrom),
     ...(operation.sourceOnly

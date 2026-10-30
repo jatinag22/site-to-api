@@ -3,7 +3,7 @@
  * AGENT.md) and the `gen` step reads from {@link Analysis}; none of them look at raw HAR data.
  */
 import type { ExtractSpec } from '@site-to-api/runtime'
-import type { Exchange, ExchangeKind, GraphqlOperationType } from './exchange'
+import type { Exchange, ExchangeKind, GraphqlOperationType, RpcRequest } from './exchange'
 import type { FlowsDocument, SourceRef } from './flows'
 
 /** The subset of JSON Schema 2020-12 the inference stage produces. */
@@ -161,6 +161,22 @@ export interface Operation {
   graphql?: GraphqlOperation
   /** Set when the operation is one function of a dispatcher endpoint (decision 0039). */
   dispatch?: DispatchOperation
+  /** Set when the operation is one tRPC procedure or Connect RPC method (decision 0050). */
+  rpc?: RpcOperation
+}
+
+/** A tRPC procedure or Connect RPC method, one per operation (decision 0050). */
+export interface RpcOperation {
+  protocol: 'trpc' | 'connect'
+  /** As in {@link RpcRequest.procedure}. */
+  procedure: string
+  /**
+   * True when the method only reads: a tRPC query (sent with GET), a Connect method called with
+   * GET, or one whose descriptor in the site's code says `idempotency_level = NO_SIDE_EFFECTS`.
+   */
+  readOnly: boolean
+  /** Why `readOnly` is true (`called with GET`, `NO_SIDE_EFFECTS in the site's descriptor`); null when false. */
+  readOnlyEvidence: string | null
 }
 
 /** Where a value that a WebSocket client sends came from (decision 0023). */

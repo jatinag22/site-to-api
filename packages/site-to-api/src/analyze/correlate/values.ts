@@ -115,6 +115,15 @@ function jsonLeaves(value: unknown, pointer = ''): Array<{ pointer: string, valu
   return []
 }
 
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown
+  }
+  catch {
+    return undefined
+  }
+}
+
 function safeDecode(segment: string): string {
   try {
     return decodeURIComponent(segment)
@@ -122,6 +131,32 @@ function safeDecode(segment: string): string {
   catch {
     return segment
   }
+}
+
+/**
+ * The query string's values. A tRPC `input` or Connect `message` is JSON: its fields are the
+ * values, at `query.<name>./<pointer>` (decision 0050).
+ */
+function queryValues(exchange: Exchange): LocatedValue[] {
+  return exchange.request.query.flatMap(({ name, value }): LocatedValue[] => {
+    const json = exchange.rpc?.jsonParam === name
+      ? parseJson(value)
+      : undefined
+    if (json === null || typeof json !== 'object') {
+      return [
+        {
+          location: { in: 'query', name },
+          value,
+          name,
+        },
+      ]
+    }
+    return jsonLeaves(json).map(leaf => ({
+      location: { in: 'query', name, pointer: leaf.pointer },
+      value: leaf.value,
+      name: lastPointerName(leaf.pointer),
+    }))
+  })
 }
 
 /** Every value a request sends, in a fixed order: path, query, headers, cookies, body. */
@@ -138,13 +173,7 @@ export function requestValues(exchange: Exchange): LocatedValue[] {
       })
     }
   })
-  for (const { name, value } of request.query) {
-    values.push({
-      location: { in: 'query', name },
-      value,
-      name,
-    })
-  }
+  values.push(...queryValues(exchange))
   for (const { name, value } of request.headers) {
     if (!isBrowserHeader(name)) {
       values.push({

@@ -18,8 +18,9 @@ import { annotateGraphql, applyGraphqlTypes, graphqlTypeTargets } from '../analy
 import { createHtmlLocator, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
 import { createRedactor, probeReportWithRedactedNames, withRedactedNames } from '../analyze/redact'
+import { annotateRpc, applyConnectIdempotency } from '../analyze/rpc'
 import { inferOperationSchemas } from '../analyze/schema'
-import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findGraphqlTypes, findOneTimeCodes, findSourceEndpoints, isOpaqueFrame, screenSourceRoutes } from '../analyze/source'
+import { buildExcerpt, collectStaticStrings, createSourceResolver, createWrapperAwareResolver, findConnectIdempotency, findGraphqlTypes, findOneTimeCodes, findSourceEndpoints, isOpaqueFrame, screenSourceRoutes } from '../analyze/source'
 import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi'
 import { writeFlows } from '../emit/flows'
 import { clientGap, handoffStems, writeHandoffDocs } from '../emit/handoff'
@@ -225,7 +226,8 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   // GraphQL requests are marked and batches split before anything groups or traces them (0027).
   // Engine.IO long-polling requests are one channel's transport, documented with the channel
   // rather than as HTTP operations (0038).
-  const exchanges = annotateGraphql(classified.exchanges).map(exchange => isEnginePolling(exchange)
+  // tRPC batches are split, and tRPC and Connect calls marked, the same way (0050).
+  const exchanges = annotateRpc(annotateGraphql(classified.exchanges)).map(exchange => isEnginePolling(exchange)
     ? { ...exchange, kind: 'noise' as const, kindReason: 'Engine.IO long-polling: documented as a WebSocket channel' }
     : exchange)
   const resolver = await createSourceResolver(loaded.sessions)
@@ -257,6 +259,8 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
   let operations = buildOperations(exchanges, { sourceRoutes, isSecretKey: redactor.isSecretKey })
     .filter(operation => !operation.sourceOnly || (wanted(operation.host) && !pollingPaths.has(`${operation.host} ${operation.path}`)))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
+  if (operations.some(operation => operation.rpc?.protocol === 'connect'))
+    operations = applyConnectIdempotency(operations, await findConnectIdempotency(loaded.sessions))
   operations = inferOperationSchemas(operations, redactor)
   const blocked = failedNavigationsWarning(loaded.navigations)
   const warnings = [
