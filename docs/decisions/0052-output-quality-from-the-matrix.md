@@ -19,7 +19,7 @@ listed under each decision below.
   (`log_event`); then twelve or fewer values, none id-like, are literal endpoints
   (`/youtubei/v1/${endpoint}`, `/svc/${svc}/…`). A name that says identity (`user`, `username`,
   `handle`, `name`, `slug`, `id`, `account`, `owner`, `profile`, or a personal field name) is never
-  undone.
+  undone. Decision 0053 replaces the verb rule for parameters without a telling name.
 - **Slug pages** (refines 0035). Sibling paths of safe reads become one template with
   `slug-pages` evidence when every value is a slug (lower-case words, digits, `-`, `_`), every
   page is HTML, all pages are alike and not one shell, and each page's title names its value

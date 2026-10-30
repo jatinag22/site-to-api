@@ -49,7 +49,7 @@ merges after CI. See `docs/testing.md` for the testing layers.
 ## Finishing
 
 1. `pnpm run lint:fix`, then the affected tests. Do not run the full `pnpm run ci` yourself before
-   pushing: the pre-push hook runs lint, build, typecheck and the affected tests, and GitHub CI runs
+   pushing: the pre-push hook runs lint, build, typecheck, knip and the affected tests, and GitHub CI runs
    the full suite on the pull request. Fix root causes; do
    not add lint ignores or skip tests. If `knip` reports an export only used by a module another
    agent is building, keep it and say so in the report.

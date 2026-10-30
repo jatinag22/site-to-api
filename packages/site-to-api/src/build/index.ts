@@ -12,7 +12,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'pathe'
 import { buildChannels, channelExchanges, collectConnections, isEnginePolling, protocolSecrets } from '../analyze/channels'
 import { classifyExchanges, createChannelScope } from '../analyze/classify'
-import { traceValues } from '../analyze/correlate'
+import { traceValues, untracedCodeLiterals } from '../analyze/correlate'
 import { buildFlows } from '../analyze/flows'
 import { annotateGraphql, applyGraphqlTypes, graphqlTypeTargets } from '../analyze/graphql'
 import { createHtmlLocator, inferExtraction } from '../analyze/html'
@@ -278,7 +278,23 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
   const wanted = inHostFilter(config.hosts)
   // The page's own calls to a long-polling path are the channel's transport, not unused endpoints.
   const pollingPaths = new Set(exchanges.filter(isEnginePolling).map(exchange => `${exchange.request.host} ${exchange.request.path}`))
-  let operations = buildOperations(exchanges, { sourceRoutes, isSecretKey: redactor.isSecretKey })
+  // Traced before operations are built: a code route's parameter whose values are all literals
+  // of the site's code, provided by no response, page or typing, names endpoints (0053).
+  const allTraces = traceValues({
+    exchanges: [
+      ...exchanges,
+      ...sockets.exchanges,
+    ],
+    sessions: loaded.sessions,
+    htmlLocator,
+    staticStrings,
+    minValueLength: config.build.minTraceValueLength,
+  })
+  const codeLiteral = untracedCodeLiterals(staticStrings, allTraces, [
+    ...exchanges,
+    ...sockets.exchanges,
+  ])
+  let operations = buildOperations(exchanges, { sourceRoutes, isSecretKey: redactor.isSecretKey, codeLiteral })
     .filter(operation => !operation.sourceOnly || (wanted(operation.host) && !pollingPaths.has(`${operation.host} ${operation.path}`)))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
   if (operations.some(operation => operation.rpc?.protocol === 'connect'))
@@ -305,16 +321,6 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
   const callSites = createWrapperAwareResolver(resolver, exchanges, exchange => operationIdByExchange.get(exchange.id) ?? null)
   operations = addCallSites(operations, callSites)
 
-  const allTraces = traceValues({
-    exchanges: [
-      ...exchanges,
-      ...sockets.exchanges,
-    ],
-    sessions: loaded.sessions,
-    htmlLocator,
-    staticStrings,
-    minValueLength: config.build.minTraceValueLength,
-  })
   if (locatorErrors.length > 0)
     warnings.push(`Value tracing could not read ${locatorErrors.length} HTML page(s) and skipped them (first error: ${locatorErrors[0]}).`)
   const traces = allTraces.filter(trace => !sockets.standIns.has(trace.exchangeId))

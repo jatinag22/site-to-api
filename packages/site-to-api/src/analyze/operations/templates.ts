@@ -77,7 +77,7 @@ function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCand
  * 5. With `siblings`, words that differ in one position of otherwise equal paths are a parameter
  *    when the capture shows they are data (decision 0035, `markSiblingPositions`).
  */
-export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set(), siblings: SiblingFacts | null = null, titled: ReadonlySet<string> = new Set()): Map<string, Marks> {
+export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set(), siblings: SiblingFacts | null = null, titled: ReadonlySet<string> = new Set(), codeLiteral: (value: string) => boolean = () => false): Map<string, Marks> {
   // A hyphenated slug (`pine-hill`) only counts when another response links to it: plain-word
   // endpoint names (`/api/all-upcoming-issues`) appear in bundles, never as links in data.
   // A method name in an RPC position (`/api/v3/getAssetsJsonV2`) is never a value.
@@ -124,7 +124,7 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
     result.set(path, marks)
   }
 
-  unmarkWordOperations(sourced)
+  unmarkWordOperations(sourced, codeLiteral)
   markVaryingPositions(free, isCandidate)
   markTrailingSlugs(free, titled)
   if (siblings)
@@ -169,78 +169,36 @@ const OPERATION_WORDS: ReadonlySet<string> = new Set([
   'function',
   'command',
 ])
-/** First words of operation names (`getAssets`, `log_event`, `loadCachedPageChunk`). */
-const VERBS: ReadonlySet<string> = new Set([
-  'get',
-  'list',
-  'load',
-  'fetch',
-  'create',
-  'update',
-  'delete',
-  'remove',
-  'set',
-  'add',
-  'search',
-  'query',
-  'find',
-  'log',
-  'send',
-  'submit',
-  'track',
-  'save',
-  'sync',
-  'check',
-  'init',
-  'start',
-  'stop',
-  'edit',
-  'read',
-  'write',
-  'subscribe',
-  'unsubscribe',
-  'upload',
-  'download',
-  'post',
-  'put',
-  'patch',
-  'report',
-  'record',
-  'register',
-  'validate',
-  'verify',
-  'refresh',
-  'resolve',
-  'lookup',
-  'batch',
-])
 /** More distinct values than this at one position are data, not an endpoint's operations. */
 const MAX_OPERATION_VALUES = 12
 
 /**
- * Whether a code template's parameter may be undone: its code name says it names an operation
- * (`endpoint`, `method`, `action`, `svc`…), or it has no code name and every value starts with a
- * verb (`log_event`, `getAssetsJsonV2`). A name that says identity (`username`, `handle`, `slug`,
- * `id`, `owner`, or any personal field name) never is, and neither is any other name.
+ * Whether a code template's parameter may be undone, its values being different endpoints:
+ * - never when its code name says identity (`username`, `handle`, `slug`, `id`, `owner`, or any
+ *   personal field name);
+ * - when its code name says it names an operation (`endpoint`, `method`, `action`, `svc`…);
+ * - for any other name (unknown, minified, missing: `{qsa}`, `{e}`, `{param}`), only when there
+ *   are two or more values and every one is a static string literal in the site's own code that
+ *   no response, page or typing provided (`codeLiteral`): `log_event` and `feedback` written in
+ *   YouTube's bundle. Usernames come from responses and are not; `post_malone` is not in code.
  */
-function namesOperations(name: string, values: readonly string[]): boolean {
+function namesOperations(name: string, values: readonly string[], codeLiteral: (value: string) => boolean): boolean {
   const words = codeWords(name)
   if (words.some(word => IDENTITY_WORDS.has(word)) || isPersonalField(name))
     return false
   if (words.some(word => OPERATION_WORDS.has(word)))
     return true
-  // `{param}`, `{param2}`: a position the code gave no name.
-  return /^param\d*$/.test(name) && values.every(value => VERBS.has(codeWords(value)[0] ?? ''))
+  return values.length >= 2 && values.every(codeLiteral)
 }
 
 /**
- * Undoes code-template parameters that name operations (decision 0052): `/youtubei/v1/${endpoint}`
+ * Undoes code-template parameters that name operations (decisions 0052, 0053): `/youtubei/v1/${endpoint}`
  * sent `feedback` and `log_event`, and `/svc/${svc}/${slug}` sent `events` and `shreddit`,
  * different endpoints each. Only {@link namesOperations} parameters with a few values (twelve at
  * most, none id-like) are undone; every other position a code template marks stays a parameter
  * whatever its values: `john_smith` and `JohnSmith` in `/api/v1/${username}`.
  */
-function unmarkWordOperations(sourced: Array<{ path: string, segments: string[], marks: Marks, template: ParsedTemplate }>): void {
+function unmarkWordOperations(sourced: Array<{ path: string, segments: string[], marks: Marks, template: ParsedTemplate }>, codeLiteral: (value: string) => boolean): void {
   const byTemplate = new Map<ParsedTemplate, typeof sourced>()
   for (const item of sourced) {
     byTemplate.set(item.template, [
@@ -255,7 +213,7 @@ function unmarkWordOperations(sourced: Array<{ path: string, segments: string[],
       const values = [
         ...new Set(items.map(item => item.segments[index] ?? '')),
       ]
-      if (values.length > MAX_OPERATION_VALUES || values.some(isIdentifierLike) || !namesOperations(part.param, values))
+      if (values.length > MAX_OPERATION_VALUES || values.some(isIdentifierLike) || !namesOperations(part.param, values, codeLiteral))
         return
       for (const item of items)
         item.marks.delete(index)

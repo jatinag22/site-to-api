@@ -23,7 +23,7 @@ please open an issue: that is a bug.
 2. Create a branch: `feat/<area>`, `fix/<area>` or `docs/<topic>`.
 3. Add or update tests next to the code you change. Changes to output must keep `e2e/` passing.
 4. Run `pnpm run lint:fix` and the tests affected by your change. The pre-push hook checks lint,
-   types and affected tests; CI runs the full suite on your pull request.
+   types, unused exports (knip) and affected tests; CI runs the full suite on your pull request.
 5. Commit with a Conventional Commit subject and a body explaining why, signed off:
    `git commit -s -m "fix(redact): mask JWTs inside JSON strings" -m "Why: ..."`.
 6. Open a pull request. Describe the problem, the change and how you tested it.

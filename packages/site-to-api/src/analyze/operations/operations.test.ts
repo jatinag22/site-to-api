@@ -41,7 +41,7 @@ function paths(operations: Operation[]): string[] {
 }
 
 /** Operations with summaries judged by a redactor of the same exchanges, as `build` does. */
-function build(exchanges: Exchange[], sourceRoutes: SourceRoute[] = []): Operation[] {
+function build(exchanges: Exchange[], sourceRoutes: SourceRoute[] = [], codeLiterals: readonly string[] = []): Operation[] {
   const redactor = createRedactor({
     exchanges,
     config: {
@@ -51,7 +51,11 @@ function build(exchanges: Exchange[], sourceRoutes: SourceRoute[] = []): Operati
       fields: [],
     },
   })
-  return buildOperations(exchanges, { sourceRoutes, isSecretKey: redactor.isSecretKey })
+  return buildOperations(exchanges, {
+    sourceRoutes,
+    isSecretKey: redactor.isSecretKey,
+    codeLiteral: value => codeLiterals.includes(value),
+  })
 }
 
 describe('buildOperations: path parameters', () => {
@@ -689,13 +693,42 @@ describe('buildOperations: method names in paths (decision 0052)', () => {
     ], [
       route('/tubei/v1/{endpoint}'),
     ]))).toEqual(['POST /tubei/v1/feedback', 'POST /tubei/v1/log_event'])
-    // Without a code name, only values that start with a verb are operations.
-    expect(paths(build([
+  })
+
+  it('splits an unknown-named code parameter only when every value is an untraced literal of the code (decision 0053)', () => {
+    const youtubeLike = [
+      post('/tubei/v1/feedback', { feedbackResponses: [] }),
       post('/tubei/v1/log_event', {}),
-      post('/tubei/v1/get_feed', { items: [] }),
+    ]
+    expect(paths(build(youtubeLike, [
+      route('/tubei/v1/{qsa}'),
+    ], ['feedback', 'log_event']))).toEqual(['POST /tubei/v1/feedback', 'POST /tubei/v1/log_event'])
+    // One value not in the code: the position is data.
+    expect(paths(build(youtubeLike, [
+      route('/tubei/v1/{qsa}'),
+    ], ['feedback']))).toEqual(['POST /tubei/v1/{qsa}'])
+    // Names a site sends, not words of its code, stay templated: `post_malone`, `set_jones`.
+    expect(paths(build([
+      get('/api/artists/post_malone', {
+        responseBody: jsonBody({ name: 'a' }),
+      }),
+      get('/api/artists/set_jones', {
+        responseBody: jsonBody({ name: 'b' }),
+      }),
     ], [
-      route('/tubei/v1/{}'),
-    ]))).toEqual(['POST /tubei/v1/get_feed', 'POST /tubei/v1/log_event'])
+      route('/api/artists/{e}'),
+    ]))).toEqual(['GET /api/artists/{e}'])
+    // An identity name is never split, literals or not.
+    expect(paths(build([
+      get('/api/u/john_smith', {
+        responseBody: jsonBody({ name: 'a' }),
+      }),
+      get('/api/u/jane_doe', {
+        responseBody: jsonBody({ name: 'b' }),
+      }),
+    ], [
+      route('/api/u/{username}'),
+    ], ['john_smith', 'jane_doe']))).toEqual(['GET /api/u/{username}'])
   })
 
   it('undoes an operation-named code parameter, keeps an identity-named one, and templates alike pages', () => {

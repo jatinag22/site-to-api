@@ -2,7 +2,7 @@ import type { CaptureEvent, Exchange, ExchangeKind, HtmlLocator, LoadedSession, 
 import type { LocatedValue } from './values'
 import type { MatchTransform, Variant } from './variants'
 import { registrableHost } from '../../hosts'
-import { isAuthScheme } from '../redact'
+import { isAuthScheme, maskPersonalData, PERSONAL_DATA_PATTERNS } from '../redact'
 import { browserCookieNote, findTransformEvent, findUserInputField } from './fallbacks'
 import { isTrivial } from './trivial'
 import { requestValues, responseText, responseValues } from './values'
@@ -561,4 +561,51 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
     }
   }
   return traces
+}
+
+/** Text of a response body searched for a candidate literal, at most this much of each. */
+const MAX_PROVIDED_TEXT = 2_000_000
+
+/**
+ * A test for values that are static string literals of the site's own code which nothing in the
+ * capture provided (decision 0053): no traced request got them from anywhere but a constant or
+ * nowhere (a response, a page, typing, a computation, the browser), no JSON response holds
+ * them, and no response body or page contains them as text. That is what a minified code
+ * route's parameter holds when its values name endpoints (`/youtubei/v1/${qsa}` with
+ * `log_event`). A username a response or page shows is never one, even when the code also
+ * writes it, and neither is a value that looks like personal data (an email, a phone number).
+ * `exchanges` should include WebSocket stand-ins, so frames count as responses too.
+ */
+export function untracedCodeLiterals(staticStrings: ReadonlySet<string>, traces: readonly ValueTrace[], exchanges: readonly Exchange[]): (value: string) => boolean {
+  const provided = new Set(traces
+    .filter(trace => trace.origin.kind !== 'constant' && trace.origin.kind !== 'unknown')
+    .map(trace => trace.value))
+  const texts: string[] = []
+  for (const exchange of exchanges) {
+    for (const found of responseValues(exchange))
+      provided.add(found.value)
+    const text = responseText(exchange)
+    if (text !== null) {
+      texts.push(text.length > MAX_PROVIDED_TEXT
+        ? text.slice(0, MAX_PROVIDED_TEXT)
+        : text)
+    }
+  }
+  const verdicts = new Map<string, boolean>()
+  return (value) => {
+    let verdict = verdicts.get(value)
+    if (verdict === undefined) {
+      verdict = staticStrings.has(value)
+        && !provided.has(value)
+        && !looksPersonal(value)
+        && !texts.some(text => text.includes(value))
+      verdicts.set(value, verdict)
+    }
+    return verdict
+  }
+}
+
+/** True when a value matches a built-in personal-data pattern (email, phone, card, PAN, Aadhaar). */
+function looksPersonal(value: string): boolean {
+  return maskPersonalData(value, PERSONAL_DATA_PATTERNS) !== value
 }
