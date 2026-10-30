@@ -585,7 +585,26 @@ describe('smartFoxServer 2X', () => {
                 sfs.string('rival_cleo'),
                 sfs.short(0),
                 sfs.short(3),
-                sfs.array([]),
+                sfs.array([
+                  sfs.array([
+                    sfs.string('nick'),
+                    sfs.byte(8),
+                    sfs.string('VarNickZed'),
+                  ]),
+                ]),
+              ]),
+            }),
+          ],
+          [
+            '<',
+            packet(0, 12, {
+              u: sfs.int(1002),
+              vl: sfs.array([
+                sfs.array([
+                  sfs.string('realName'),
+                  sfs.byte(8),
+                  sfs.string('Quill Ferro'),
+                ]),
               ]),
             }),
           ],
@@ -677,6 +696,12 @@ describe('smartFoxServer 2X', () => {
         'data',
       ],
       [
+        'receiveSetUserVariables',
+        'sfs2x',
+        1,
+        'data',
+      ],
+      [
         'receiveGenericMessage',
         'sfs2x',
         1,
@@ -734,6 +759,8 @@ describe('smartFoxServer 2X', () => {
       'rival_dora',
       'buddy_emil',
       'table nine',
+      'VarNickZed',
+      'Quill Ferro',
       '123456',
       SESSION_TOKEN,
       TOKEN,

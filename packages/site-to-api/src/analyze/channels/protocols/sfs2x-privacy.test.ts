@@ -81,6 +81,133 @@ describe('maskSystemParams', () => {
     })
   })
 
+  it('masks string values of user and buddy variables, keeping names, types and other values', () => {
+    const userVars = [
+      ['nick', 8, 'VarNickZed'],
+      ['level', 4, 12],
+      ['vip', 1, true],
+    ]
+    const masked = maskSystemParams('UserEnterRoom', params({
+      u: [7, 'cleo', 0, 0, userVars],
+      r: 3,
+    }))
+    expect(masked.params).toEqual({
+      u: [
+        0,
+        'xxxx',
+        0,
+        0,
+        [
+          ['nick', 8, 'XxxXxxxXxx'],
+          ['level', 4, 12],
+          ['vip', 1, true],
+        ],
+      ],
+      r: 3,
+    })
+    expect(masked.secrets).toEqual(['cleo', 'VarNickZed'])
+    const set = maskSystemParams('SetUserVariables', params({
+      u: 7,
+      vl: [
+        ['realName', 8, 'Quill Ferro'],
+        ['mood', 8, 'ok'],
+      ],
+    }))
+    expect(set.params).toEqual({
+      u: 0,
+      vl: [
+        ['realName', 8, 'Xxxxx Xxxxx'],
+        ['mood', 8, 'xx'],
+      ],
+    })
+    // `ok` is masked where it sits but too short to hunt elsewhere.
+    expect(set.secrets).toEqual(['Quill Ferro'])
+    expect(maskSystemParams('InitBuddyList', params({
+      bl: [
+        [
+          4,
+          'emil',
+          false,
+          [
+            ['$room', 8, 'Den of Wolves'],
+          ],
+        ],
+      ],
+      mv: [
+        ['$mood', 8, 'sleepy'],
+      ],
+    })).params).toEqual({
+      bl: [
+        [
+          0,
+          'xxxx',
+          false,
+          [
+            ['$room', 8, 'Xxx xx Xxxxxx'],
+          ],
+        ],
+      ],
+      mv: [
+        ['$mood', 8, 'xxxxxx'],
+      ],
+    })
+    expect(maskSystemParams('AddBuddy', params({
+      bn: [
+        4,
+        'emil',
+        false,
+        [
+          ['city', 8, 'Velmora'],
+        ],
+      ],
+    })).params).toEqual({
+      bn: [
+        0,
+        'xxxx',
+        false,
+        [
+          ['city', 8, 'Xxxxxxx'],
+        ],
+      ],
+    })
+    expect(maskSystemParams('SetBuddyVariables', params({
+      bn: 'emil',
+      bv: [
+        ['$status', 8, 'away-long'],
+      ],
+    })).params).toEqual({
+      bn: 'xxxx',
+      bv: [
+        ['$status', 8, 'xxxx-xxxx'],
+      ],
+    })
+    expect(maskSystemParams('JoinRoom', params({
+      ul: [
+        [
+          1,
+          'ana',
+          0,
+          1,
+          [
+            ['nick', 8, 'Zed'],
+          ],
+        ],
+      ],
+    })).params).toEqual({
+      ul: [
+        [
+          0,
+          'xxx',
+          0,
+          1,
+          [
+            ['nick', 8, 'Xxx'],
+          ],
+        ],
+      ],
+    })
+  })
+
   it('treats every string of the login\'s custom params as a credential', () => {
     const { params: masked, secrets } = maskSystemParams('Login', params({
       zn: 'zone',

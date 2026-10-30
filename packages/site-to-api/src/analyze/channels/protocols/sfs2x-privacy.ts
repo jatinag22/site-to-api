@@ -21,7 +21,12 @@ const MIN_GLOBAL_NUMBER_DIGITS = 6
 /** Shorter strings (`en`, `USD`) are masked where they sit but not hunted elsewhere. */
 const MIN_GLOBAL_STRING_LENGTH = 6
 
-type Slot = 'id' | 'name' | 'user' | 'users' | 'ids' | 'text' | 'buddies'
+/** Where an SFS2X user array keeps its variables. */
+const USER_VARIABLES = 4
+/** Where a buddy array keeps its variables. */
+const BUDDY_VARIABLES = 3
+
+type Slot = 'id' | 'name' | 'user' | 'users' | 'ids' | 'text' | 'buddy' | 'buddies' | 'variables'
 
 /** Params of each system action that hold people, and how. */
 const SLOTS: ReadonlyMap<string, Readonly<Record<string, Slot>>> = new Map<string, Readonly<Record<string, Slot>>>([
@@ -43,7 +48,10 @@ const SLOTS: ReadonlyMap<string, Readonly<Record<string, Slot>>> = new Map<strin
   ],
   [
     'SetUserVariables',
-    { u: 'user' },
+    {
+      u: 'user',
+      vl: 'variables',
+    },
   ],
   [
     'SpectatorToPlayer',
@@ -82,15 +90,18 @@ const SLOTS: ReadonlyMap<string, Readonly<Record<string, Slot>>> = new Map<strin
   ],
   [
     'InitBuddyList',
-    { bl: 'buddies' },
+    {
+      bl: 'buddies',
+      mv: 'variables',
+    },
   ],
   [
     'AddBuddy',
-    { bn: 'user' },
+    { bn: 'buddy' },
   ],
   [
     'BlockBuddy',
-    { bn: 'name', bd: 'user' },
+    { bn: 'name', bd: 'buddy' },
   ],
   [
     'RemoveBuddy',
@@ -98,7 +109,10 @@ const SLOTS: ReadonlyMap<string, Readonly<Record<string, Slot>>> = new Map<strin
   ],
   [
     'SetBuddyVariables',
-    { bn: 'name' },
+    {
+      bn: 'name',
+      bv: 'variables',
+    },
   ],
   [
     'GoOnline',
@@ -146,7 +160,12 @@ class Collector {
   }
 
   /** `[id, name, ...]` (a user or a buddy), or a bare id. */
-  user(value: unknown): unknown {
+  /**
+   * `[id, name, ...]`, or a bare id. Users keep their variables at index 4
+   * (`[id, name, privilegeId, playerId, variables]`), buddies at index 3
+   * (`[id, name, blocked, variables]`).
+   */
+  user(value: unknown, variablesAt = USER_VARIABLES): unknown {
     if (!Array.isArray(value))
       return this.id(value)
     return value.map((item: unknown, index) => {
@@ -154,8 +173,25 @@ class Collector {
         return this.id(item)
       if (index === 1 && typeof item === 'string')
         return this.text(item, true)
+      if (index === variablesAt)
+        return this.variables(item)
       return item
     })
+  }
+
+  /**
+   * User, buddy or room-user variables, `[[name, type, value], ...]`: what a player set about
+   * themselves (`realName`, `nick`). String values are masked keeping their format; names
+   * stay, since they are the site's own words.
+   */
+  variables(value: unknown): unknown {
+    if (!Array.isArray(value))
+      return value
+    return value.map((entry: unknown) => Array.isArray(entry)
+      ? entry.map((item: unknown, index) => index === 2 && typeof item === 'string'
+          ? this.text(item, item.length >= MIN_GLOBAL_STRING_LENGTH)
+          : item)
+      : entry)
   }
 
   slot(slot: Slot, value: unknown): unknown {
@@ -176,10 +212,19 @@ class Collector {
         return Array.isArray(value)
           ? value.map((item: unknown) => this.id(item))
           : this.id(value)
+      case 'buddy':
+        return typeof value === 'string'
+          ? this.text(value, true)
+          : this.user(value, BUDDY_VARIABLES)
+      case 'variables':
+        return this.variables(value)
       case 'users':
-      case 'buddies':
         return Array.isArray(value)
           ? value.map((item: unknown) => this.user(item))
+          : value
+      case 'buddies':
+        return Array.isArray(value)
+          ? value.map((item: unknown) => this.user(item, BUDDY_VARIABLES))
           : value
     }
   }

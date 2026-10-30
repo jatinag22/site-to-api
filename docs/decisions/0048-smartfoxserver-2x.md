@@ -70,6 +70,11 @@ credentials under names the redactor cannot recognise.
   `sd` and the text `m`, FindUsers `fu`, SetUserPosition `p` and `m`, the buddy-list actions
   (`bl`, `bn`, `bd`, `bi`), invitations (`u`, `ui`, `iu`, `ee`) and the login's `un` and `id`.
   Ids become 0 (still integers in the schema); names and text are masked keeping their format.
+  User and buddy variables (`[[name, type, value], …]` at index 4 of a user array, index 3 of a
+  buddy array, SetUserVariables `vl`, the buddy list's `mv`, SetBuddyVariables `bv`) are what a
+  player set about themselves (`realName`, `nick`): their string values are masked keeping
+  their format, and those of 6 characters or more go to the redactor as secrets. Variable names
+  stay; they are the site's words.
   Names and ids of 6 digits or more also go to the redactor as secrets. This masking happens in
   the decoder, so it applies even with `redact.examples: raw`.
 - **Other players.** Game feeds list other players. Their ids, names and pictures are personal
