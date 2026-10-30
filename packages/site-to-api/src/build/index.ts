@@ -290,7 +290,10 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
     staticStrings,
     minValueLength: config.build.minTraceValueLength,
   })
-  const codeLiteral = untracedCodeLiterals(staticStrings, allTraces, exchanges)
+  const codeLiteral = untracedCodeLiterals(staticStrings, allTraces, [
+    ...exchanges,
+    ...sockets.exchanges,
+  ])
   let operations = buildOperations(exchanges, { sourceRoutes, isSecretKey: redactor.isSecretKey, codeLiteral })
     .filter(operation => !operation.sourceOnly || (wanted(operation.host) && !pollingPaths.has(`${operation.host} ${operation.path}`)))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))

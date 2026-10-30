@@ -976,4 +976,48 @@ describe('untracedCodeLiterals (decision 0053)', () => {
     expect(literal('john_smith')).toBe(false)
     expect(literal('post_malone')).toBe(false)
   })
+
+  it('counts a value a page or a frame shows, an HTML-traced one, or a personal-looking one as provided', () => {
+    const page = exchange({
+      url: 'https://x.example.test/team',
+      startedAt: 1,
+      kind: 'page',
+      responseBody: textBody('<html><body><a href="/u/jane_doe">Jane</a><script>var who="mary_major"</script></body></html>'),
+    })
+    const frame = exchange({
+      url: 'https://x.example.test/ws',
+      startedAt: 2,
+      responseBody: textBody('42["joined","ann_lee"]', 'text/plain'),
+    })
+    const staticStrings = new Set([
+      'jane_doe',
+      'mary_major',
+      'ann_lee',
+      'pat@example.org',
+      'get_feed',
+    ])
+    const htmlTraced: ValueTrace = {
+      exchangeId: 'c1',
+      location: { in: 'path', index: 2 },
+      value: 'zoe_quinn',
+      origin: {
+        kind: 'response',
+        exchangeId: page.id,
+        location: {
+          in: 'html',
+          selector: 'a',
+          attr: 'href',
+          pattern: null,
+        },
+        transform: 'none',
+      },
+    }
+    const literal = untracedCodeLiterals(new Set([...staticStrings, 'zoe_quinn']), [htmlTraced], [page, frame])
+    expect(literal('jane_doe')).toBe(false)
+    expect(literal('mary_major')).toBe(false)
+    expect(literal('ann_lee')).toBe(false)
+    expect(literal('zoe_quinn')).toBe(false)
+    expect(literal('pat@example.org')).toBe(false)
+    expect(literal('get_feed')).toBe(true)
+  })
 })
