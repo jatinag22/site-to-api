@@ -58,6 +58,29 @@ const server = createServer((req, res) => {
     req.on('close', () => clearInterval(timer))
     return
   }
+  // Ends after every 600 events with a short retry, so the EventSource reconnects again and again.
+  if (req.url === '/reconnecting') {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write('retry: 20\n\n')
+    let sent = 0
+    const timer = setInterval(() => {
+      res.write(Array.from({ length: 50 }, (_, index) => `data: {"n":${sent + index}}\n\n`).join(''))
+      sent += 50
+      if (sent >= 600) {
+        clearInterval(timer)
+        res.end()
+      }
+    }, 10)
+    req.on('close', () => clearInterval(timer))
+    return
+  }
+  if (req.url === '/reconnect.html') {
+    res.writeHead(200, { 'content-type': 'text/html' }).end(`<!doctype html><title>Reconnect</title><script>
+      window.__count = 0
+      new EventSource('/reconnecting').onmessage = () => { window.__count++ }
+    </script>`)
+    return
+  }
   if (req.url === '/api/search') {
     const chunks: Buffer[] = []
     req.on('data', (chunk: Buffer) => chunks.push(chunk))
@@ -137,5 +160,29 @@ describe('runCapture with an event stream and a compressed request body', () => 
       title: expect.any(String),
       bytes: expect.any(Number),
     })
+  }, 90_000)
+
+  it('keeps at most 2000 events per stream URL across reconnects, and says so', async () => {
+    await writeFile(path.join(work, 'reconnect.mjs'), `
+export default async ({ page, baseUrl }) => {
+  await page.goto(new URL('/reconnect.html', baseUrl).href)
+  await page.waitForFunction(() => window.__count >= 3000, null, { timeout: 30000 })
+}
+`)
+    const config = ConfigSchema.parse({
+      capture: {
+        browser: { channel: null, headless: true, sandbox: process.env.CI !== 'true' },
+        script: 'reconnect.mjs',
+      },
+    })
+    const result = await runCapture(config, { url: `${origin}/`, sessionId: 'reconnect', cwd: work })
+    const text = await readFile(path.join(result.sessionDir, 'events.jsonl'), 'utf8')
+    const streamed = text.trim().split('\n').map(line => CaptureEventSchema.parse(JSON.parse(line))).filter(event => event.t === 'sse')
+    expect(streamed).toHaveLength(2000)
+    // Several reconnects, each its own stream, sharing the one budget of their URL.
+    expect(new Set(streamed.map(event => event.t === 'sse'
+      ? event.stream
+      : -1)).size).toBeGreaterThanOrEqual(4)
+    expect(result.warnings.some(warning => warning.startsWith('Kept the first 2000 events of each server-sent event stream URL'))).toBe(true)
   }, 90_000)
 })

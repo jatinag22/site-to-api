@@ -276,10 +276,11 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     const omitted = saved.har && harOmissionNote(saved.har, { websockets: capture.websockets, saveScripts: capture.saveScripts, eventsFile: EVENTS_FILE })
     if (omitted)
       log(omitted)
-    const dropped = streams?.warning() ?? null
-    warnings.push(...collector.warnings, ...(dropped === null
-      ? []
-      : [dropped]), ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
+    const limits = [
+      streams?.warning() ?? null,
+      bodies.warning(),
+    ].filter(warning => warning !== null)
+    warnings.push(...collector.warnings, ...limits, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
 
     const meta = SessionMetaSchema.parse({
       formatVersion: RAW_FORMAT_VERSION,
