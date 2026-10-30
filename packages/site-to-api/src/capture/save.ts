@@ -177,8 +177,16 @@ async function closeBrowser(input: SaveInput, warnings: string[]): Promise<Close
   // Playwright writes the HAR when the context's close finishes, which ending the browser lets
   // happen: wait for it (bounded) so the HAR is checked as it ends up, not before it is written.
   // On Amazon the check ran first and reported "0 requests" for a 718-request HAR.
-  if (closing !== null)
-    await waitBounded(closing, closeMs, input.stopper.forced)
+  const flushed = closing === null
+    ? 'stopped'
+    : await waitBounded(closing, closeMs, input.stopper.forced)
+  // Every page had closed and Playwright then finished closing, so the HAR holds everything the
+  // pages did: only the browser process lingered (YouTube kept it busy past the wait). The
+  // session is complete; ending the browser is worth a note, not an incomplete mark.
+  if (closed === 'timeout' && pages === 'done' && flushed === 'done') {
+    warnings.push(`The browser did not close within ${seconds(closeMs)} after its pages had closed, so it was ended; the HAR was written in full afterwards.`)
+    return { closed: false, incomplete: null }
+  }
   if (closed === 'stopped') {
     warnings.push('Stopped waiting for the browser: a second stop signal arrived, so the browser was ended and the HAR may be missing.')
     return {
