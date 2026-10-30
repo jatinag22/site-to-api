@@ -329,6 +329,9 @@ describe('handoff folder', () => {
       expect(message).toContain('Leak check failed: 1 secret value(s) learnt from the capture appear in')
       expect(message).toContain(`notes/planted.md: ${session.slice(0, 3)}…${session.slice(-2)} (${session.length} chars)`)
       expect(message).not.toContain(session)
+      expect(message).toContain('The handoff folder was deleted so the values cannot be shared')
+      expect(existsSync(planted)).toBe(false)
+      expect(existsSync(outDir)).toBe(false)
     }
     finally {
       await rm(join(outDir, 'notes'), { recursive: true, force: true })

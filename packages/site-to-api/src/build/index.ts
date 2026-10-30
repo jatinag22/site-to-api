@@ -31,7 +31,7 @@ import { VERSION } from '../version'
 import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
 import { inHostFilter, unmatchedHostPatterns } from './hosts'
-import { findHandoffLeaks, leakError } from './leaks'
+import { discardLeakingOutput, findHandoffLeaks, leakError } from './leaks'
 import { buildRecordFor, writeBuildRecord } from './record'
 
 export { readBuildRecord, recordClientGenerated, stickyOptions } from './record'
@@ -433,8 +433,12 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
   // copies captured values on purpose, so the check would only restate that choice.
   if (options.config.redact.examples !== 'raw') {
     const leaks = await findHandoffLeaks(outDir, analyzed.redactor.learntSecrets())
-    if (leaks.length > 0)
-      throw leakError(outDir, leaks)
+    if (leaks.length > 0) {
+      throw leakError(outDir, leaks, await discardLeakingOutput(outDir, leaks, [
+        resolve(options.cwd),
+        rawDir,
+      ]))
+    }
   }
   return { analysis, outDir, files, warnings }
 }

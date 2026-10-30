@@ -1,8 +1,9 @@
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterAll, describe, expect, it } from 'vitest'
-import { findHandoffLeaks, findLeaks, leakError, maskedHint } from './leaks'
+import { discardLeakingOutput, findHandoffLeaks, findLeaks, leakError, maskedHint } from './leaks'
 
 const token = 'PH8DAQEIZW52aXJvbm1lbnQBCQ'
 
@@ -63,10 +64,55 @@ describe('leakError', () => {
       file: `f${index}`,
       hint: maskedHint(token),
     }))
-    const message = leakError('/out', leaks).message
+    const message = leakError('/out', leaks, 'The handoff folder was deleted.').message
     expect(message).toContain('Leak check failed: 12 secret value(s) learnt from the capture appear in /out:')
     expect(message).toContain('  f0: PH8…CQ (26 chars)')
     expect(message).toContain('… and 2 more')
+    expect(message).toContain('The handoff folder was deleted.')
     expect(message).not.toContain(token)
+  })
+})
+
+describe('discardLeakingOutput', () => {
+  const dirs: string[] = []
+  afterAll(async () => {
+    await Promise.all(dirs.map(dir => rm(dir, { recursive: true, force: true })))
+  })
+
+  async function project(): Promise<{ cwd: string, out: string, raw: string }> {
+    const cwd = await mkdtemp(join(tmpdir(), 'site-to-api-discard-'))
+    dirs.push(cwd)
+    const out = join(cwd, 'api-handoff')
+    const raw = join(cwd, '.site-to-api', 'raw')
+    await mkdir(join(out, 'specs'), { recursive: true })
+    await mkdir(raw, { recursive: true })
+    await writeFile(join(out, 'specs', 'leak.yaml'), token)
+    await writeFile(join(out, 'AGENT.md'), 'clean')
+    return { cwd, out, raw }
+  }
+
+  it('deletes the whole handoff folder when it is a folder of its own', async () => {
+    const { cwd, out, raw } = await project()
+    const said = await discardLeakingOutput(out, [
+      { file: 'specs/leak.yaml', hint: '' },
+    ], [cwd, raw])
+    expect(existsSync(out)).toBe(false)
+    expect(existsSync(raw)).toBe(true)
+    expect(said).toContain('The handoff folder was deleted')
+  })
+
+  it('deletes only the leaking files when the folder is the project itself', async () => {
+    const { cwd, out, raw } = await project()
+    const said = await discardLeakingOutput(out, [
+      { file: 'specs/leak.yaml', hint: '' },
+    ], [out, raw])
+    expect(existsSync(join(out, 'specs', 'leak.yaml'))).toBe(false)
+    expect(existsSync(join(out, 'AGENT.md'))).toBe(true)
+    expect(said).toContain('The 1 file(s) listed were deleted')
+    const holdsRaw = await discardLeakingOutput(cwd, [
+      { file: 'api-handoff/AGENT.md', hint: '' },
+    ], [raw])
+    expect(existsSync(raw)).toBe(true)
+    expect(holdsRaw).toContain('were deleted')
   })
 })

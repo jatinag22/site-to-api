@@ -29,7 +29,10 @@ Playwright passes unless `chromiumSandbox` is set, and that a capture whose page
   auth headers, tokens and other learnt secrets from requests, responses and WebSocket frames,
   in each encoding searched for). Only values of 12+ characters that mix letters and digits are
   checked, so a cookie such as `desktop-layout` never matches ordinary text. Any hit fails the
-  build with the file and a masked hint (`PH8…Q= (40 chars)`), never the value. The only
+  build with the file and a masked hint (`PH8…Q= (40 chars)`), never the value, and deletes the
+  output so no leaking file stays on disk: the whole handoff folder when it is a folder of its
+  own, else only the listed files (when the folder is the working directory or holds the raw
+  captures). The only
   opt-out is `redact.examples: raw`, which copies captured values on purpose; the check is
   skipped then.
 - **Sandbox.** Captures launch Chromium with its sandbox (`capture.browser.sandbox`, default
@@ -50,6 +53,6 @@ Playwright passes unless `chromiumSandbox` is set, and that a capture whose page
 ## Consequences
 A random file name in an image URL inside an example is now masked when it changes between
 sessions, as it already was in request paths. The leak check costs one pass over the folder and
-can fail a build the redactor considered clean; that is the point, and the message says to
-delete the folder and report the shapes. Secrets that are short or letters-only (an OTP, a
+can fail a build the redactor considered clean; that is the point, and the message says what
+was deleted and asks for the shapes to be reported. Secrets that are short or letters-only (an OTP, a
 word-like cookie) are still redacted but not checked.

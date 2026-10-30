@@ -4,8 +4,8 @@
  * new shapes (a token in a WebSocket URL inside a frame), so the tool checks what it wrote
  * instead of trusting the rules.
  */
-import { readdir, readFile } from 'node:fs/promises'
-import { join, relative } from 'pathe'
+import { readdir, readFile, rm } from 'node:fs/promises'
+import { dirname, join, relative } from 'pathe'
 import { SiteToApiError } from '../errors'
 
 /** One learnt secret found in one output file. */
@@ -68,8 +68,33 @@ export async function findHandoffLeaks(outDir: string, secrets: readonly string[
   return findLeaks(await handoffFiles(outDir), secrets)
 }
 
-/** The error that fails `build` when the check found anything. */
-export function leakError(outDir: string, leaks: readonly Leak[]): SiteToApiError {
+/** True when `dir` is `other` or contains it. */
+function containsOrEquals(dir: string, other: string): boolean {
+  const path = relative(dir, other)
+  return path === '' || (!path.startsWith('..') && !path.startsWith('/'))
+}
+
+/**
+ * Removes what a failed leak check found, so no leaking file stays on disk: the whole handoff
+ * folder when it is a folder of its own, else only the files with a leak (when it is the working
+ * directory, the filesystem root, or holds a `protect`ed folder such as the raw captures).
+ * Returns what was removed, for the error.
+ */
+export async function discardLeakingOutput(outDir: string, leaks: readonly Leak[], protect: readonly string[]): Promise<string> {
+  const ownFolder = dirname(outDir) !== outDir && protect.every(dir => !containsOrEquals(outDir, dir))
+  if (ownFolder) {
+    await rm(outDir, { recursive: true, force: true })
+    return `The handoff folder was deleted so the values cannot be shared; fix the cause and run build again.`
+  }
+  const files = [
+    ...new Set(leaks.map(leak => leak.file)),
+  ]
+  await Promise.all(files.map(file => rm(join(outDir, file), { force: true })))
+  return `The ${files.length} file(s) listed were deleted (the handoff folder ${outDir} also holds other things, so it was kept); fix the cause and run build again.`
+}
+
+/** The error that fails `build` when the check found anything; `removed` says what was deleted. */
+export function leakError(outDir: string, leaks: readonly Leak[], removed: string): SiteToApiError {
   const listed = leaks.slice(0, MAX_LISTED).map(leak => `  ${leak.file}: ${leak.hint}`)
   const more = leaks.length > MAX_LISTED
     ? [`  … and ${leaks.length - MAX_LISTED} more`]
@@ -78,6 +103,7 @@ export function leakError(outDir: string, leaks: readonly Leak[]): SiteToApiErro
     `Leak check failed: ${leaks.length} secret value(s) learnt from the capture appear in ${outDir}:`,
     ...listed,
     ...more,
-    'This is a redaction bug in site-to-api. Do not share or commit this folder; delete it, and report the file names and value shapes above (never the values).',
+    removed,
+    'This is a redaction bug in site-to-api: report the file names and value shapes above (never the values).',
   ].join('\n'))
 }
