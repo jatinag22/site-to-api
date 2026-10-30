@@ -18,6 +18,7 @@ import pkg from '../../package.json' with { type: 'json' }
 import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
+import { RequestBodyRecorder } from './bodies'
 import { EventWriter } from './events'
 import { harOmissionNote } from './har'
 import { instrumentSource, pageMessageToEvent } from './instrument'
@@ -209,6 +210,16 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
   const collector = new ScriptCollector(sessionDir, context.request, { saveScripts: capture.saveScripts, sourcemaps: capture.sourcemaps })
   if (capture.saveScripts || capture.sourcemaps)
     context.on('response', response => collector.onResponse(response))
+  // Bodies the HAR would garble (compressed or binary), kept as bytes for the HAR (decision 0049).
+  const bodies = new RequestBodyRecorder()
+  context.on('request', (request) => {
+    try {
+      bodies.record(request.method(), request.url(), request.postDataBuffer())
+    }
+    catch {
+      // A request whose body cannot be read is recorded by the HAR as it is.
+    }
+  })
   const ignoredFrames = new Map<string, number>()
   // Opened now, while the browser answers: the way to end it when closing does not work.
   const browserSession = await context.browser()?.newBrowserCDPSession().catch(() => null) ?? null
@@ -252,6 +263,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       stopper,
       scripted: script !== null,
       kill,
+      restoreBodies: entries => bodies.patch(entries),
     })
     closed = true
     const finalIncomplete = incomplete ?? saved.incomplete

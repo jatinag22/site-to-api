@@ -3,7 +3,8 @@
  */
 import type { Exchange, Initiator, NameValue, RequestEvent } from '../model'
 import type { HarEntry } from './har'
-import { baseMimeType, decodeBody } from './body'
+import { Buffer } from 'node:buffer'
+import { baseMimeType, decodeBody, decodeContentEncoding } from './body'
 import { normalizeHeaders, parseCookieHeader, responseSetCookies } from './headers'
 
 /** `sec-fetch-dest` values mapped to Playwright resource types. */
@@ -73,6 +74,44 @@ function resolveInitiator(event: RequestEvent | undefined, resourceType: string)
   return null
 }
 
+type PostData = NonNullable<HarEntry['request']['postData']>
+
+/**
+ * The request body and the headers to keep (decision 0049). A body capture saved as raw bytes is
+ * decoded with its `content-encoding`; once decoded, that header no longer describes the body the
+ * exchange holds, so it is dropped: a client sends the decoded body, and an input whose value the
+ * HTTP stack sets is not one the wrapper has to find.
+ */
+function requestBodyOf(postData: PostData | null | undefined, contentType: string | null | undefined, headers: NameValue[]): { body: Exchange['request']['body'], headers: NameValue[] } {
+  if (!postData)
+    return { body: null, headers }
+  const raw = postData._base64
+  if (raw === null || raw === undefined || raw === '') {
+    return {
+      body: decodeBody({ contentType, text: postData.text, params: postData.params }),
+      headers,
+    }
+  }
+  const encoding = header(headers, 'content-encoding')
+  const decoded = encoding === null
+    ? null
+    : decodeContentEncoding(Buffer.from(raw, 'base64'), encoding)
+  if (decoded === null) {
+    return {
+      body: decodeBody({ contentType, text: raw, encoding: 'base64' }),
+      headers,
+    }
+  }
+  return {
+    body: decodeBody({
+      contentType,
+      text: decoded.toString('base64'),
+      encoding: 'base64',
+    }),
+    headers: headers.filter(item => item.name !== 'content-encoding'),
+  }
+}
+
 export interface BuildExchangeInput {
   entry: HarEntry
   harIndex: number
@@ -96,14 +135,14 @@ export function buildExchange({ entry, harIndex, sessionId, event }: BuildExchan
   const cookies = cookieHeader === ''
     ? (entry.request.cookies ?? []).map(cookie => ({ name: cookie.name, value: cookie.value }))
     : parseCookieHeader(cookieHeader)
-  const requestHeaders = allRequestHeaders.filter(entry => entry.name !== 'cookie')
+  const postData = entry.request.postData
+  const requestContentType = postData?.mimeType || header(allRequestHeaders, 'content-type')
+  const { body: requestBody, headers: requestHeaders } = requestBodyOf(postData, requestContentType, allRequestHeaders.filter(entry => entry.name !== 'cookie'))
 
   const allResponseHeaders = normalizeHeaders(entry.response.headers)
   const responseHeaders = allResponseHeaders.filter(entry => entry.name !== 'set-cookie')
   const content = entry.response.content
   const responseContentType = content?.mimeType || header(responseHeaders, 'content-type')
-  const postData = entry.request.postData
-  const requestContentType = postData?.mimeType || header(requestHeaders, 'content-type')
 
   const resourceType = resolveResourceType(entry, requestHeaders, event, baseMimeType(responseContentType))
   const startedAt = Date.parse(entry.startedDateTime)
@@ -126,9 +165,7 @@ export function buildExchange({ entry, harIndex, sessionId, event }: BuildExchan
       query: [...url.searchParams].map(([name, value]) => ({ name, value })),
       headers: requestHeaders,
       cookies,
-      body: postData
-        ? decodeBody({ contentType: requestContentType, text: postData.text, params: postData.params })
-        : null,
+      body: requestBody,
     },
     response: {
       status: entry.response.status,

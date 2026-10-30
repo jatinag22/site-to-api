@@ -118,6 +118,8 @@ export interface SaveInput {
   scripted: boolean
   /** Ends the browser process when it does not close; must not throw. */
   kill: () => Promise<void>
+  /** Puts back request bodies the HAR could not hold (`RequestBodyRecorder.patch`). */
+  restoreBodies?: (entries: unknown[]) => number
 }
 
 export interface SaveResult {
@@ -206,7 +208,7 @@ export async function saveSession(input: SaveInput): Promise<SaveResult> {
   const incomplete = browser.incomplete ?? settled ?? interrupted
   let har: FinishedHar
   try {
-    har = await finishHar(input.harPath)
+    har = await finishHar(input.harPath, undefined, input.restoreBodies)
   }
   catch (error) {
     const reason = error instanceof Error
