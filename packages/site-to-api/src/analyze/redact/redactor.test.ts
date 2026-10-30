@@ -1,7 +1,7 @@
 import type { ResolvedConfig } from '../../config/schema'
 import type { Exchange, RedactContext, Redactor } from '../../model'
 import { describe, expect, it } from 'vitest'
-import { exchange, jsonBody } from '../../../test/helpers'
+import { exchange, jsonBody, textBody } from '../../../test/helpers'
 import { CONFIG, fixtureExchanges, SECRETS } from '../../../test/secret-fixture'
 import { SiteToApiError } from '../../errors'
 import { isLuhnValid, isTrackingIdName, isVerhoeffValid, maskPersonalData, PERSONAL_DATA_PATTERNS } from './personal-data'
@@ -1085,6 +1085,34 @@ describe('createRedactor: device and ad signals (decision 0049)', () => {
     expect(r.value('8', { in: 'header', name: 'device-memory' })).toBe('8')
     expect(r.value('2.20240101.01.00', { in: 'header', name: 'x-tube-client-version' })).toBe('2.20240101.01.00')
     expect(r.value('q=shoes&page=2', { in: 'query', name: 'next' })).toBe('q=shoes&page=2')
+  })
+})
+
+describe('createRedactor: escaped and protocol-relative URLs', () => {
+  it('redacts and learns tokens in JSON-escaped URLs, keeping the escaping', () => {
+    const text = 'window.cfg = {"next":"https:\\/\\/shop.test\\/cb?token=Zq8xT2mLp4VwRk7YbN3c&page=2"}'
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/',
+        responseBody: textBody(`<script>${text}</script>`),
+      }),
+    ])
+    expect(r.value(text, { in: 'response-body' }))
+      .toBe('window.cfg = {"next":"https:\\/\\/shop.test\\/cb?token=<redacted: 20 base64 chars>&page=2"}')
+    expect(r.value('copy Zq8xT2mLp4VwRk7YbN3c', { in: 'text' })).toBe('copy <redacted: 20 base64 chars>')
+  })
+
+  it('redacts and learns tokens in protocol-relative URLs, and leaves code comments alone', () => {
+    const text = 'load //cdn.shop.test/a.js?sig=hX7kQ2mZpL9vRt4WcB8n then // note: done'
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/',
+        responseBody: textBody(text),
+      }),
+    ])
+    expect(r.value(text, { in: 'response-body' }))
+      .toBe('load //cdn.shop.test/a.js?sig=<redacted: 20 base64 chars> then // note: done')
+    expect(r.value('x hX7kQ2mZpL9vRt4WcB8n', { in: 'text' })).toBe('x <redacted: 20 base64 chars>')
   })
 })
 

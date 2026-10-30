@@ -109,6 +109,69 @@ const ABSOLUTE_URL = /^(?:https?|wss?):\/\/\S+$/i
 const URL_IN_TEXT = /\b(?:https?|wss?):\/\/[^\s"'<>`\\]+/gi
 /** Punctuation that ends a sentence around a URL rather than belonging to it. */
 const URL_TRAILER = /[.,;:!?)\]}]+$/
+/** A URL whose slashes are JSON-escaped, as in an inline script: `https:\/\/host\/a?token=…`. */
+const ESCAPED_URL_IN_TEXT = /\b(?:https?|wss?):\\\/\\\/[^\s"'<>`]+/gi
+/**
+ * A protocol-relative URL (`//cdn.host/a?token=…`): two slashes not after a scheme, a word or a
+ * slash, then a dotted host, so code comments (`// note`) do not count.
+ */
+const RELATIVE_URL_IN_TEXT = /(?<![:\w/\\])\/\/[a-z\d-]+(?:\.[a-z\d-]+)+(?::\d+)?(?:[/?#][^\s"'<>`\\]*)?/gi
+
+/** One URL found in text, as an absolute URL, and how to write a redacted version back. */
+interface TextUrl {
+  match: string
+  url: string
+  restore: (redacted: string) => string
+}
+
+function withoutTrailer(match: string): { body: string, trailer: string } {
+  const trailer = URL_TRAILER.exec(match)?.[0] ?? ''
+  return {
+    body: match.slice(0, match.length - trailer.length),
+    trailer,
+  }
+}
+
+/**
+ * The forms of URL found in text: JSON-escaped first (the plain pattern stops at `\`), plain,
+ * then protocol-relative. Each reads a match as an absolute URL and writes a redacted one back
+ * in the match's own form.
+ */
+const TEXT_URL_FORMS: ReadonlyArray<{ pattern: RegExp, read: (match: string) => TextUrl }> = [
+  {
+    pattern: ESCAPED_URL_IN_TEXT,
+    read: (match) => {
+      const { body, trailer } = withoutTrailer(match)
+      return {
+        match,
+        url: body.replace(/\\\//g, '/'),
+        restore: redacted => `${redacted.replace(/\//g, '\\/')}${trailer}`,
+      }
+    },
+  },
+  {
+    pattern: URL_IN_TEXT,
+    read: (match) => {
+      const { body, trailer } = withoutTrailer(match)
+      return {
+        match,
+        url: body,
+        restore: redacted => `${redacted}${trailer}`,
+      }
+    },
+  },
+  {
+    pattern: RELATIVE_URL_IN_TEXT,
+    read: (match) => {
+      const { body, trailer } = withoutTrailer(match)
+      return {
+        match,
+        url: `https:${body}`,
+        restore: redacted => `${redacted.slice('https:'.length)}${trailer}`,
+      }
+    },
+  },
+]
 
 interface Located {
   value: string
@@ -282,9 +345,10 @@ function* expand(item: Located, depth: number): Generator<Located> {
   }
   if (!whole && !URLENCODED.test(item.value)) {
     // Tokens in URLs inside longer text are learnt too, so they are scrubbed everywhere.
-    for (const url of item.value.match(URL_IN_TEXT) ?? []) {
+    const urls = TEXT_URL_FORMS.flatMap(({ pattern, read }) => (item.value.match(pattern) ?? []).map(match => read(match).url))
+    for (const url of urls) {
       yield* expand({
-        value: url.replace(URL_TRAILER, ''),
+        value: url,
         in: item.in,
         name: item.name,
       }, depth + 1)
@@ -576,11 +640,10 @@ export function createRedactor(input: RedactorInput): Redactor {
 
   /** Every URL inside longer text redacted with {@link redactUrl}; the rest is left as it is. */
   function redactUrlsInText(text: string, depth: number): string {
-    return text.replace(URL_IN_TEXT, (match) => {
-      const trailer = URL_TRAILER.exec(match)?.[0] ?? ''
-      const url = match.slice(0, match.length - trailer.length)
-      return `${redactUrl(url, depth)}${trailer}`
-    })
+    return TEXT_URL_FORMS.reduce((current, { pattern, read }) => current.replace(pattern, (match) => {
+      const found = read(match)
+      return found.restore(redactUrl(found.url, depth))
+    }), text)
   }
 
   function redactNested(text: string, context: RedactContext, depth: number): string | null {
