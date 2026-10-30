@@ -220,6 +220,14 @@ function* jsonValues(value: unknown, where: RedactContext['in'], name: string | 
   }
 }
 
+/** The parameter-carrying parts of a URL: its query, its fragment and the fragment's own query. */
+function urlParameterParts(url: string): string[] {
+  const [beforeHash = '', hash] = url.split(/#(.*)/s)
+  const query = beforeHash.split(/\?(.*)/s)[1]
+  const hashQuery = hash?.split(/\?(.*)/s)[1]
+  return [query, hash, hashQuery].filter((part): part is string => part !== undefined && part !== '')
+}
+
 function* expand(item: Located, depth: number): Generator<Located> {
   yield item
   if (depth > MAX_DEPTH)
@@ -230,14 +238,16 @@ function* expand(item: Located, depth: number): Generator<Located> {
     return
   }
   const whole = ABSOLUTE_URL.test(item.value)
-  const query = whole
-    ? item.value.split(/[?#]/)[1] ?? ''
-    : item.value
-  if (URLENCODED.test(query)) {
-    for (const [name, value] of new URLSearchParams(query))
+  // A URL's query, its fragment (`#access_token=...`) and a hash router's own query
+  // (`#/cb?token=...`) all carry parameters; plain text may be URL-encoded itself.
+  const parts = whole
+    ? urlParameterParts(item.value)
+    : [item.value]
+  for (const part of parts.filter(candidate => URLENCODED.test(candidate))) {
+    for (const [name, value] of new URLSearchParams(part))
       yield* expand({ value, in: 'form', name }, depth + 1)
   }
-  else if (!whole) {
+  if (!whole && !URLENCODED.test(item.value)) {
     // Tokens in URLs inside longer text are learnt too, so they are scrubbed everywhere.
     for (const url of item.value.match(URL_IN_TEXT) ?? []) {
       yield* expand({
@@ -467,10 +477,18 @@ export function createRedactor(input: RedactorInput): Redactor {
       : `?${redactQuery(query, depth)}`
     const redactedHash = hash === undefined
       ? ''
-      : `#${URLENCODED.test(hash)
-        ? redactQuery(hash, depth)
-        : scanText(hash)}`
+      : `#${redactFragment(hash, depth)}`
     return `${redactUrlBase(base)}${redactedQuery}${redactedHash}`
+  }
+
+  /** `#access_token=...` like a query; `#/cb?token=...` (a hash router) with its own query. */
+  function redactFragment(hash: string, depth: number): string {
+    if (URLENCODED.test(hash))
+      return redactQuery(hash, depth)
+    const [route = '', query] = hash.split(/\?(.*)/s)
+    return query === undefined
+      ? scanText(hash)
+      : `${scanText(route)}?${redactQuery(query, depth)}`
   }
 
   function redactUrlBase(base: string): string {

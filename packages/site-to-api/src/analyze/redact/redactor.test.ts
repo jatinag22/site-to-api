@@ -853,6 +853,41 @@ describe('createRedactor: URLs inside values (decision 0047)', () => {
       .toBe('https://cdn.test/f?x-id=<redacted: 20 base64 chars>')
   })
 
+  it('redacts and learns tokens in fragments and in a hash router\'s query', () => {
+    const routed = 'https://shop.test/#/cb?token=Zq8xT2mLp4VwRk7YbN3c&page=2'
+    const implicit = 'https://shop.test/cb?a=1#access_token=hX7kQ2mZpL9vRt4WcB8n&state=ok'
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/a',
+        responseBody: jsonBody({ next: routed, back: implicit }),
+      }),
+    ])
+    expect(r.value(routed, { in: 'body', name: 'next' })).toBe('https://shop.test/#/cb?token=<redacted: 20 base64 chars>&page=2')
+    expect(r.value(implicit, { in: 'body', name: 'back' })).toBe('https://shop.test/cb?a=1#access_token=<redacted: 20 base64 chars>&state=ok')
+    // Learnt, so the tokens are removed from unrelated text too.
+    expect(r.value('a Zq8xT2mLp4VwRk7YbN3c b hX7kQ2mZpL9vRt4WcB8n', { in: 'text' }))
+      .toBe('a <redacted: 20 base64 chars> b <redacted: 20 base64 chars>')
+  })
+
+  it('keeps only Unix times and short offsets under t', () => {
+    const r = redactor([])
+    for (const value of [
+      '1700000000',
+      '1700000000123',
+      '90s',
+      '1m30s',
+      '1h2m3s',
+    ])
+      expect(r.value(value, { in: 'query', name: 't' }), value).toBe(value)
+    for (const value of [
+      '84736251908374',
+      '90',
+      '123456789',
+      'abc',
+    ])
+      expect(r.value(value, { in: 'query', name: 't' }), value).toMatch(/^<redacted: /)
+  })
+
   it('keeps times and offsets under t, and ordinary URLs unchanged', () => {
     const r = redactor([])
     for (const url of [

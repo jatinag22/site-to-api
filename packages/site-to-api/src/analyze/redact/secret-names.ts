@@ -74,8 +74,12 @@ const QUERY_SECRET_NAMES = new Set([
   't',
 ])
 
-/** A number or a duration such as `90`, `1700000000.5`, `1m30s`: a time or offset, not a token. */
-const TIME_VALUE = /^(?:\d+(?:\.\d+)?|(?:\d+[hms])+)$/
+/**
+ * A Unix time in seconds or milliseconds (10 or 13 digits) or a short offset with units
+ * (`90s`, `1m30s`, `1h2m3s`): a time, not a token. Other digit strings (`84736251908374`) can be
+ * numeric tokens and stay secret.
+ */
+const TIME_VALUE = /^(?:\d{10}|\d{13}|(?=\d)(?:\d{1,2}h)?(?:\d{1,3}m)?(?:\d{1,5}s)?)$/
 
 const SECRET_JOINED = [
   'apikey',
