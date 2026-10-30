@@ -401,8 +401,10 @@ function blockEvidence(response: LiveResponse): string | null {
  * kind. Used before a bare or minimized answer may say a cookie or header is not needed.
  */
 function carriesCapturedContent(exchange: Exchange, text: string): boolean {
+  // An empty capture (a 204, a beacon's empty 200) is matched by an empty answer: there was no
+  // content to lose, so a bare request that worked needs nothing.
   if (text.trim() === '')
-    return false
+    return (exchange.response.body?.text ?? '').trim() === '' && exchange.response.body?.json === undefined
   const captured = exchange.response.body?.json
   if (captured === undefined)
     return true

@@ -71,6 +71,10 @@ const ROUTES: Record<string, Handler> = {
     res.writeHead(200, { 'content-type': 'text/html' }).end('<form action="/session"><input name="user"><input type="password" name="pw"></form>')
   },
   '/api/open': json(200, '{"items":[1]}'),
+  // A beacon that answers 204 with no body, whatever is sent.
+  '/generate_204': (_req, res) => {
+    res.writeHead(204).end()
+  },
   // A list the session fills; without it, an empty list.
   '/api/notifications': (req, res) => {
     const signedIn = String(req.headers.cookie ?? '').includes('sid=abc')
@@ -213,6 +217,23 @@ describe('probeOperations', () => {
     })
     const open = report.operations.find(result => result.operationId === 'getOpen')
     expect(open).toMatchObject({ replay: 'ok', bare: 'ok', requires: [] })
+  })
+
+  it('needs nothing for an empty answer the capture had too: a bare 204 works (decision 0054)', async () => {
+    const report = await probeOperations({
+      toolVersion: 'test',
+      config,
+      operations: [
+        op('getGenerate204', 'GET', '/generate_204', {
+          url: `${origin}/generate_204`,
+          status: 204,
+          cookies: { sid: 'abc' },
+          requestHeaders: { 'referer': 'https://x.test/', 'sec-fetch-dest': 'image', 'priority': 'u=1' },
+          responseBody: null,
+        }),
+      ],
+    })
+    expect(report.operations[0]).toMatchObject({ replay: 'ok', bare: 'ok', requires: [] })
   })
 
   it('needs the session when a list empties or a value changes kind without it', async () => {
