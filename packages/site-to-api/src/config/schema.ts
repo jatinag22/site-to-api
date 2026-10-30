@@ -41,6 +41,11 @@ export const ConfigSchema = z.strictObject({
        * and CI runners) the capture retries once without it and warns. Set false to skip that.
        */
       sandbox: z.boolean().default(true),
+      /**
+       * Start the browser with `--mute-audio` (decision 0049): a capture opens pages that autoplay
+       * video and sound, and the person running it should not hear them. Set false to hear them.
+       */
+      muteAudio: z.boolean().default(true),
     }).prefault({}),
     /** Probe and unpack `.js.map` files for every script. */
     sourcemaps: z.boolean().default(true),

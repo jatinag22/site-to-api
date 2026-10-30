@@ -60,6 +60,11 @@ A matrix run on fourteen real sites found three gaps.
   complete, with a warning that the browser had to be ended. A page that never closed keeps the
   session incomplete.
 
+- **Muted capture browser.** Captures of YouTube and similar sites played sound on the machine
+  running them. The browser now starts with Chrome's `--mute-audio` unless
+  `capture.browser.muteAudio` is false. Muting changes no network traffic: media still loads and
+  plays, only without sound.
+
 ## Consequences
 - YouTube's innertube calls get request-body schemas, examples and traced inputs; the agent sees
   the search query and the `context` object.

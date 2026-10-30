@@ -22,6 +22,10 @@
 | `config` | config sources | stdout | none |
 | `init` | nothing | `site-to-api.config.ts`, `.gitignore` entries | none |
 
+The capture browser starts muted (`--mute-audio`, `capture.browser.muteAudio`, default true;
+decision 0049): captured pages autoplay video and sound, and the person running the capture
+should not hear them.
+
 ## Stages of `build`
 
 All stages are pure functions over the data contracts in `packages/site-to-api/src/model/`.
