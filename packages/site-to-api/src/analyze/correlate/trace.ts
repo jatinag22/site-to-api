@@ -562,3 +562,21 @@ export function traceValues(input: TraceValuesInput): ValueTrace[] {
   }
   return traces
 }
+
+/**
+ * A test for values that are static string literals of the site's own code which nothing in the
+ * capture provided (decision 0053): no traced request got them from a response, a page or typing,
+ * and no JSON response holds them. That is what a minified code route's parameter holds when its
+ * values name endpoints (`/youtubei/v1/${qsa}` with `log_event`). A username a response gave is
+ * never one, even when the code also writes it (tracing then calls it a constant).
+ */
+export function untracedCodeLiterals(staticStrings: ReadonlySet<string>, traces: readonly ValueTrace[], exchanges: readonly Exchange[]): (value: string) => boolean {
+  const provided = new Set(traces
+    .filter(trace => trace.origin.kind === 'response' || trace.origin.kind === 'user-input')
+    .map(trace => trace.value))
+  for (const exchange of exchanges) {
+    for (const found of responseValues(exchange))
+      provided.add(found.value)
+  }
+  return value => staticStrings.has(value) && !provided.has(value)
+}

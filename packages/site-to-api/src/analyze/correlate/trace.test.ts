@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { exchange, formBody, jsonBody, textBody } from '../../../test/helpers'
 import { CLIENT_VERSION, CONSTANT_API_KEY, fakeHtmlLocator, ITEM_ID, shopCapture } from '../../../test/scenarios'
 import { createHtmlLocator } from '../html'
-import { traceValues } from './index'
+import { traceValues, untracedCodeLiterals } from './index'
 
 const noLocator: HtmlLocator = () => null
 
@@ -957,5 +957,23 @@ describe('traceValues: shop scenario', () => {
       minValueLength: 4,
     })
     expect(shuffled).toEqual(traces)
+  })
+})
+
+describe('untracedCodeLiterals (decision 0053)', () => {
+  it('accepts literals of the code no response provided, and never a value a response gave', () => {
+    const me = exchange({
+      url: 'https://x.example.test/api/me',
+      startedAt: 1,
+      responseBody: jsonBody({ username: 'john_smith' }),
+    })
+    const profile = exchange({ url: 'https://x.example.test/api/users/john_smith/profile', startedAt: 2 })
+    const log = exchange({ method: 'POST', url: 'https://x.example.test/tubei/v1/log_event', startedAt: 3 })
+    const staticStrings = ['john_smith', 'log_event']
+    const traces = trace([me, profile, log], { staticStrings })
+    const literal = untracedCodeLiterals(new Set(staticStrings), traces, [me, profile, log])
+    expect(literal('log_event')).toBe(true)
+    expect(literal('john_smith')).toBe(false)
+    expect(literal('post_malone')).toBe(false)
   })
 })

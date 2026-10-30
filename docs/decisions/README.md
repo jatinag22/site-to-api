@@ -60,3 +60,4 @@ or `Proposed`.
 | [0050](0050-compressed-bodies-event-streams-and-pages.md) | Compressed request bodies are kept and decoded; server-sent event streams are channels and probe reads only their start; navigations next to service-worker copies stay pages (refines 0023, 0031, 0036, 0037, 0038, 0044, 0046) | Accepted |
 | [0051](0051-trpc-connect-firebase-primus.md) | tRPC and Connect RPC operations (batches split, JSON inputs traced, read-only Connect methods probed); Firebase Realtime Database and Primus channels (refines 0027, 0038, 0039) | Accepted |
 | [0052](0052-output-quality-from-the-matrix.md) | Output quality from the real-site matrix: method names, slug pages, static files, origins, check exit code, build speed (refines 0035, 0044, 0046) | Accepted |
+| [0053](0053-code-literals-name-endpoints.md) | A code route's parameter names endpoints only when its values are untraced code literals (refines 0052) | Accepted |
