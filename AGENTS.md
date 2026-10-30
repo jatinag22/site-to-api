@@ -97,7 +97,7 @@ pnpm run ci           # everything CI runs
 ```
 
 While working, run only the affected tests. A pre-push hook runs `pnpm run ci:push` (lint, build,
-typecheck and the tests affected by your changes against `origin/main`); do not bypass it with
+typecheck, knip and the tests affected by your changes against `origin/main`); do not bypass it with
 `--no-verify`. GitHub CI runs the full `pnpm run ci` on every pull request, and nothing merges until
 it passes. Fix root causes; do not add ignores.
 
