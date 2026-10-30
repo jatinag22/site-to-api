@@ -25,7 +25,7 @@ A matrix run on fourteen real sites found three gaps.
 
 ## Decision
 - **Raw request bodies.** Capture keeps the bytes of each request body that is not valid UTF-8
-  (`request.postDataBuffer()`, at most 2 MB) and, once the browser has written the HAR, adds them
+  (`request.postDataBuffer()`, at most 2 MB each, 200 per method and URL and 64 MB per session, then one warning) and, once the browser has written the HAR, adds them
   to the matching entry as `postData._base64` (matched by method, URL and byte size, in order;
   only entries whose text Playwright garbled or left empty). The field is additive: older readers
   ignore it, older captures do not have it, so the raw format version stays 1. `load` decodes the
@@ -36,7 +36,7 @@ A matrix run on fourteen real sites found three gaps.
 - **Event streams as channels.** Capture listens on each page's DevTools protocol for
   `Network.eventSourceMessageReceived` and writes an `sse` event per event an `EventSource`
   receives: URL, stream number, event name (`message` when none), id, data cut to 64 KB, at most
-  2,000 events per stream (a warning says how many more were dropped). It is part of
+  2,000 events per stream URL, so reconnects share it, and at most 20,000 events and 32 MB of data per session (one warning says how many more were dropped). It is part of
   `capture.websockets` (real-time channels). The `sse` event is a new, additive member of the
   capture event union. The channels stage turns each stream into a connection whose events are
   received frames, plus each `text/event-stream` response the HAR holds a body for (a `fetch`
@@ -57,15 +57,16 @@ A matrix run on fourteen real sites found three gaps.
   site's own hosts; only without them is every host the site's own.
 - **A browser that lingers after its pages.** When every page closed, the context's close timed
   out, and it finished once the browser was ended (so Playwright wrote the HAR), the session is
-  complete, with a warning that the browser had to be ended. A page that never closed keeps the
-  session incomplete.
+  complete, with a warning that the browser had to be ended. A page that never closed, or a close
+  that rejected, keeps the session incomplete.
 
 - **The person's IP address.** Decoded innertube bodies carry the visitor's public IP
   (`context.client.remoteHost`), and YouTube's `sw.js_data` array holds it without a field
   name. Fields named `ip`, `ipAddress`, `remoteHost`, `remoteAddr`, `remoteIp` are personal
-  fields (masked keeping their format), and a public IPv4 address is masked wherever it appears
+  fields (masked keeping their format), and a public IPv4 or IPv6 address is masked wherever it appears
   as text (not after `/`, `.`, `v` or a word character, so `Chrome/156.0.0.0` and `v1.2.3.4`
-  stay; private, loopback, link-local, CGNAT and multicast addresses and `.0` networks stay).
+  stay, as does an address right after `version` or `ver=`; IPv6 must start with a group 2xxx or
+  3xxx and be valid, so times, MAC addresses and hex ids stay; private, loopback, link-local, CGNAT and multicast addresses and `.0` networks stay).
 - **Muted capture browser.** Captures of YouTube and similar sites played sound on the machine
   running them. The browser now starts with Chrome's `--mute-audio` unless
   `capture.browser.muteAudio` is false. Muting changes no network traffic: media still loads and
