@@ -202,6 +202,38 @@ describe('buildOperations: grouping, ids and summaries', () => {
     expect(operations[0]!.operationId).not.toMatch(/Hq7Z|Zx9Q/)
   })
 
+  it('leaves out a challenge answer on an endpoint other calls reached, GraphQL batches included', () => {
+    const query = (name: string): Exchange => graphqlPost({
+      host: 'pens.test',
+      operationName: name,
+      query: `query ${name} { x }`,
+      variables: {},
+      data: { x: 1 },
+    })
+    const blocked: Exchange = {
+      ...exchange({
+        method: 'POST',
+        url: 'https://pens.test/graphql',
+        status: 403,
+        kind: 'bot-protection',
+        requestBody: jsonBody([
+          { operationName: 'Later', query: 'query Later { y }' },
+        ]),
+        responseBody: textBody('<html><title>Just a moment...</title></html>'),
+      }),
+      kindReason: 'Cloudflare: response header cf-mitigated',
+    }
+    const operations = build(annotateGraphql([
+      query('Pens'),
+      query('Profile'),
+      blocked,
+    ]))
+    expect(operations.some(operation => operation.kind === 'bot-protection')).toBe(false)
+    expect(operations.map(operation => operation.summary).join(' ')).not.toContain('browser only')
+    // Alone, the same answer is still reported.
+    expect(build([blocked]).map(operation => operation.kind)).toEqual(['bot-protection'])
+  })
+
   it('keeps a page that was challenged once a page', () => {
     const operations = build([
       {

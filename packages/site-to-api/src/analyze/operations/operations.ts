@@ -659,14 +659,33 @@ function assignOperationIds(operations: Operation[]): Operation[] {
   })
 }
 
+/** `POST shop.test /graphql`: the endpoint a request went to, whatever operation it carried. */
+function endpointKey(exchange: Exchange): string {
+  return `${exchange.request.method} ${exchange.request.host} ${exchange.request.path}`
+}
+
 /**
- * Builds operations from classified exchanges (`api`, `page` and `bot-protection` only) and adds
+ * The exchanges operations are built from, without challenge answers on endpoints that answered
+ * other calls normally. One batch of CodePen's GraphQL that met a Cloudflare 403 must not become
+ * a `postGraphql` operation reported as browser only while every other call to `/graphql` worked.
+ */
+function withoutStrayChallenges(exchanges: readonly Exchange[]): Exchange[] {
+  const answered = new Set(exchanges
+    .filter(exchange => (exchange.kind === 'api' || exchange.kind === 'page') && exchange.response.status > 0 && exchange.response.status < 400)
+    .map(endpointKey))
+  return exchanges.filter(exchange => !(isChallengeAnswer(exchange) && answered.has(endpointKey(exchange))))
+}
+
+/**
+ * Builds operations from classified exchanges (`api`, `page` and `bot-protection` only; challenge answers
+ * on endpoints that answered other calls normally are left out) and adds
  * `sourceOnly` operations for source routes that were never called. Request and response shapes
  * are left empty for `analyze/schema`; `sentFrom` is left empty for the flows stage.
  *
  * @returns operations sorted by host, path, method
  */
 export function buildOperations(exchanges: Exchange[], options: BuildOperationsOptions): Operation[] {
+  exchanges = withoutStrayChallenges(exchanges)
   const observed = [
     ...observedOperations(exchanges, options.sourceRoutes, options.isSecretKey),
     ...graphqlOperations(exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind)), options.isSecretKey),
