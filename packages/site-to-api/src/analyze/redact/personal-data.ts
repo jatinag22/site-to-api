@@ -208,13 +208,23 @@ const PERSONAL_NAME_ENDINGS: readonly string[] = [
   'customerid',
   'accountid',
   'memberid',
+  // Other players in a game feed (decision 0047): their ids, names and chosen pictures.
+  'playerid',
+  'playername',
+  'profileimage',
+  'profileimages',
+  'profilepicture',
+  'profilephoto',
+  'avatar',
+  'avatars',
+  'avatarurl',
 ]
 
 /**
  * Field names whose values are a person's name, account or address, wherever they appear:
  * `username`, `user_name`, `login`, `displayName`, `firstName`, `lastName`, `fullName`,
- * `address`, `street`, `city`, `postcode`, `zip`, `dob`, `birthDate`, and account ids
- * (`userId`). Phone fields have their own rule ({@link isPhoneField}).
+ * `address`, `street`, `city`, `postcode`, `zip`, `dob`, `birthDate`, account and player ids
+ * (`userId`, `player_id`) and profile pictures (`profileImage`, `avatarUrl`). Phone fields have their own rule ({@link isPhoneField}).
  */
 export function isPersonalField(name: string | null | undefined): boolean {
   if (name === null || name === undefined || name === '')

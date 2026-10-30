@@ -285,6 +285,32 @@ describe('createRedactor: rules', () => {
     expect(r.value('demo', { in: 'form', name: 'login' })).toBe('xxxx')
   })
 
+  it('masks other players in a game feed: ids, names and profile pictures', () => {
+    const feed = {
+      cashouts: [
+        {
+          player_id: '51082&&demo',
+          username: 'demo_51660',
+          profileImage: 'av-7.png',
+          avatarUrl: 'https://cdn.example/a/51082.png',
+          multiplier: 1.5,
+        },
+      ],
+      topPlayerProfileImages: ['av-44.png'],
+      openBetsCount: 12,
+    }
+    const masked = JSON.stringify(r.json(feed, { in: 'response-body' }))
+    for (const value of [
+      '51082',
+      'demo_51660',
+      'av-7.png',
+      'av-44.png',
+    ])
+      expect(masked).not.toContain(value)
+    expect(masked).toContain('"multiplier":1.5')
+    expect(masked).toContain('"openBetsCount":12')
+  })
+
   it('keeps ordinary names and ids outside person records', () => {
     expect(r.json([
       { id: 7, name: 'Snacks', slug: 'snacks' },

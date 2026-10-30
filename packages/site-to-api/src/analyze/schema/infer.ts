@@ -17,10 +17,11 @@ export interface Sample {
 
 export interface InferOptions {
   /**
-   * Called for each candidate enum value; returning false drops the enum. Lets the caller refuse
-   * enums of values the redactor would change (personal data must not leak through `enum`).
+   * Called for each candidate enum value with the name of the field holding it; returning false
+   * drops the enum. Lets the caller refuse enums of values the redactor would change (personal
+   * data must not leak through `enum`, `username: ["demo_51660", …]` included).
    */
-  allowEnumValue?: (value: string) => boolean
+  allowEnumValue?: (value: string, name: string | null) => boolean
   /**
    * Name of the value being inferred (query parameter, header, form field). Object properties
    * use their own key; array items use the array's name. Enums need a code-like name or
@@ -320,7 +321,7 @@ function isEnumWorthy(node: Node, values: string[], name: string | null, options
     return false
   if (!isCodeName(name) && (isIdentityName(name) || !values.every(isCodeToken)))
     return false
-  return values.every(value => options.allowEnumValue?.(value) ?? true)
+  return values.every(value => options.allowEnumValue?.(value, name) ?? true)
 }
 
 function stringKeywords(node: Node, name: string | null, options: InferOptions): JsonSchema {
