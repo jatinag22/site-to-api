@@ -35,6 +35,12 @@ export const ConfigSchema = z.strictObject({
       userAgent: z.string().nullable().default(null),
       /** Reuse a browser profile directory so logins persist between captures. */
       userDataDir: z.string().nullable().default(null),
+      /**
+       * Run Chromium with its sandbox (decision 0047). Captured sites are untrusted; Playwright
+       * turns the sandbox off unless asked. Where the sandbox cannot start (many Linux containers
+       * and CI runners) the capture retries once without it and warns. Set false to skip that.
+       */
+      sandbox: z.boolean().default(true),
     }).prefault({}),
     /** Probe and unpack `.js.map` files for every script. */
     sourcemaps: z.boolean().default(true),

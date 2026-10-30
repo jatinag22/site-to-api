@@ -189,7 +189,8 @@ beforeAll(async () => {
     rawDir: join(work, 'raw'),
     outDir: join(work, 'handoff'),
     capture: {
-      browser: { channel: null, headless: true },
+      // GitHub's Ubuntu runners cannot start Chromium's sandbox; locally it is on (decision 0047).
+      browser: { channel: null, headless: true, sandbox: process.env.CI !== 'true' },
     },
   }
   for (const scenario of scenarios) {
