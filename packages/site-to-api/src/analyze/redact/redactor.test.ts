@@ -999,19 +999,51 @@ describe('createRedactor: learntSecrets (decision 0047)', () => {
 })
 
 describe('createRedactor: short secrets and public labels', () => {
-  it('never learns a plain word or a host label sent under a key name, and keeps it in place', () => {
+  it('never learns a host label sent under a key name, and keeps it wherever it is redacted', () => {
     const r = redactor([
       exchange({
         url: 'https://www.pagebook.so/api/v3/getSpaces',
         method: 'POST',
-        requestBody: jsonBody({ api_key: 'pagebook', apiKey: 'web-app' }),
+        requestBody: jsonBody({ api_key: 'pagebook' }),
       }),
     ])
     expect(r.value('https://www.pagebook.so/api', { in: 'text' })).toBe('https://www.pagebook.so/api')
     expect(r.value('x-pagebook-client-version', { in: 'text' })).toBe('x-pagebook-client-version')
     expect(r.value('Open pagebook to continue', { in: 'text' })).toBe('Open pagebook to continue')
     expect(r.value('pagebook', { in: 'body', name: 'api_key' })).toBe('pagebook')
+    expect(r.value('pagebook', { in: 'header', name: 'x-api-key' })).toBe('pagebook')
     expect(r.learntSecrets()).toEqual([])
+  })
+
+  it('keeps a short lower-case word under a name that says the key is public', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/x',
+        method: 'POST',
+        requestBody: jsonBody({ siteKey: 'docs' }),
+      }),
+    ])
+    expect(r.value('docs', { in: 'body', name: 'siteKey' })).toBe('docs')
+  })
+
+  it('never keeps a key by its shape: letters-only and word-like keys stay secret unless constant', () => {
+    for (const key of [
+      'KxRtQmPzLwVbNnHjGfDsAa',
+      'Kx-RtQmPz_LwVbNn',
+      'correct-horse-battery-staple',
+      'webapp',
+    ]) {
+      const r = redactor([
+        exchange({
+          url: 'https://api.shop.test/v1/x',
+          requestHeaders: { 'x-api-key': key },
+          responseBody: jsonBody({ note: `k ${key}` }),
+        }),
+      ])
+      expect(r.value(key, { in: 'header', name: 'x-api-key' }), key).toMatch(/^<redacted: /)
+      expect(r.value(key, { in: 'query', name: 'api_key' }), key).toMatch(/^<redacted: /)
+      expect(r.value(`use ${key} now`, { in: 'response-body', name: 'note' }), key).not.toContain(key)
+    }
   })
 
   it('still treats a real key under a key name as a secret unless constant', () => {
@@ -1026,21 +1058,39 @@ describe('createRedactor: short secrets and public labels', () => {
     expect(r.value('use pk_9f3a7c21e8b4 here', { in: 'text' })).toBe('use <redacted: 15 chars> here')
   })
 
-  it('replaces short learnt secrets only as whole tokens, never inside names or hosts', () => {
+  it('replaces short secrets with digits wherever they occur, and checks them for leaks', () => {
+    const sid = 'a1b2c3d4e5'
     const r = redactor([
       exchange({
         url: 'https://shop.test/api/x',
-        cookies: { sid: 'k7q2z9' },
+        cookies: { sid },
       }),
     ])
-    expect(r.value('sid k7q2z9 and "k7q2z9". end k7q2z9.', { in: 'text' })).toBe('sid <redacted: 6 chars> and "<redacted: 6 chars>". end <redacted: 6 chars>.')
     for (const text of [
-      'xk7q2z9',
-      'k7q2z9-client',
-      'k7q2z9.shop.test',
-      'a.k7q2z9',
-      'k7q2z9_id',
+      `/files/${sid}.json`,
+      `uid_${sid}`,
+      `user-${sid}`,
+      `x.${sid}`,
+      `${sid}-x`,
+      `"${sid}"`,
+      `sid=${sid}`,
+      `${sid}.`,
+      `https://cdn.test/${sid}.js`,
     ])
+      expect(r.value(text, { in: 'response-body', name: 'note' }), text).not.toContain(sid)
+    expect(r.learntSecrets()).toContain(sid)
+  })
+
+  it('replaces short letters-only secrets only as whole words', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: { theme: 'kqzvwx' },
+      }),
+    ])
+    expect(r.value('a kqzvwx b, kqzvwx.json, user-kqzvwx', { in: 'text' }))
+      .toBe('a <redacted: 6 chars> b, <redacted: 6 chars>.json, user-<redacted: 6 chars>')
+    for (const text of ['kqzvwxmode', 'xkqzvwx', 'kqzvwx2'])
       expect(r.value(text, { in: 'text' }), text).toBe(text)
   })
 

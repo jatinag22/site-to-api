@@ -16,13 +16,18 @@ A real-site run over a dozen sites found four ways the output went wrong:
   history length, browser and OS) were copied into examples as captured.
 
 ## Decision
-- **Public labels.** A plain word (letters joined by `-`, `_` or `.`, up to 32 characters) or a
-  label of the request's host, sent under a publishable-key name, is a public label: it is not
-  learnt as a secret and is kept where it sits. Real keys mix letters and digits.
-- **Short secrets as whole tokens.** Learnt secrets shorter than 16 characters are replaced in
-  other text only as whole tokens: not after or before a letter, digit, `_` or `-`, not after a
-  `.`, and not before a `.` that starts another label. Longer secrets are still replaced anywhere,
-  in every encoding.
+- **Public labels.** A value sent under a publishable-key name is a public label when it is a
+  label of the request's host (Notion's `api_key: "notion"` to `www.notion.so`), or a lower-case
+  word of at most 12 letters under a name that says the key is public (`publishableKey`,
+  `siteKey`, `publicKey`). Labels are not learnt as secrets and are kept wherever they are
+  redacted. The shape of a value never makes an `api_key`, `x-api-key` or `appKey` public: random
+  keys can be letters only. Any other value keeps the old rule, kept only when constant across
+  sessions.
+- **Short word-like secrets as whole words.** Learnt secrets made only of letters and shorter
+  than 16 characters are replaced in other text only as whole words (not next to another letter
+  or digit). Every other learnt secret of 6 or more characters (with a digit or another
+  character, or longer) is replaced wherever it occurs, and the leak check looks for those that
+  mix letters and digits from 6 characters on.
 - **Shared challenge scripts.** A script that ordinary pages also load (AWS WAF's
   `challenge.js`) marks a challenge only on an interstitial: status 202, 403 or 405, or a page of
   at most 20 KB with almost no text of its own. Challenge-only markup (`gokuProps`, Cloudflare's
@@ -41,8 +46,8 @@ A real-site run over a dozen sites found four ways the output went wrong:
   URLs, written back in their own form, and their tokens are learnt.
 
 ## Consequences
-A short secret that only ever appears glued to other characters is no longer found there; it is
-still redacted where it was captured, and long secrets are unaffected. A public label under a key
-name may now appear in examples, which is what a client needs. A real challenge page larger than
+A short letters-only secret glued to other letters is no longer found there; it is still
+redacted where it was captured. A host label under a key name may now appear in examples, which
+is what a client needs. A real challenge page larger than
 20 KB with text, served 200, that carries only the shared script is not recognised; vendors'
 interstitials are small or use a challenge status.
