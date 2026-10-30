@@ -78,6 +78,8 @@ const PROTOCOL_NAMES: Record<ChannelProtocolId, string> = {
   'phoenix': 'Phoenix `topic:event`',
   'centrifugo': 'Centrifugo channel',
   'sfs2x': 'SFS2X system action or extension command (`p.c`)',
+  'firebase': 'Firebase action and database path',
+  'primus': 'Primus message `type` (or another field that names it)',
 }
 
 const FORMAT_WORDS: Partial<Record<ChannelMessage['format'], string>> = {
@@ -344,7 +346,7 @@ export function channelsSection(channels: readonly WebSocketChannel[], stems: Ho
   return [
     '## Real-time channels',
     '',
-    'WebSocket connections the pages opened. Messages are grouped by direction and by their protocol-level name when a framing protocol (Socket.IO, SignalR, STOMP, GraphQL over WebSocket, Phoenix, Centrifugo, SmartFoxServer 2X) was detected, otherwise by the field that names their type; the AsyncAPI file has the schema and redacted examples of each. The upgrade lines are facts from the capture: names only for cookies and URL tokens.',
+    'WebSocket connections the pages opened. Messages are grouped by direction and by their protocol-level name when a framing protocol (Socket.IO, SignalR, STOMP, GraphQL over WebSocket, Phoenix, Centrifugo, SmartFoxServer 2X, Firebase Realtime Database, Primus) was detected, otherwise by the field that names their type; the AsyncAPI file has the schema and redacted examples of each. The upgrade lines are facts from the capture: names only for cookies and URL tokens.',
     '',
     ...channels.flatMap(channel => channelLines(channel, stems)),
   ]

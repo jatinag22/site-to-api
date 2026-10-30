@@ -788,3 +788,41 @@ describe('smartFoxServer 2X', () => {
     expect(written).toContain('"openBetsCount":12')
   })
 })
+
+describe('firebase realtime database', () => {
+  it('names messages by action and templated path and keeps the auth credential out', () => {
+    const credential = 'invented-firebase-credential-0123456789'
+    const url = `wss://${HOST}/.ws?v=5&ns=demo-board`
+    const [channel] = channelsOf([
+      upgrade('s', url, 0),
+    ], [
+      loadedSession('s', socketEvents({
+        url,
+        socket: 0,
+        openedAt: T0,
+        frames: [
+          ['<', '{"t":"c","d":{"t":"h","d":{"ts":1700000000000,"v":"5","h":"demo-board.example","s":"invented-session"}}}'],
+          ['>', `{"t":"d","d":{"r":1,"a":"auth","b":{"cred":"${credential}"}}}`],
+          ['>', '{"t":"d","d":{"r":2,"a":"q","b":{"p":"/v0/item/41001","h":""}}}'],
+          ['>', '{"t":"d","d":{"r":3,"a":"q","b":{"p":"/v0/item/41002","h":""}}}'],
+          ['<', '{"t":"d","d":{"a":"d","b":{"p":"v0/item/41001","d":{"title":"Invented","score":7}}}}'],
+          ['<', '{"t":"d","d":{"r":2,"b":{"s":"ok","d":{}}}}'],
+        ],
+      })),
+    ])
+    expect(channel?.protocol?.id).toBe('firebase')
+    expect(channel?.messages.map(message => [message.id, message.protocol?.name, message.count])).toEqual([
+      ['sendAuth', 'auth', 1],
+      ['sendListenV0ItemId', 'listen /v0/item/{id}', 2],
+      ['receiveHello', 'hello', 1],
+      ['receiveDataV0ItemId', 'data v0/item/{id}', 1],
+      ['receiveListenV0ItemId', 'listen /v0/item/{id}', 1],
+    ])
+    expect(channel?.handshake.map(step => [step.message, step.role])).toEqual([
+      ['sendAuth', 'auth'],
+      ['sendListenV0ItemId', 'subscribe'],
+      ['sendListenV0ItemId', 'subscribe'],
+    ])
+    expect(JSON.stringify(channel)).not.toContain(credential)
+  })
+})

@@ -197,7 +197,7 @@ export interface ChannelValueLink {
  * Framing protocols the channels stage decodes (decision 0038). `graphql-ws` covers both
  * `graphql-transport-ws` and the older `subscriptions-transport-ws` (see the channel's `version`).
  */
-export type ChannelProtocolId = 'socket.io' | 'signalr' | 'stomp' | 'graphql-ws' | 'phoenix' | 'centrifugo' | 'sfs2x'
+export type ChannelProtocolId = 'socket.io' | 'signalr' | 'stomp' | 'graphql-ws' | 'phoenix' | 'centrifugo' | 'sfs2x' | 'firebase' | 'primus'
 
 /** How each protocol is called in prose. */
 export const CHANNEL_PROTOCOL_LABELS: Readonly<Record<ChannelProtocolId, string>> = {
@@ -208,6 +208,8 @@ export const CHANNEL_PROTOCOL_LABELS: Readonly<Record<ChannelProtocolId, string>
   'phoenix': 'Phoenix',
   'centrifugo': 'Centrifugo',
   'sfs2x': 'SmartFoxServer 2X',
+  'firebase': 'Firebase Realtime Database',
+  'primus': 'Primus',
 }
 
 /**
