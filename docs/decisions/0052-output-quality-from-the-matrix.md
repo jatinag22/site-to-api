@@ -14,10 +14,12 @@ listed under each decision below.
   `rpc`, `svc`, `service` or a service name, is never a parameter. Their parts must read as words,
   so random mixed-case tokens are still ids. Elsewhere such segments are values like any other.
 - **Code templates.** A position a code template marks as a parameter stays one whatever its
-  values (`john_smith`, `JohnSmith` in `/users/${username}`), except in an RPC position (its
-  nearest literal is a version, `rpc`, `svc`, `service` or a service name), where twelve or fewer
-  word values, none id-like, name methods (`/youtubei/v1/${endpoint}`, `/svc/${svc}/${slug}`)
-  unless they are safe reads whose responses share one structure.
+  values, unless its code name says it names an operation (`endpoint`, `method`, `action`, `op`,
+  `rpc`, `svc`, `procedure`, `fn`…), or it has no code name and every value starts with a verb
+  (`log_event`); then twelve or fewer values, none id-like, are literal endpoints
+  (`/youtubei/v1/${endpoint}`, `/svc/${svc}/…`). A name that says identity (`user`, `username`,
+  `handle`, `name`, `slug`, `id`, `account`, `owner`, `profile`, or a personal field name) is never
+  undone.
 - **Slug pages** (refines 0035). Sibling paths of safe reads become one template with
   `slug-pages` evidence when every value is a slug (lower-case words, digits, `-`, `_`), every
   page is HTML, all pages are alike and not one shell, and each page's title names its value
@@ -41,7 +43,8 @@ listed under each decision below.
     removed it on its own during minimization and the answer still matched (`tested` in
     `probe.json`). A bare answer that worked tested nothing one by one, so presence in every
     sample still decides. "Matched" includes the captured content, not only its shape: an
-    `/api/me` that answers `{"user": null}` without the session cookie needs it.
+    `/api/me` that answers `{"user": null}` without the session cookie needs it, as does a list
+    that comes back empty or a value of another kind.
   - A plain word sent under a name is not traced to a field of an unrelated name that several
     items of one listing share (`type=model` and every model's `repoType`).
   - Extraction patterns never anchor on data numbers (five or more digits, or three or more
