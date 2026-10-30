@@ -230,6 +230,11 @@ describe('buildOperations: grouping, ids and summaries', () => {
     ]))
     expect(operations.some(operation => operation.kind === 'bot-protection')).toBe(false)
     expect(operations.map(operation => operation.summary).join(' ')).not.toContain('browser only')
+    // The endpoint says it was sometimes challenged.
+    expect(operations.every(operation => operation.summary.endsWith('Sometimes challenged: 1 call(s) to this endpoint got a bot challenge instead and are left out.'))).toBe(true)
+    expect(build(annotateGraphql([
+      query('Pens'),
+    ]))[0]!.summary).not.toContain('Sometimes challenged')
     // Alone, the same answer is still reported.
     expect(build([blocked]).map(operation => operation.kind)).toEqual(['bot-protection'])
   })
@@ -252,7 +257,7 @@ describe('buildOperations: grouping, ids and summaries', () => {
       }),
     ])
     expect(operations.map(operation => [operation.operationId, operation.kind, operation.summary])).toEqual([
-      ['getTrade', 'page', 'Page trade.'],
+      ['getTrade', 'page', 'Page trade. Sometimes challenged: 1 call(s) to this endpoint got a bot challenge instead and are left out.'],
     ])
   })
 

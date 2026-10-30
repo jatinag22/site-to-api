@@ -34,7 +34,8 @@ A real-site run over a dozen sites found four ways the output went wrong:
   `_cf_chl_opt`, captcha pages, challenge titles) still counts on its own. Probe uses the same
   rule.
 - **Stray challenge answers.** A challenge answer on an endpoint (method, host, path) that
-  answered other calls with a status below 400 is left out of operations; one on an endpoint
+  answered other calls with a status below 400 is left out of operations, and the operation's
+  summary says how many calls were challenged ("Sometimes challenged: …"); one on an endpoint
   nothing else reached is still an operation.
 - **Device and ad signals.** Custom headers named for device or ad signals (`device`, `signals`,
   `ad-signals`, `fingerprint`, `screen`, `viewport`), and any URL-encoded parameter list with two

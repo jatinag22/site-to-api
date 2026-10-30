@@ -666,14 +666,34 @@ function endpointKey(exchange: Exchange): string {
 
 /**
  * The exchanges operations are built from, without challenge answers on endpoints that answered
- * other calls normally. One batch of CodePen's GraphQL that met a Cloudflare 403 must not become
- * a `postGraphql` operation reported as browser only while every other call to `/graphql` worked.
+ * other calls normally, and how many such answers each endpoint had. One batch of CodePen's
+ * GraphQL that met a Cloudflare 403 must not become a `postGraphql` operation reported as browser
+ * only while every other call to `/graphql` worked.
  */
-function withoutStrayChallenges(exchanges: readonly Exchange[]): Exchange[] {
+function withoutStrayChallenges(exchanges: readonly Exchange[]): { kept: Exchange[], challenged: Map<string, number> } {
   const answered = new Set(exchanges
     .filter(exchange => (exchange.kind === 'api' || exchange.kind === 'page') && exchange.response.status > 0 && exchange.response.status < 400)
     .map(endpointKey))
-  return exchanges.filter(exchange => !(isChallengeAnswer(exchange) && answered.has(endpointKey(exchange))))
+  const challenged = new Map<string, number>()
+  const kept = exchanges.filter((exchange) => {
+    const key = endpointKey(exchange)
+    if (!isChallengeAnswer(exchange) || !answered.has(key))
+      return true
+    challenged.set(key, (challenged.get(key) ?? 0) + 1)
+    return false
+  })
+  return { kept, challenged }
+}
+
+/** The summary with a note when calls to the operation's endpoint were sometimes challenged. */
+function withChallengeNote(operation: Operation, challenged: ReadonlyMap<string, number>): Operation {
+  const count = [
+    ...new Set(operation.exchanges.map(endpointKey)),
+  ]
+    .reduce((total, key) => total + (challenged.get(key) ?? 0), 0)
+  return count === 0
+    ? operation
+    : { ...operation, summary: `${operation.summary} Sometimes challenged: ${count} call(s) to this endpoint got a bot challenge instead and are left out.` }
 }
 
 /**
@@ -685,11 +705,11 @@ function withoutStrayChallenges(exchanges: readonly Exchange[]): Exchange[] {
  * @returns operations sorted by host, path, method
  */
 export function buildOperations(exchanges: Exchange[], options: BuildOperationsOptions): Operation[] {
-  exchanges = withoutStrayChallenges(exchanges)
+  const { kept, challenged } = withoutStrayChallenges(exchanges)
   const observed = [
-    ...observedOperations(exchanges, options.sourceRoutes, options.isSecretKey),
-    ...graphqlOperations(exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind)), options.isSecretKey),
-  ]
+    ...observedOperations(kept, options.sourceRoutes, options.isSecretKey),
+    ...graphqlOperations(kept.filter(exchange => OPERATION_KINDS.has(exchange.kind)), options.isSecretKey),
+  ].map(operation => withChallengeNote(operation, challenged))
   return assignOperationIds([
     ...observed,
     ...sourceOnlyOperations(options.sourceRoutes, observed, exchanges),
