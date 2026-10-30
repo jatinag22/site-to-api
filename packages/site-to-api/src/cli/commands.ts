@@ -264,7 +264,9 @@ const genCommand: CommandRegistrar = (program) => {
       // AGENT.md and API_MAP.md were written when the client was missing or stale; say it exists now.
       printWarnings([
         ...result.warnings,
-        ...await updateClientState(handoffDir, 'current'),
+        ...await updateClientState(handoffDir, result.empty
+          ? 'empty'
+          : 'current'),
       ])
       await recordClientGenerated(handoffDir, { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' })
       consola.success(`Generated ${result.files.length} client files`)

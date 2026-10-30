@@ -496,6 +496,32 @@ paths:
       await rm(dir, { recursive: true, force: true })
     }
   }, 60_000)
+  it('writes no client, and removes an old one, when every operation is a bot-protection step', async () => {
+    const dir = await workspace()
+    try {
+      const handoff = path.join(dir, 'handoff')
+      await writeFile(path.join(handoff, 'specs', 'shop.example.com.yaml'), `openapi: 3.1.0
+info: { title: t, version: '1' }
+servers: [{ url: 'https://shop.example.com' }]
+paths:
+  /a1b2/c3d4/mfc:
+    get:
+      operationId: getA1b2C3d4Mfc
+      x-site-to-api-kind: bot-protection
+      responses:
+        '200':
+          description: OK
+`)
+      await mkdir(path.join(handoff, 'client'), { recursive: true })
+      await writeFile(path.join(handoff, 'client', 'index.ts'), 'const sdks = {}\n')
+      const result = await generateClient({ handoffDir: handoff, flows })
+      expect(result).toEqual({ files: [], warnings: [], empty: true })
+      await expect(readFile(path.join(handoff, 'client', 'index.ts'), 'utf8')).rejects.toThrow()
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
 })
 
 describe('generateClient errors', () => {

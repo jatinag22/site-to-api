@@ -346,6 +346,33 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 }
 
 /**
+ * Generates `client/` (or removes or keeps it) and says which state it is in. Pushes the files it
+ * wrote to `files` and its warnings to `warnings`.
+ */
+async function writeClient(outDir: string, analysis: Analysis, config: ResolvedConfig, files: string[], warnings: string[]): Promise<ClientState> {
+  if (config.gen.client && analysis.operations.length > 0) {
+    const generated = await generateClient({ handoffDir: outDir, flows: analysis.flows, mcp: config.gen.mcp })
+    files.push(...generated.files.map(file => join(outDir, file)))
+    warnings.push(...generated.warnings)
+    return generated.empty
+      ? 'empty'
+      : 'current'
+  }
+  if (analysis.operations.length === 0) {
+    // Nothing left to describe: a client from an earlier build would point at operations that are gone.
+    await rm(join(outDir, 'client'), { recursive: true, force: true })
+    return 'none'
+  }
+  if (!existsSync(join(outDir, 'client', 'index.ts')))
+    return 'none'
+  // Same sentence as the AGENT.md gap, so the terminal and the folder say the same thing.
+  const stale = clientGap('stale')
+  if (stale !== null)
+    warnings.push(stale)
+  return 'stale'
+}
+
+/**
  * Runs the whole analysis and writes the handoff folder, including `build.json` with the options
  * used. `client/` (with `--no-client`) and `probe.json` are kept.
  */
@@ -392,24 +419,7 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     ...await writeExcerpts(outDir, analysis.excerpts),
   ]
   const warnings = [...analysis.warnings]
-  let client: ClientState = 'none'
-  if (options.config.gen.client && analysis.operations.length > 0) {
-    const generated = await generateClient({ handoffDir: outDir, flows: analysis.flows, mcp: options.config.gen.mcp })
-    files.push(...generated.files.map(file => join(outDir, file)))
-    warnings.push(...generated.warnings)
-    client = 'current'
-  }
-  else if (analysis.operations.length === 0) {
-    // Nothing left to describe: a client from an earlier build would point at operations that are gone.
-    await rm(join(outDir, 'client'), { recursive: true, force: true })
-  }
-  else if (existsSync(join(outDir, 'client', 'index.ts'))) {
-    client = 'stale'
-    // Same sentence as the AGENT.md gap, so the terminal and the folder say the same thing.
-    const stale = clientGap(client)
-    if (stale !== null)
-      warnings.push(stale)
-  }
+  const client = await writeClient(outDir, analysis, options.config, files, warnings)
   files.push(
     ...await writeHandoffDocs(outDir, analysis, {
       toolVersion: VERSION,
