@@ -54,7 +54,8 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    navigate), turns each segment into a flow of steps with typed inputs and outputs, merges flows
    seen in several sessions, and derives per-host session requirements.
 7. **channels** (`src/analyze/channels`): rebuilds WebSocket connections from the `ws` capture
-   events and turns them into channels (decision 0023). Frames stand in as exchanges for the
+   events, and server-sent event streams from the `sse` events and `text/event-stream` bodies
+   (decision 0049), and turns them into channels (decision 0023). Frames stand in as exchanges for the
    redactor (so secrets sent over a socket are learnt and scrubbed everywhere) and for value
    tracing (so a client value such as `productId` links to the HTTP response it came from). The
    connection URL is templated by the operations stage's path and query rules; messages are

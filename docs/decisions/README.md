@@ -56,3 +56,4 @@ or `Proposed`.
 | [0046](0046-real-site-verdicts-and-first-party-hosts.md) | Verdicts follow tested calls; trailing slugs; first-party hosts and build assets (refines 0033, 0035, 0036, 0037) | Accepted |
 | [0047](0047-embedded-urls-leak-check-and-sandbox.md) | URLs inside values are redacted like request URLs; `build` checks its output for learnt secrets; captures use Chromium's sandbox (refines 0004, 0019, 0020) | Accepted |
 | [0048](0048-smartfoxserver-2x.md) | SmartFoxServer 2X binary packets: a strict decoder, names from the published action table and extension commands, protocol-named secrets (refines 0038) | Accepted |
+| [0049](0049-compressed-bodies-event-streams-and-pages.md) | Compressed request bodies are kept and decoded; server-sent event streams are channels and probe reads only their start; navigations next to service-worker copies stay pages (refines 0023, 0031, 0036, 0037, 0038, 0044, 0046) | Accepted |
