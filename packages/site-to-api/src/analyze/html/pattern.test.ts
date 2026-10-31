@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createHtmlLocator } from './locate'
-import { anchoredPattern, capture } from './pattern'
+import { anchoredPattern, capture, holdsLearntWord } from './pattern'
 
 describe('anchoredPattern', () => {
   it('anchors on the text before the value', () => {
@@ -29,5 +29,20 @@ describe('createHtmlLocator: patterns never embed searched text (decision 0054)'
     expect(createHtmlLocator(() => {}, {
       avoid: anchor => anchor.includes('lofi'),
     })(plain, 't0k3n-value')).not.toBeNull()
+  })
+})
+
+describe('holdsLearntWord (decision 0056)', () => {
+  it('finds a learnt name among the words of a pattern, not inside another word', () => {
+    const learnt = (value: string): boolean => value === 'jdoe4821'
+    expect(holdsLearntWord('"login":"jdoe4821","repo":"', learnt)).toBe(true)
+    expect(holdsLearntWord('/jdoe4821/repo-one?tab=', learnt)).toBe(true)
+    expect(holdsLearntWord('"login":"jdoe48210",', learnt)).toBe(false)
+    const locate = createHtmlLocator(() => {}, {
+      avoid: text => holdsLearntWord(text, learnt),
+    })
+    expect(locate('{"owner":"jdoe4821","stars":"12345abc"}', '12345abc')).not.toBeNull()
+    expect(locate('signed in as jdoe4821 code ab12cd34 today', 'ab12cd34')).not.toBeNull()
+    expect(locate('jdoe4821 ab12cd34', 'ab12cd34')).toBeNull()
   })
 })

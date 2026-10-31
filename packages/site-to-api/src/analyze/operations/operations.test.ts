@@ -840,7 +840,7 @@ describe('buildOperations: learnt values in paths (decision 0056)', () => {
     const operations = buildOperations(exchanges, {
       sourceRoutes: [],
       isSecretKey: redactor.isSecretKey,
-      isLearntValue: value => redactor.value(value, { in: 'path' }) !== value,
+      isLearntValue: redactor.isLearnt,
     })
     // The same value is named the same everywhere it is a parameter.
     expect(paths(operations)).toEqual([
@@ -850,6 +850,49 @@ describe('buildOperations: learnt values in paths (decision 0056)', () => {
       'GET /settings',
     ])
     expect(JSON.stringify(operations.map(operation => [operation.operationId, operation.path, operation.summary]))).not.toContain(user)
+  })
+
+  it('templates a name a response body taught, and never a plain word or host name a cookie holds', () => {
+    const exchanges = [
+      get('/api/me', {
+        cookies: { layout: 'desktop', site: 'shop.test' },
+        responseBody: jsonBody({ username: 'bob_smith_7' }),
+      }),
+      get('/u/bob_smith_7/settings', {
+        kind: 'page',
+        cookies: { layout: 'desktop' },
+        responseBody: textBody('<html></html>'),
+      }),
+      get('/api/desktop/menu', {
+        cookies: { layout: 'desktop' },
+        responseBody: jsonBody({ items: [] }),
+      }),
+      get('/api/mobile/menu', {
+        responseBody: jsonBody({ items: [] }),
+      }),
+      get('/go/shop.test', {
+        cookies: { site: 'shop.test' },
+        responseBody: jsonBody({ ok: true }),
+      }),
+    ]
+    const redactor = createRedactor({
+      exchanges,
+      config: {
+        examples: 'masked',
+        maxExamples: 3,
+        patterns: [],
+        fields: [],
+      },
+    })
+    const operations = buildOperations(exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey, isLearntValue: redactor.isLearnt })
+    expect(paths(operations)).toEqual([
+      'GET /api/desktop/menu',
+      'GET /api/me',
+      'GET /api/mobile/menu',
+      'GET /go/shop.test',
+      'GET /u/{u}/settings',
+    ])
+    expect(operations.map(operation => operation.operationId).join(' ')).not.toMatch(/bob/i)
   })
 })
 

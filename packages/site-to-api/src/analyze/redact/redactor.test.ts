@@ -1232,6 +1232,29 @@ describe('createRedactor: ad-click signatures (decision 0054)', () => {
   })
 })
 
+describe('createRedactor: isLearnt (decision 0056)', () => {
+  it('is true for personal values and token-like secrets, never for plain words or captured hosts', () => {
+    const r = redactor([
+      exchange({
+        url: 'https://shop.test/api/me',
+        cookies: {
+          sid: 'jdoe4821',
+          layout: 'desktop',
+          site: 'shop.test',
+          Mixed: 'aBcDeFgH',
+        },
+        responseBody: jsonBody({ username: 'bob_smith_7' }),
+      }),
+    ])
+    expect(r.isLearnt('jdoe4821')).toBe(true)
+    expect(r.isLearnt('bob_smith_7')).toBe(true)
+    expect(r.isLearnt('desktop')).toBe(false)
+    expect(r.isLearnt('shop.test')).toBe(false)
+    expect(r.isLearnt('settings')).toBe(false)
+    expect(r.isLearnt('')).toBe(false)
+  })
+})
+
 describe('createRedactor: modes and examples', () => {
   const exchanges = fixtureExchanges()
 

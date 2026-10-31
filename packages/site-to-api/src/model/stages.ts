@@ -140,4 +140,12 @@ export interface Redactor extends ValueRedactor {
    * for, sorted. `build` checks the handoff folder for each after writing it (decision 0047).
    */
   learntSecrets: () => readonly string[]
+  /**
+   * True for a value the capture taught the redactor is a person's (decision 0056): one sent
+   * under a personal field name (`username`, `userId`, a person's `id`), or a learnt secret that
+   * looks like a token (a digit and a letter, or mixed case). Plain words a cookie happens to hold
+   * (`desktop`, `english`) and the capture's own host names never are. Paths use it to make such
+   * segments parameters; extraction patterns never anchor on them.
+   */
+  isLearnt: (value: string) => boolean
 }

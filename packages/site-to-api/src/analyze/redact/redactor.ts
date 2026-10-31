@@ -67,6 +67,11 @@ interface RedactorInput {
  */
 const MIN_CHECKED_SECRET_LENGTH = 6
 
+/** A token's shape: a digit and a letter, or both cases of letters (`jdoe4821`, `aBcDeFgH`). */
+function isTokenLike(value: string): boolean {
+  return (/\d/.test(value) && /[a-z]/i.test(value)) || (/[a-z]/.test(value) && /[A-Z]/.test(value))
+}
+
 function isCheckedSecret(value: string): boolean {
   return value.length >= MIN_CHECKED_SECRET_LENGTH && /\d/.test(value) && /[a-z]/i.test(value)
 }
@@ -530,6 +535,10 @@ export function createRedactor(input: RedactorInput): Redactor {
   }
 
   const { sessionsByValue, always, unlessConstant, personal, publicLabels } = learnValues(input.exchanges, isAlwaysSecret)
+  const capturedHosts = new Set(input.exchanges.flatMap(exchange => [
+    exchange.request.host,
+    exchange.request.host.replace(/:\d+$/, ''),
+  ]))
   const known = new Set((input.knownSecrets ?? []).filter(value => value !== ''))
 
   const isConstant = (value: string): boolean =>
@@ -588,6 +597,13 @@ export function createRedactor(input: RedactorInput): Redactor {
       keyVerdicts.set(key, verdict)
     }
     return verdict
+  }
+
+  /** See {@link Redactor.isLearnt}. */
+  function isLearnt(value: string): boolean {
+    if (value === '' || capturedHosts.has(value))
+      return false
+    return personal.has(value) || (secrets.has(value) && isTokenLike(value))
   }
 
   function redactQuery(query: string, depth: number): string {
@@ -814,6 +830,7 @@ export function createRedactor(input: RedactorInput): Redactor {
       : redactJson(value, context, 0))(values),
     isSecretKey,
     learntSecrets: () => [...secrets].filter(isCheckedSecret).sort(),
+    isLearnt,
     browserOnly: {
       value: text => raw || text === ''
         ? text

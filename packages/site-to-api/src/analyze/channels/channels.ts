@@ -333,7 +333,7 @@ export function buildChannels(input: BuildChannelsInput): WebSocketChannel[] {
     sourceRoutes: input.sourceRoutes,
     isSecretKey: redactor.isSecretKey,
     // A learnt value in a socket path (`/ws/<user>`) is a parameter, as in HTTP paths (0056).
-    isLearntValue: value => redactor.value(value, { in: 'path' }) !== value,
+    isLearntValue: redactor.isLearnt,
   }).filter(operation => !operation.sourceOnly), redactor)
   const operationByExchange = new Map(input.operations.flatMap(operation => operation.exchanges.map(exchange => [exchange.id, operation] as const)))
   const linkContext: LinkContext = { redactor, operationByExchange }

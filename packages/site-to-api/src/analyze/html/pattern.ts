@@ -86,3 +86,11 @@ export function anchoredPattern(input: string, index: number, value: string): st
   }
   return null
 }
+
+/**
+ * True when a word of `text` (split at anything but letters, digits and `._@+-`) is a learnt
+ * person's value: a pattern anchored on the signed-in user's name works for that user only.
+ */
+export function holdsLearntWord(text: string, isLearnt: (value: string) => boolean): boolean {
+  return text.split(/[^\w.@+-]+/).some(word => word !== '' && isLearnt(word))
+}
