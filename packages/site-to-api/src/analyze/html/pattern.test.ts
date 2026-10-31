@@ -44,5 +44,7 @@ describe('holdsLearntWord (decision 0056)', () => {
     expect(locate('{"owner":"jdoe4821","stars":"12345abc"}', '12345abc')).not.toBeNull()
     expect(locate('signed in as jdoe4821 code ab12cd34 today', 'ab12cd34')).not.toBeNull()
     expect(locate('jdoe4821 ab12cd34', 'ab12cd34')).toBeNull()
+    // A short learnt name is not looked for in pattern text.
+    expect(holdsLearntWord('"name":"jdoe","', value => value === 'jdoe')).toBe(false)
   })
 })

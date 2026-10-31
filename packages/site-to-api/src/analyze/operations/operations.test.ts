@@ -894,6 +894,41 @@ describe('buildOperations: learnt values in paths (decision 0056)', () => {
     ])
     expect(operations.map(operation => operation.operationId).join(' ')).not.toMatch(/bob/i)
   })
+
+  it('templates an email segment and a short name a response taught, but not an IP address', () => {
+    const exchanges = [
+      get('/api/me', {
+        responseBody: jsonBody({ username: 'jdoe' }),
+      }),
+      get('/u/jdoe/settings', {
+        kind: 'page',
+        responseBody: textBody('<html></html>'),
+      }),
+      get('/api/users/alice%40example.com/prefs', {
+        responseBody: jsonBody({ theme: 'dark' }),
+      }),
+      get('/api/hosts/192.168.10.20/status', {
+        responseBody: jsonBody({ up: true }),
+      }),
+    ]
+    const redactor = createRedactor({
+      exchanges,
+      config: {
+        examples: 'masked',
+        maxExamples: 3,
+        patterns: [],
+        fields: [],
+      },
+    })
+    const operations = buildOperations(exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey, isLearntValue: redactor.isLearnt })
+    expect(paths(operations)).toEqual([
+      'GET /api/hosts/192.168.10.20/status',
+      'GET /api/me',
+      'GET /api/users/{user}/prefs',
+      'GET /u/{u}/settings',
+    ])
+    expect(operations.map(operation => operation.operationId).join(' ')).not.toMatch(/alice|jdoe/i)
+  })
 })
 
 describe('buildOperations: sibling paths (decision 0035)', () => {

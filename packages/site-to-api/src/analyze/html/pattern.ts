@@ -87,10 +87,14 @@ export function anchoredPattern(input: string, index: number, value: string): st
   return null
 }
 
+const MIN_LEARNT_WORD = 6
+
 /**
- * True when a word of `text` (split at anything but letters, digits and `._@+-`) is a learnt
+ * True when a word of `text` (split at anything but letters, digits and `._@+-`, six characters
+ * or more) is a learnt
  * person's value: a pattern anchored on the signed-in user's name works for that user only.
  */
 export function holdsLearntWord(text: string, isLearnt: (value: string) => boolean): boolean {
-  return text.split(/[^\w.@+-]+/).some(word => word !== '' && isLearnt(word))
+  // Short names (`jdoe`) are learnt for whole path segments only; in prose they match words.
+  return text.split(/[^\w.@+-]+/).some(word => word.length >= MIN_LEARNT_WORD && isLearnt(word))
 }

@@ -67,6 +67,16 @@ interface RedactorInput {
  */
 const MIN_CHECKED_SECRET_LENGTH = 6
 
+/** Personal values shorter than this are not learnt at all: `id: 7` says nothing. */
+const MIN_PERSONAL_NAME_LENGTH = 3
+
+/** The whole value is an email address or a phone number (`alice@example.com`, `+4915112345678`). */
+function isEmailOrPhone(value: string): boolean {
+  return PERSONAL_DATA_PATTERNS
+    .filter(pattern => pattern.name === 'email' || pattern.name === 'phone')
+    .some(pattern => new RegExp(`^(?:${pattern.regex.source})$`, pattern.regex.flags.replace('g', '')).test(value) && (pattern.accept?.(value) ?? true))
+}
+
 /** A token's shape: a digit and a letter, or both cases of letters (`jdoe4821`, `aBcDeFgH`). */
 function isTokenLike(value: string): boolean {
   return (/\d/.test(value) && /[a-z]/i.test(value)) || (/[a-z]/.test(value) && /[A-Z]/.test(value))
@@ -437,6 +447,11 @@ interface Learnt {
    * to recognise the same value as an object key; they are not searched for in other text.
    */
   personal: Set<string>
+  /**
+   * The same values from three characters on (`jdoe`), for {@link Redactor.isLearnt}, which only
+   * compares whole path segments, where a short name is still a name.
+   */
+  personalNames: Set<string>
   /** Values sent under publishable-key names that are public labels ({@link isPublicLabel}). */
   publicLabels: Set<string>
 }
@@ -464,8 +479,11 @@ function learnKey(key: string, learnt: Learnt): void {
 
 /** Records which secret set a non-empty value belongs to, if any. */
 function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean, host: string): void {
-  if (item.value.length >= MIN_SEARCHED_SECRET_LENGTH && maskByName(item.value, item.name, item.person === true, item.in) !== null)
-    learnt.personal.add(item.value)
+  if (item.value.length >= MIN_PERSONAL_NAME_LENGTH && maskByName(item.value, item.name, item.person === true, item.in) !== null) {
+    learnt.personalNames.add(item.value)
+    if (item.value.length >= MIN_SEARCHED_SECRET_LENGTH)
+      learnt.personal.add(item.value)
+  }
   if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true) {
     forms.forEach(form => learnt.always.add(form))
   }
@@ -492,6 +510,7 @@ function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: Red
     always: new Set(),
     unlessConstant: new Set(),
     personal: new Set(),
+    personalNames: new Set(),
     publicLabels: new Set(),
   }
   for (const exchange of exchanges) {
@@ -534,7 +553,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     return fields.has(lower)
   }
 
-  const { sessionsByValue, always, unlessConstant, personal, publicLabels } = learnValues(input.exchanges, isAlwaysSecret)
+  const { sessionsByValue, always, unlessConstant, personal, personalNames, publicLabels } = learnValues(input.exchanges, isAlwaysSecret)
   const capturedHosts = new Set(input.exchanges.flatMap(exchange => [
     exchange.request.host,
     exchange.request.host.replace(/:\d+$/, ''),
@@ -603,7 +622,7 @@ export function createRedactor(input: RedactorInput): Redactor {
   function isLearnt(value: string): boolean {
     if (value === '' || capturedHosts.has(value))
       return false
-    return personal.has(value) || (secrets.has(value) && isTokenLike(value))
+    return personalNames.has(value) || (secrets.has(value) && isTokenLike(value)) || isEmailOrPhone(value)
   }
 
   function redactQuery(query: string, depth: number): string {
