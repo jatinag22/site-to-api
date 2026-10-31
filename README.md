@@ -502,7 +502,20 @@ access controls, and never hides that the browser is automated. See
   value); functions the capture never called are not listed, and POST functions are not probed
   unless `--unsafe-methods`.
 - Interactive capture (closing the window to finish) is covered by an abort test but not by an
-  automated headful test.
+  automated headful test. In interactive mode a browser crash looks like quitting; both save a
+  complete session with a note.
+- Redaction and value tracing are heuristics. Personal data with no telling field name or shape
+  (a name in a free-text bio) can get through; the build's leak check only searches for values
+  the redactor learnt, and only those of 6 or more characters that mix letters and digits.
+- Path templating can merge two endpoints whose code-route parameter has a minified name and
+  whose words also appear in page text (YouTube's `/youtubei/v1/{qsa}`), and a site whose own
+  API host is named `analytics.*` or `telemetry.*` is ranked last.
+- A learnt value inside a host name (`<user>.github.io`) is not templated; the leak check stops
+  that build instead.
+- Not decoded: fetch streams that never end, zstd request bodies, binary Connect bodies,
+  gRPC-web, tRPC over WebSocket, encrypted SmartFoxServer packets.
+- Tested by hand on about 30 public sites logged out (see [docs/testing.md](docs/testing.md)) and
+  on two logged-in sessions; other kinds of site may still show new problems.
 
 ## Contributing and docs
 
