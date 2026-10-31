@@ -18,6 +18,16 @@ interface Mark {
 /** Parameter positions of one observed path. */
 export type Marks = Map<number, Mark>
 
+/** A path segment as the person typed it: `jane%20doe` → `jane doe`; malformed escapes stay. */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment)
+  }
+  catch {
+    return segment
+  }
+}
+
 /** Path segments after the leading slash; `/` is `['']`. */
 export function segmentsOf(path: string): string[] {
   return path.split('/').slice(1)
@@ -77,7 +87,7 @@ function bestSourceMatch(templates: ParsedTemplate[], segments: string[], isCand
  * 5. With `siblings`, words that differ in one position of otherwise equal paths are a parameter
  *    when the capture shows they are data (decision 0035, `markSiblingPositions`).
  */
-export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set(), siblings: SiblingFacts | null = null, titled: ReadonlySet<string> = new Set(), codeLiteral: (value: string) => boolean = () => false): Map<string, Marks> {
+export function markParameters(paths: string[], routes: SourceRoute[], linkedSlugs: ReadonlySet<string> = new Set(), siblings: SiblingFacts | null = null, titled: ReadonlySet<string> = new Set(), codeLiteral: (value: string) => boolean = () => false, isLearntValue: (value: string) => boolean = () => false): Map<string, Marks> {
   // A hyphenated slug (`pine-hill`) only counts when another response links to it: plain-word
   // endpoint names (`/api/all-upcoming-issues`) appear in bundles, never as links in data.
   // A method name in an RPC position (`/api/v3/getAssetsJsonV2`) is never a value.
@@ -113,7 +123,18 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
       continue
     }
     segments.forEach((segment, index) => {
-      if (isStrongIdentifier(segment, segments[index - 1]) && !isRpcMethodAt(segments, index)) {
+      // A segment equal to a value the redactor learnt (the signed-in user's name from a cookie,
+      // an email) is a parameter on sight: as a literal it would reach the spec path, the
+      // operation id, the client's function and type names and the flows (decision 0056).
+      if (segment !== '' && isLearntValue(decodeSegment(segment))) {
+        marks.set(index, {
+          evidence: ['value-trace'],
+          sourceName: index === 0
+            ? 'owner'
+            : null,
+        })
+      }
+      else if (isStrongIdentifier(segment, segments[index - 1]) && !isRpcMethodAt(segments, index)) {
         marks.set(index, {
           evidence: ['looks-like-id'],
           sourceName: null,

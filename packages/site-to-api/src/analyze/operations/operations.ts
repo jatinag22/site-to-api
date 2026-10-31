@@ -31,6 +31,11 @@ interface BuildOperationsOptions {
    * parameter whose values are all such literals names different endpoints. Never, when omitted.
    */
   codeLiteral?: (value: string) => boolean
+  /**
+   * True for a value the redactor learnt as a secret or personal value (decision 0056): a path
+   * segment equal to one becomes a parameter, so it never reaches paths, ids or client names.
+   */
+  isLearntValue?: (value: string) => boolean
 }
 
 /** Written in summaries instead of a response key that is a secret or personal value. */
@@ -453,7 +458,7 @@ function templateOperations(method: string, group: Classified[], names: Map<numb
   ]
 }
 
-function observedOperations(exchanges: Exchange[], routes: SourceRoute[], isSecretKey: (key: string) => boolean, codeLiteral: (value: string) => boolean): Operation[] {
+function observedOperations(exchanges: Exchange[], routes: SourceRoute[], isSecretKey: (key: string) => boolean, codeLiteral: (value: string) => boolean, isLearntValue: (value: string) => boolean): Operation[] {
   // GraphQL requests get their own operations; templating their paths would merge them.
   // RPC calls too: their procedure is in the path (decision 0051).
   const relevant = exchanges.filter(exchange => OPERATION_KINDS.has(exchange.kind) && !isGraphqlExchange(exchange) && !isRpcExchange(exchange))
@@ -471,7 +476,7 @@ function observedOperations(exchanges: Exchange[], routes: SourceRoute[], isSecr
     const { host, method } = members[0]!.request
     const marks = markParameters([
       ...new Set(members.map(exchange => exchange.request.path)),
-    ], routesFor(routes, host, method), linkedSlugs(members, relevant), siblingFacts(members, relevant), titledSlugPaths(members), codeLiteral)
+    ], routesFor(routes, host, method), linkedSlugs(members, relevant), siblingFacts(members, relevant), titledSlugPaths(members), codeLiteral, isLearntValue)
     for (const exchange of members) {
       const segments = segmentsOf(exchange.request.path)
       classified.push({
@@ -767,7 +772,7 @@ function withChallengeNote(operation: Operation, challenged: ReadonlyMap<string,
 export function buildOperations(exchanges: Exchange[], options: BuildOperationsOptions): Operation[] {
   const { kept, challenged } = withoutStrayChallenges(exchanges)
   const observed = [
-    ...observedOperations(kept, options.sourceRoutes, options.isSecretKey, options.codeLiteral ?? (() => false)),
+    ...observedOperations(kept, options.sourceRoutes, options.isSecretKey, options.codeLiteral ?? (() => false), options.isLearntValue ?? (() => false)),
     ...graphqlOperations(kept.filter(exchange => OPERATION_KINDS.has(exchange.kind)), options.isSecretKey),
     ...rpcOperations(kept.filter(exchange => OPERATION_KINDS.has(exchange.kind)), options.isSecretKey),
   ].map(operation => withChallengeNote(operation, challenged))

@@ -15,7 +15,7 @@ import { classifyExchanges, createChannelScope } from '../analyze/classify'
 import { searchedTexts, traceValues, untracedCodeLiterals } from '../analyze/correlate'
 import { buildFlows } from '../analyze/flows'
 import { annotateGraphql, applyGraphqlTypes, graphqlTypeTargets } from '../analyze/graphql'
-import { createHtmlLocator, inferExtraction } from '../analyze/html'
+import { createHtmlLocator, holdsLearntWord, inferExtraction } from '../analyze/html'
 import { buildOperations } from '../analyze/operations'
 import { createRedactor, probeReportWithRedactedNames, withRedactedNames } from '../analyze/redact'
 import { annotateRpc, applyConnectIdempotency, combineIdempotency } from '../analyze/rpc'
@@ -262,8 +262,11 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
   const locatorErrors: string[] = []
   // What the person searched for never anchors an extraction pattern (decision 0054).
   const searched = searchedTexts(loaded.exchanges)
+  // Nor does a value the redactor learnt is a person's (the signed-in user's name, 0056); the
+  // redactor exists by the time tracing asks the locator.
+  let isLearnt: (value: string) => boolean = () => false
   const htmlLocator = createHtmlLocator(error => locatorErrors.push(errorMessage(error)), {
-    avoid: text => searched.some(value => text.includes(value)),
+    avoid: text => searched.some(value => text.includes(value)) || holdsLearntWord(text, isLearnt),
   })
 
   // WebSocket frames stand in as exchanges, so the redactor learns secrets sent over a socket and
@@ -279,6 +282,7 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
     // An SFS2X login's `un` and `pw` say nothing by name; the protocol says they are secrets.
     knownSecrets: protocolSecrets(connections),
   })
+  isLearnt = redactor.isLearnt
   const wanted = inHostFilter(config.hosts)
   // The page's own calls to a long-polling path are the channel's transport, not unused endpoints.
   const pollingPaths = new Set(exchanges.filter(isEnginePolling).map(exchange => `${exchange.request.host} ${exchange.request.path}`))
@@ -298,7 +302,13 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
     ...exchanges,
     ...sockets.exchanges,
   ])
-  let operations = buildOperations(exchanges, { sourceRoutes, isSecretKey: redactor.isSecretKey, codeLiteral })
+  // A path segment the redactor would change is a learnt secret or personal value (0056).
+  let operations = buildOperations(exchanges, {
+    sourceRoutes,
+    isSecretKey: redactor.isSecretKey,
+    codeLiteral,
+    isLearntValue: redactor.isLearnt,
+  })
     .filter(operation => !operation.sourceOnly || (wanted(operation.host) && !pollingPaths.has(`${operation.host} ${operation.path}`)))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
   if (operations.some(operation => operation.rpc?.protocol === 'connect'))

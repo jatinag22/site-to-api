@@ -5,3 +5,4 @@
 export { applyExtractSpec } from './apply'
 export { inferExtraction } from './infer'
 export { createHtmlLocator } from './locate'
+export { holdsLearntWord } from './pattern'

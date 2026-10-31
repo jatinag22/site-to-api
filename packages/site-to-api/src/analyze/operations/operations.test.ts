@@ -800,6 +800,137 @@ describe('buildOperations: method names in paths (decision 0052)', () => {
   })
 })
 
+describe('buildOperations: learnt values in paths (decision 0056)', () => {
+  it('turns a segment equal to a learnt value into a parameter, so no path, id or summary holds it', () => {
+    // The signed-in user's name, learnt from a session cookie, as the redactor would see it.
+    const user = 'jdoe4821'
+    const exchanges = [
+      {
+        ...get(`/${user}`, {
+          kind: 'page',
+          cookies: { dotcom_user: user },
+          responseBody: textBody('<html><title>profile</title></html>'),
+        }),
+      },
+      {
+        ...get(`/${user}/repo-one`, {
+          kind: 'page',
+          cookies: { dotcom_user: user },
+          responseBody: textBody('<html><title>repo</title></html>'),
+        }),
+      },
+      get(`/api/users/${user}/stars`, {
+        cookies: { dotcom_user: user },
+        responseBody: jsonBody({ stars: 1 }),
+      }),
+      get('/settings', {
+        kind: 'page',
+        responseBody: textBody('<html></html>'),
+      }),
+    ]
+    const redactor = createRedactor({
+      exchanges,
+      config: {
+        examples: 'masked',
+        maxExamples: 3,
+        patterns: [],
+        fields: [],
+      },
+    })
+    const operations = buildOperations(exchanges, {
+      sourceRoutes: [],
+      isSecretKey: redactor.isSecretKey,
+      isLearntValue: redactor.isLearnt,
+    })
+    // The same value is named the same everywhere it is a parameter.
+    expect(paths(operations)).toEqual([
+      'GET /{owner}',
+      'GET /{owner}/repo-one',
+      'GET /api/users/{owner}/stars',
+      'GET /settings',
+    ])
+    expect(JSON.stringify(operations.map(operation => [operation.operationId, operation.path, operation.summary]))).not.toContain(user)
+  })
+
+  it('templates a name a response body taught, and never a plain word or host name a cookie holds', () => {
+    const exchanges = [
+      get('/api/me', {
+        cookies: { layout: 'desktop', site: 'shop.test' },
+        responseBody: jsonBody({ username: 'bob_smith_7' }),
+      }),
+      get('/u/bob_smith_7/settings', {
+        kind: 'page',
+        cookies: { layout: 'desktop' },
+        responseBody: textBody('<html></html>'),
+      }),
+      get('/api/desktop/menu', {
+        cookies: { layout: 'desktop' },
+        responseBody: jsonBody({ items: [] }),
+      }),
+      get('/api/mobile/menu', {
+        responseBody: jsonBody({ items: [] }),
+      }),
+      get('/go/shop.test', {
+        cookies: { site: 'shop.test' },
+        responseBody: jsonBody({ ok: true }),
+      }),
+    ]
+    const redactor = createRedactor({
+      exchanges,
+      config: {
+        examples: 'masked',
+        maxExamples: 3,
+        patterns: [],
+        fields: [],
+      },
+    })
+    const operations = buildOperations(exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey, isLearntValue: redactor.isLearnt })
+    expect(paths(operations)).toEqual([
+      'GET /api/desktop/menu',
+      'GET /api/me',
+      'GET /api/mobile/menu',
+      'GET /go/shop.test',
+      'GET /u/{u}/settings',
+    ])
+    expect(operations.map(operation => operation.operationId).join(' ')).not.toMatch(/bob/i)
+  })
+
+  it('templates an email segment and a short name a response taught, but not an IP address', () => {
+    const exchanges = [
+      get('/api/me', {
+        responseBody: jsonBody({ username: 'jdoe' }),
+      }),
+      get('/u/jdoe/settings', {
+        kind: 'page',
+        responseBody: textBody('<html></html>'),
+      }),
+      get('/api/users/alice%40example.com/prefs', {
+        responseBody: jsonBody({ theme: 'dark' }),
+      }),
+      get('/api/hosts/192.168.10.20/status', {
+        responseBody: jsonBody({ up: true }),
+      }),
+    ]
+    const redactor = createRedactor({
+      exchanges,
+      config: {
+        examples: 'masked',
+        maxExamples: 3,
+        patterns: [],
+        fields: [],
+      },
+    })
+    const operations = buildOperations(exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey, isLearntValue: redactor.isLearnt })
+    expect(paths(operations)).toEqual([
+      'GET /api/hosts/192.168.10.20/status',
+      'GET /api/me',
+      'GET /api/users/{user}/prefs',
+      'GET /u/{u}/settings',
+    ])
+    expect(operations.map(operation => operation.operationId).join(' ')).not.toMatch(/alice|jdoe/i)
+  })
+})
+
 describe('buildOperations: sibling paths (decision 0035)', () => {
   const article = (title: string): Parameters<typeof get>[1] => ({
     kind: 'page',
