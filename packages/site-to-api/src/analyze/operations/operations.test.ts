@@ -800,6 +800,59 @@ describe('buildOperations: method names in paths (decision 0052)', () => {
   })
 })
 
+describe('buildOperations: learnt values in paths (decision 0056)', () => {
+  it('turns a segment equal to a learnt value into a parameter, so no path, id or summary holds it', () => {
+    // The signed-in user's name, learnt from a session cookie, as the redactor would see it.
+    const user = 'jdoe4821'
+    const exchanges = [
+      {
+        ...get(`/${user}`, {
+          kind: 'page',
+          cookies: { dotcom_user: user },
+          responseBody: textBody('<html><title>profile</title></html>'),
+        }),
+      },
+      {
+        ...get(`/${user}/repo-one`, {
+          kind: 'page',
+          cookies: { dotcom_user: user },
+          responseBody: textBody('<html><title>repo</title></html>'),
+        }),
+      },
+      get(`/api/users/${user}/stars`, {
+        cookies: { dotcom_user: user },
+        responseBody: jsonBody({ stars: 1 }),
+      }),
+      get('/settings', {
+        kind: 'page',
+        responseBody: textBody('<html></html>'),
+      }),
+    ]
+    const redactor = createRedactor({
+      exchanges,
+      config: {
+        examples: 'masked',
+        maxExamples: 3,
+        patterns: [],
+        fields: [],
+      },
+    })
+    const operations = buildOperations(exchanges, {
+      sourceRoutes: [],
+      isSecretKey: redactor.isSecretKey,
+      isLearntValue: value => redactor.value(value, { in: 'path' }) !== value,
+    })
+    // The same value is named the same everywhere it is a parameter.
+    expect(paths(operations)).toEqual([
+      'GET /{owner}',
+      'GET /{owner}/repo-one',
+      'GET /api/users/{owner}/stars',
+      'GET /settings',
+    ])
+    expect(JSON.stringify(operations.map(operation => [operation.operationId, operation.path, operation.summary]))).not.toContain(user)
+  })
+})
+
 describe('buildOperations: sibling paths (decision 0035)', () => {
   const article = (title: string): Parameters<typeof get>[1] => ({
     kind: 'page',

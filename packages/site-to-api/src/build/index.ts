@@ -298,7 +298,14 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
     ...exchanges,
     ...sockets.exchanges,
   ])
-  let operations = buildOperations(exchanges, { sourceRoutes, isSecretKey: redactor.isSecretKey, codeLiteral })
+  // A path segment the redactor would change is a learnt secret or personal value (0056).
+  const isLearntValue = (value: string): boolean => redactor.value(value, { in: 'path' }) !== value
+  let operations = buildOperations(exchanges, {
+    sourceRoutes,
+    isSecretKey: redactor.isSecretKey,
+    codeLiteral,
+    isLearntValue,
+  })
     .filter(operation => !operation.sourceOnly || (wanted(operation.host) && !pollingPaths.has(`${operation.host} ${operation.path}`)))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
   if (operations.some(operation => operation.rpc?.protocol === 'connect'))
