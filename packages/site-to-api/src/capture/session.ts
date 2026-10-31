@@ -274,7 +274,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       exitedEarly: () => sessionEnd.exitedEarly,
     })
     closed = true
-    const finalIncomplete = incomplete ?? saved.incomplete
+    const finalIncomplete = sessionIncomplete(incomplete, saved.incomplete, sessionEnd.exitedEarly)
     warnings.push(...saved.warnings)
     const omitted = saved.har && harOmissionNote(saved.har, { websockets: capture.websockets, saveScripts: capture.saveScripts, eventsFile: EVENTS_FILE })
     if (omitted)
@@ -398,6 +398,17 @@ async function prepare({ context, streams, capture, options, events, ignoredFram
       track(binding.attach(other, false))
   }
   return page
+}
+
+/**
+ * Why the session is incomplete: the run's own reason first, except a script that failed because
+ * the browser went away under it (a crash mid-run), which failed for that reason: the browser's
+ * exit, as saving recorded it, not the script's error.
+ */
+function sessionIncomplete(run: Incomplete | null, saved: Incomplete | null, exitedEarly: boolean): Incomplete | null {
+  if (run?.reason === 'script-failed' && exitedEarly && saved !== null)
+    return saved
+  return run ?? saved
 }
 
 function logFailure(incomplete: Incomplete | null, log: (message: string) => void): void {

@@ -47,8 +47,8 @@ describe('runCapture when the browser is gone before capture closes it', () => {
   it('keeps the session complete when the context had closed and the HAR is there', async () => {
     await writeFile(path.join(work, 'closes.mjs'), `
 export default async ({ page, context, baseUrl }) => {
-  await page.goto(baseUrl)
-  await page.waitForResponse(response => response.url().endsWith('/api/items'))
+  // Listening before the navigation: the page's fetch can finish before goto returns.
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/items')), page.goto(baseUrl)])
   await context.close()
 }
 `)
@@ -65,8 +65,7 @@ export default async ({ page, context, baseUrl }) => {
   it('takes a close through page.context() for the script\'s own end, not a crash', async () => {
     await writeFile(path.join(work, 'page-context.mjs'), `
 export default async ({ page, baseUrl }) => {
-  await page.goto(baseUrl)
-  await page.waitForResponse(response => response.url().endsWith('/api/items'))
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/items')), page.goto(baseUrl)])
   await page.context().close()
 }
 `)
@@ -83,11 +82,14 @@ export default async ({ page, baseUrl }) => {
   it('marks the session incomplete when the browser process ended and left no HAR', async () => {
     await writeFile(path.join(work, 'kills.mjs'), `
 export default async ({ page, context, baseUrl }) => {
-  await page.goto(baseUrl)
-  await page.waitForResponse(response => response.url().endsWith('/api/items'))
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/items')), page.goto(baseUrl)])
+  // Waits for the browser to be gone, however long a slow machine takes, instead of a fixed sleep.
+  const gone = new Promise(resolve => context.once('close', resolve))
   const cdp = await context.newCDPSession(page)
   await cdp.send('Browser.close').catch(() => {})
-  await new Promise(resolve => setTimeout(resolve, 1000))
+  await gone
+  // A script still working on the dead browser fails; that failure is the browser's exit.
+  await page.title()
 }
 `)
     const result = await runCapture(config('kills.mjs'), {
