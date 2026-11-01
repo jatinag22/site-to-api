@@ -16,7 +16,7 @@ catalogs:
     '@asyncapi/parser': ^3.6.6
     '@jridgewell/gen-mapping': 0.3.13
     '@modelcontextprotocol/client': 2.4.0
-    '@scalar/openapi-parser': 0.29.16
+    '@scalar/openapi-parser': 0.29.18
     '@types/node': ^26.6.5
     '@types/ws': ^8.18.2
     bumpp: ^12.3.0
