@@ -30,4 +30,10 @@ describe('normalizeCaptureUrl', () => {
       expect(() => normalizeCaptureUrl(junk), junk).toThrow(/for example https:\/\/example\.com or localhost:3000/)
     }
   })
+
+  it('refuses a user name or password before "@", which would change the host', () => {
+    expect(() => normalizeCaptureUrl('example.com@evil.test')).toThrow('"example.com@evil.test" holds a user name before "@"; capture would open evil.test.')
+    expect(() => normalizeCaptureUrl('user:pass@localhost:3000')).toThrow(/holds a user name before "@"; capture would open localhost:3000/)
+    expect(() => normalizeCaptureUrl('https://me@shop.test/')).toThrow(SiteToApiError)
+  })
 })

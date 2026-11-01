@@ -26,6 +26,9 @@ export function normalizeCaptureUrl(input: string): string {
   catch {
     throw new SiteToApiError(`"${input}" is not a URL. Pass the page to open first, ${EXAMPLE}.`)
   }
+  // `example.com@evil.test` opens evil.test: the part before "@" is a user name, not the host.
+  if (url.username !== '' || url.password !== '')
+    throw new SiteToApiError(`"${input}" holds a user name before "@"; capture would open ${url.host}. Pass just the page URL, ${EXAMPLE}.`)
   if (url.protocol !== 'http:' && url.protocol !== 'https:')
     throw new SiteToApiError(`"${input}" is a ${url.protocol} URL; capture opens http and https pages only, ${EXAMPLE}.`)
   // A host needs a dot, a port or to be this machine: "shop" alone is far more often a typo
