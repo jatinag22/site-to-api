@@ -20,18 +20,23 @@ is protected, so a release goes through a pull request like any other change.
    1. **prepare** (read-only) checks:
       - every package has the same version, and the branch name (or a hand-pushed tag) matches it;
       - the commit is on `main`.
-   2. **pack** (read-only) builds and packs both packages once. The tarballs and their
-      `SHA256SUMS` become the workflow artifact, and every later job uses those exact files.
+   2. **pack** (read-only) builds and packs both packages once. The tarballs become the
+      workflow artifact, and every later job uses those exact files. Their SHA-256 checksums are
+      the job's outputs, so they do not travel inside the artifact they protect.
    3. **ci** (read-only) runs the whole CI workflow against the merge commit: lint, build,
       typecheck, knip, unit and end-to-end tests. Its package smoke test, on Node 22 and 24 with
-      npm and pnpm, runs on the artifact's tarballs after checking their checksums.
-   4. **release** (`contents: write`; it installs and builds nothing) has three steps:
+      npm and pnpm, runs on the artifact's tarballs after checking them against pack's
+      checksums.
+   4. **release** (`contents: write`) needs no checkout and runs no third-party code, only the
+      GitHub CLI. It:
+      - checks the downloaded tarballs against pack's checksums;
       - tags the commit `v<version>`;
-      - creates the GitHub release with notes from the Conventional Commits (changelogithub);
+      - creates the GitHub release with GitHub's generated notes (`--generate-notes
+        --verify-tag`, marked as a prerelease for a prerelease version);
       - attaches the tarballs and `SHA256SUMS`.
    5. **publish** (`id-token: write`, the only job with it) runs only when `PUBLISH_ENABLED` is
       `true`, and waits for a reviewer's approval in the `npm` environment. It checks the
-      checksums and runs `npm publish <tarball> --provenance` for the runtime, then the CLI. It
+      tarballs against pack's checksums and runs `npm publish <tarball> --provenance` for the runtime, then the CLI. It
       installs and builds nothing. A version with a prerelease part (`0.1.0-alpha.0`) is
       published under the `next` dist-tag, everything else under `latest`.
 
@@ -64,6 +69,8 @@ locally before a release:
   with `zod@4`.
 
 Options:
+- `--static` runs only the quick checks: pack, manifests, publint, and the runtime's neutrality
+  (it installs the runtime tarball alone for that);
 - `--tarballs <dir>` tests given tarballs instead of packing, after checking them against a
   `SHA256SUMS` file in that folder (the release uses this);
 - `--keep` leaves the temporary folder for inspection;
@@ -73,10 +80,16 @@ Options:
 It needs network access. `node scripts/check-neutral.mjs <entry.mjs>` runs the neutrality check on
 its own.
 
-On pull requests CI runs it once (Node 24, npm), and only when a file that ends up in a package
-changed: a package's `package.json`, README, `src/`, `bin/` or build config, the lockfile or
-workspace file, the fixture site, or the smoke scripts. Pushes to `main` and release runs use the
-full matrix.
+CI runs `--static` (pack, manifests, publint, neutral runtime: quick, no browser) on every
+pull request.
+
+The install-and-capture part runs once on a pull request (Node 24, npm), and only when a file
+that ends up in a package changed:
+- a package's `package.json`, README, `src/`, `bin/` or build config;
+- the lockfile, the workspace file, the root `package.json`, `tsconfig*.json` or `.npmrc`;
+- the fixture site or the smoke scripts.
+
+Pushes to `main` and release runs use the full matrix.
 
 ## Installing an alpha from a GitHub release
 

@@ -5,7 +5,9 @@
 // into fresh projects where `--help`, `init`, `capture` (headless, Playwright's Chromium) against
 // the e2e fixture site, `build` and `gen` work and the generated client type-checks.
 //
-// Usage: node scripts/smoke-package.mjs [--tarballs <dir>] [--keep] [--only npm|pnpm] [--with-deps]
+// Usage: node scripts/smoke-package.mjs [--static] [--tarballs <dir>] [--keep] [--only npm|pnpm] [--with-deps]
+//   --static     only the quick checks: pack, manifests, publint, and the runtime's neutrality
+//                (the runtime tarball alone is installed for it); no browser, no capture
 //   --tarballs   test these tarballs instead of packing (the release tests the exact files it
 //                publishes); a SHA256SUMS file next to them is checked first
 //   --keep       leave the temporary folder for inspection
@@ -25,6 +27,7 @@ import { neutralProblems } from './check-neutral.mjs'
 const root = resolve(import.meta.dirname, '..')
 const args = process.argv.slice(2)
 const keep = args.includes('--keep')
+const staticOnly = args.includes('--static')
 const withDeps = args.includes('--with-deps')
 const only = args.includes('--only')
   ? args[args.indexOf('--only') + 1]
@@ -154,7 +157,9 @@ for (const tarball of [cliTarball, runtimeTarball]) {
 // 3. Fresh projects, one per package manager.
 const version = /^site-to-api-runtime-(.+)\.tgz$/.exec(runtimeTarball)?.[1]
 const projects = []
-for (const manager of managers) {
+for (const manager of staticOnly
+  ? []
+  : managers) {
   step(`Install the tarballs with ${manager}`)
   const dir = join(work, `${manager}-app`)
   mkdirSync(dir)
@@ -193,11 +198,27 @@ for (const manager of managers) {
 
 // 4. The runtime must run outside Node (Bun, Deno, edge workers): no Node imports or globals.
 step('Bundle the runtime for a neutral platform')
-const first = projects[0]
-const problems = await neutralProblems(join(first.dir, 'node_modules', '@site-to-api', 'runtime', 'dist', 'index.mjs'))
+let neutralDir = projects[0]?.dir
+if (neutralDir === undefined) {
+  // Static mode: a project with the runtime tarball alone, so its dependencies resolve.
+  neutralDir = join(work, 'runtime-app')
+  mkdirSync(neutralDir)
+  writeFileSync(join(neutralDir, 'package.json'), `${JSON.stringify({
+    name: 'smoke-runtime',
+    private: true,
+    type: 'module',
+    dependencies: { '@site-to-api/runtime': `file:${join(tarballs, runtimeTarball)}` },
+  }, null, 2)}\n`)
+  run('npm', ['install', '--no-audit', '--no-fund'], { cwd: neutralDir })
+}
+const problems = await neutralProblems(join(neutralDir, 'node_modules', '@site-to-api', 'runtime', 'dist', 'index.mjs'))
 if (problems.length > 0)
   fail(`the runtime is not neutral:\n  ${problems.join('\n  ')}`)
 console.log('runtime bundles for platform=neutral with no Node imports or globals')
+if (staticOnly) {
+  console.log('\nsmoke-package: static checks OK')
+  process.exit(0)
+}
 
 // 5. The fixture site, which the e2e tests capture too.
 step('Start the e2e fixture site')
