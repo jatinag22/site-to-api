@@ -15,7 +15,9 @@ export default defineConfig({
     exclude: [],
   },
   capture: {
-    browser: { channel: 'chrome', headless: false },
+    // Chrome by default, or Playwright's Chromium where Chrome is not installed. Set channel
+    // ('chrome', 'msedge', ...) to require one browser, or null for Playwright's Chromium.
+    browser: { headless: false },
   },
   redact: {
     // 'masked' keeps formats but hides secrets and personal data. 'raw' copies real values.

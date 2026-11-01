@@ -187,7 +187,7 @@ The full format is specified in [docs/output-format.md](docs/output-format.md).
 | Command | What it does |
 |---|---|
 | `init` | Writes `site-to-api.config.ts` and gitignores `.site-to-api/` |
-| `capture [url]` | Opens a browser and records everything until you finish: close the last tab or window, quit the browser, or press Ctrl+C (all save a complete session). `--script <file>` drives it from code instead (a failing script or Ctrl+C still saves the session, marked incomplete, and exits 1); `--headless`; `--channel chrome\|msedge\|bundled`; `--user-data-dir` keeps logins |
+| `capture [url]` | Opens a browser and records everything until you finish: close the last tab or window, quit the browser, or press Ctrl+C (all save a complete session). `--script <file>` drives it from code instead (a failing script or Ctrl+C still saves the session, marked incomplete, and exits 1); `--headless`; `--channel chrome\|msedge\|bundled` (default chrome, falling back to the bundled Chromium with a note when Chrome is not installed and no channel was chosen); `--user-data-dir` keeps logins |
 | `import <file.har>` | Turns a HAR exported from browser DevTools or a proxy into a raw session that `build`, `probe` and `gen` use like a captured one. `--session <id>`; `--delete-source` deletes the HAR afterwards (it holds your cookies) |
 | `build` | Analyses every capture and writes the handoff folder, including the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client`, `--mcp [read\|write]` |
 | `probe` | Replays captured requests against the live site, rate limited, safe methods (and GraphQL queries) only unless `--unsafe-methods`; works out the needed cookies and headers for up to `--minimize-per-host <n>` operations per host (default 5); rebuilds the handoff folder with the flags of the last `build` (from `build.json`) and prints a summary |
@@ -204,6 +204,9 @@ lists them.
 
 ## Configuration
 
+Every key, its default, its environment variable and what it does: [docs/configuration.md](docs/configuration.md)
+(generated from the config schema).
+
 ```ts
 // site-to-api.config.ts
 import { defineConfig } from 'site-to-api'
@@ -216,6 +219,7 @@ export default defineConfig({
     exclude: []
   },
   capture: {
+    // Chrome by default (Playwright's Chromium where Chrome is missing); null: Playwright's Chromium
     browser: { channel: 'chrome', headless: false }
   },
   redact: { examples: 'masked' }, // 'raw' copies real values into the handoff folder

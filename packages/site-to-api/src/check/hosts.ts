@@ -14,6 +14,10 @@ export interface HostSelection {
   operations: Operation[]
   /** Third-party hosts that have operations but were not selected, sorted. */
   skippedHosts: string[]
+  /** `--include`/`--exclude` patterns that match no host with operations: most likely a typo. */
+  unmatched: Array<{ flag: '--include' | '--exclude', pattern: string }>
+  /** Every host with operations, sorted, for the message about `unmatched`. */
+  hosts: string[]
 }
 
 export interface HostFlags {
@@ -45,5 +49,25 @@ export function selectOperations(analysis: Analysis, flags: HostFlags): HostSele
       .filter(operation => roles.get(operation.host) === 'third-party' && !chosen.has(operation.host) && !excluded(operation.host))
       .map(operation => operation.host)),
   ].sort()
-  return { operations, skippedHosts }
+  const hosts = [
+    ...new Set(analysis.operations.map(operation => operation.host)),
+  ].sort()
+  const unmatched = (flag: '--include' | '--exclude', patterns: readonly string[]): HostSelection['unmatched'] => patterns
+    .filter(pattern => !hosts.some(compileHostGlobs([pattern])))
+    .map(pattern => ({ flag, pattern }))
+  return {
+    operations,
+    skippedHosts,
+    unmatched: [
+      ...unmatched('--include', include),
+      ...unmatched('--exclude', flags.exclude ?? []),
+    ],
+    hosts,
+  }
+}
+
+/** One warning per pattern that matched no host, listing the hosts there are. */
+export function unmatchedWarnings(selection: HostSelection): string[] {
+  return selection.unmatched.map(({ flag, pattern }) =>
+    `${flag} "${pattern}" matches no captured host. Hosts with operations: ${selection.hosts.join(', ') || 'none'}.`)
 }

@@ -5,10 +5,12 @@
  */
 import type { Command } from 'commander'
 import type { CommandRegistrar } from './program'
+import { readFile } from 'node:fs/promises'
 import process from 'node:process'
 import { InvalidArgumentError } from 'commander'
 import { resolve } from 'pathe'
 import { serveGenerated, serveHandoff } from '../mcp'
+import { ignoredConfigChanges } from './ignored-config'
 import { resolveConfig } from './program'
 
 interface McpFlags {
@@ -50,8 +52,18 @@ export const mcpCommand: CommandRegistrar = (program) => {
       const { config, cwd, ignored } = await resolveConfig(command, {
         probe: { maxRps: flags.maxRps },
       }, { code: false })
-      if (ignored !== undefined)
-        log(`Not running ${ignored}: \`mcp\` reads only flags, SITE_TO_API_* variables and site-to-api.config.json (handoff folder: ${dir ?? config.outDir}).`)
+      // Said only when the file sets something mcp uses differently: printed on every start of
+      // every project otherwise, it is noise people learn to skip.
+      const changes = ignored === undefined
+        ? []
+        : ignoredConfigChanges(await readFile(ignored, 'utf8').catch(() => ''), config)
+      if (ignored !== undefined && changes.length > 0) {
+        log(`Not running ${ignored}: \`mcp\` reads only flags, SITE_TO_API_* variables and site-to-api.config.json, so its ${changes.join(', ')} ${changes.length === 1
+          ? 'is'
+          : 'are'} not used (handoff folder: ${dir ?? config.outDir}). Move ${changes.length === 1
+          ? 'it'
+          : 'them'} to site-to-api.config.json, or pass the folder as an argument.`)
+      }
       const handoffDir = resolve(cwd, dir ?? config.outDir)
       if (flags.generated) {
         await serveGenerated({ handoffDir, trustClient: flags.trustClient === true })

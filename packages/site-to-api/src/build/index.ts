@@ -255,7 +255,11 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 /** Everything `build` learns from the raw captures; `probe.json` is applied by {@link withStoredProbe}. */
 async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (message: string) => void): Promise<CapturedAnalysis> {
   const loaded = await loadSessions(rawDir)
-  log(`Loaded ${loaded.sessions.length} session(s), ${loaded.exchanges.length} requests`)
+  log(`Loaded ${loaded.sessions.length} ${loaded.sessions.length === 1
+    ? 'session'
+    : 'sessions'}, ${loaded.exchanges.length} ${loaded.exchanges.length === 1
+    ? 'request'
+    : 'requests'}`)
   const classified = classifyExchanges(loaded.exchanges, config.hosts)
   // GraphQL requests are marked and batches split before anything groups or traces them (0027).
   // Engine.IO long-polling requests are one channel's transport, documented with the channel
@@ -530,7 +534,8 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     }),
     await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION)),
   )
-  log(`Wrote ${files.length} files to ${outDir}`)
+  // The folder itself is in the line the caller prints at the end.
+  log(`Wrote ${files.length} files`)
   // The folder must hold no secret the capture had (decision 0047). With `examples: raw` it
   // copies captured values on purpose, so the check would only restate that choice.
   if (options.config.redact.examples !== 'raw') {

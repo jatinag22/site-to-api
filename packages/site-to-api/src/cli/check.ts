@@ -9,8 +9,9 @@ import { InvalidArgumentError } from 'commander'
 import { consola } from 'consola'
 import { resolve } from 'pathe'
 import { analyzeForProbe, readBuildRecord, stickyOptions } from '../build'
-import { checkOperations, selectOperations, summarizeCheck, volatileInputs, writeCheckReport } from '../check'
+import { checkOperations, selectOperations, summarizeCheck, unmatchedWarnings, volatileInputs, writeCheckReport } from '../check'
 import { VERSION } from '../version'
+import { warn } from './output'
 import { resolveConfig } from './program'
 
 interface CheckFlags {
@@ -44,7 +45,10 @@ async function runCheck(flags: CheckFlags, command: Command): Promise<void> {
   const { analysis, redactText } = await analyzeForProbe({ config, cwd })
   const operationIds = flags.operations?.flatMap(value => value.split(',')).map(id => id.trim()).filter(id => id !== '')
   // Only the site's own hosts by default; a third party is opted in with --include.
-  const { operations, skippedHosts } = selectOperations(analysis, { include: flags.include, exclude: flags.exclude, operationIds })
+  const selection = selectOperations(analysis, { include: flags.include, exclude: flags.exclude, operationIds })
+  const { operations, skippedHosts } = selection
+  for (const warning of unmatchedWarnings(selection))
+    warn(warning)
   const report = await checkOperations({
     operations,
     skippedHosts,

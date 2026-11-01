@@ -30,11 +30,15 @@ context or browser has been closed". A capture where every page load failed
   not close (or on the second signal) the browser process is ended through a CDP session opened
   at launch. A timeout saves what exists, marks the session and says what it stopped waiting for.
 - `capture` exits with status 1 when the session is incomplete.
-- When half or more of the main-frame page loads failed with no response (iframes and loads the
-  browser aborted itself, `net::ERR_ABORTED`, do not count), `capture` warns and `build` puts
-  the same sentence in AGENT.md's gaps (first among the warnings), with the browser's error: the site probably blocks
-  automated browsers; capture with a visible browser (`--channel chrome`, without `--headless`),
-  and if that fails too, use the site's official API (decision 0008).
+- When half or more of the main-frame page loads failed with no response or a 403 (iframes and
+  loads the browser aborted itself, `net::ERR_ABORTED`, do not count), `capture` warns and `build`
+  puts the same sentence in AGENT.md's gaps (first among the warnings), with the browser's error
+  and advice for its kind: a host that does not resolve (DNS block or offline); nothing listening
+  (`ERR_CONNECTION_REFUSED`: start the site or check the URL); an unsafe port the browser refuses;
+  and only for timeouts, resets and 403 refusals, that the site probably blocks automated
+  browsers: capture with a visible browser (`--channel chrome`, without `--headless`), and if that
+  fails too, use the site's official API (decision 0008). A first page that answered 404 is
+  reported as a URL to check.
 
 ## Consequences
 A session cut short by a timeout may miss the last responses of the page that did not finish.

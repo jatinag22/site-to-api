@@ -17,7 +17,7 @@ import { CHECK_FORMAT_VERSION, CheckReportSchema } from '../model/check'
 import { createReplayer } from '../probe'
 import { compareLive, unreachableCheck, withStaleInputs } from './compare'
 
-export { selectOperations } from './hosts'
+export { selectOperations, unmatchedWarnings } from './hosts'
 export { summarizeCheck } from './summary'
 export { volatileInputs } from './volatile'
 
@@ -87,8 +87,12 @@ export async function checkOperations(options: CheckOptions): Promise<CheckRepor
   const skipped: CheckReport['skipped'] = []
   const ordered = [...selected].sort((a, b) => byCodeUnits(a.host, b.host) || byCodeUnits(a.operationId, b.operationId))
   for (const operation of ordered) {
-    options.log?.(`check ${operation.method} ${operation.path}`)
     const live = await replay(operation)
+    // Progress only for requests that went out: a skipped operation sent nothing.
+    if (live.kind === 'answered')
+      options.log?.(`check ${operation.method} ${operation.path}: ${live.status}`)
+    else if (live.kind === 'unreachable')
+      options.log?.(`check ${operation.method} ${operation.path}: unreachable`)
     if (live.kind === 'skipped') {
       skipped.push({
         operationId: operation.operationId,

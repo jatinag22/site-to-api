@@ -143,6 +143,8 @@ async function loadSession(dir: string, name: string, warnings: string[]): Promi
       ? 'what came after the error is missing'
       : 'pages after that point are missing'}, so capture again for full coverage.`)
   }
+  for (const warning of meta.data.warnings ?? [])
+    warnings.push(`${meta.data.sessionId}: ${warning}`)
   const events = await readEvents(dir, meta.data, warnings)
   const { entries, raw } = await readHarEntries(dir, meta.data, warnings)
   const requestEvents = events.filter((event): event is RequestEvent => event.t === 'request')

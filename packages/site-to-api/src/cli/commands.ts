@@ -12,16 +12,17 @@ import { InvalidArgumentError, Option } from 'commander'
 import { consola } from 'consola'
 import { dirname, join, resolve } from 'pathe'
 import { analyzeForProbe, buildHandoff, readBuildRecord, recordClientGenerated, stickyOptions } from '../build'
-import { runCapture } from '../capture'
+import { CHANNEL_NAMES, channelList, normalizeCaptureUrl, runCapture } from '../capture'
 import { updateClientState } from '../emit/handoff'
 import { SiteToApiError } from '../errors'
 import { generateClient } from '../gen'
 import { importHar } from '../import'
 import { countSessions } from '../load'
 import { FlowsDocumentSchema } from '../model'
-import { probeOperations, summarizeProbe, writeProbeReport } from '../probe'
+import { probeOperations, summarizeProbe, unreachableWarning, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { checkCommands } from './check'
+import { counted, shown, warn } from './output'
 import { resolveConfig } from './program'
 
 function parseNumber(value: string): number {
@@ -37,7 +38,23 @@ function collect(value: string, previous: string[] = []): string[] {
 
 function printWarnings(warnings: string[]): void {
   for (const warning of warnings)
-    consola.warn(warning)
+    warn(warning)
+}
+
+function parseChannel(value: string): string {
+  if (!CHANNEL_NAMES.includes(value))
+    throw new InvalidArgumentError(`"${value}" is not a browser capture can use. Capture records with Chromium-based browsers: ${channelList()}.`)
+  return value
+}
+
+/** Without a script nobody can use a headless browser, and the capture would never end. */
+function headlessWithoutScript(source: string | undefined): string {
+  const where = source === 'flag'
+    ? '--headless'
+    : `capture.browser.headless (set in ${source === 'env'
+      ? 'SITE_TO_API_CAPTURE__BROWSER__HEADLESS'
+      : 'the config file'})`
+  return `${where} needs a capture script: a headless browser has no window to use the site in. Add --script <file> to drive it with a script, or drop --headless to use the site by hand (--minimized keeps a scripted capture off the screen).`
 }
 
 interface CaptureFlags {
@@ -57,11 +74,14 @@ const captureCommand: CommandRegistrar = (program) => {
     .option('--session <id>', 'session id (default: <host>-<timestamp>)')
     .option('--headless', 'run without a window (for scripted captures; sites with bot protection often block it)')
     .option('--minimized', 'a normal browser with its windows minimized, for scripted captures that should not take over the screen')
-    .option('--channel <name>', 'browser channel, e.g. chrome, msedge, or "bundled" for Playwright\'s Chromium')
+    .option('--channel <name>', `browser: ${channelList()} (default: chrome, or bundled where Chrome is not installed)`, parseChannel)
     .option('--script <file>', 'drive the browser with a script instead of by hand: export default async ({ page, baseUrl }) => {}')
     .option('--user-data-dir <dir>', 'reuse a browser profile so logins persist')
     .action(async (url: string | undefined, flags: CaptureFlags, command: Command) => {
-      const { config, cwd } = await resolveConfig(command, {
+      const startUrl = url === undefined
+        ? null
+        : normalizeCaptureUrl(url)
+      const { config, cwd, sources } = await resolveConfig(command, {
         capture: {
           browser: {
             headless: flags.headless,
@@ -76,22 +96,33 @@ const captureCommand: CommandRegistrar = (program) => {
             : undefined,
         },
       })
+      if (config.capture.browser.headless && config.capture.script === null)
+        throw new SiteToApiError(headlessWithoutScript(sources['capture.browser.headless']))
       const controller = new AbortController()
       const result = await runCapture(config, {
-        url: url ?? null,
+        url: startUrl,
         sessionId: flags.session,
         cwd,
         signal: controller.signal,
+        channelFallback: sources['capture.browser.channel'] === 'default',
+        instructions: process.stdin.isTTY === true,
         log: message => consola.info(message),
       })
       printWarnings(result.warnings)
+      const contents = [
+        result.requests === null
+          ? 'no readable HAR'
+          : counted(result.requests, 'request'),
+        counted(result.events, 'event'),
+        counted(result.meta.scripts.length, 'script'),
+      ].join(', ')
       if (result.meta.incomplete) {
         // Saved, but not a clean run: scripts and CI should notice.
         process.exitCode = 1
-        consola.warn(`Saved an incomplete capture to ${result.sessionDir}`)
+        warn(`Saved an incomplete session ${result.meta.sessionId} to ${shown(result.sessionDir)} (${contents}).`)
       }
       else {
-        consola.success(`Saved capture to ${result.sessionDir}`)
+        consola.success(`Saved session ${result.meta.sessionId} to ${shown(result.sessionDir)} (${contents}).`)
       }
       // Two sessions are what separates constants from per-session values; more help less.
       consola.info(await countSessions(dirname(result.sessionDir)) >= 2
@@ -127,9 +158,15 @@ function addOutputOptions(command: Command, note: string): Command {
   return command
     .option('--include <host>', `only analyse this host (glob, repeatable)${note}`, collect)
     .option('--exclude <host>', `skip this host (glob, repeatable)${note}`, collect)
-    .option('--examples <mode>', `masked | raw | none${note}`)
+    .option('--examples <mode>', `example values in the handoff folder${note}:\nmasked: secrets and personal data replaced (default)\nraw: captured values as they are, personal data too\nnone: no example values`, examplesMode)
     .option('--no-client', `do not generate the TypeScript client${note}`)
     .addOption(mcpOption(note))
+}
+
+function examplesMode(value: string): string {
+  if (!['masked', 'raw', 'none'].includes(value))
+    throw new InvalidArgumentError(`"${value}" is not an examples mode: use masked, raw or none.`)
+  return value
 }
 
 function mcpMode(value: string): string {
@@ -140,7 +177,7 @@ function mcpMode(value: string): string {
 
 function warnIfRaw(examples: string): void {
   if (examples === 'raw')
-    consola.warn('redact.examples is "raw": captured values, including personal data, will be written to the handoff folder.')
+    warn('redact.examples is "raw": captured values, including personal data, will be written to the handoff folder.')
 }
 
 const buildCommand: CommandRegistrar = (program) => {
@@ -169,8 +206,8 @@ const buildCommand: CommandRegistrar = (program) => {
         log: message => consola.info(message),
       })
       printWarnings(result.warnings)
-      consola.success(`${result.analysis.operations.length} operations, ${result.analysis.flows.flows.length} flows → ${result.outDir}`)
-      consola.info(`Start with ${resolve(result.outDir, 'AGENT.md')}`)
+      consola.success(`${counted(result.analysis.operations.length, 'operation')}, ${counted(result.analysis.flows.flows.length, 'flow')} → ${shown(result.outDir)}`)
+      consola.info(`Start with ${shown(resolve(result.outDir, 'AGENT.md'))}`)
     })
 }
 
@@ -228,7 +265,14 @@ const probeCommand: CommandRegistrar = (program) => {
       printWarnings(result.warnings)
       for (const line of summarizeProbe(report))
         consola.info(line)
-      consola.success(`Handoff folder updated with the probe results: ${outDir}`)
+      const unreachable = unreachableWarning(report)
+      if (unreachable !== null) {
+        // Nothing was learnt: scripts and CI should not take this run as a probe.
+        warn(unreachable)
+        process.exitCode = 1
+        return
+      }
+      consola.success(`Handoff folder updated with the probe results: ${shown(outDir)}`)
     })
 }
 
@@ -271,7 +315,7 @@ const genCommand: CommandRegistrar = (program) => {
           : 'current'),
       ])
       await recordClientGenerated(handoffDir, { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' })
-      consola.success(`Generated ${result.files.length} client files`)
+      consola.success(`Generated ${counted(result.files.length, 'client file')}`)
     })
 }
 
@@ -296,11 +340,11 @@ const importCommand: CommandRegistrar = (program) => {
         deleteSource: flags.deleteSource,
       })
       printWarnings(result.warnings)
-      consola.success(`Imported ${result.entries} requests, ${result.events} events and ${result.scripts} scripts into ${result.sessionDir}`)
+      consola.success(`Imported session ${result.meta.sessionId} to ${shown(result.sessionDir)} (${counted(result.entries, 'request')}, ${counted(result.events, 'event')}, ${counted(result.scripts, 'script')}).`)
       if (result.sourceDeleted)
         consola.info(`Deleted ${file}.`)
       else
-        consola.warn(`${file} holds your cookies and session tokens. Delete it once you no longer need it (or import with --delete-source).`)
+        warn(`${file} holds your cookies and session tokens. Delete it once you no longer need it (or import with --delete-source).`)
       consola.info('Next: `site-to-api build`. A HAR has no record of what the page\'s code did, so AGENT.md lists what an imported session cannot show.')
     })
 }

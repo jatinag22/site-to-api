@@ -4,11 +4,12 @@
  */
 import type { ResolvedConfig } from './schema'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { createJiti } from 'jiti'
-import { resolve } from 'pathe'
-import { z } from 'zod'
+import { basename, resolve } from 'pathe'
 import { SiteToApiError } from '../errors'
+import { describeIssues, syntaxExcerpt } from './errors'
 import { ConfigSchema } from './schema'
 
 const CONFIG_FILE_NAMES: readonly string[] = [
@@ -152,9 +153,16 @@ async function readConfigFile(path: string): Promise<PlainObject> {
     loaded = await jiti.import(path, { default: true })
   }
   catch (error) {
-    throw new SiteToApiError(`Could not load config file ${path}: ${error instanceof Error
+    const message = (error instanceof Error
       ? error.message
-      : String(error)}`, { cause: error })
+      : String(error))
+    // JSON errors repeat the file's path (possibly through a symlink) in front of the message.
+      .replace(new RegExp(`^\\S*${basename(path).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: `), '')
+      .trim()
+    const excerpt = syntaxExcerpt(await readFile(path, 'utf8').catch(() => ''), message)
+    throw new SiteToApiError(`Could not load config file ${path}: ${message}${excerpt === ''
+      ? ''
+      : `\n${excerpt}`}`, { cause: error })
   }
   if (!isPlainObject(loaded))
     throw new SiteToApiError(`Config file ${path} must export an object (use \`export default defineConfig({ ... })\`).`)
@@ -190,7 +198,14 @@ export async function loadConfig(options: LoadConfigOptions): Promise<LoadedConf
   const merged = merge(merge(fromFile, fromEnv), fromFlags)
   const parsed = ConfigSchema.safeParse(merged)
   if (!parsed.success) {
-    throw new SiteToApiError(`Invalid configuration:\n${z.prettifyError(parsed.error)}\nSources: ${file ?? 'no config file'}, ${ENV_PREFIX}* environment variables, CLI flags.`)
+    const problems = describeIssues(parsed.error.issues, {
+      file,
+      fromFile,
+      fromEnv,
+      fromFlags,
+      env: options.env ?? {},
+    })
+    throw new SiteToApiError(`Invalid configuration:\n${problems.map(problem => `- ${problem}`).join('\n')}`)
   }
 
   const sources: Record<string, ConfigSource> = {}

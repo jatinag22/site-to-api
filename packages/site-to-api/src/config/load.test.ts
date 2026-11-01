@@ -86,6 +86,37 @@ describe('loadConfig', () => {
     })).rejects.toThrow(/maxRps/)
   })
 
+  it('names the source of each bad value and suggests the key that was meant', async () => {
+    await writeFile(join(dir, 'site-to-api.config.json'), JSON.stringify({
+      probe: { maxRp: 2 },
+      captur: {},
+    }))
+    const error = await loadConfig({
+      cwd: dir,
+      env: { SITE_TO_API_PROBE__MINIMIZEPERHOST: '3', SITE_TO_API_PROBE__TIMEOUT_MS: 'soon' },
+      flags: {
+        redact: { examples: 'everything' },
+      },
+    }).catch((caught: unknown) => caught)
+    const file = join(dir, 'site-to-api.config.json')
+    expect(String(error)).toContain(`- captur (config file ${file}): unknown key. Did you mean "capture"?`)
+    expect(String(error)).toContain(`- probe.maxRp (config file ${file}): unknown key. Did you mean "probe.maxRps"?`)
+    expect(String(error)).toContain('- probe.minimizeperhost (environment variable SITE_TO_API_PROBE__MINIMIZEPERHOST): unknown key. Did you mean SITE_TO_API_PROBE__MINIMIZE_PER_HOST?')
+    expect(String(error)).toContain('- probe.timeoutMs (environment variable SITE_TO_API_PROBE__TIMEOUT_MS): Invalid input: expected number, received string')
+    expect(String(error)).toMatch(/- redact\.examples \(CLI flag --examples\): Invalid option/)
+  })
+
+  it('shows the line of a config file that does not parse', async () => {
+    await writeFile(join(dir, 'site-to-api.config.json'), '{\n  "probe": { "maxRps": 2, }\n}\n')
+    const error = String(await loadConfig({ cwd: dir }).catch((caught: unknown) => caught))
+    expect(error).toMatch(/config\.json: Expected double-quoted property name/)
+    expect(error).toContain('  1 | {\n  2 |   "probe": { "maxRps": 2, }\n    |                           ^')
+    await rm(join(dir, 'site-to-api.config.json'))
+    await writeFile(join(dir, 'site-to-api.config.ts'), 'export default {\n  probe: { maxRps: 2 }\n  outDir: \'x\',\n}\n')
+    const code = String(await loadConfig({ cwd: dir }).catch((caught: unknown) => caught))
+    expect(code).toContain('  3 |   outDir: \'x\',\n    |   ^')
+  })
+
   it('loads a config that imports defineConfig from site-to-api, even without a local install', async () => {
     // The temp project has no node_modules: the import must resolve to the running copy.
     await writeFile(join(dir, 'site-to-api.config.ts'), `

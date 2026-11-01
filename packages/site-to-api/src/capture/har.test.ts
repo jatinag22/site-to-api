@@ -151,8 +151,9 @@ describe('finishHar', () => {
 
   it('says what it left out, and where frames and scripts are only when they were kept', () => {
     const compaction = { entries: 3, bodiesOmitted: 2, framesOmitted: 5 }
-    expect(harOmissionNote(compaction, { websockets: true, saveScripts: true, eventsFile: 'events.jsonl' })).toBe('Left 2 asset bodies and 5 WebSocket frames out of the HAR (the frames are in events.jsonl; the scripts under scripts/).')
-    expect(harOmissionNote(compaction, { websockets: false, saveScripts: false, eventsFile: 'events.jsonl' })).toBe('Left 2 asset bodies and 5 WebSocket frames out of the HAR (frames are not kept: capture.websockets is off; scripts are not kept: capture.saveScripts is off).')
+    expect(harOmissionNote(compaction, { websockets: true, saveScripts: true, eventsFile: 'events.jsonl' })).toBe('Left out of traffic.har to keep it small: 2 asset bodies (images, fonts, styles, scripts; scripts are saved under scripts/) and 5 WebSocket frames (saved in events.jsonl).')
+    expect(harOmissionNote(compaction, { websockets: false, saveScripts: false, eventsFile: 'events.jsonl' })).toBe('Left out of traffic.har to keep it small: 2 asset bodies (images, fonts, styles, scripts; scripts are not kept: capture.saveScripts is off) and 5 WebSocket frames (not kept: capture.websockets is off).')
+    expect(harOmissionNote({ entries: 3, bodiesOmitted: 1, framesOmitted: 0 }, { websockets: true, saveScripts: true, eventsFile: 'events.jsonl' })).toBe('Left out of traffic.har to keep it small: 1 asset body (images, fonts, styles, scripts; scripts are saved under scripts/).')
     expect(harOmissionNote({ entries: 3, bodiesOmitted: 0, framesOmitted: 0 }, { websockets: true, saveScripts: true, eventsFile: 'events.jsonl' })).toBeNull()
   })
 })

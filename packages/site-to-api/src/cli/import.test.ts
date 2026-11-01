@@ -34,7 +34,10 @@ async function importCli(extra: string[]): Promise<{ success: string[], warn: st
     join(dir, 'shop.har'),
     ...extra,
   ], pipelineCommands)
-  const text = (spy: typeof success): string[] => spy.mock.calls.map(call => String(call[0]))
+  // warn() passes consola a log object ({ message, badge: false }); the rest pass the text.
+  const text = (spy: typeof success): string[] => spy.mock.calls.map(([first]: unknown[]) => typeof first === 'object' && first !== null && 'message' in first
+    ? String(first.message)
+    : String(first))
   return {
     success: text(success),
     warn: text(warn),
@@ -47,7 +50,7 @@ describe('import', () => {
     await writeFile(join(dir, 'shop.har'), JSON.stringify(chromeHar()))
     const out = await importCli(['--session', 'from-devtools'])
     expect(out.success).toEqual([
-      expect.stringMatching(/^Imported 6 requests, \d+ events and 1 scripts into .*captures\/from-devtools$/),
+      expect.stringMatching(/^Imported session from-devtools to .*captures\/from-devtools \(6 requests, \d+ events, 1 script\)\.$/),
     ])
     expect(out.warn.some(message => message.includes('holds your cookies and session tokens'))).toBe(true)
     expect(existsSync(join(dir, 'captures', 'from-devtools', 'meta.json'))).toBe(true)
