@@ -1,7 +1,9 @@
 import type { LoadConfigOptions, LoadedConfig } from '../config/load'
+import { statSync } from 'node:fs'
 import process from 'node:process'
 import { Command } from 'commander'
 import { consola } from 'consola'
+import { resolve } from 'pathe'
 import { loadConfig } from '../config/load'
 import { SiteToApiError } from '../errors'
 import { VERSION } from '../version'
@@ -18,10 +20,20 @@ interface CommandContext extends LoadedConfig {
   cwd: string
 }
 
+/** `--cwd`, checked: a missing folder would otherwise run with defaults as if it were empty. */
+function workingDir(options: GlobalOptions): string {
+  if (options.cwd === undefined)
+    return process.cwd()
+  const dir = resolve(process.cwd(), options.cwd)
+  if (statSync(dir, { throwIfNoEntry: false })?.isDirectory() !== true)
+    throw new SiteToApiError(`--cwd ${options.cwd}: no such directory (${dir}). Pass the folder of the project to work in.`)
+  return dir
+}
+
 /** Loads config for a command, layering this command's flags on top. */
 export async function resolveConfig(command: Command, flags: Record<string, unknown> = {}, load: Pick<LoadConfigOptions, 'code'> = {}): Promise<CommandContext> {
   const options = command.optsWithGlobals<GlobalOptions>()
-  const cwd = options.cwd ?? process.cwd()
+  const cwd = workingDir(options)
   const loaded = await loadConfig({
     cwd,
     configFile: options.config ?? null,
@@ -61,7 +73,7 @@ export function createProgram(registrars: CommandRegistrar[] = []): Command {
     .command('init')
     .description('create site-to-api.config.ts and gitignore the raw capture folder')
     .action(async (_options: unknown, command: Command) => {
-      const cwd = command.optsWithGlobals<GlobalOptions>().cwd ?? process.cwd()
+      const cwd = workingDir(command.optsWithGlobals<GlobalOptions>())
       const result = await initProject(cwd)
       for (const file of result.created)
         consola.success(`Wrote ${file}`)

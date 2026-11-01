@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import process from 'node:process'
+import { consola } from 'consola'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mcpCommand } from './mcp'
@@ -52,6 +53,24 @@ describe('cli', () => {
     expect(written).toContain('minimizePerHost: 5')
     const gitignore = await readFile(join(dir, '.gitignore'), 'utf8')
     expect(gitignore.match(/\.site-to-api\//g)).toHaveLength(1)
+  })
+
+  it('refuses a --cwd that does not exist instead of running with defaults', async () => {
+    const errors: string[] = []
+    vi.spyOn(consola, 'error').mockImplementation((message: unknown) => {
+      errors.push(String(message))
+    })
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      join(dir, 'missing'),
+      'config',
+    ])
+    expect(errors).toEqual([
+      expect.stringMatching(/^--cwd .*missing: no such directory/),
+    ])
+    expect(process.exitCode).toBe(1)
   })
 
   it('config --json shows values and their sources, with flags winning', async () => {
