@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { syncGenerated } from './manifest'
+import { isFolderRelative } from './contained'
+import { removeGenerated, syncGenerated } from './manifest'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -58,5 +60,61 @@ describe('syncGenerated', () => {
     const result = await syncGenerated(await folder({ 'extract.ts': 'generated' }), target, {}, false)
     expect(await readFile(path.join(target, 'extract.ts'), 'utf8')).toBe('my own extract')
     expect(result.warnings[0]).toContain('Did not overwrite 1 file(s)')
+  })
+})
+
+describe('paths recorded in build.json and symbolic links (decision 0058)', () => {
+  const hash = (text: string): string => createHash('sha256').update(text).digest('hex')
+
+  it('never deletes a recorded path outside the folder, with or without --force', async () => {
+    const root = await folder({ 'secret.env': 'TOKEN=abc', 'proj/api-handoff/client/keep.md': 'k' })
+    const client = path.join(root, 'proj', 'api-handoff', 'client')
+    for (const force of [true, false]) {
+      const result = await removeGenerated(client, {
+        '../../../secret.env': hash('TOKEN=abc'),
+        '/etc/hosts': 'x',
+      }, force)
+      expect(await readFile(path.join(root, 'secret.env'), 'utf8')).toBe('TOKEN=abc')
+      expect(result.warnings.join('\n')).toContain('../../../secret.env is not a path inside the folder')
+    }
+  })
+
+  it('never writes or deletes through a symbolic link, in legacy mode or with --force', async () => {
+    const root = await folder({ 'victim.txt': 'mine', 'client/keep.md': 'k', 'elsewhere/x.ts': 'theirs' })
+    const client = path.join(root, 'client')
+    await symlink(path.join(root, 'victim.txt'), path.join(client, 'index.ts'))
+    await symlink(path.join(root, 'elsewhere'), path.join(client, 'shop'))
+    const staging = await folder({ 'index.ts': 'generated', 'shop/x.ts': 'generated' })
+    for (const [previous, force] of [
+      [null, false],
+      [{}, true],
+    ] as const) {
+      const result = await syncGenerated(staging, client, previous, force)
+      expect(await readFile(path.join(root, 'victim.txt'), 'utf8')).toBe('mine')
+      expect(await readFile(path.join(root, 'elsewhere', 'x.ts'), 'utf8')).toBe('theirs')
+      expect(result.warnings.join('\n')).toContain('index.ts is a symbolic link')
+      expect(result.warnings.join('\n')).toContain('shop/x.ts is reached through a symbolic link')
+      expect(result.manifest).toEqual({})
+    }
+    await removeGenerated(client, {
+      'index.ts': hash('mine'),
+      'shop/x.ts': hash('theirs'),
+    }, true)
+    expect(existsSync(path.join(root, 'victim.txt'))).toBe(true)
+    expect(existsSync(path.join(root, 'elsewhere', 'x.ts'))).toBe(true)
+  })
+
+  it('accepts only relative paths inside the folder', () => {
+    expect(['index.ts', 'shop/sdk.gen.ts'].every(isFolderRelative)).toBe(true)
+    expect([
+      '../x',
+      'a/../b',
+      '/etc/x',
+      'C:/x',
+      'a\\b',
+      'a//b',
+      './a',
+      '',
+    ].some(isFolderRelative)).toBe(false)
   })
 })

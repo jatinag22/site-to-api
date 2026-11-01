@@ -18,6 +18,13 @@ kept there disappeared and hand edits to generated files were lost without a wor
   recorded are never deleted, and one at a path `gen` now generates is not overwritten.
 - A folder without a recorded manifest (from an older version) has its generated paths
   overwritten and nothing deleted.
+- `build.json` is repository data. A recorded generated file must be a relative path inside its
+  folder (no absolute path, drive letter, backslash or `.`/`..` segment); a record with any other
+  key is refused when read. Before every hash read, copy and delete, `gen` checks again that no
+  folder on the way and not the file itself is a symbolic link, and that the real location lies in
+  the real client or MCP folder; such a path is left alone and named in a warning. The leak check
+  reads and deletes only regular files inside the handoff, client or MCP folder, with the same
+  check.
 
 ### The client folder is configurable
 - `gen.clientDir` (relative to the working directory, like `outDir`) puts the client in the app's

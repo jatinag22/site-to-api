@@ -150,3 +150,19 @@ describe('mcpChoice (decision 0058)', () => {
     expect(mcpChoice(config, { 'gen.mcp': 'default' }, null)).toEqual({ mode: 'off', kept: false })
   })
 })
+
+describe('generated paths in build.json (decision 0058)', () => {
+  it('refuses a record whose generated files leave their folder', async () => {
+    const record = buildRecordFor(config, {}, 'test')
+    await writeFile(join(dir, 'build.json'), JSON.stringify({
+      ...record,
+      generated: { '../../../secret.env': 'x' },
+    }))
+    await expect(readBuildRecord(dir)).rejects.toThrow(/Invalid key in record;\s+→ at generated\["\.\.\/\.\.\/\.\.\/secret\.env"\]/)
+    await writeFile(join(dir, 'build.json'), JSON.stringify({
+      ...record,
+      generatedMcp: { '/etc/hosts': 'x' },
+    }))
+    await expect(readBuildRecord(dir)).rejects.toThrow(/Invalid key in record;\s+→ at generatedMcp\["\/etc\/hosts"\]/)
+  })
+})

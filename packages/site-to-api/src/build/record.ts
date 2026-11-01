@@ -11,6 +11,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'pathe'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
+import { isFolderRelative } from '../gen/contained'
 
 const BUILD_RECORD_FILE = 'build.json'
 
@@ -25,6 +26,9 @@ const STICKY_PATHS = [
   'hosts.include',
   'redact.examples',
 ] as const
+/** A recorded generated file: relative and inside its folder, never `../…` or absolute (decision 0058). */
+const ManifestKey = z.string().refine(isFolderRelative, { message: 'a generated file must be a relative path inside its folder' })
+
 const BuildRecordSchema = z.strictObject({
   formatVersion: z.literal(1),
   generatedBy: z.string(),
@@ -42,7 +46,7 @@ const BuildRecordSchema = z.strictObject({
    * (decision 0058): only these are replaced or removed later, and a changed hash means a hand
    * edit. Absent in older records.
    */
-  generated: z.record(z.string(), z.string()).optional(),
+  generated: z.record(ManifestKey, z.string()).optional(),
   /**
    * The client folder relative to the handoff folder, with `/` separators (`client`, or
    * `../client` with `gen.clientDir`), so `gen` and `mcp` find it from the handoff folder alone.
@@ -52,7 +56,7 @@ const BuildRecordSchema = z.strictObject({
   /** The MCP server folder relative to the handoff folder; absent: `mcp` next to the client folder. */
   mcpDir: z.string().optional(),
   /** The files `gen --mcp` generated into the MCP folder and their SHA-256, like `generated`. */
-  generatedMcp: z.record(z.string(), z.string()).optional(),
+  generatedMcp: z.record(ManifestKey, z.string()).optional(),
   /**
    * The options above that came from CLI flags or `SITE_TO_API_*` variables. `probe` and `gen`
    * reuse exactly these; the others come from the config file, which they read again anyway.
@@ -119,7 +123,7 @@ export async function readBuildRecord(outDir: string): Promise<BuildRecord | nul
   }
   const parsed = BuildRecordSchema.safeParse(data)
   if (!parsed.success)
-    throw new SiteToApiError(`${path} is not a build record this version understands. Run \`site-to-api build\` to rewrite it.`)
+    throw new SiteToApiError(`${path} is not a build record this version understands (${z.prettifyError(parsed.error).replaceAll('\n', '; ')}). Run \`site-to-api build\` to rewrite it.`)
   return parsed.data
 }
 

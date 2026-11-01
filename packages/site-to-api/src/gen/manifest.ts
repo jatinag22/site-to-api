@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, rmdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { containedPath } from './contained'
 
 /** Generated files, by path relative to the client folder with `/` separators, and their SHA-256. */
 export type ClientManifest = Record<string, string>
@@ -49,7 +50,7 @@ export interface SyncResult {
 
 type Placement = 'write' | 'edited' | 'foreign'
 
-/** Whether the generated file `hash` may replace what is at `to`. */
+/** Whether the generated file `hash` may replace what is at `to` (already checked by {@link containedPath}). */
 async function placement(to: string, hash: string, recorded: string | undefined, legacy: boolean, force: boolean): Promise<Placement> {
   if (force || !existsSync(to))
     return 'write'
@@ -64,10 +65,17 @@ async function placement(to: string, hash: string, recorded: string | undefined,
 }
 
 /** Deletes the recorded files no longer generated, keeping those edited by hand unless `force`. */
-async function removeStale(target: string, previous: ClientManifest, kept: Set<string>, force: boolean, edited: string[]): Promise<void> {
+async function removeStale(target: string, previous: ClientManifest, kept: Set<string>, force: boolean, edited: string[], refused: string[]): Promise<void> {
   for (const [file, recorded] of Object.entries(previous)) {
-    const at = path.join(target, file)
-    if (kept.has(file) || !existsSync(at))
+    if (kept.has(file))
+      continue
+    const contained = await containedPath(target, file)
+    if ('refused' in contained) {
+      refused.push(contained.refused)
+      continue
+    }
+    const at = contained.path
+    if (!existsSync(at))
       continue
     if (!force && await sha256(at) !== recorded) {
       edited.push(file)
@@ -90,10 +98,16 @@ export async function syncGenerated(staging: string, target: string, previous: C
   const warnings: string[] = []
   const edited: string[] = []
   const foreign: string[] = []
+  const refused: string[] = []
   const generated = await relativeFiles(staging)
   for (const file of generated) {
     const from = path.join(staging, file)
-    const to = path.join(target, file)
+    const contained = await containedPath(target, file)
+    if ('refused' in contained) {
+      refused.push(contained.refused)
+      continue
+    }
+    const to = contained.path
     const hash = await sha256(from)
     const recorded = previous?.[file]
     const decision = await placement(to, hash, recorded, previous === null, force)
@@ -110,11 +124,13 @@ export async function syncGenerated(staging: string, target: string, previous: C
     await copyFile(from, to)
     manifest[file] = hash
   }
-  await removeStale(target, previous ?? {}, new Set(generated), force, edited)
+  await removeStale(target, previous ?? {}, new Set(generated), force, edited, refused)
   if (edited.length > 0)
     warnings.push(`Kept ${edited.length} client file(s) edited by hand instead of regenerating them: ${edited.sort().join(', ')}. Move your changes out of the generated files, or run \`site-to-api gen --force\` to overwrite them.`)
   if (foreign.length > 0)
     warnings.push(`Did not overwrite ${foreign.length} file(s) site-to-api did not write: ${foreign.sort().join(', ')}. Move them, or run \`site-to-api gen --force\` to replace them.`)
+  if (refused.length > 0)
+    warnings.push(`Left ${refused.length} path(s) alone, since writing or deleting them could reach outside ${target}: ${refused.sort().join('; ')}. Remove the link or fix build.json, then run \`site-to-api gen\` again.`)
   return { manifest, warnings }
 }
 

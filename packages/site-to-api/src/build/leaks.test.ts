@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -40,6 +40,34 @@ describe('findHandoffLeaks', () => {
   const dirs: string[] = []
   afterAll(async () => {
     await Promise.all(dirs.map(dir => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('never reads or deletes a recorded path outside the folders or behind a symbolic link (decision 0058)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'site-to-api-leaks-'))
+    dirs.push(root)
+    const out = join(root, 'handoff')
+    const client = join(root, 'app', 'client')
+    await mkdir(out, { recursive: true })
+    await mkdir(client, { recursive: true })
+    await writeFile(join(root, 'secret.env'), token)
+    await writeFile(join(client, 'index.ts'), `const t = '${token}'\n`)
+    await symlink(join(root, 'secret.env'), join(client, 'linked.ts'))
+    const roots = [out, client]
+    const leaks = await findHandoffLeaks(out, [
+      join(root, 'secret.env'),
+      join(client, 'linked.ts'),
+      join(client, 'index.ts'),
+    ], [token], roots)
+    expect(leaks.map(leak => leak.file)).toEqual(['../app/client/index.ts'])
+    // A leak list naming an outside file (as a tampered one could) deletes nothing there.
+    await discardLeakingOutput(out, [
+      ...leaks,
+      { file: '../secret.env', hint: 'x' },
+      { file: '../app/client/linked.ts', hint: 'x' },
+    ], roots)
+    expect(existsSync(join(client, 'index.ts'))).toBe(false)
+    expect(await readFile(join(root, 'secret.env'), 'utf8')).toBe(token)
+    expect(existsSync(join(client, 'linked.ts'))).toBe(true)
   })
 
   it('reads only the files it is given that lie inside the folder', async () => {

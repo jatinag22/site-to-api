@@ -635,9 +635,10 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
       ...Object.keys(recorded.generatedMcp ?? {}).map(file => join(layout.mcpDir, file)),
       join(outDir, 'probe.json'),
     ]
-    const leaks = await findHandoffLeaks(outDir, managed, analyzed.redactor.learntSecrets())
+    const roots = [outDir, clientDir, layout.mcpDir]
+    const leaks = await findHandoffLeaks(outDir, managed, analyzed.redactor.learntSecrets(), roots)
     if (leaks.length > 0)
-      throw leakError(outDir, leaks, await discardLeakingOutput(outDir, leaks))
+      throw leakError(outDir, leaks, await discardLeakingOutput(outDir, leaks, roots))
   }
   return { analysis, outDir, files, warnings }
 }
