@@ -67,7 +67,7 @@ export function harEntry(init: EntryInit): Record<string, unknown> {
 
 const SCRIPT = 'async function loadItems(){const r=await fetch("/api/items");return r.json()}\nfunction search(q){return fetch("/api/search",{method:"POST",body:JSON.stringify({q})})}\n'
 
-/** Chrome / Edge DevTools "Save all as HAR (with content)". */
+/** Chrome / Edge DevTools "Export HAR (with sensitive data)": cookies kept (an invented one here). */
 export function chromeHar(): Record<string, unknown> {
   const stack = {
     callFrames: [
@@ -128,6 +128,10 @@ export function chromeHar(): Record<string, unknown> {
         harEntry({
           url: 'https://shop.test/api/items',
           started: '2026-01-01T10:00:00.300Z',
+          requestHeaders: [
+            { name: 'User-Agent', value: 'Mozilla/5.0 (Test) Browser/1.0' },
+            { name: 'Cookie', value: 'cart=invented-cart-1' },
+          ],
           text: '{"items":[{"id":1042,"name":"Peanuts","price":3.5}]}',
           extra: {
             _resourceType: 'fetch',

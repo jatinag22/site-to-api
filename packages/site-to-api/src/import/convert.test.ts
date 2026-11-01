@@ -173,6 +173,23 @@ describe('convertHar: stored entries and warnings', () => {
     expect(result.events.find(event => event.t === 'request' && event.url === 'https://shop.test/api/deep')).toBeDefined()
   })
 
+  it('warns when no entry has a cookie or Authorization header, as Chrome\'s default export leaves them out', () => {
+    expect(convert(chromeHar()).warnings).toEqual([])
+    expect(convert(firefoxHar()).warnings).toEqual([
+      expect.stringContaining('in Chrome, export with "Export HAR (with sensitive data)"'),
+    ])
+    const har = firefoxHar()
+    const log = har.log as { entries: unknown[] }
+    log.entries.push(harEntry({
+      url: 'https://shop.test/api/me',
+      started: '2026-01-01T10:00:05.000Z',
+      requestHeaders: [
+        { name: 'Authorization', value: 'Bearer invented-token' },
+      ],
+    }))
+    expect(convert(har).warnings).toEqual([])
+  })
+
   it('skips data: and file: scripts instead of filing them under a made-up host', () => {
     const har = chromeHar()
     const log = har.log as { entries: unknown[] }

@@ -273,6 +273,22 @@ function knownFields(raw: Record<string, unknown>, entry: ValidEntry['entry']): 
   return kept
 }
 
+/**
+ * True when some entry carries a cookie or an Authorization header. Chrome's default HAR export
+ * strips Cookie, Set-Cookie and Authorization, which leaves a session that cannot show how the
+ * site authenticates.
+ */
+function hasCredentials(entries: readonly ValidEntry[]): boolean {
+  return entries.some(({ entry }) =>
+    (entry.request.cookies?.length ?? 0) > 0
+    || (entry.response.cookies?.length ?? 0) > 0
+    || entry.request.headers.some(item => /^(?:cookie|authorization)$/i.test(item.name) && item.value !== '')
+    || entry.response.headers.some(item => /^set-cookie$/i.test(item.name) && item.value !== ''))
+}
+
+/** Says how to export again when the HAR has no cookies or Authorization headers at all. */
+const NO_CREDENTIALS_WARNING = 'No request in this HAR has a cookie or an Authorization header, so the session cannot show how the site signs you in. Browsers often leave them out: in Chrome, export with "Export HAR (with sensitive data)" (DevTools settings, Network, "Allow to generate HAR with sensitive data"); if the site needs no sign-in, ignore this.'
+
 /** The entries that pass load's schema and have a date; one warning counts the rest. */
 function validEntries(raws: readonly unknown[]): { valid: ValidEntry[], warnings: string[] } {
   const valid: ValidEntry[] = []
@@ -310,6 +326,8 @@ function validEntries(raws: readonly unknown[]): { valid: ValidEntry[], warnings
  */
 export function convertHar(har: ImportHar): ConvertedHar {
   const { valid, warnings } = validEntries(har.log.entries)
+  if (valid.length > 0 && !hasCredentials(valid))
+    warnings.push(NO_CREDENTIALS_WARNING)
 
   const urls = pageUrls(valid)
   const events: CaptureEvent[] = [

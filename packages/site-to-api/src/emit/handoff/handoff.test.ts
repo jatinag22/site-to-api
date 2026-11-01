@@ -356,6 +356,8 @@ describe('renderAgentGuide: imported sessions', () => {
     expect(guide).toContain('No value is shown as computed in the browser')
     expect(guide).toContain('Calls are not linked to the code that made them')
     expect(guide).toContain('No scripts were in the HAR, so there is no source analysis')
+    expect(guide).toContain('export again in Chrome with "Export HAR (with sensitive data)"')
+    expect(guide).toContain('WebSocket frames come only from Chrome exports')
   })
 
   it('credits the stacks and scripts a HAR held, and says nothing for captured sessions', () => {

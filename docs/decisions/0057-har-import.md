@@ -13,10 +13,17 @@ instrumentation records: no JavaScript stacks (except Chrome's `_initiator`), no
 - `site-to-api import <file.har> [--session <id>] [--delete-source]` writes a raw session under
   `<rawDir>/<session>/` with the same files a capture writes (`meta.json`, `traffic.har`,
   `events.jsonl`, `scripts/`), so build, probe and gen read it unchanged.
-- The HAR is untrusted input. The file must be at most 512 MB, valid JSON and a HAR (`log.entries`
+- The HAR is untrusted input. The file must be at most 256 MB (above that Node's default heap runs out inside `JSON.parse` before a friendly error could be shown), valid JSON and a HAR (`log.entries`
   an array); each entry is checked with load's schema and an invalid one is dropped with one
   warning that counts them. The session id is sanitized, every path is joined with `safeJoin`,
   an existing session is never overwritten, and the raw folder gets its `.gitignore` of `*`.
+  Only known fields of an entry are written (load's schema output, `pageref`, `_frameref` and an
+  `_initiator` cut to 8 stack levels), so a deeply nested vendor field cannot crash the write.
+  The session is written into a temporary folder that is renamed at the end and removed on any
+  error, so a failed import never blocks the next one.
+- Chrome's default export strips Cookie, Set-Cookie and Authorization. When no entry has any of
+  them, import warns and says to use "Export HAR (with sensitive data)"; AGENT.md says the same.
+  Only `http:` and `https:` script bodies are saved (`data:` and `file:` have no host).
   Imported content goes through the same redaction and leak check as a capture's.
 - What the HAR can give becomes events: a navigation per `log.pages` entry (named by its title,
   or by the path when Firefox gives the URL as title), or per page load when there are no pages;
@@ -28,7 +35,8 @@ instrumentation records: no JavaScript stacks (except Chrome's `_initiator`), no
   browser). Both are optional and additive, so the raw format version stays 1.
 - `AGENT.md` has an "Imported sessions" section when any session was imported: no computed
   values or typed inputs, call sites only if the HAR had stacks, source analysis only if it held
-  scripts, no sourcemaps, cookies set by page scripts seen only in requests.
+  scripts, no sourcemaps, cookies set by page scripts seen only in requests, WebSocket frames
+  only from Chrome exports (Firefox and Safari HARs have no `_webSocketMessages`).
 - The HAR holds the person's cookies and tokens: `import` warns to delete it, and
   `--delete-source` deletes it once the session is saved.
 

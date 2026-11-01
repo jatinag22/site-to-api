@@ -79,8 +79,9 @@ Then point your coding agent at `api-handoff/AGENT.md`.
 
 ### Already have a HAR file?
 
-Export one from your browser's DevTools (Network tab, "Save all as HAR") or a proxy (Charles,
-mitmproxy) and import it instead of capturing:
+Export one from your browser's DevTools (Network tab; in Chrome use "Export HAR (with sensitive
+data)", since the default export leaves out cookies and Authorization headers) or a proxy
+(Charles, mitmproxy) and import it instead of capturing:
 
 ```sh
 site-to-api import session.har --delete-source   # a raw session, like a capture

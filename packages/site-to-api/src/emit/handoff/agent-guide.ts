@@ -341,6 +341,8 @@ function importedSection(analysis: Analysis): string[] {
       ? '- Source analysis reads the script bodies the HAR held; there are no sourcemaps.'
       : '- No scripts were in the HAR, so there is no source analysis: no endpoints found in code, no excerpts.',
     '- Cookies a page script set are seen only in the requests that sent them, and response bodies the exporting tool left out are missing.',
+    '- Chrome\'s default HAR export leaves out Cookie, Set-Cookie and Authorization headers. If the hosts show no cookies or sign-in where the site has them, export again in Chrome with "Export HAR (with sensitive data)".',
+    '- WebSocket frames come only from Chrome exports (`_webSocketMessages`); a Firefox or Safari HAR has no frames, so its WebSocket channels are missing.',
     '- Capture a session with `site-to-api capture` to fill these in.',
     '',
   ]
