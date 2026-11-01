@@ -20,6 +20,7 @@ import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { RequestBodyRecorder } from './bodies'
 import { EventWriter } from './events'
+import { failureMessage } from './failure'
 import { harOmissionNote } from './har'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
@@ -68,12 +69,6 @@ const HAR_FILE = 'traffic.har'
 const EVENTS_FILE = 'events.jsonl'
 const META_FILE = 'meta.json'
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error
-    ? error.message
-    : String(error)
-}
-
 /** Creates the raw directory with a `.gitignore` of `*`, so real cookies can never be committed. */
 async function prepareRawDir(rawDir: string): Promise<void> {
   await mkdir(rawDir, { recursive: true })
@@ -91,7 +86,7 @@ async function loadCaptureScript(file: string): Promise<CaptureScript> {
     loaded = await jiti.import(file, { default: true })
   }
   catch (error) {
-    throw new SiteToApiError(`Could not load capture script ${file}: ${errorMessage(error)}`, { cause: error })
+    throw new SiteToApiError(`Could not load capture script ${file}: ${failureMessage(error)}`, { cause: error })
   }
   if (typeof loaded !== 'function')
     throw new SiteToApiError(`Capture script ${file} must export a default function: export default async ({ page, context, baseUrl }) => { ... }`)
@@ -144,7 +139,7 @@ async function launchOnce(browser: BrowserConfig, cwd: string, harPath: string, 
     const hint = browser.channel === null
       ? 'Run `npx playwright install chromium` to download the bundled browser.'
       : `Install ${browser.channel} or set capture.browser.channel to null to use Playwright's bundled Chromium.`
-    throw new SiteToApiError(`Could not start the browser: ${errorMessage(error)}\n${hint}`, { cause: error })
+    throw new SiteToApiError(`Could not start the browser: ${failureMessage(error)}\n${hint}`, { cause: error })
   }
 }
 
@@ -256,7 +251,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       // Instrumentation or the first page failed before the run: save what exists anyway.
       incomplete = {
         reason: 'error',
-        error: errorMessage(error),
+        error: failureMessage(error),
       }
     }
     await runEnded(sessionEnd, script !== null)
@@ -414,10 +409,10 @@ function sessionIncomplete(run: Incomplete | null, saved: Incomplete | null, exi
 function logFailure(incomplete: Incomplete | null, log: (message: string) => void): void {
   if (incomplete === null || incomplete.reason === 'interrupted')
     return
-  const what = incomplete.reason === 'script-failed'
+  // The error itself is in the incomplete-session warning at the end; it is said once.
+  log(`${incomplete.reason === 'script-failed'
     ? 'Capture script'
-    : 'Capture'
-  log(`${what} failed: ${incomplete.error ?? 'unknown error'}. Saving what was recorded.`)
+    : 'Capture'} failed; saving what was recorded.`)
 }
 
 function incompleteField(incomplete: Incomplete | null): Pick<SessionMeta, 'incomplete'> {
@@ -432,7 +427,7 @@ function incompleteWarning(sessionId: string, incomplete: Incomplete | null): st
   const detail = incomplete.error
     ? `: ${incomplete.error}`
     : ''
-  return [`Session ${sessionId} is incomplete (${incomplete.reason}${detail}). What was recorded is saved and \`build\` will use it with a warning; capture again for full coverage.`]
+  return [`Session ${sessionId} is incomplete (${incomplete.reason}${detail}). What was recorded is saved; \`build\` uses it with a warning. Capture again for full coverage.`]
 }
 
 function ignoredFramesWarning(ignored: Map<string, number>): string[] {
@@ -530,7 +525,7 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
     if (options.url !== null) {
       // A failed first load (typo, offline) should not end the session: the person can retry.
       await page.goto(options.url, { waitUntil: 'commit' }).catch((error: unknown) => {
-        log(`Could not open ${options.url}: ${errorMessage(error)}`)
+        log(`Could not open ${options.url}: ${failureMessage(error)}`)
       })
     }
     log('Browser open. Use the site the way a person would: log in, search, open the pages you want covered.')
@@ -607,7 +602,7 @@ async function runScripted(script: CaptureScript, context: BrowserContext, page:
   catch (error) {
     return {
       reason: 'script-failed',
-      error: errorMessage(error),
+      error: failureMessage(error),
     }
   }
   finally {

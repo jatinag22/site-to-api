@@ -21,6 +21,7 @@ import { FlowsDocumentSchema } from '../model'
 import { probeOperations, summarizeProbe, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { checkCommands } from './check'
+import { warn } from './output'
 import { resolveConfig } from './program'
 
 function parseNumber(value: string): number {
@@ -36,7 +37,7 @@ function collect(value: string, previous: string[] = []): string[] {
 
 function printWarnings(warnings: string[]): void {
   for (const warning of warnings)
-    consola.warn(warning)
+    warn(warning)
 }
 
 interface CaptureFlags {
@@ -87,7 +88,7 @@ const captureCommand: CommandRegistrar = (program) => {
       if (result.meta.incomplete) {
         // Saved, but not a clean run: scripts and CI should notice.
         process.exitCode = 1
-        consola.warn(`Saved an incomplete capture to ${result.sessionDir}`)
+        warn(`Saved an incomplete capture to ${result.sessionDir}`)
       }
       else {
         consola.success(`Saved capture to ${result.sessionDir}`)
@@ -139,7 +140,7 @@ function mcpMode(value: string): string {
 
 function warnIfRaw(examples: string): void {
   if (examples === 'raw')
-    consola.warn('redact.examples is "raw": captured values, including personal data, will be written to the handoff folder.')
+    warn('redact.examples is "raw": captured values, including personal data, will be written to the handoff folder.')
 }
 
 const buildCommand: CommandRegistrar = (program) => {

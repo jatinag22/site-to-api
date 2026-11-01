@@ -495,11 +495,26 @@ describe('runCapture errors and interactive mode', () => {
 
   it('saves the session of a failing capture script, marked incomplete with the error', async () => {
     await writeFile(path.join(work, 'failing.mjs'), 'export default async ({ page, baseUrl }) => { await page.goto(baseUrl + "/second"); throw new Error("boom") }\n')
-    const result = await runCapture(headlessConfig('failing.mjs'), { url: site.url, sessionId: 'failing', cwd: work })
+    const logs: string[] = []
+    const result = await runCapture(headlessConfig('failing.mjs'), {
+      url: site.url,
+      sessionId: 'failing',
+      cwd: work,
+      log: m => logs.push(m),
+    })
+    // The error is said once, in the warning; the progress line only says what happens next.
+    expect(logs).toContain('Capture script failed; saving what was recorded.')
+    expect(logs.some(line => line.includes('boom'))).toBe(false)
     const onDisk = SessionMetaSchema.parse(JSON.parse(await readFile(path.join(result.sessionDir, 'meta.json'), 'utf8')))
     expect(onDisk.incomplete).toEqual({ reason: 'script-failed', error: 'boom' })
     expect(result.warnings.some(warning => warning.includes('is incomplete (script-failed: boom)'))).toBe(true)
     expect(await readFile(path.join(result.sessionDir, 'traffic.har'), 'utf8')).toContain('/second')
+  }, 60_000)
+
+  it('stores a failed navigation without Playwright\'s call log or colour codes', async () => {
+    await writeFile(path.join(work, 'refused.mjs'), 'export default async ({ page }) => { await page.goto("http://127.0.0.1:1/") }\n')
+    const result = await runCapture(headlessConfig('refused.mjs'), { url: site.url, sessionId: 'refused', cwd: work })
+    expect(result.meta.incomplete?.error).toBe('page.goto: net::ERR_UNSAFE_PORT at http://127.0.0.1:1/')
   }, 60_000)
 
   it('ends an interactive session on abort and still writes a valid HAR', async () => {
