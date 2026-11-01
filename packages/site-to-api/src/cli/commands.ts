@@ -157,9 +157,15 @@ function addOutputOptions(command: Command, note: string): Command {
   return command
     .option('--include <host>', `only analyse this host (glob, repeatable)${note}`, collect)
     .option('--exclude <host>', `skip this host (glob, repeatable)${note}`, collect)
-    .option('--examples <mode>', `masked | raw | none${note}`)
+    .option('--examples <mode>', `example values in the handoff folder${note}:\nmasked: secrets and personal data replaced (default)\nraw: captured values as they are, personal data too\nnone: no example values`, examplesMode)
     .option('--no-client', `do not generate the TypeScript client${note}`)
     .addOption(mcpOption(note))
+}
+
+function examplesMode(value: string): string {
+  if (!['masked', 'raw', 'none'].includes(value))
+    throw new InvalidArgumentError(`"${value}" is not an examples mode: use masked, raw or none.`)
+  return value
 }
 
 function mcpMode(value: string): string {

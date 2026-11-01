@@ -7,7 +7,7 @@ import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runCapture } from '../capture'
 import { pipelineCommands } from './commands'
-import { run } from './program'
+import { createProgram, run } from './program'
 
 vi.mock('../capture', async importOriginal => ({
   ...await importOriginal<typeof import('../capture')>(),
@@ -203,5 +203,18 @@ describe('capture arguments', () => {
     await capture('https://shop.test', '--minimized', '--script', 'drive.mjs')
     await capture('https://shop.test', '--minimized', '--script', 'drive.mjs', '--channel', 'chrome')
     expect(vi.mocked(runCapture).mock.calls.map(call => call[1].channelFallback)).toEqual([true, false])
+  })
+})
+
+describe('help', () => {
+  it('lists the global options in every command\'s help, and explains each --examples value', () => {
+    const program = createProgram(pipelineCommands)
+    for (const command of program.commands) {
+      const help = command.helpInformation()
+      expect(help, command.name()).toContain('Global Options:')
+      expect(help, command.name()).toMatch(/--cwd <dir>[\s\S]*--raw-dir <dir>[\s\S]*--out-dir <dir>/)
+    }
+    const build = program.commands.find(command => command.name() === 'build')?.helpInformation() ?? ''
+    expect(build).toMatch(/masked: secrets and personal data replaced \(default\)\n\s+raw: captured values as they are, personal data too\n\s+none: no example values/)
   })
 })

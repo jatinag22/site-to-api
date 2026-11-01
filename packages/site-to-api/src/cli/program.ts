@@ -68,6 +68,8 @@ export function createProgram(registrars: CommandRegistrar[] = []): Command {
     .option('--raw-dir <dir>', 'raw capture directory (gitignored)')
     .option('--out-dir <dir>', 'handoff output directory')
     .showHelpAfterError()
+    // Subcommands inherit this: `capture --help` lists -c, --cwd, --raw-dir and --out-dir too.
+    .configureHelp({ showGlobalOptions: true })
 
   program
     .command('init')
