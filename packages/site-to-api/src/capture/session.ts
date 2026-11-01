@@ -19,7 +19,7 @@ import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { RequestBodyRecorder } from './bodies'
-import { launchChannel } from './channel'
+import { fallbackWarning, launchChannel } from './channel'
 import { EventWriter } from './events'
 import { failureMessage } from './failure'
 import { harOmissionNote } from './har'
@@ -316,6 +316,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       har: HAR_FILE,
       events: EVENTS_FILE,
       scripts: collector.scripts.toSorted((a, b) => a.url.localeCompare(b.url)),
+      ...warningsField(fallbackWarning(browser.channel, channel)),
       ...incompleteField(finalIncomplete),
     } satisfies SessionMeta)
     await writeJsonAtomic(path.join(sessionDir, META_FILE), meta)
@@ -441,6 +442,14 @@ function logFailure(incomplete: Incomplete | null, log: (message: string) => voi
   log(`${incomplete.reason === 'script-failed'
     ? 'Capture script'
     : 'Capture'} failed; saving what was recorded.`)
+}
+
+function warningsField(warning: string | null): Pick<SessionMeta, 'warnings'> {
+  return warning === null
+    ? {}
+    : {
+        warnings: [warning],
+      }
 }
 
 function incompleteField(incomplete: Incomplete | null): Pick<SessionMeta, 'incomplete'> {

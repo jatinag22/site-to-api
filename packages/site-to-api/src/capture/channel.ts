@@ -75,3 +75,13 @@ export async function launchChannel<T, C extends string>(launch: (channel: C | n
     throw launchError(null, error)
   }
 }
+
+/**
+ * The `meta.json` warning for a capture that asked for a browser and ran the bundled Chromium
+ * instead (only the default `chrome` falls back), so `build` repeats it; null otherwise.
+ */
+export function fallbackWarning(requested: string | null, used: string | null): string | null {
+  return requested !== null && used === null
+    ? `Captured with Playwright's bundled Chromium because ${productName(requested)} is not installed. Bot protection can treat it differently from ${productName(requested)}, so blocked or missing calls may come from that; install it and capture again if the site blocked this capture.`
+    : null
+}

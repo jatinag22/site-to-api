@@ -51,6 +51,12 @@ export const SessionMetaSchema = z.object({
     }).nullable(),
   })),
   /**
+   * Capture conditions that affect what the session shows and that `build` repeats, such as a
+   * fallback to Playwright's bundled Chromium. Optional and additive, so the format version is
+   * unchanged and older readers still accept the file.
+   */
+  warnings: z.array(z.string()).optional(),
+  /**
    * Set when the session did not end normally (decision 0037): the capture script threw, the run
    * was interrupted (Ctrl+C, SIGTERM, abort), a page or the browser did not finish in time, or setting
    * up the first page failed (`error`). What was

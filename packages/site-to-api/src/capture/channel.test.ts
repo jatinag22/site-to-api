@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SiteToApiError } from '../errors'
-import { channelList, launchChannel, launchError } from './channel'
+import { channelList, fallbackWarning, launchChannel, launchError } from './channel'
 
 const chromeMissing = new Error('browserType.launchPersistentContext: Chromium distribution \'chrome\' is not found at /opt/google/chrome/chrome\nRun "npx playwright install chrome"')
 
@@ -46,5 +46,13 @@ describe('launchError', () => {
 
   it('lists every channel for messages', () => {
     expect(channelList()).toBe('chrome, chrome-beta, chrome-dev, chrome-canary, msedge, msedge-beta, msedge-dev, msedge-canary, chromium, or bundled (Playwright\'s Chromium)')
+  })
+})
+
+describe('fallbackWarning', () => {
+  it('records a fallback to the bundled Chromium for meta.json, and nothing otherwise', () => {
+    expect(fallbackWarning('chrome', null)).toMatch(/^Captured with Playwright's bundled Chromium because Google Chrome is not installed\. Bot protection can treat it differently/)
+    expect(fallbackWarning('chrome', 'chrome')).toBeNull()
+    expect(fallbackWarning(null, null)).toBeNull()
   })
 })

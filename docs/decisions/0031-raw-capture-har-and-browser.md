@@ -28,7 +28,8 @@ the HAR only by URL, not by type.
 - `capture.browser.channel` takes only Chromium-based Playwright channels (`chrome`, `msedge` and
   their beta, dev and canary builds, `chromium`) or `null`; anything else is refused with the
   list. Left at the default `chrome` on a machine without Chrome, capture falls back to the
-  bundled Chromium with a one-line note, and `meta.json` records `bundled`; a channel set by
+  bundled Chromium with a one-line note, and `meta.json` records `bundled` and a `warnings`
+  entry (bot protection can treat the bundled Chromium differently) that `build` repeats; a channel set by
   flag, variable or config file stays strict. A browser that does not start leaves no session
   folder.
 - The raw format version is unchanged: the HAR is still a HAR 1.2 file, older captures with full
