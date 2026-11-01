@@ -188,6 +188,9 @@ lists them.
 
 ## Configuration
 
+Every key, its default, its environment variable and what it does: [docs/configuration.md](docs/configuration.md)
+(generated from the config schema).
+
 ```ts
 // site-to-api.config.ts
 import { defineConfig } from 'site-to-api'

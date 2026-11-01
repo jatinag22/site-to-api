@@ -34,6 +34,7 @@ export const ConfigSchema = z.strictObject({
      * or an API call to a page, minus known analytics and ad networks.
      */
     include: z.array(HostPattern).default([]),
+    /** Hosts never to analyse, as globs; applied after `include`. */
     exclude: z.array(HostPattern).default([]),
   }).prefault({}),
   capture: z.strictObject({
@@ -44,14 +45,18 @@ export const ConfigSchema = z.strictObject({
        * to the bundled Chromium; set explicitly, the channel is required.
        */
       channel: z.enum(BROWSER_CHANNELS).nullable().default('chrome'),
+      /** Run the browser without a window. Needs `capture.script`; sites with bot protection often block it. */
       headless: z.boolean().default(false),
       /**
        * Keep the headful browser but minimize its windows, so a scripted capture does not take
        * over the screen. Unlike `headless`, sites see an ordinary browser. Ignored when headless.
        */
       minimized: z.boolean().default(false),
+      /** Browser locale such as `en-GB`; `null` keeps the machine's. */
       locale: z.string().nullable().default(null),
+      /** Time zone such as `Europe/London`; `null` keeps the machine's. */
       timezone: z.string().nullable().default(null),
+      /** User agent to send instead of the browser's own; `null` keeps it. */
       userAgent: z.string().nullable().default(null),
       /** Reuse a browser profile directory so logins persist between captures. */
       userDataDir: z.string().nullable().default(null),
@@ -73,6 +78,7 @@ export const ConfigSchema = z.strictObject({
     saveScripts: z.boolean().default(true),
     /** Inject the request, response, crypto and action hooks into every page (not workers). */
     instrument: z.boolean().default(true),
+    /** Record WebSocket frames and server-sent events into `events.jsonl`. */
     websockets: z.boolean().default(true),
     /**
      * Module that drives the browser instead of a person: `export default async ({ page }) => {}`.
@@ -94,6 +100,7 @@ export const ConfigSchema = z.strictObject({
      * values into committed files, `none` writes no examples at all.
      */
     examples: z.enum(['masked', 'raw', 'none']).default('masked'),
+    /** Example values kept per field in the handoff folder (0 to 25). */
     maxExamples: z.number().int().min(0).max(25).default(3),
     /** Extra patterns to treat as personal data. */
     patterns: z.array(z.strictObject({
@@ -108,6 +115,7 @@ export const ConfigSchema = z.strictObject({
     maxRps: z.number().positive().max(10).default(1),
     /** Replay POST, PUT, PATCH and DELETE, GraphQL mutations and GraphQL operations of unknown type too. Off by default: they can change data. */
     unsafeMethods: z.boolean().default(false),
+    /** How long one replayed request may take, in milliseconds. */
     timeoutMs: z.number().int().positive().default(15_000),
     /**
      * Operations per host that get the remove-one-at-a-time analysis that finds which cookies and
