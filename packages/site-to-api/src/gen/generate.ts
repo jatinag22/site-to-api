@@ -1,10 +1,12 @@
 import type { OperationEntry } from '../mcp/catalog'
 import type { FlowsDocument } from '../model'
+import type { ClientManifest } from './manifest'
 import type { McpMode, ZodExport } from './mcp'
 import type { ChannelSummary, HostSpec, OpenApiDocument } from './spec'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
 import { createClient } from '@hey-api/openapi-ts'
 import { parse as parseYaml } from 'yaml'
@@ -16,6 +18,7 @@ import { checkGeneratedCode, heyApiInput } from './code-safety'
 import { dispatchFunctions, renderDispatchModule } from './dispatch'
 import { graphqlFunctions, renderGraphqlModule } from './graphql'
 import { nameHtmlValues } from './html-values'
+import { syncGenerated } from './manifest'
 import { mcpTools, renderMcpReadme, renderMcpServer, zodExports } from './mcp'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
 import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema, withoutBrowserOnlySteps } from './spec'
@@ -32,6 +35,13 @@ export interface GenerateClientInput {
   mcp?: McpMode
   /** Trust store to record the new client in (decision 0043); defaults to the person's config directory. */
   trustStore?: string
+  /**
+   * The files the last run generated and their hashes (`build.json`), so only those are replaced
+   * or removed (decision 0057); `null` or absent for a folder from an older version.
+   */
+  previous?: ClientManifest | null
+  /** Overwrite generated files edited by hand, and files at generated paths `gen` did not write. */
+  force?: boolean
 }
 
 /** What {@link generateClient} wrote. */
@@ -40,8 +50,10 @@ export interface GenerateClientResult {
   files: string[]
   /** Things the user may want to fix, e.g. a constant header with conflicting values. */
   warnings: string[]
-  /** True when no spec had an API operation, so no client was written and `client/` was removed. */
+  /** True when no spec had an API operation, so no client was written and the generated files were removed. */
   empty: boolean
+  /** The generated files now in the client folder and their hashes, for `build.json`. */
+  manifest: ClientManifest
 }
 
 /**
@@ -50,7 +62,9 @@ export interface GenerateClientResult {
  * `extract.ts` with a parser per HTML/text operation and a reader per value flows.json traces to
  * an HTML page, `index.ts` wiring each host to `@site-to-api/runtime`, and a `README.md`. Every
  * relative import ends in `.js`, so the client works under `bundler` and `nodenext` resolution.
- * The `client/` folder is replaced on every run, so stale hosts do not linger.
+ * Everything is written into a staging folder and then copied into `client/`: only the files
+ * generated (recorded with their hashes) are replaced or removed, hand-edited ones are kept and
+ * reported unless `force`, and files the person put there are never touched (decision 0057).
  */
 export async function generateClient(input: GenerateClientInput): Promise<GenerateClientResult> {
   const warnings: string[] = []
@@ -66,10 +80,39 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
     seen.set(host.identifier, host.file)
   }
 
-  await rm(clientDir, { recursive: true, force: true })
-  // A client of no hosts does not type-check (its host union is `never`); there is nothing to call.
-  if (loaded.length === 0)
-    return { files: [], warnings, empty: true }
+  const staging = await mkdtemp(path.join(os.tmpdir(), 'site-to-api-client-'))
+  try {
+    // A client of no hosts does not type-check (its host union is `never`); there is nothing to
+    // call, so the generated files of an earlier run are removed and nothing is written.
+    if (loaded.length > 0)
+      await writeClientFiles(staging, loaded, channels, input, warnings)
+    const synced = await syncGenerated(staging, clientDir, input.previous ?? null, input.force === true)
+    warnings.push(...synced.warnings)
+    if (loaded.length === 0) {
+      return {
+        files: [],
+        warnings,
+        empty: true,
+        manifest: synced.manifest,
+      }
+    }
+    // Generated here, so this machine may run it (call_operation, the generated MCP server).
+    await trustClient(clientDir, input.trustStore)
+    const files = Object.keys(synced.manifest).sort().map(file => path.posix.join('client', file))
+    return {
+      files,
+      warnings,
+      empty: false,
+      manifest: synced.manifest,
+    }
+  }
+  finally {
+    await rm(staging, { recursive: true, force: true })
+  }
+}
+
+/** Writes the whole client into `clientDir` (a staging folder) and checks the code. */
+async function writeClientFiles(clientDir: string, loaded: readonly LoadedSpec[], channels: ChannelSummary[], input: GenerateClientInput, warnings: string[]): Promise<void> {
   assertTypeScript6()
   await mkdir(clientDir, { recursive: true })
   const hosts: HostSpec[] = []
@@ -97,12 +140,8 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
     await writeMcpServer(clientDir, loaded, input.flows, input.mcp, warnings)
 
   // Every file, hey-api's and our own, must parse and carry no regex literal a spec could have
-  // put there; only then is the client trusted on this machine.
+  // put there; only then is the client copied into place and trusted on this machine.
   await checkGeneratedCode(clientDir)
-  // Generated here, so this machine may run it (call_operation, the generated MCP server).
-  await trustClient(clientDir, input.trustStore)
-  const files = (await listFiles(clientDir)).map(file => path.posix.join('client', file))
-  return { files, warnings, empty: false }
 }
 
 interface LoadedSpec {
@@ -251,12 +290,4 @@ function assertTypeScript6(): void {
   const version = typeScriptVersionForHeyApi()
   if (!version.startsWith('6.'))
     throw new SiteToApiError(`hey-api found TypeScript ${version}, but code generation needs TypeScript 6. Install typescript@6 next to site-to-api (for example \`npm install -D typescript@6\`) and run \`site-to-api gen\` again`)
-}
-
-async function listFiles(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { recursive: true, withFileTypes: true })
-  return entries
-    .filter(entry => entry.isFile())
-    .map(entry => path.relative(dir, path.join(entry.parentPath, entry.name)).split(path.sep).join('/'))
-    .sort()
 }

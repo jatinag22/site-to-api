@@ -350,6 +350,28 @@ describe('handoff folder', () => {
     }
     await buildHandoff({ config, cwd: work })
   }, 120_000)
+
+  it('keeps the user\'s files in client/ and hand edits to generated files unless forced (decision 0057)', async () => {
+    const own = join(outDir, 'client', 'my-helper.ts')
+    const readme = join(outDir, 'client', 'README.md')
+    const generated = await readFile(readme, 'utf8')
+    await writeFile(own, 'export const mine = 1\n')
+    await writeFile(readme, `${generated}\nMy notes.\n`)
+    try {
+      const kept = await buildHandoff({ config, cwd: work })
+      expect(await readFile(own, 'utf8')).toBe('export const mine = 1\n')
+      expect(await readFile(readme, 'utf8')).toBe(`${generated}\nMy notes.\n`)
+      expect(kept.warnings.join('\n')).toContain('Kept 1 client file(s) edited by hand instead of regenerating them: README.md.')
+      const forced = await buildHandoff({ config, cwd: work, force: true })
+      expect(await readFile(readme, 'utf8')).toBe(generated)
+      expect(await readFile(own, 'utf8')).toBe('export const mine = 1\n')
+      expect(forced.warnings.join('\n')).not.toContain('edited by hand')
+    }
+    finally {
+      await rm(own, { force: true })
+    }
+    await buildHandoff({ config, cwd: work })
+  }, 180_000)
 })
 
 describe('operations', () => {

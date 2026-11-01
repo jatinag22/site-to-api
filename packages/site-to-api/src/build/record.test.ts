@@ -102,6 +102,13 @@ describe('build.json', () => {
     expect(await readFile(join(dir, 'build.json'), 'utf8')).toMatch(/\n$/)
   })
 
+  it('records the generated client files and their hashes (decision 0057)', async () => {
+    await writeBuildRecord(dir, buildRecordFor(config, {}, 'test', { 'index.ts': 'a1' }))
+    expect((await readBuildRecord(dir))?.generated).toEqual({ 'index.ts': 'a1' })
+    await recordClientGenerated(dir, undefined, { 'index.ts': 'b2', 'README.md': 'c3' })
+    expect((await readBuildRecord(dir))?.generated).toEqual({ 'index.ts': 'b2', 'README.md': 'c3' })
+  })
+
   it('explains what to do with a broken file', async () => {
     await writeFile(join(dir, 'build.json'), '{"formatVersion": 1')
     await expect(readBuildRecord(dir)).rejects.toThrow(/not valid JSON.*site-to-api build/)

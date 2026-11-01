@@ -35,6 +35,12 @@ const BuildRecordSchema = z.strictObject({
   /** `gen.mcp`; absent in records written before `client/mcp/` existed, which means `off`. */
   mcp: z.enum(['off', 'read', 'write']).optional(),
   /**
+   * The files `gen` generated into the client folder, by path relative to it, and their SHA-256
+   * (decision 0057): only these are replaced or removed later, and a changed hash means a hand
+   * edit. Absent in older records.
+   */
+  generated: z.record(z.string(), z.string()).optional(),
+  /**
    * The options above that came from CLI flags or `SITE_TO_API_*` variables. `probe` and `gen`
    * reuse exactly these; the others come from the config file, which they read again anyway.
    */
@@ -43,8 +49,11 @@ const BuildRecordSchema = z.strictObject({
 export type BuildRecord = z.infer<typeof BuildRecordSchema>
 
 /** The record for a build with this config; `sources` says which values were given on the command line. */
-export function buildRecordFor(config: ResolvedConfig, sources: Record<string, ConfigSource>, toolVersion: string): BuildRecord {
+export function buildRecordFor(config: ResolvedConfig, sources: Record<string, ConfigSource>, toolVersion: string, generated?: Record<string, string>): BuildRecord {
   return {
+    ...(generated === undefined
+      ? {}
+      : { generated }),
     formatVersion: 1,
     generatedBy: `site-to-api ${toolVersion}`,
     examples: config.redact.examples,
@@ -135,13 +144,16 @@ export function stickyOptions(record: BuildRecord | null, current: Record<string
  * describes it, and a later `probe` should keep the client up to date. `mcp` is what gen wrote
  * into `client/mcp/`; it is sticky when a flag or variable chose it, so probe's rebuild keeps it.
  */
-export async function recordClientGenerated(outDir: string, mcp?: { mode: NonNullable<BuildRecord['mcp']>, sticky: boolean }): Promise<void> {
+export async function recordClientGenerated(outDir: string, mcp?: { mode: NonNullable<BuildRecord['mcp']>, sticky: boolean }, generated?: Record<string, string>): Promise<void> {
   const record = await readBuildRecord(outDir)
   if (!record)
     return
   const sticky = record.sticky.filter(path => path !== 'gen.client' && (mcp === undefined || path !== 'gen.mcp'))
   await writeBuildRecord(outDir, {
     ...record,
+    ...(generated === undefined
+      ? {}
+      : { generated }),
     client: true,
     ...(mcp === undefined
       ? {}

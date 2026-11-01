@@ -5,6 +5,7 @@
 import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import type { ClientState } from '../emit/handoff'
+import type { ClientManifest } from '../gen'
 import type { Analysis, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver, ValueTrace } from '../model'
 import type { ProbeReport } from '../model/probe'
 import { existsSync } from 'node:fs'
@@ -25,7 +26,7 @@ import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi
 import { writeFlows } from '../emit/flows'
 import { clientGap, handoffStems, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
-import { generateClient } from '../gen'
+import { generateClient, removeGenerated } from '../gen'
 import { registrableHost } from '../hosts'
 import { failedNavigationsWarning, loadSessions } from '../load'
 import { alignProbeReport, applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation, testedByOperation, writeProbeReport } from '../probe'
@@ -34,7 +35,7 @@ import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
 import { inHostFilter, unmatchedHostPatterns } from './hosts'
 import { assertOwnOutDir, discardLeakingOutput, filesUnder, findHandoffLeaks, leakError } from './leaks'
-import { buildRecordFor, writeBuildRecord } from './record'
+import { buildRecordFor, readBuildRecord, writeBuildRecord } from './record'
 
 export { readBuildRecord, recordClientGenerated, stickyOptions } from './record'
 
@@ -47,6 +48,8 @@ export interface BuildOptions {
    */
   sources?: Record<string, ConfigSource>
   log?: (message: string) => void
+  /** Overwrite generated client files edited by hand (decision 0057). */
+  force?: boolean
   /**
    * The analysis of the raw captures from {@link analyzeForProbe}, for the same config: `probe`
    * hands it over so its rebuild applies the new `probe.json` instead of analysing every capture
@@ -422,27 +425,44 @@ async function withStoredProbe(captured: CapturedAnalysis, outDir: string): Prom
  * Generates `client/` (or removes or keeps it) and says which state it is in. Pushes the files it
  * wrote to `files` and its warnings to `warnings`.
  */
-async function writeClient(outDir: string, analysis: Analysis, config: ResolvedConfig, files: string[], warnings: string[]): Promise<ClientState> {
+async function writeClient(outDir: string, analysis: Analysis, config: ResolvedConfig, files: string[], warnings: string[], force: boolean): Promise<{ state: ClientState, manifest: ClientManifest | undefined }> {
+  const clientDir = join(outDir, 'client')
+  const previous = (await readBuildRecord(outDir))?.generated ?? null
   if (config.gen.client && analysis.operations.length > 0) {
-    const generated = await generateClient({ handoffDir: outDir, flows: analysis.flows, mcp: config.gen.mcp })
+    const generated = await generateClient({
+      handoffDir: outDir,
+      flows: analysis.flows,
+      mcp: config.gen.mcp,
+      previous,
+      force,
+    })
     files.push(...generated.files.map(file => join(outDir, file)))
     warnings.push(...generated.warnings)
-    return generated.empty
-      ? 'empty'
-      : 'current'
+    return {
+      state: generated.empty
+        ? 'empty'
+        : 'current',
+      manifest: generated.manifest,
+    }
   }
   if (analysis.operations.length === 0) {
-    // Nothing left to describe: a client from an earlier build would point at operations that are gone.
-    await rm(join(outDir, 'client'), { recursive: true, force: true })
-    return 'none'
+    // Nothing left to describe: a client from an earlier build would point at operations that
+    // are gone. Only its generated files go (decision 0057); a folder from an older version
+    // without a record is left as it is.
+    if (previous !== null) {
+      const removed = await removeGenerated(clientDir, previous, force)
+      warnings.push(...removed.warnings)
+      return { state: 'none', manifest: removed.manifest }
+    }
+    return { state: 'none', manifest: undefined }
   }
-  if (!existsSync(join(outDir, 'client', 'index.ts')))
-    return 'none'
+  if (!existsSync(join(clientDir, 'index.ts')))
+    return { state: 'none', manifest: previous ?? undefined }
   // Same sentence as the AGENT.md gap, so the terminal and the folder say the same thing.
   const stale = clientGap('stale')
   if (stale !== null)
     warnings.push(stale)
-  return 'stale'
+  return { state: 'stale', manifest: previous ?? undefined }
 }
 
 /**
@@ -494,7 +514,7 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     ...await writeExcerpts(outDir, analysis.excerpts),
   ]
   const warnings = [...analysis.warnings]
-  const client = await writeClient(outDir, analysis, options.config, files, warnings)
+  const { state: client, manifest } = await writeClient(outDir, analysis, options.config, files, warnings, options.force === true)
   files.push(
     ...await writeHandoffDocs(outDir, analysis, {
       toolVersion: VERSION,
@@ -515,7 +535,7 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
         : null,
       pageHosts,
     }),
-    await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION)),
+    await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION, manifest)),
   )
   log(`Wrote ${files.length} files to ${outDir}`)
   // The folder must hold no secret the capture had (decision 0047). With `examples: raw` it

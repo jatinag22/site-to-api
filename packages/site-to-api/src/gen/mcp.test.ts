@@ -138,7 +138,7 @@ describe('generateClient with mcp', () => {
   })
 
   it('adds writes in write mode, never bot protection or code-only endpoints, and writes nothing when off', async () => {
-    await generateClient({ handoffDir: dir, flows: shopFlows, mcp: 'write' })
+    const first = await generateClient({ handoffDir: dir, flows: shopFlows, mcp: 'write' })
     const write = await readFile(path.join(dir, 'client', 'mcp', 'server.ts'), 'utf8')
     expect(toolNames(write)).toEqual([
       'addToWishlist',
@@ -151,7 +151,7 @@ describe('generateClient with mcp', () => {
     ])
     expect(write).toContain('readOnlyHint: false, destructiveHint: true')
     expect(write).toContain('body: shop_example_comZod.zPostApiSessionBody,')
-    await generateClient({ handoffDir: dir, flows: shopFlows })
+    await generateClient({ handoffDir: dir, flows: shopFlows, previous: first.manifest })
     expect(await readFile(path.join(dir, 'client', 'mcp', 'server.ts'), 'utf8').catch(() => null)).toBeNull()
   }, 60_000)
 

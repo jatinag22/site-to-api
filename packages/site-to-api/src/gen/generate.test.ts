@@ -1,5 +1,6 @@
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { FlowsDocument } from '../model'
+import { createHash } from 'node:crypto'
 import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
@@ -514,8 +515,16 @@ paths:
 `)
       await mkdir(path.join(handoff, 'client'), { recursive: true })
       await writeFile(path.join(handoff, 'client', 'index.ts'), 'const sdks = {}\n')
-      const result = await generateClient({ handoffDir: handoff, flows })
-      expect(result).toEqual({ files: [], warnings: [], empty: true })
+      const previous = {
+        'index.ts': createHash('sha256').update('const sdks = {}\n').digest('hex'),
+      }
+      const result = await generateClient({ handoffDir: handoff, flows, previous })
+      expect(result).toEqual({
+        files: [],
+        warnings: [],
+        empty: true,
+        manifest: {},
+      })
       await expect(readFile(path.join(handoff, 'client', 'index.ts'), 'utf8')).rejects.toThrow()
     }
     finally {

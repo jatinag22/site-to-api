@@ -149,7 +149,8 @@ const buildCommand: CommandRegistrar = (program) => {
       .description('analyse all captures and write the handoff folder (specs, flows, docs, client); the options used are recorded in build.json for probe and gen'),
     '',
   )
-    .action(async (flags: OutputFlags, command: Command) => {
+    .option('--force', 'overwrite generated client files you edited by hand (they are kept and reported otherwise)')
+    .action(async (flags: OutputFlags & { force?: boolean }, command: Command) => {
       const { config, cwd, sources } = await resolveConfig(command, {
         hosts: { include: flags.include, exclude: flags.exclude },
         redact: { examples: flags.examples },
@@ -165,6 +166,7 @@ const buildCommand: CommandRegistrar = (program) => {
         config,
         cwd,
         sources,
+        force: flags.force === true,
         log: message => consola.info(message),
       })
       printWarnings(result.warnings)
@@ -253,15 +255,22 @@ const genCommand: CommandRegistrar = (program) => {
     .command('gen')
     .description('regenerate only the TypeScript client from the specs in the handoff folder (updates the client lines of AGENT.md and API_MAP.md)')
     .addOption(mcpOption(''))
-    .action(async (flags: { mcp?: string }, command: Command) => {
+    .option('--force', 'overwrite generated client files you edited by hand (they are kept and reported otherwise)')
+    .action(async (flags: { mcp?: string, force?: boolean }, command: Command) => {
       const { config, cwd, sources } = await resolveConfig(command, {
         gen: { mcp: flags.mcp },
       })
       // Works from the committed handoff folder alone: raw captures are not needed (or present) in a fresh clone.
       const handoffDir = resolve(cwd, config.outDir)
       // Fails on an unreadable build.json before anything in the folder is rewritten.
-      await readBuildRecord(handoffDir)
-      const result = await generateClient({ handoffDir, flows: await readFlowsDocument(handoffDir), mcp: config.gen.mcp })
+      const record = await readBuildRecord(handoffDir)
+      const result = await generateClient({
+        handoffDir,
+        flows: await readFlowsDocument(handoffDir),
+        mcp: config.gen.mcp,
+        previous: record?.generated ?? null,
+        force: flags.force === true,
+      })
       // AGENT.md and API_MAP.md were written when the client was missing or stale; say it exists now.
       printWarnings([
         ...result.warnings,
@@ -269,7 +278,7 @@ const genCommand: CommandRegistrar = (program) => {
           ? 'empty'
           : 'current'),
       ])
-      await recordClientGenerated(handoffDir, { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' })
+      await recordClientGenerated(handoffDir, { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' }, result.manifest)
       consola.success(`Generated ${result.files.length} client files`)
     })
 }

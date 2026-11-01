@@ -64,3 +64,4 @@ or `Proposed`.
 | [0054](0054-recheck-origins-and-telemetry-hosts.md) | Empty answers match empty captures; typed input over page values; no path substrings; `sigh` secret; telemetry hosts last (refines 0041, 0047, 0052, 0053) | Accepted |
 | [0055](0055-varies-by-request-and-gone-browser.md) | `check` reads XSSI-prefixed JSON and reports answers that vary by request as `varies`; a browser already gone leaves a complete session when its HAR is valid (refines 0044, 0050) | Accepted |
 | [0056](0056-learnt-values-in-paths.md) | A path segment equal to a learnt value is a parameter (refines 0004, 0047) | Accepted |
+| [0057](0057-client-in-an-app.md) | The generated client lives inside the user's app: only generated files are replaced, hand edits are kept unless `--force` (refines 0025, 0043) | Accepted |
