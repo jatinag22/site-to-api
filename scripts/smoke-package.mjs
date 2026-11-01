@@ -5,18 +5,22 @@
 // into fresh projects where `--help`, `init`, `capture` (headless, Playwright's Chromium) against
 // the e2e fixture site, `build` and `gen` work and the generated client type-checks.
 //
-// Usage: node scripts/smoke-package.mjs [--keep] [--only npm|pnpm] [--with-deps]
+// Usage: node scripts/smoke-package.mjs [--tarballs <dir>] [--keep] [--only npm|pnpm] [--with-deps]
+//   --tarballs   test these tarballs instead of packing (the release tests the exact files it
+//                publishes); a SHA256SUMS file next to them is checked first
 //   --keep       leave the temporary folder for inspection
 //   --only       test one package manager only
 //   --with-deps  install Chromium's system libraries too (CI runners)
 // Needs network access for npm and pnpm installs. Run from the repository root after
 // `pnpm install`.
 import { spawn, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
+import { neutralProblems } from './check-neutral.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const args = process.argv.slice(2)
@@ -24,6 +28,9 @@ const keep = args.includes('--keep')
 const withDeps = args.includes('--with-deps')
 const only = args.includes('--only')
   ? args[args.indexOf('--only') + 1]
+  : null
+const given = args.includes('--tarballs')
+  ? resolve(args[args.indexOf('--tarballs') + 1] ?? '')
   : null
 const managers = only === null
   ? ['npm', 'pnpm']
@@ -70,8 +77,9 @@ function run(command, commandArgs, options = {}) {
 }
 
 const work = mkdtempSync(join(tmpdir(), 'site-to-api-smoke-'))
-const tarballs = join(work, 'tarballs')
-mkdirSync(tarballs)
+const tarballs = given ?? join(work, 'tarballs')
+if (given === null)
+  mkdirSync(tarballs)
 let fixture = null
 process.on('exit', () => {
   // The fixture runs under pnpm and tsx: stop the whole process group, not only pnpm.
@@ -87,21 +95,37 @@ process.on('exit', () => {
     console.log(`\nKept ${work}`)
 })
 
-// 1. Pack. pnpm replaces `workspace:` and `catalog:` ranges with real versions while packing.
-step('Pack both packages')
-run('pnpm', [
-  '--filter',
-  'site-to-api',
-  '--filter',
-  '@site-to-api/runtime',
-  'pack',
-  '--pack-destination',
-  tarballs,
-], { cwd: root })
+if (given === null) {
+  // 1. Pack. pnpm replaces `workspace:` and `catalog:` ranges with real versions while packing.
+  step('Pack both packages')
+  run('pnpm', [
+    '--filter',
+    'site-to-api',
+    '--filter',
+    '@site-to-api/runtime',
+    'pack',
+    '--pack-destination',
+    tarballs,
+  ], { cwd: root })
+}
+else {
+  // 1. The given tarballs, checked against their SHA256SUMS when there is one.
+  step(`Use the tarballs in ${given}`)
+  const sums = readdirSync(given).includes('SHA256SUMS')
+    ? readFileSync(join(given, 'SHA256SUMS'), 'utf8').trim().split('\n')
+    : []
+  for (const line of sums) {
+    const [expected, file] = line.trim().split(/\s+\*?/)
+    const actual = createHash('sha256').update(readFileSync(join(given, file ?? ''))).digest('hex')
+    if (actual !== expected)
+      fail(`${file}: sha256 ${actual} does not match SHA256SUMS (${expected})`)
+    console.log(`${file}: sha256 matches`)
+  }
+}
 const packed = readdirSync(tarballs).filter(file => file.endsWith('.tgz'))
 const cliTarball = packed.find(file => file.startsWith('site-to-api-') && !file.startsWith('site-to-api-runtime-'))
 const runtimeTarball = packed.find(file => file.startsWith('site-to-api-runtime-'))
-if (cliTarball === undefined || runtimeTarball === undefined)
+if (packed.length !== 2 || cliTarball === undefined || runtimeTarball === undefined)
   fail(`expected two tarballs, got: ${packed.join(', ')}`)
 
 // 2. Inspect each tarball: no workspace or catalog ranges, publint clean.
@@ -128,7 +152,7 @@ for (const tarball of [cliTarball, runtimeTarball]) {
 }
 
 // 3. Fresh projects, one per package manager.
-const version = JSON.parse(readFileSync(join(root, 'packages', 'runtime', 'package.json'), 'utf8')).version
+const version = /^site-to-api-runtime-(.+)\.tgz$/.exec(runtimeTarball)?.[1]
 const projects = []
 for (const manager of managers) {
   step(`Install the tarballs with ${manager}`)
@@ -167,35 +191,13 @@ for (const manager of managers) {
   projects.push({ manager, dir })
 }
 
-// 4. The runtime must run outside Node (Bun, Deno, edge workers): no `node:` imports.
+// 4. The runtime must run outside Node (Bun, Deno, edge workers): no Node imports or globals.
 step('Bundle the runtime for a neutral platform')
-const esbuild = createRequire(join(root, 'e2e', 'package.json'))('esbuild')
 const first = projects[0]
-const bundled = await esbuild.build({
-  entryPoints: [
-    join(first.dir, 'node_modules', '@site-to-api', 'runtime', 'dist', 'index.mjs'),
-  ],
-  bundle: true,
-  platform: 'neutral',
-  format: 'esm',
-  mainFields: ['module', 'main'],
-  conditions: ['import', 'default'],
-  write: false,
-  logLevel: 'silent',
-}).catch(error => error)
-if (bundled instanceof Error) {
-  const messages = (bundled.errors ?? []).map(item => item.text).join('\n  ')
-  fail(`the runtime does not bundle for a neutral platform:\n  ${messages || bundled.message}`)
-}
-const nodeImports = bundled.outputFiles.flatMap(file => [
-  ...file.text.matchAll(/from\s*["'](node:[\w/]+)["']|require\(["'](node:[\w/]+)["']\)/g),
-].map(match => match[1] ?? match[2]))
-if (nodeImports.length > 0) {
-  fail(`the runtime bundle imports ${[
-    ...new Set(nodeImports),
-  ].join(', ')}`)
-}
-console.log('runtime bundles for platform=neutral with no node: imports')
+const problems = await neutralProblems(join(first.dir, 'node_modules', '@site-to-api', 'runtime', 'dist', 'index.mjs'))
+if (problems.length > 0)
+  fail(`the runtime is not neutral:\n  ${problems.join('\n  ')}`)
+console.log('runtime bundles for platform=neutral with no Node imports or globals')
 
 // 5. The fixture site, which the e2e tests capture too.
 step('Start the e2e fixture site')
