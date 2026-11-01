@@ -8,6 +8,7 @@ import type { CommandRegistrar } from './program'
 import process from 'node:process'
 import { InvalidArgumentError } from 'commander'
 import { resolve } from 'pathe'
+import { staticConfigValue } from '../config/static'
 import { serveGenerated, serveHandoff } from '../mcp'
 import { resolveConfig } from './program'
 
@@ -47,12 +48,19 @@ export const mcpCommand: CommandRegistrar = (program) => {
       }
       // A plugin starts this command in every project: a .ts or .js config file is code from the
       // project, so only flags, SITE_TO_API_* variables and site-to-api.config.json are read.
-      const { config, cwd, ignored } = await resolveConfig(command, {
+      const { config, cwd, ignored, sources } = await resolveConfig(command, {
         probe: { maxRps: flags.maxRps },
       }, { code: false })
-      if (ignored !== undefined)
-        log(`Not running ${ignored}: \`mcp\` reads only flags, SITE_TO_API_* variables and site-to-api.config.json (handoff folder: ${dir ?? config.outDir}).`)
-      const handoffDir = resolve(cwd, dir ?? config.outDir)
+      let outDir = config.outDir
+      if (ignored !== undefined && dir === undefined && sources.outDir === 'default') {
+        // The file is not run, but a plain `outDir: '…'` in it can be read (decision 0057).
+        const read = await staticConfigValue(ignored, 'outDir')
+        if (read !== null)
+          outDir = read
+        else
+          log(`Not running ${ignored} and found no plain \`outDir: '…'\` in it, so the handoff folder is ${outDir}. Pass the folder instead: \`site-to-api mcp <outDir>\`.`)
+      }
+      const handoffDir = resolve(cwd, dir ?? outDir)
       if (flags.generated) {
         await serveGenerated({ handoffDir, trustClient: flags.trustClient === true })
         return

@@ -204,8 +204,14 @@ export default defineConfig({
   },
   redact: { examples: 'masked' }, // 'raw' copies real values into the handoff folder
   probe: { maxRps: 1, unsafeMethods: false, minimizePerHost: 5 },
+  // The client goes to <outDir>/client unless clientDir puts it in your app's source tree.
+  gen: { client: true, clientDir: null, mcp: 'off' },
 })
 ```
+
+`build` and `gen` replace only the client files they generated (recorded with their hashes in
+`build.json`): your own files in the client folder are left alone, and a generated file you edited
+is kept and reported until `--force` overwrites it.
 
 Precedence: CLI flags > `SITE_TO_API_*` environment variables > config file > defaults. Unknown
 keys are errors, and `site-to-api config` shows which source set each value.
@@ -395,7 +401,8 @@ Two MCP servers, both over stdio (decision 0043).
 instead of reading every spec. It reads only the redacted handoff files, never the raw captures.
 It also starts before the folder exists; its tools then say to run `capture` and `build`, and pick
 the folder up once it is written. It runs no code from the project: a `site-to-api.config.ts` is
-ignored (pass the folder, or use `site-to-api.config.json`).
+not run, only a plain `outDir: '…'` string in it is read (otherwise pass the folder, or use
+`site-to-api.config.json`). The client folder comes from `build.json`.
 
 ```sh
 claude mcp add site-api -- site-to-api mcp ./api-handoff

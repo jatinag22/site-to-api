@@ -21,7 +21,7 @@ async function sha256(file: string): Promise<string> {
 }
 
 /** Every file under `dir`, relative, with `/` separators, sorted. */
-export async function relativeFiles(dir: string): Promise<string[]> {
+async function relativeFiles(dir: string): Promise<string[]> {
   if (!existsSync(dir))
     return []
   const entries = await readdir(dir, { recursive: true, withFileTypes: true })

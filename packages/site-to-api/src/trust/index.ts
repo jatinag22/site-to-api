@@ -19,7 +19,15 @@ const EntrySchema = z.object({
   formatVersion: z.literal(1),
   path: z.string(),
   sha256: z.string(),
+  /**
+   * The generated files the hash covers, relative to the folder (decision 0057), so the person's
+   * own files next to the client do not make it untrusted. Kept here, outside the project, never
+   * read from `build.json`, which a repository controls. Absent: every file of the folder.
+   */
+  files: z.array(z.string()).optional(),
 })
+
+type Entry = z.infer<typeof EntrySchema>
 
 /**
  * The message for a client this machine did not generate (or that changed since). It does not
@@ -39,18 +47,24 @@ export function trustStorePath(env: Record<string, string | undefined> = process
   return join(base, 'site-to-api', 'trusted-clients')
 }
 
-/** SHA-256 over every file of `clientDir`: sorted relative paths and contents, so any change shows. */
-export async function clientHash(clientDir: string): Promise<string> {
-  const entries = await readdir(clientDir, { recursive: true, withFileTypes: true })
-  const files = entries
-    .filter(entry => !entry.isDirectory())
-    .map(entry => relative(clientDir, join(entry.parentPath, entry.name)))
-    .sort()
+/**
+ * SHA-256 over `files` of `clientDir` (every file when absent): sorted relative paths and
+ * contents, so any change shows. A listed file that is gone hashes differently from any content.
+ */
+export async function clientHash(clientDir: string, files?: readonly string[]): Promise<string> {
+  const listed = files === undefined
+    ? (await readdir(clientDir, { recursive: true, withFileTypes: true }))
+        .filter(entry => !entry.isDirectory())
+        .map(entry => relative(clientDir, join(entry.parentPath, entry.name)))
+    : [...files]
   const hash = createHash('sha256')
-  for (const file of files) {
+  for (const file of listed.sort()) {
     hash.update(`${file}\0`)
     // A symbolic link is hashed by what it points to now, so retargeting it changes the hash.
-    hash.update(await readFile(join(clientDir, file)))
+    const path = join(clientDir, file)
+    hash.update(existsSync(path)
+      ? await readFile(path)
+      : '\0missing')
     hash.update('\0')
   }
   return hash.digest('hex')
@@ -61,7 +75,7 @@ function entryPath(store: string, key: string): string {
   return join(store, `${createHash('sha256').update(key).digest('hex')}.json`)
 }
 
-async function readEntry(path: string, key: string): Promise<string | null> {
+async function readEntry(path: string, key: string): Promise<Entry | null> {
   if (!existsSync(path))
     return null
   const invalid = (cause?: unknown): SiteToApiError =>
@@ -77,17 +91,30 @@ async function readEntry(path: string, key: string): Promise<string | null> {
   if (!parsed.success)
     throw invalid()
   return parsed.data.path === key
-    ? parsed.data.sha256
+    ? parsed.data
     : null
 }
 
-/** Records the client in `clientDir` as generated here. Called by `gen` (and `build`) after writing it. */
-export async function trustClient(clientDir: string, store: string = trustStorePath()): Promise<void> {
+/**
+ * Records the client in `clientDir` as generated here. Called by `gen` (and `build`) after writing
+ * it, with the files it generated (relative to `clientDir`; every file of the folder when absent).
+ */
+export async function trustClient(clientDir: string, store: string = trustStorePath(), files?: readonly string[]): Promise<void> {
   const key = await realpath(clientDir)
   const path = entryPath(store, key)
   await mkdir(store, { recursive: true, mode: 0o700 })
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
-  await writeFile(temporary, `${JSON.stringify({ formatVersion: 1, path: key, sha256: await clientHash(clientDir) }, null, 2)}\n`, { mode: 0o600 })
+  const entry: Entry = {
+    formatVersion: 1,
+    path: key,
+    sha256: await clientHash(clientDir, files),
+    ...(files === undefined
+      ? {}
+      : {
+          files: [...files].sort(),
+        }),
+  }
+  await writeFile(temporary, `${JSON.stringify(entry, null, 2)}\n`, { mode: 0o600 })
   await chmod(temporary, 0o600)
   await rename(temporary, path)
 }
@@ -98,7 +125,8 @@ export async function untrustedReason(clientDir: string, store: string = trustSt
     return null
   const key = await realpath(clientDir)
   const recorded = await readEntry(entryPath(store, key), key)
-  if (recorded === null || recorded !== await clientHash(clientDir))
+  // Packages installed inside the client folder would be resolved before the project's own.
+  if (recorded === null || existsSync(join(clientDir, 'node_modules')) || recorded.sha256 !== await clientHash(clientDir, recorded.files))
     return `${clientDir}: ${UNTRUSTED_CLIENT}`
   return null
 }

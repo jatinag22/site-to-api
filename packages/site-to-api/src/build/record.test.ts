@@ -30,6 +30,7 @@ describe('build.json', () => {
       'hosts.exclude': 'default',
     }, '1.2.3')
     expect(record).toEqual({
+      clientDir: 'client',
       formatVersion: 1,
       generatedBy: 'site-to-api 1.2.3',
       examples: 'none',
@@ -55,12 +56,16 @@ describe('build.json', () => {
     await writeFile(join(dir, 'build.json'), JSON.stringify({ ...older, sticky: [] }))
     expect((await readBuildRecord(dir))?.mcp).toBeUndefined()
     // gen --mcp read records what it wrote, sticky because a flag chose it.
-    await recordClientGenerated(dir, { mode: 'read', sticky: true })
+    await recordClientGenerated(dir, {
+      mcp: { mode: 'read', sticky: true },
+    })
     expect(await readBuildRecord(dir)).toMatchObject({
       mcp: 'read',
       sticky: ['gen.mcp'],
     })
-    await recordClientGenerated(dir, { mode: 'off', sticky: false })
+    await recordClientGenerated(dir, {
+      mcp: { mode: 'off', sticky: false },
+    })
     expect(await readBuildRecord(dir)).toMatchObject({ mcp: 'off', sticky: [] })
   })
 
@@ -105,8 +110,14 @@ describe('build.json', () => {
   it('records the generated client files and their hashes (decision 0057)', async () => {
     await writeBuildRecord(dir, buildRecordFor(config, {}, 'test', { 'index.ts': 'a1' }))
     expect((await readBuildRecord(dir))?.generated).toEqual({ 'index.ts': 'a1' })
-    await recordClientGenerated(dir, undefined, { 'index.ts': 'b2', 'README.md': 'c3' })
-    expect((await readBuildRecord(dir))?.generated).toEqual({ 'index.ts': 'b2', 'README.md': 'c3' })
+    await recordClientGenerated(dir, {
+      generated: { 'index.ts': 'b2', 'README.md': 'c3' },
+      clientDir: '../app/client',
+    })
+    expect(await readBuildRecord(dir)).toMatchObject({
+      generated: { 'index.ts': 'b2', 'README.md': 'c3' },
+      clientDir: '../app/client',
+    })
   })
 
   it('explains what to do with a broken file', async () => {

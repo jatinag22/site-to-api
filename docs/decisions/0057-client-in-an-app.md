@@ -19,6 +19,25 @@ kept there disappeared and hand edits to generated files were lost without a wor
 - A folder without a recorded manifest (from an older version) has its generated paths
   overwritten and nothing deleted.
 
+### The client folder is configurable
+- `gen.clientDir` (relative to the working directory, like `outDir`) puts the client in the app's
+  source tree; unset, it is `<outDir>/client`. `build.json` records it relative to the handoff
+  folder (`clientDir`), so `gen` (when the config does not set it), `mcp` and `call_operation`
+  find it from the handoff folder alone. When it changes, the old folder is left in place with a
+  warning, and the new one starts with nothing recorded.
+- `AGENT.md`, `API_MAP.md`, the client and MCP READMEs and gen's messages name the real folders,
+  as paths relative to the handoff folder, the client folder or the project root, never
+  absolute. `gen` swaps the client sentences whatever folder the old ones named.
+- The leak check (0047) reads the recorded generated files, not every file in the client folder,
+  so the person's own files there are never read or deleted.
+- The trust entry (0043) lists the generated files its hash covers, kept in the person's config
+  directory and never taken from `build.json`; the person's own files no longer make the client
+  untrusted. A `node_modules` folder inside the client folder does, since it would shadow the
+  project's packages.
+- `mcp` still never runs a `.ts`/`.js` config file, but reads a plain string `outDir: '…'` from it
+  with the TypeScript parser; anything computed is not read, and the message says to pass the
+  folder.
+
 ## Consequences
 People can keep their own files next to the client. A stale file from an old version that `gen`
 no longer writes stays until it is deleted by hand.

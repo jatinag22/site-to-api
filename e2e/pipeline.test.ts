@@ -317,14 +317,16 @@ describe('handoff folder', () => {
       .find(cookie => cookie.name === 'pm_session')
       ?.value ?? ''
     expect(session.length).toBeGreaterThan(11)
-    // With --no-client build keeps client/ and checks it: a file there stands in for a leak an
-    // emitter let through.
-    const planted = join(outDir, 'client', 'planted.md')
-    // The user's own file in the folder is neither scanned nor touched.
+    // With --no-client build keeps the generated client files and checks them: a value pasted
+    // into one stands in for a leak an emitter let through (decision 0057).
+    const planted = join(outDir, 'client', 'README.md')
+    // The user's own files, in the folder or next to the client, are neither scanned nor touched.
     const own = join(outDir, 'notes', 'own.md')
+    const ownClient = join(outDir, 'client', 'own.md')
     await mkdir(join(outDir, 'notes'), { recursive: true })
-    await writeFile(planted, `copied by hand: ${session}\n`)
+    await writeFile(planted, `${await readFile(planted, 'utf8')}\ncopied by hand: ${session}\n`)
     await writeFile(own, `my note: ${session}\n`)
+    await writeFile(ownClient, `my note: ${session}\n`)
     try {
       const keepClient = {
         ...config,
@@ -336,16 +338,18 @@ describe('handoff folder', () => {
         ? error.message
         : ''
       expect(message).toContain('Leak check failed: 1 secret value(s) learnt from the capture appear in')
-      expect(message).toContain(`client/planted.md: ${session.slice(0, 3)}…${session.slice(-2)} (${session.length} chars)`)
+      expect(message).toContain(`client/README.md: ${session.slice(0, 3)}…${session.slice(-2)} (${session.length} chars)`)
       expect(message).not.toContain('notes/own.md')
+      expect(message).not.toContain('client/own.md')
       expect(message).not.toContain(session)
       expect(message).toContain('The 1 file(s) listed were deleted')
       expect(existsSync(planted)).toBe(false)
       expect(existsSync(own)).toBe(true)
+      expect(existsSync(ownClient)).toBe(true)
       expect(existsSync(join(outDir, 'AGENT.md'))).toBe(true)
     }
     finally {
-      await rm(planted, { force: true })
+      await rm(ownClient, { force: true })
       await rm(join(outDir, 'notes'), { recursive: true, force: true })
     }
     await buildHandoff({ config, cwd: work })
@@ -369,6 +373,30 @@ describe('handoff folder', () => {
     }
     finally {
       await rm(own, { force: true })
+    }
+    await buildHandoff({ config, cwd: work })
+  }, 180_000)
+
+  it('writes the client into gen.clientDir and names that folder in the docs and build.json (decision 0057)', async () => {
+    const appClient = join(work, 'app', 'api')
+    try {
+      const moved = {
+        ...config,
+        gen: {
+          ...config.gen,
+          clientDir: join('app', 'api'),
+        },
+      }
+      const result = await buildHandoff({ config: moved, cwd: work })
+      expect(existsSync(join(appClient, 'index.ts'))).toBe(true)
+      expect(await readFile(join(outDir, 'AGENT.md'), 'utf8')).toContain('`../app/api/`: typed client with Zod validation; see `../app/api/README.md`.')
+      expect(await readFile(join(outDir, 'API_MAP.md'), 'utf8')).toContain('exported by the generated `../app/api/`.')
+      expect(JSON.parse(await readFile(join(outDir, 'build.json'), 'utf8'))).toMatchObject({ clientDir: '../app/api' })
+      expect(result.warnings.join('\n')).toContain(`The client moved from ${join(outDir, 'client')} to ${appClient}`)
+      expect(await readFile(join(appClient, 'README.md'), 'utf8')).toContain('`app/api/index.js` from the project root')
+    }
+    finally {
+      await rm(join(work, 'app'), { recursive: true, force: true })
     }
     await buildHandoff({ config, cwd: work })
   }, 180_000)

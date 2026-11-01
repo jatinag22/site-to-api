@@ -70,6 +70,24 @@ describe('trust store', () => {
     expect(await untrustedReason(dir, store)).toContain(UNTRUSTED_CLIENT)
   })
 
+  it('covers only the generated files it was given, so the person\'s own files keep it trusted (decision 0057)', async () => {
+    const { dir, store } = await client()
+    const files = ['index.ts', 'mcp/server.ts']
+    await trustClient(dir, store, files)
+    await writeFile(path.join(dir, 'my-helper.ts'), 'export const mine = 1\n')
+    expect(await untrustedReason(dir, store)).toBeNull()
+    await writeFile(path.join(dir, 'index.ts'), 'export const a = 2\n')
+    expect(await untrustedReason(dir, store)).toContain(UNTRUSTED_CLIENT)
+    await writeFile(path.join(dir, 'index.ts'), 'export const a = 1\n')
+    await rm(path.join(dir, 'mcp', 'server.ts'))
+    expect(await untrustedReason(dir, store)).toContain(UNTRUSTED_CLIENT)
+    await writeFile(path.join(dir, 'mcp', 'server.ts'), 'export {}\n')
+    expect(await untrustedReason(dir, store)).toBeNull()
+    // Packages inside the folder would shadow the project's own.
+    await mkdir(path.join(dir, 'node_modules', 'zod'), { recursive: true })
+    expect(await untrustedReason(dir, store)).toContain(UNTRUSTED_CLIENT)
+  })
+
   it('keeps every entry when many gen runs record clients at once', async () => {
     const { root, store } = await client()
     const clients = await Promise.all(Array.from({ length: 20 }, async (_, index) => {

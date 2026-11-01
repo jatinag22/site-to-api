@@ -113,4 +113,29 @@ describe('mcp', () => {
     expect(stderr.join('')).toContain(`Not running ${join(dir, 'site-to-api.config.ts')}`)
     expect(process.exitCode).toBe(1)
   })
+
+  it('reads a plain outDir from a .ts config file without running it (decision 0057)', async () => {
+    const marker = join(dir, 'ran.txt')
+    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\nexport default { outDir: 'src/api/shop' }\n`)
+    const output: string[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      output.push(String(chunk))
+      return true
+    })
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      output.push(String(chunk))
+      return true
+    })
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      dir,
+      'mcp',
+      '--generated',
+    ], [mcpCommand])
+    expect(existsSync(marker)).toBe(false)
+    expect(output.join('')).toContain(`No generated MCP server at ${join(dir, 'src', 'api', 'shop', 'client', 'mcp', 'server.ts')}`)
+    expect(output.join('')).not.toContain('Not running')
+  })
 })

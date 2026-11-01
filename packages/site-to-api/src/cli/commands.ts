@@ -11,7 +11,7 @@ import process from 'node:process'
 import { InvalidArgumentError, Option } from 'commander'
 import { consola } from 'consola'
 import { dirname, join, resolve } from 'pathe'
-import { analyzeForProbe, buildHandoff, readBuildRecord, recordClientGenerated, stickyOptions } from '../build'
+import { analyzeForProbe, buildHandoff, configuredClientDir, previousClient, readBuildRecord, recordClientGenerated, recordedClientDir, relativePath, stickyOptions } from '../build'
 import { runCapture } from '../capture'
 import { updateClientState } from '../emit/handoff'
 import { SiteToApiError } from '../errors'
@@ -264,22 +264,37 @@ const genCommand: CommandRegistrar = (program) => {
       const handoffDir = resolve(cwd, config.outDir)
       // Fails on an unreadable build.json before anything in the folder is rewritten.
       const record = await readBuildRecord(handoffDir)
+      // The configured folder when one is set; otherwise the one the last build used (decision 0057).
+      const clientDir = sources['gen.clientDir'] === 'default'
+        ? recordedClientDir(handoffDir, record)
+        : configuredClientDir(config, cwd)
+      const { previous, warning } = previousClient(handoffDir, record, clientDir)
       const result = await generateClient({
         handoffDir,
+        clientDir,
+        root: cwd,
         flows: await readFlowsDocument(handoffDir),
         mcp: config.gen.mcp,
-        previous: record?.generated ?? null,
+        previous,
         force: flags.force === true,
       })
+      const clientPath = relativePath(handoffDir, clientDir)
       // AGENT.md and API_MAP.md were written when the client was missing or stale; say it exists now.
       printWarnings([
+        ...(warning === null
+          ? []
+          : [warning]),
         ...result.warnings,
         ...await updateClientState(handoffDir, result.empty
           ? 'empty'
-          : 'current'),
+          : 'current', clientPath),
       ])
-      await recordClientGenerated(handoffDir, { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' }, result.manifest)
-      consola.success(`Generated ${result.files.length} client files`)
+      await recordClientGenerated(handoffDir, {
+        mcp: { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' },
+        generated: result.manifest,
+        clientDir: clientPath,
+      })
+      consola.success(`Generated ${result.files.length} client files in ${relativePath(cwd, clientDir)}`)
     })
 }
 

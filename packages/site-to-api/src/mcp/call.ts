@@ -166,11 +166,11 @@ export function createCaller(options: CallerOptions): (entry: OperationEntry, ar
   const clients = new Map<string, Record<string, unknown>>()
 
   async function loadClient(): Promise<z.infer<typeof ClientModuleSchema>> {
-    const path = join(options.handoff.dir, 'client', 'index.ts')
+    const path = join(options.handoff.clientDir, 'index.ts')
     // The client is code, and the folder may come from anyone: run it only when this machine
     // generated it, or the person said they reviewed it.
     if (options.trustClient !== true) {
-      const reason = await untrustedReason(join(options.handoff.dir, 'client'), options.trustStore)
+      const reason = await untrustedReason(options.handoff.clientDir, options.trustStore)
       if (reason !== null)
         throw new SiteToApiError(reason)
     }

@@ -6,12 +6,14 @@
  * exports, and writes the files.
  */
 import type { OperationEntry } from '../mcp/catalog'
+import type { GeneratedPaths } from './paths'
 import { createHash } from 'node:crypto'
 import { toCase } from '@hey-api/shared'
 import { z } from 'zod'
 import { oneLine } from '../emit/escape'
 import { sdkFunctionName } from '../emit/naming'
 import { changesData, neverSentReason } from '../probe/safety'
+import { DEFAULT_PATHS, dotted } from './paths'
 
 /** Which operations the generated server exposes. */
 export type McpMode = 'off' | 'read' | 'write'
@@ -435,7 +437,8 @@ export function renderMcpServer(hosts: readonly McpHost[], tools: readonly McpTo
 }
 
 /** `client/mcp/README.md`: how to run and register the server. */
-export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTool[], mode: Exclude<McpMode, 'off'>): string {
+export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTool[], mode: Exclude<McpMode, 'off'>, paths: GeneratedPaths = DEFAULT_PATHS): string {
+  const handoff = dotted(paths.handoff)
   const single = hosts.length === 1
   const example = hosts[0]?.identifier.toUpperCase() ?? 'HOST'
   const env = single
@@ -460,15 +463,15 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
     '```',
     '',
     'Register it with Claude Code (from the folder that holds the handoff folder). `site-to-api mcp',
-    '--generated` runs this server only when this machine generated `client/` and nothing changed it',
+    `--generated\` runs this server only when this machine generated \`${paths.client}/\` and nothing changed it`,
     'since; a client from someone else (a cloned repository) is refused until you run',
     '`site-to-api gen`, or review it and add `--trust-client`:',
     '',
     '```sh',
-    `claude mcp add site-api -e ${env}='name=value; other=value' -- site-to-api mcp ./api-handoff --generated`,
+    `claude mcp add site-api -e ${env}='name=value; other=value' -- site-to-api mcp ${handoff} --generated`,
     '```',
     '',
-    'Running the file directly (`npx tsx ./api-handoff/client/mcp/server.ts`) skips that check: it',
+    `Running the file directly (\`npx tsx ${dotted(paths.client)}/mcp/server.ts\`) skips that check: it`,
     'runs whatever code the folder holds, with your environment. Do that only with a client you',
     'generated or reviewed.',
     '',
@@ -479,7 +482,7 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
       mcpServers: {
         'site-api': {
           command: 'site-to-api',
-          args: ['mcp', './api-handoff', '--generated'],
+          args: ['mcp', handoff, '--generated'],
           env: { [env]: 'name=value' },
         },
       },
@@ -495,7 +498,7 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
       : '_<HOST>'}\`: cookies to send, as a \`Cookie\` header (\`name=value; other=value\`).`,
     `- \`SITE_API_AUTH${single
       ? ''
-      : '_<HOST>'}\`: the credential for operations whose spec declares \`security\` (see \`client/README.md\`).`,
+      : '_<HOST>'}\`: the credential for operations whose spec declares \`security\` (see \`${paths.client}/README.md\`).`,
     `- \`SITE_API_BASE_URL${single
       ? ''
       : '_<HOST>'}\`: another base URL, e.g. a staging host.`,
@@ -507,7 +510,7 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
         ]
       : [
           '',
-          `\`<HOST>\` is the host's folder under \`client/\` in upper case: ${hosts.map(host => `\`${host.identifier.toUpperCase()}\``).join(', ')}. With several hosts the plain names are not read, so a cookie is never sent to the wrong site.`,
+          `\`<HOST>\` is the host's folder under \`${paths.client}/\` in upper case: ${hosts.map(host => `\`${host.identifier.toUpperCase()}\``).join(', ')}. With several hosts the plain names are not read, so a cookie is never sent to the wrong site.`,
         ]),
     '',
   ].join('\n')

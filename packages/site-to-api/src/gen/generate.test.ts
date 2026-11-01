@@ -1,6 +1,7 @@
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { FlowsDocument } from '../model'
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
@@ -455,6 +456,55 @@ describe('generateClient', () => {
   }, 60_000)
 })
 
+describe('generateClient into gen.clientDir (decision 0057)', () => {
+  it('writes the client outside the handoff folder, keeps the person\'s files and names real paths', async () => {
+    const dir = await workspace()
+    try {
+      const handoff = path.join(dir, 'handoff')
+      const clientDir = path.join(dir, 'src', 'api')
+      await mkdir(clientDir, { recursive: true })
+      await writeFile(path.join(clientDir, 'mine.ts'), 'export const mine = 1\n')
+      const first = await generateClient({
+        handoffDir: handoff,
+        clientDir,
+        root: dir,
+        flows,
+      })
+      expect(first.files).toContain('../src/api/index.ts')
+      expect(first.files).not.toContain('../src/api/mine.ts')
+      expect(existsSync(path.join(handoff, 'client'))).toBe(false)
+      const readme = await readFile(path.join(clientDir, 'README.md'), 'utf8')
+      expect(readme).toContain('Generated from `../../handoff/specs/` and `../../handoff/flows.json` (the handoff folder `handoff/`)')
+      expect(readme).toContain('`src/api/index.js` from the project root')
+      // A hand edit is kept and reported; --force overwrites it; the person's file stays.
+      const index = await readFile(path.join(clientDir, 'index.ts'), 'utf8')
+      await writeFile(path.join(clientDir, 'index.ts'), `${index}// mine\n`)
+      const second = await generateClient({
+        handoffDir: handoff,
+        clientDir,
+        root: dir,
+        flows,
+        previous: first.manifest,
+      })
+      expect(second.warnings.join('\n')).toContain('Kept 1 client file(s) edited by hand instead of regenerating them: index.ts.')
+      expect(await readFile(path.join(clientDir, 'index.ts'), 'utf8')).toBe(`${index}// mine\n`)
+      await generateClient({
+        handoffDir: handoff,
+        clientDir,
+        root: dir,
+        flows,
+        previous: second.manifest,
+        force: true,
+      })
+      expect(await readFile(path.join(clientDir, 'index.ts'), 'utf8')).toBe(index)
+      expect(await readFile(path.join(clientDir, 'mine.ts'), 'utf8')).toBe('export const mine = 1\n')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+})
+
 describe('generateClient and bot-protection steps', () => {
   it('generates no client method or folder for bot-protection steps', async () => {
     const dir = await workspace()
@@ -567,7 +617,7 @@ describe('generateClient errors', () => {
       const spec = (host: string): string => `openapi: 3.1.0\ninfo: { title: t, version: '1' }\nservers: [{ url: 'https://${host}' }]\npaths: {}\n`
       await writeFile(path.join(dir, 'specs', 'a.yaml'), spec('a-b.example'))
       await writeFile(path.join(dir, 'specs', 'b.yaml'), spec('a.b.example'))
-      await expect(generateClient({ handoffDir: dir, flows })).rejects.toThrow(/both map to client\/a_b_example\//)
+      await expect(generateClient({ handoffDir: dir, root: dir, flows })).rejects.toThrow(/both map to client\/a_b_example\//)
     }
     finally {
       await rm(dir, { recursive: true, force: true })

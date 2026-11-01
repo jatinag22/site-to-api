@@ -12,12 +12,15 @@ import { updateClientState, withApiMapClientState, withClientState } from './cli
 
 const STATES: ClientState[] = ['current', 'stale', 'none', 'empty']
 
-function guide(client: ClientState, warnings: string[] = [], excerpts = new Map<string, string>()): string {
+function guide(client: ClientState, warnings: string[] = [], excerpts = new Map<string, string>(), clientPath?: string): string {
   const context: AgentGuideContext = {
     toolVersion: '0.1.0',
     examples: 'masked',
     probed: true,
     client,
+    ...(clientPath === undefined
+      ? {}
+      : { clientPath }),
     probe: {
       minimizePerHost: 5,
       notMinimized: [],
@@ -67,6 +70,18 @@ describe('client state in AGENT.md and API_MAP.md', () => {
       for (const to of STATES) {
         expect(withClientState(guide(from, ['Host cdn.example skipped.']), to), `${from} → ${to}`).toBe(guide(to, ['Host cdn.example skipped.']))
         expect(withApiMapClientState(renderApiMap(twoHostAnalysis(), from), to), `${from} → ${to}`).toBe(renderApiMap(twoHostAnalysis(), to))
+      }
+    }
+  })
+
+  it('names the client folder gen.clientDir chose, and swaps the state whatever folder the line names (decision 0057)', () => {
+    expect(guide('current', [], new Map(), '../app/api')).toContain('5. `../app/api/`: typed client with Zod validation; see `../app/api/README.md`.')
+    expect(guide('stale', [], new Map(), '../app/api')).toContain('- `../app/api/` is from an earlier build')
+    expect(renderApiMap(twoHostAnalysis(), 'current', undefined, '../app/api')).toContain('exported by the generated `../app/api/`.')
+    for (const from of STATES) {
+      for (const to of STATES) {
+        expect(withClientState(guide(from, [], new Map()), to, '../app/api'), `${from} → ${to}`).toBe(guide(to, [], new Map(), '../app/api'))
+        expect(withApiMapClientState(renderApiMap(twoHostAnalysis(), from), to, '../app/api')).toBe(renderApiMap(twoHostAnalysis(), to, undefined, '../app/api'))
       }
     }
   })

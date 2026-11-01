@@ -5,7 +5,7 @@
  * instead of trusting the rules.
  */
 import { existsSync } from 'node:fs'
-import { readdir, readFile, rm } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'pathe'
 import { SiteToApiError } from '../errors'
 
@@ -71,27 +71,16 @@ export function assertOwnOutDir(outDir: string, cwd: string, rawDir: string): vo
     throw new SiteToApiError(`outDir ${outDir} holds the raw captures (${rawDir}), which must never be shared. Set outDir to a folder of its own, such as "api-handoff", outside rawDir.`)
 }
 
-/** Files under `dir`, absolute; dependencies installed into it are skipped. A missing folder has none. */
-export async function filesUnder(dir: string): Promise<string[]> {
-  if (!existsSync(dir))
-    return []
-  const entries = await readdir(dir, { recursive: true, withFileTypes: true })
-  return entries
-    .filter(entry => entry.isFile())
-    .map(entry => join(entry.parentPath, entry.name))
-    .filter(path => !relative(dir, path).split('/').includes('node_modules'))
-}
-
 /**
- * {@link findLeaks} over `written`, the absolute paths `build` wrote or manages in `outDir`,
- * reported relative to it. Nothing else is read: the user's own files are neither the tool's
- * output nor its business.
+ * {@link findLeaks} over `written`, the absolute paths `build` wrote or manages, reported
+ * relative to `outDir` (a client in `gen.clientDir` shows as `../client/…`). Nothing else is
+ * read: the user's own files are neither the tool's output nor its business.
  */
 export async function findHandoffLeaks(outDir: string, written: readonly string[], secrets: readonly string[]): Promise<Leak[]> {
   const paths = [
     ...new Set(written),
   ]
-    .filter(path => containsOrEquals(outDir, path) && existsSync(path))
+    .filter(path => existsSync(path))
     .sort()
   const files = await Promise.all(paths.map(async path => ({
     path: relative(outDir, path),

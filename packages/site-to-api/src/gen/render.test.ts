@@ -447,11 +447,14 @@ describe('renderReadme auth and usage', () => {
     expect(readme).toContain(`from './client/index.js'`)
   })
 
-  it('says build and probe regenerate the client and gen only regenerates this folder', () => {
+  it('says build and probe regenerate the client, gen only the client, and gives real paths', () => {
     const readme = renderReadme([
       host(),
     ], [], [])
-    expect(readme).toContain('`site-to-api build` and\n`site-to-api probe` regenerate them, and `site-to-api gen` regenerates only this folder')
+    expect(readme).toContain('files: `site-to-api build` and `site-to-api probe` regenerate them, and `site-to-api gen`\nregenerates only the client')
+    expect(readme).toContain('Generated from `../specs/` and `../flows.json` (the handoff folder `api-handoff/`)')
+    expect(readme).toContain('files of your own in this folder are left alone.')
+    expect(readme).toContain('`api-handoff/client/index.js` from the project root')
     expect(readme).not.toContain('again after `build` or `probe`')
   })
 

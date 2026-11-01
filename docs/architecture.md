@@ -102,10 +102,10 @@ See `docs/output-format.md` for the full specification.
   specs/<host>.yaml OpenAPI 3.1, with x-site-to-api-* extensions
   specs/<host>.asyncapi.yaml  AsyncAPI 3.0 for WebSocket channels, when there are any
   source/           code excerpts referenced by flows and specs
-  client/           generated TypeScript client (gen); client/mcp/ with gen.mcp
+  client/           generated TypeScript client (gen), or in gen.clientDir; client/mcp/ with gen.mcp
   probe.json        probe results (names only)
   check.json        check results: drift per operation (field paths only)
-  build.json        options of the last build, reused by probe (gen updates its client entry)
+  build.json        options of the last build, reused by probe; the client folder and its generated files with hashes
 ```
 
 ## Packages

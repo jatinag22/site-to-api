@@ -34,10 +34,10 @@ import { VERSION } from '../version'
 import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
 import { inHostFilter, unmatchedHostPatterns } from './hosts'
-import { assertOwnOutDir, discardLeakingOutput, filesUnder, findHandoffLeaks, leakError } from './leaks'
-import { buildRecordFor, readBuildRecord, writeBuildRecord } from './record'
+import { assertOwnOutDir, discardLeakingOutput, findHandoffLeaks, leakError } from './leaks'
+import { buildRecordFor, configuredClientDir, previousClient, readBuildRecord, relativePath, writeBuildRecord } from './record'
 
-export { readBuildRecord, recordClientGenerated, stickyOptions } from './record'
+export { configuredClientDir, previousClient, readBuildRecord, recordClientGenerated, recordedClientDir, relativePath, stickyOptions } from './record'
 
 export interface BuildOptions {
   config: ResolvedConfig
@@ -425,12 +425,17 @@ async function withStoredProbe(captured: CapturedAnalysis, outDir: string): Prom
  * Generates `client/` (or removes or keeps it) and says which state it is in. Pushes the files it
  * wrote to `files` and its warnings to `warnings`.
  */
-async function writeClient(outDir: string, analysis: Analysis, config: ResolvedConfig, files: string[], warnings: string[], force: boolean): Promise<{ state: ClientState, manifest: ClientManifest | undefined }> {
-  const clientDir = join(outDir, 'client')
-  const previous = (await readBuildRecord(outDir))?.generated ?? null
+async function writeClient(outDir: string, clientDir: string, root: string, analysis: Analysis, config: ResolvedConfig, files: string[], warnings: string[], force: boolean): Promise<{ state: ClientState, manifest: ClientManifest | undefined }> {
+  const moved = previousClient(outDir, await readBuildRecord(outDir), clientDir)
+  const previous = moved.previous
+  if (moved.warning !== null)
+    warnings.push(moved.warning)
+  const clientPath = relativePath(outDir, clientDir)
   if (config.gen.client && analysis.operations.length > 0) {
     const generated = await generateClient({
       handoffDir: outDir,
+      clientDir,
+      root,
       flows: analysis.flows,
       mcp: config.gen.mcp,
       previous,
@@ -459,7 +464,7 @@ async function writeClient(outDir: string, analysis: Analysis, config: ResolvedC
   if (!existsSync(join(clientDir, 'index.ts')))
     return { state: 'none', manifest: previous ?? undefined }
   // Same sentence as the AGENT.md gap, so the terminal and the folder say the same thing.
-  const stale = clientGap('stale')
+  const stale = clientGap('stale', clientPath)
   if (stale !== null)
     warnings.push(stale)
   return { state: 'stale', manifest: previous ?? undefined }
@@ -514,13 +519,16 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     ...await writeExcerpts(outDir, analysis.excerpts),
   ]
   const warnings = [...analysis.warnings]
-  const { state: client, manifest } = await writeClient(outDir, analysis, options.config, files, warnings, options.force === true)
+  const clientDir = configuredClientDir(options.config, options.cwd)
+  const clientPath = relativePath(outDir, clientDir)
+  const { state: client, manifest } = await writeClient(outDir, clientDir, resolve(options.cwd), analysis, options.config, files, warnings, options.force === true)
   files.push(
     ...await writeHandoffDocs(outDir, analysis, {
       toolVersion: VERSION,
       examples: options.config.redact.examples,
       probed: analysis.flows.session.some(entry => entry.probed),
       client,
+      clientPath,
       probe: probe
         ? {
             minimizePerHost: minimizeLimit(probe),
@@ -535,17 +543,18 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
         : null,
       pageHosts,
     }),
-    await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION, manifest)),
+    await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION, manifest, clientPath)),
   )
   log(`Wrote ${files.length} files to ${outDir}`)
   // The folder must hold no secret the capture had (decision 0047). With `examples: raw` it
   // copies captured values on purpose, so the check would only restate that choice.
   if (options.config.redact.examples !== 'raw') {
-    // What build wrote this run, plus what it manages across runs: a kept `client/` and
-    // `probe.json`. Never anything else in the folder.
+    // What build wrote this run, plus what it manages across runs: the generated client files
+    // (also those a `--no-client` build kept) and `probe.json`. Never anything else in the
+    // folder, nor the person's own files next to the client (decision 0057).
     const managed = [
       ...files,
-      ...await filesUnder(join(outDir, 'client')),
+      ...Object.keys(manifest ?? {}).map(file => join(clientDir, file)),
       join(outDir, 'probe.json'),
     ]
     const leaks = await findHandoffLeaks(outDir, managed, analyzed.redactor.learntSecrets())

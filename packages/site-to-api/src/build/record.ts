@@ -8,11 +8,14 @@ import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'pathe'
+import { join, relative, resolve } from 'pathe'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 
 const BUILD_RECORD_FILE = 'build.json'
+
+/** The client folder relative to the handoff folder when `gen.clientDir` is not set. */
+const DEFAULT_CLIENT_DIR = 'client'
 
 /** Options `probe` reuses, as dotted config paths (`gen` only updates `gen.client`). */
 const STICKY_PATHS = [
@@ -41,6 +44,12 @@ const BuildRecordSchema = z.strictObject({
    */
   generated: z.record(z.string(), z.string()).optional(),
   /**
+   * The client folder relative to the handoff folder, with `/` separators (`client`, or
+   * `../client` with `gen.clientDir`), so `gen` and `mcp` find it from the handoff folder alone.
+   * Absent in older records, which means `client`.
+   */
+  clientDir: z.string().optional(),
+  /**
    * The options above that came from CLI flags or `SITE_TO_API_*` variables. `probe` and `gen`
    * reuse exactly these; the others come from the config file, which they read again anyway.
    */
@@ -49,11 +58,12 @@ const BuildRecordSchema = z.strictObject({
 export type BuildRecord = z.infer<typeof BuildRecordSchema>
 
 /** The record for a build with this config; `sources` says which values were given on the command line. */
-export function buildRecordFor(config: ResolvedConfig, sources: Record<string, ConfigSource>, toolVersion: string, generated?: Record<string, string>): BuildRecord {
+export function buildRecordFor(config: ResolvedConfig, sources: Record<string, ConfigSource>, toolVersion: string, generated?: Record<string, string>, clientDir: string = DEFAULT_CLIENT_DIR): BuildRecord {
   return {
     ...(generated === undefined
       ? {}
       : { generated }),
+    clientDir,
     formatVersion: 1,
     generatedBy: `site-to-api ${toolVersion}`,
     examples: config.redact.examples,
@@ -139,12 +149,23 @@ export function stickyOptions(record: BuildRecord | null, current: Record<string
   return result
 }
 
+/** What `gen` changed, for {@link recordClientGenerated}. */
+export interface ClientUpdate {
+  /** The MCP mode gen wrote, and whether a flag or variable chose it. */
+  mcp?: { mode: NonNullable<BuildRecord['mcp']>, sticky: boolean }
+  /** The manifest of generated files (decision 0057). */
+  generated?: Record<string, string>
+  /** The client folder relative to the handoff folder. */
+  clientDir?: string
+}
+
 /**
  * After `gen`: the folder now has a current client, so a sticky `--no-client` no longer
  * describes it, and a later `probe` should keep the client up to date. `mcp` is what gen wrote
  * into `client/mcp/`; it is sticky when a flag or variable chose it, so probe's rebuild keeps it.
  */
-export async function recordClientGenerated(outDir: string, mcp?: { mode: NonNullable<BuildRecord['mcp']>, sticky: boolean }, generated?: Record<string, string>): Promise<void> {
+export async function recordClientGenerated(outDir: string, update: ClientUpdate = {}): Promise<void> {
+  const { mcp, generated, clientDir } = update
   const record = await readBuildRecord(outDir)
   if (!record)
     return
@@ -154,6 +175,9 @@ export async function recordClientGenerated(outDir: string, mcp?: { mode: NonNul
     ...(generated === undefined
       ? {}
       : { generated }),
+    ...(clientDir === undefined
+      ? {}
+      : { clientDir }),
     client: true,
     ...(mcp === undefined
       ? {}
@@ -162,4 +186,53 @@ export async function recordClientGenerated(outDir: string, mcp?: { mode: NonNul
       ? [...sticky, 'gen.mcp' as const].sort()
       : sticky,
   })
+}
+
+/**
+ * The client folder of the handoff folder `outDir`, as `build.json` records it (decision 0057);
+ * `<outDir>/client` when no record or an older one says nothing.
+ */
+export function recordedClientDir(outDir: string, record: BuildRecord | null): string {
+  return resolve(outDir, record?.clientDir ?? DEFAULT_CLIENT_DIR)
+}
+
+/**
+ * The client folder for `config`, absolute: `gen.clientDir` resolved against `cwd`, or
+ * `<outDir>/client`.
+ */
+export function configuredClientDir(config: ResolvedConfig, cwd: string): string {
+  return config.gen.clientDir === null
+    ? resolve(cwd, config.outDir, DEFAULT_CLIENT_DIR)
+    : resolve(cwd, config.gen.clientDir)
+}
+
+/** `to` relative to `from` with `/` separators, as written into Markdown and `build.json`. */
+export function relativePath(from: string, to: string): string {
+  return relative(from, to) || '.'
+}
+
+/** The manifest of the last run for a client now in `clientDir`, and a warning when it moved. */
+export interface PreviousClient {
+  /** `null` for a folder from an older version without a manifest (decision 0057). */
+  previous: Record<string, string> | null
+  warning: string | null
+}
+
+/**
+ * What the last run generated into `clientDir`. When `gen.clientDir` changed since, the recorded
+ * files are in the old folder: the new folder starts with nothing generated, and the old one is
+ * left for the person to delete.
+ */
+export function previousClient(outDir: string, record: BuildRecord | null, clientDir: string): PreviousClient {
+  if (record === null)
+    return { previous: null, warning: null }
+  const recorded = recordedClientDir(outDir, record)
+  if (recorded === clientDir)
+    return { previous: record.generated ?? null, warning: null }
+  return {
+    previous: {},
+    warning: existsSync(recorded)
+      ? `The client moved from ${recorded} to ${clientDir} (gen.clientDir); the old folder was left as it is. Delete it once nothing imports it.`
+      : null,
+  }
 }

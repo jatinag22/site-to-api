@@ -10,6 +10,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { createJiti } from 'jiti'
 import { dirname, join } from 'pathe'
+import { readBuildRecord, recordedClientDir } from '../build/record'
 import { SiteToApiError } from '../errors'
 import { untrustedReason } from '../trust'
 
@@ -35,11 +36,12 @@ function aliases(): Record<string, string> {
 
 /** Checks the client and runs its server, which serves stdio until the client disconnects. */
 export async function serveGenerated(options: ServeGeneratedOptions): Promise<void> {
-  const server = join(options.handoffDir, 'client', 'mcp', 'server.ts')
+  const clientDir = recordedClientDir(options.handoffDir, await readBuildRecord(options.handoffDir))
+  const server = join(clientDir, 'mcp', 'server.ts')
   if (!existsSync(server))
     throw new SiteToApiError(`No generated MCP server at ${server}: run \`site-to-api gen --mcp\` first.`)
   if (!options.trustClient) {
-    const reason = await untrustedReason(join(options.handoffDir, 'client'), options.trustStore)
+    const reason = await untrustedReason(clientDir, options.trustStore)
     if (reason !== null)
       throw new SiteToApiError(reason)
   }

@@ -2,6 +2,7 @@ import type { OperationEntry } from '../mcp/catalog'
 import type { FlowsDocument } from '../model'
 import type { ClientManifest } from './manifest'
 import type { McpMode, ZodExport } from './mcp'
+import type { GeneratedPaths } from './paths'
 import type { ChannelSummary, HostSpec, OpenApiDocument } from './spec'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -20,13 +21,18 @@ import { graphqlFunctions, renderGraphqlModule } from './graphql'
 import { nameHtmlValues } from './html-values'
 import { syncGenerated } from './manifest'
 import { mcpTools, renderMcpReadme, renderMcpServer, zodExports } from './mcp'
+import { generatedPaths } from './paths'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
 import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema, withoutBrowserOnlySteps } from './spec'
 
 /** Input for {@link generateClient}. */
 export interface GenerateClientInput {
-  /** The handoff folder `build` wrote; specs are read from `specs/`, the client goes to `client/`. */
+  /** The handoff folder `build` wrote; specs are read from `specs/`. */
   handoffDir: string
+  /** Where the client goes (`gen.clientDir`); `<handoffDir>/client` when absent (decision 0057). */
+  clientDir?: string
+  /** The project root the READMEs give paths from; the handoff folder's parent when absent. */
+  root?: string
   flows: FlowsDocument
   /**
    * `read` or `write` also writes `client/mcp/`, an MCP server with a tool per operation that
@@ -69,14 +75,15 @@ export interface GenerateClientResult {
 export async function generateClient(input: GenerateClientInput): Promise<GenerateClientResult> {
   const warnings: string[] = []
   const specsDir = path.join(input.handoffDir, 'specs')
-  const clientDir = path.join(input.handoffDir, 'client')
+  const clientDir = input.clientDir ?? path.join(input.handoffDir, 'client')
+  const paths = generatedPaths(input.root ?? path.dirname(input.handoffDir), input.handoffDir, clientDir)
   const { loaded, channels } = await loadSpecs(specsDir, warnings)
 
   const seen = new Map<string, string>()
   for (const { host } of loaded) {
     const other = seen.get(host.identifier)
     if (other !== undefined)
-      throw new SiteToApiError(`specs/${other} and specs/${host.file} both map to client/${host.identifier}/; keep one spec per host and run \`site-to-api gen\` again`)
+      throw new SiteToApiError(`specs/${other} and specs/${host.file} both map to ${paths.client}/${host.identifier}/; keep one spec per host and run \`site-to-api gen\` again`)
     seen.set(host.identifier, host.file)
   }
 
@@ -85,7 +92,7 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
     // A client of no hosts does not type-check (its host union is `never`); there is nothing to
     // call, so the generated files of an earlier run are removed and nothing is written.
     if (loaded.length > 0)
-      await writeClientFiles(staging, loaded, channels, input, warnings)
+      await writeClientFiles(staging, loaded, channels, input, paths, warnings)
     const synced = await syncGenerated(staging, clientDir, input.previous ?? null, input.force === true)
     warnings.push(...synced.warnings)
     if (loaded.length === 0) {
@@ -97,8 +104,9 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
       }
     }
     // Generated here, so this machine may run it (call_operation, the generated MCP server).
-    await trustClient(clientDir, input.trustStore)
-    const files = Object.keys(synced.manifest).sort().map(file => path.posix.join('client', file))
+    await trustClient(clientDir, input.trustStore, Object.keys(synced.manifest))
+    const fromHandoff = path.relative(input.handoffDir, clientDir).split(path.sep).join('/')
+    const files = Object.keys(synced.manifest).sort().map(file => path.posix.join(fromHandoff, file))
     return {
       files,
       warnings,
@@ -112,7 +120,7 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
 }
 
 /** Writes the whole client into `clientDir` (a staging folder) and checks the code. */
-async function writeClientFiles(clientDir: string, loaded: readonly LoadedSpec[], channels: ChannelSummary[], input: GenerateClientInput, warnings: string[]): Promise<void> {
+async function writeClientFiles(clientDir: string, loaded: readonly LoadedSpec[], channels: ChannelSummary[], input: GenerateClientInput, paths: GeneratedPaths, warnings: string[]): Promise<void> {
   assertTypeScript6()
   await mkdir(clientDir, { recursive: true })
   const hosts: HostSpec[] = []
@@ -135,13 +143,13 @@ async function writeClientFiles(clientDir: string, loaded: readonly LoadedSpec[]
   const htmlValues = nameHtmlValues(input.flows, new Set(extracts.map(entry => entry.functionName)), warnings)
   await writeFile(path.join(clientDir, 'extract.ts'), renderExtractModule(extracts, htmlValues))
   await writeFile(path.join(clientDir, 'index.ts'), renderIndexModule(hosts, extracts, htmlValues))
-  await writeFile(path.join(clientDir, 'README.md'), renderReadme(hosts, extracts, input.flows.session, htmlValues, channels))
+  await writeFile(path.join(clientDir, 'README.md'), renderReadme(hosts, extracts, input.flows.session, htmlValues, channels, paths))
   if (input.mcp !== undefined && input.mcp !== 'off')
-    await writeMcpServer(clientDir, loaded, input.flows, input.mcp, warnings)
+    await writeMcpServer(clientDir, loaded, input.flows, input.mcp, paths, warnings)
 
   // Every file, hey-api's and our own, must parse and carry no regex literal a spec could have
   // put there; only then is the client copied into place and trusted on this machine.
-  await checkGeneratedCode(clientDir)
+  await checkGeneratedCode(clientDir, paths.client)
 }
 
 interface LoadedSpec {
@@ -150,7 +158,7 @@ interface LoadedSpec {
 }
 
 /** `client/mcp/` (decision 0043), from the specs and the Zod schemas hey-api just wrote. */
-async function writeMcpServer(clientDir: string, loaded: readonly LoadedSpec[], flows: FlowsDocument, mode: Exclude<McpMode, 'off'>, warnings: string[]): Promise<void> {
+async function writeMcpServer(clientDir: string, loaded: readonly LoadedSpec[], flows: FlowsDocument, mode: Exclude<McpMode, 'off'>, paths: GeneratedPaths, warnings: string[]): Promise<void> {
   const operations: OperationEntry[] = []
   const exportsByHost = new Map<string, Map<string, ZodExport>>()
   for (const { host, document } of loaded) {
@@ -166,7 +174,7 @@ async function writeMcpServer(clientDir: string, loaded: readonly LoadedSpec[], 
   const tools = mcpTools(operations, exportsByHost, mode, warnings)
   await mkdir(path.join(clientDir, 'mcp'), { recursive: true })
   await writeFile(path.join(clientDir, 'mcp', 'server.ts'), renderMcpServer(hosts, tools, mode))
-  await writeFile(path.join(clientDir, 'mcp', 'README.md'), renderMcpReadme(hosts, tools, mode))
+  await writeFile(path.join(clientDir, 'mcp', 'README.md'), renderMcpReadme(hosts, tools, mode, paths))
 }
 
 function isAsyncApi(raw: unknown): boolean {

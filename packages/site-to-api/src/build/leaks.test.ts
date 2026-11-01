@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterAll, describe, expect, it } from 'vitest'
 import { SiteToApiError } from '../errors'
-import { assertOwnOutDir, discardLeakingOutput, filesUnder, findHandoffLeaks, findLeaks, leakError, maskedHint } from './leaks'
+import { assertOwnOutDir, discardLeakingOutput, findHandoffLeaks, findLeaks, leakError, maskedHint } from './leaks'
 
 const token = 'PH8DAQEIZW52aXJvbm1lbnQBCQ'
 
@@ -60,24 +60,6 @@ describe('findHandoffLeaks', () => {
         hint: maskedHint(token),
       },
     ])
-  })
-})
-
-describe('filesUnder', () => {
-  it('lists files below a folder without node_modules, and none for a missing folder', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'site-to-api-under-'))
-    try {
-      await mkdir(join(dir, 'node_modules', 'x'), { recursive: true })
-      await writeFile(join(dir, 'index.ts'), '')
-      await writeFile(join(dir, 'node_modules', 'x', 'index.js'), '')
-      expect(await filesUnder(dir)).toEqual([
-        join(dir, 'index.ts'),
-      ])
-      expect(await filesUnder(join(dir, 'missing'))).toEqual([])
-    }
-    finally {
-      await rm(dir, { recursive: true, force: true })
-    }
   })
 })
 

@@ -129,8 +129,11 @@ describe('generateClient with mcp', () => {
 
   it('documents how to run and register it, with credentials from the environment', () => {
     expect(readme).toContain('claude mcp add site-api -e SITE_API_COOKIE=')
-    expect(readme).toContain('-- site-to-api mcp ./api-handoff --generated')
-    expect(readme).toContain('"args": [\n        "mcp",\n        "./api-handoff",\n        "--generated"\n      ]')
+    // Real paths from the project root, the handoff folder's parent by default (decision 0057).
+    const handoff = `./${path.basename(dir)}`
+    expect(readme).toContain(`-- site-to-api mcp ${handoff} --generated`)
+    expect(readme).toContain(`"args": [\n        "mcp",\n        "${handoff}",\n        "--generated"\n      ]`)
+    expect(readme).toContain(`\`npx tsx ${handoff}/client/mcp/server.ts\``)
     // Running the file directly is possible, and documented as skipping the trust check.
     expect(readme).toContain('skips that check')
     expect(readme).toContain('"mcpServers"')
