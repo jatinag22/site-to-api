@@ -454,7 +454,7 @@ interface ClientLayout {
 async function writeClient(outDir: string, layout: ClientLayout, analysis: Analysis, config: ResolvedConfig, files: string[], warnings: string[], force: boolean): Promise<{ state: ClientState, recorded: RecordedClient }> {
   const { clientDir, mcpDir, root } = layout
   const record = await readBuildRecord(outDir)
-  const moved = previousClient(outDir, record, clientDir)
+  const moved = previousClient(outDir, record, clientDir, root)
   const previous = moved.previous
   const previousMcpFiles = previousMcp(outDir, record, mcpDir)
   if (moved.warning !== null)

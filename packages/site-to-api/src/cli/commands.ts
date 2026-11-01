@@ -316,7 +316,7 @@ const genCommand: CommandRegistrar = (program) => {
       const mcpDir = sources['gen.mcpDir'] === 'default' && sources['gen.clientDir'] === 'default'
         ? recordedMcpDir(handoffDir, record)
         : configuredMcpDir(config, cwd)
-      const { previous, warning } = previousClient(handoffDir, record, clientDir)
+      const { previous, warning } = previousClient(handoffDir, record, clientDir, cwd)
       const result = await generateClient({
         handoffDir,
         clientDir,
