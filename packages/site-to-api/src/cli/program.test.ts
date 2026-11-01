@@ -113,7 +113,8 @@ describe('cli', () => {
 describe('mcp', () => {
   it('never runs a .ts config file, which a project can fill with any code', async () => {
     const marker = join(dir, 'ran.txt')
-    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\nexport default { outDir: 'handoff' }\n`)
+    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\nexport default { outDir: process.env.HANDOFF ?? 'handoff' }\n`)
+    // A plain literal outDir is read as text (decision 0058); a computed one cannot be, so it is reported.
     const stderr: string[] = []
     vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
       stderr.push(String(chunk))
@@ -149,5 +150,30 @@ describe('mcp', () => {
       '--generated',
     ], [mcpCommand])
     expect(stderr.join('')).not.toContain('Not running')
+  })
+
+  it('reads a plain outDir from a .ts config file without running it (decision 0058)', async () => {
+    const marker = join(dir, 'ran.txt')
+    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\n// outDir: 'commented'\nexport default { outDir: 'src/api/shop' }\n`)
+    const output: string[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      output.push(String(chunk))
+      return true
+    })
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      output.push(String(chunk))
+      return true
+    })
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      dir,
+      'mcp',
+      '--generated',
+    ], [mcpCommand])
+    expect(existsSync(marker)).toBe(false)
+    expect(output.join('')).toContain(`No generated MCP server at ${join(dir, 'src', 'api', 'shop', 'mcp', 'server.ts')}`)
+    expect(output.join('')).not.toContain('Not running')
   })
 })

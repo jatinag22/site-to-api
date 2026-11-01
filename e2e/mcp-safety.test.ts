@@ -78,6 +78,8 @@ describe('generated MCP server and redirects', () => {
         SITE_API_AUTH: 'key-1',
         SITE_API_MAX_RPS: '10',
       },
+      // The project root the trust check walks up to (decision 0058).
+      cwd: dir,
       stderr: 'ignore',
     }))
     try {

@@ -53,6 +53,12 @@ const ENUM_MAX_VALUES = 10
 const ENUM_MAX_LENGTH = 32
 /** Each distinct value must be seen this many times on average: a few values, many samples. */
 const ENUM_MIN_SAMPLES_PER_VALUE = 2
+/**
+ * An enum needs values seen in this many browsing sessions (decision 0058). One session shows the
+ * few values that visit happened to meet (`category: ["dairy", "snacks"]`), and the generated
+ * client then rejected every other category the site has.
+ */
+const ENUM_MIN_SESSIONS = 2
 
 /** Name words that say a field holds a code from a fixed set rather than free data. */
 const CODE_NAME_WORDS: ReadonlySet<string> = new Set([
@@ -308,7 +314,7 @@ function add(node: Node, value: unknown, sample: Visit, depth: number): void {
  * that is not an identifier (`slug`, `id`). Names, titles and other free text never become enums.
  */
 function isEnumWorthy(node: Node, values: string[], name: string | null, options: InferOptions): boolean {
-  if (node.stringOverflow || values.length < 2)
+  if (node.stringOverflow || values.length < 2 || node.sessions.size < ENUM_MIN_SESSIONS)
     return false
   // Values that differ across most samples are data, not a closed set: each distinct value must
   // have been seen at least twice on average.

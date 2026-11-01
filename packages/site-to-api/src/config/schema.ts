@@ -124,13 +124,25 @@ export const ConfigSchema = z.strictObject({
     minimizePerHost: z.number().int().min(0).default(5),
   }).prefault({}),
   gen: z.strictObject({
-    /** Generate the TypeScript client into `<outDir>/client`. */
+    /** Generate the TypeScript client (into `clientDir`). */
     client: z.boolean().default(true),
     /**
-     * Also write `client/mcp/`, an MCP server with one tool per operation: `read` exposes the
+     * Where the client goes, relative to the working directory like `outDir`; `null` means
+     * `<outDir>/client`. Lets the client live in the app's source tree apart from the handoff
+     * folder (decision 0058).
+     */
+    clientDir: z.string().min(1).nullable().default(null),
+    /**
+     * Also write an MCP server with one tool per operation (into `mcpDir`): `read` exposes the
      * operations that only read data, `write` all of them, `off` writes none (decision 0043).
      */
     mcp: z.enum(['off', 'read', 'write']).default('off'),
+    /**
+     * Where the MCP server goes, relative to the working directory; `null` means `mcp/` next to
+     * the client folder. Never inside the client folder: it is a separate program with its own
+     * dependencies, and the app's code never imports it (decision 0058).
+     */
+    mcpDir: z.string().min(1).nullable().default(null),
   }).prefault({}),
 })
 

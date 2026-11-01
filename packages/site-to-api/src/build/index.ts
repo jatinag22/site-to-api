@@ -5,8 +5,10 @@
 import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import type { ClientState } from '../emit/handoff'
+import type { ClientManifest } from '../gen'
 import type { Analysis, ImportedSession, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver, ValueTrace } from '../model'
 import type { ProbeReport } from '../model/probe'
+import type { RecordedClient } from './record'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'pathe'
@@ -25,7 +27,7 @@ import { buildAsyncApiDocuments, writeAsyncApiDocuments } from '../emit/asyncapi
 import { writeFlows } from '../emit/flows'
 import { clientGap, handoffStems, writeHandoffDocs } from '../emit/handoff'
 import { buildOpenApiDocuments, writeOpenApiDocuments } from '../emit/openapi'
-import { generateClient } from '../gen'
+import { generateClient, removeGenerated } from '../gen'
 import { registrableHost } from '../hosts'
 import { failedNavigationsWarning, loadSessions } from '../load'
 import { alignProbeReport, applyProbeReport, minimizeLimit, notMinimized, pageHostRequirements, probeFailures, readProbeReport, requirementsByOperation, testedByOperation, writeProbeReport } from '../probe'
@@ -33,10 +35,10 @@ import { VERSION } from '../version'
 import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
 import { inHostFilter, unmatchedHostPatterns } from './hosts'
-import { assertOwnOutDir, discardLeakingOutput, filesUnder, findHandoffLeaks, leakError } from './leaks'
-import { buildRecordFor, writeBuildRecord } from './record'
+import { assertOwnOutDir, discardLeakingOutput, findHandoffLeaks, leakError } from './leaks'
+import { buildRecordFor, configuredClientDir, configuredMcpDir, mcpChoice, previousClient, previousMcp, readBuildRecord, relativePath, writeBuildRecord } from './record'
 
-export { readBuildRecord, recordClientGenerated, stickyOptions } from './record'
+export { configuredClientDir, configuredMcpDir, previousClient, previousMcp, readBuildRecord, recordClientGenerated, recordedClientDir, recordedMcpDir, relativePath, stickyOptions } from './record'
 
 export interface BuildOptions {
   config: ResolvedConfig
@@ -47,6 +49,8 @@ export interface BuildOptions {
    */
   sources?: Record<string, ConfigSource>
   log?: (message: string) => void
+  /** Overwrite generated client files edited by hand (decision 0058). */
+  force?: boolean
   /**
    * The analysis of the raw captures from {@link analyzeForProbe}, for the same config: `probe`
    * hands it over so its rebuild applies the new `probe.json` instead of analysing every capture
@@ -435,31 +439,95 @@ async function withStoredProbe(captured: CapturedAnalysis, outDir: string): Prom
   return { analysis, probe, stored, redactor }
 }
 
+/** Where `build` puts the client and the MCP server, absolute. */
+interface ClientLayout {
+  clientDir: string
+  mcpDir: string
+  /** The project root generated READMEs give paths from. */
+  root: string
+}
+
 /**
- * Generates `client/` (or removes or keeps it) and says which state it is in. Pushes the files it
- * wrote to `files` and its warnings to `warnings`.
+ * Generates the client (or removes or keeps it) and says which state it is in. Pushes the files
+ * it wrote to `files` and its warnings to `warnings`; returns what `build.json` records.
  */
-async function writeClient(outDir: string, analysis: Analysis, config: ResolvedConfig, files: string[], warnings: string[]): Promise<ClientState> {
+async function writeClient(outDir: string, layout: ClientLayout, analysis: Analysis, config: ResolvedConfig, files: string[], warnings: string[], force: boolean): Promise<{ state: ClientState, recorded: RecordedClient }> {
+  const { clientDir, mcpDir, root } = layout
+  const record = await readBuildRecord(outDir)
+  const moved = previousClient(outDir, record, clientDir)
+  const previous = moved.previous
+  const previousMcpFiles = previousMcp(outDir, record, mcpDir)
+  if (moved.warning !== null)
+    warnings.push(moved.warning)
+  const clientPath = relativePath(outDir, clientDir)
+  const mcpPath = relativePath(outDir, mcpDir)
+  const kept = (manifest: ClientManifest | null): RecordedClient => ({
+    ...(manifest === null
+      ? {}
+      : { generated: manifest }),
+    generatedMcp: previousMcpFiles,
+    clientDir: clientPath,
+    mcpDir: mcpPath,
+  })
   if (config.gen.client && analysis.operations.length > 0) {
-    const generated = await generateClient({ handoffDir: outDir, flows: analysis.flows, mcp: config.gen.mcp })
+    const generated = await generateClient({
+      handoffDir: outDir,
+      clientDir,
+      mcpDir,
+      configuredFolders: { client: config.gen.clientDir !== null, mcp: config.gen.mcpDir !== null },
+      root,
+      flows: analysis.flows,
+      mcp: config.gen.mcp,
+      previous,
+      previousMcp: previousMcpFiles,
+      force,
+    })
     files.push(...generated.files.map(file => join(outDir, file)))
     warnings.push(...generated.warnings)
-    return generated.empty
-      ? 'empty'
-      : 'current'
+    return {
+      state: generated.empty
+        ? 'empty'
+        : 'current',
+      recorded: {
+        generated: generated.manifest,
+        generatedMcp: generated.mcpManifest,
+        clientDir: clientPath,
+        mcpDir: mcpPath,
+      },
+    }
   }
   if (analysis.operations.length === 0) {
-    // Nothing left to describe: a client from an earlier build would point at operations that are gone.
-    await rm(join(outDir, 'client'), { recursive: true, force: true })
-    return 'none'
+    // Nothing left to describe: a client from an earlier build would point at operations that
+    // are gone. Only its generated files go (decision 0058); a folder from an older version
+    // without a record is left as it is.
+    const removedMcp = await removeGenerated(mcpDir, previousMcpFiles, force)
+    warnings.push(...removedMcp.warnings)
+    const removed = previous === null
+      ? null
+      : await removeGenerated(clientDir, previous, force)
+    warnings.push(...removed?.warnings ?? [])
+    return {
+      state: 'none',
+      recorded: {
+        ...kept(removed?.manifest ?? null),
+        generatedMcp: removedMcp.manifest,
+      },
+    }
   }
-  if (!existsSync(join(outDir, 'client', 'index.ts')))
-    return 'none'
+  if (!existsSync(join(clientDir, 'index.ts'))) {
+    return {
+      state: 'none',
+      recorded: kept(previous),
+    }
+  }
   // Same sentence as the AGENT.md gap, so the terminal and the folder say the same thing.
-  const stale = clientGap('stale')
+  const stale = clientGap('stale', clientPath)
   if (stale !== null)
     warnings.push(stale)
-  return 'stale'
+  return {
+    state: 'stale',
+    recorded: kept(previous),
+  }
 }
 
 /**
@@ -511,13 +579,33 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     ...await writeExcerpts(outDir, analysis.excerpts),
   ]
   const warnings = [...analysis.warnings]
-  const client = await writeClient(outDir, analysis, options.config, files, warnings)
+  const clientDir = configuredClientDir(options.config, options.cwd)
+  const clientPath = relativePath(outDir, clientDir)
+  const layout = {
+    clientDir,
+    mcpDir: configuredMcpDir(options.config, options.cwd),
+    root: resolve(options.cwd),
+  }
+  const lastRecord = await readBuildRecord(outDir)
+  const mcp = mcpChoice(options.config, options.sources, lastRecord)
+  const config: ResolvedConfig = {
+    ...options.config,
+    gen: { ...options.config.gen, mcp: mcp.mode },
+  }
+  const mcpFolder = relativePath(resolve(options.cwd), layout.mcpDir)
+  if (mcp.kept)
+    log(`Kept the MCP server in ${mcpFolder}/ (gen.mcp ${mcp.mode}, from the last run); pass --mcp off or set gen.mcp to change it.`)
+  const hadMcp = Object.keys(lastRecord?.generatedMcp ?? {}).length > 0
+  const { state: client, recorded } = await writeClient(outDir, layout, analysis, config, files, warnings, options.force === true)
+  if (hadMcp && mcp.mode === 'off' && Object.keys(recorded.generatedMcp ?? {}).length === 0)
+    warnings.push(`Removed the MCP server from ${mcpFolder}/ because gen.mcp is off (set by ${options.sources?.['gen.mcp'] ?? 'the config'}); pass --mcp read or --mcp write to generate it again.`)
   files.push(
     ...await writeHandoffDocs(outDir, analysis, {
       toolVersion: VERSION,
       examples: options.config.redact.examples,
       probed: analysis.flows.session.some(entry => entry.probed),
       client,
+      clientPath,
       probe: probe
         ? {
             minimizePerHost: minimizeLimit(probe),
@@ -532,23 +620,26 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
         : null,
       pageHosts,
     }),
-    await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION)),
+    await writeBuildRecord(outDir, buildRecordFor(config, options.sources ?? {}, VERSION, recorded)),
   )
   // The folder itself is in the line the caller prints at the end.
   log(`Wrote ${files.length} files`)
   // The folder must hold no secret the capture had (decision 0047). With `examples: raw` it
   // copies captured values on purpose, so the check would only restate that choice.
   if (options.config.redact.examples !== 'raw') {
-    // What build wrote this run, plus what it manages across runs: a kept `client/` and
-    // `probe.json`. Never anything else in the folder.
+    // What build wrote this run, plus what it manages across runs: the generated client files
+    // (also those a `--no-client` build kept) and `probe.json`. Never anything else in the
+    // folder, nor the person's own files next to the client (decision 0058).
     const managed = [
       ...files,
-      ...await filesUnder(join(outDir, 'client')),
+      ...Object.keys(recorded.generated ?? {}).map(file => join(clientDir, file)),
+      ...Object.keys(recorded.generatedMcp ?? {}).map(file => join(layout.mcpDir, file)),
       join(outDir, 'probe.json'),
     ]
-    const leaks = await findHandoffLeaks(outDir, managed, analyzed.redactor.learntSecrets())
+    const roots = [outDir, clientDir, layout.mcpDir]
+    const leaks = await findHandoffLeaks(outDir, managed, analyzed.redactor.learntSecrets(), roots)
     if (leaks.length > 0)
-      throw leakError(outDir, leaks, await discardLeakingOutput(outDir, leaks))
+      throw leakError(outDir, leaks, await discardLeakingOutput(outDir, leaks, roots))
   }
   return { analysis, outDir, files, warnings }
 }

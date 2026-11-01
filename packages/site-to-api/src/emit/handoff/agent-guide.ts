@@ -258,7 +258,7 @@ function gapsSection(analysis: Analysis, context: AgentGuideContext, index: Inde
       : []),
   ]
   // Last, so `gen` can swap it (withClientState) and get exactly what a fresh build writes.
-  const client = clientGap(context.client)
+  const client = clientGap(context.client, context.clientPath)
   if (client !== null)
     gaps.push(client)
   const unique = [
@@ -394,7 +394,7 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext,
     ...(hasSource
       ? ['5. `source/`: the site\'s own code for computed values and call sites (Markdown excerpts).']
       : []),
-    clientReadingLine(context.client, hasSource ? 6 : 5),
+    clientReadingLine(context.client, hasSource ? 6 : 5, context.clientPath),
     '',
     ...hostsSection(analysis, context, index),
     ...flowsSection(analysis, index.resolver),

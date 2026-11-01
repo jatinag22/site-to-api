@@ -318,6 +318,8 @@ export interface HostSpec {
   /** Headers with `x-site-to-api-constant: true` and a default, sent on every request. */
   defaultHeaders: Record<string, string>
   operationIds: string[]
+  /** GET operations, those without path parameters first: the README's example calls one. */
+  readOperationIds: string[]
   extracts: ExtractOperation[]
   /** Security schemes the spec declares, sorted by name. */
   auth: AuthScheme[]
@@ -398,6 +400,7 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
   const { host, baseUrl } = resolveServer(file, document, warnings)
   const headerValues = new Map<string, Set<string>>()
   const operationIds: string[] = []
+  const reads: Array<{ id: string, plain: boolean }> = []
   const securedOperationIds: string[] = []
   const extracts: ExtractOperation[] = []
   const graphqlOperations: GraphqlClientOperation[] = []
@@ -409,6 +412,8 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
       continue
     }
     operationIds.push(operation.operationId)
+    if (method === 'get')
+      reads.push({ id: operation.operationId, plain: !path.includes('{') })
     // An empty list (`security: []`) is how an operation opts out of the document's default.
     if ((operation.security ?? document.security ?? []).some(requirement => Object.keys(requirement).length > 0))
       securedOperationIds.push(operation.operationId)
@@ -437,6 +442,10 @@ export function describeHost(file: string, document: OpenApiDocument, warnings: 
     baseUrl,
     defaultHeaders: settleHeaders(headerValues, file, warnings),
     operationIds: operationIds.sort(),
+    readOperationIds: [
+      ...reads.filter(read => read.plain),
+      ...reads.filter(read => !read.plain),
+    ].map(read => read.id),
     extracts: extracts.sort((a, b) => a.operationId.localeCompare(b.operationId)),
     auth: readAuthSchemes(file, document, warnings),
     securedOperationIds: securedOperationIds.sort(),

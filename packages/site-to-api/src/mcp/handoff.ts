@@ -13,7 +13,7 @@ import nodePath from 'node:path'
 import { join, relative } from 'pathe'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
-import { readBuildRecord } from '../build/record'
+import { readBuildRecord, recordedClientDir } from '../build/record'
 import { SiteToApiError } from '../errors'
 import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema } from '../gen/spec'
 import { FlowsDocumentSchema } from '../model'
@@ -44,7 +44,9 @@ export interface Handoff {
   build: BuildRecord | null
   /** Excerpt files relative to the folder (`source/src/auth/crypto.L18-28.ts.md`), sorted. */
   excerpts: string[]
-  /** `client/index.ts` exists, so calls can go through the generated client. */
+  /** The client folder, absolute: `client/` or where `build.json` says (decision 0058). */
+  clientDir: string
+  /** `index.ts` exists in the client folder, so calls can go through the generated client. */
   clientGenerated: boolean
   /** Problems that only lose detail; the server still starts. */
   warnings: string[]
@@ -166,6 +168,8 @@ export async function loadHandoff(dir: string): Promise<Handoff> {
   const warnings: string[] = []
   const flows = await readFlows(dir)
   const specs = await readSpecs(dir, warnings)
+  const build = await readBuildRecord(dir)
+  const clientDir = recordedClientDir(dir, build)
   const hosts: HandoffHost[] = []
   const operations: OperationEntry[] = []
   for (const { file, document } of specs.openApi) {
@@ -190,9 +194,10 @@ export async function loadHandoff(dir: string): Promise<Handoff> {
     operations,
     channels: specs.asyncApi.flatMap(entry => entry.channels),
     flows,
-    build: await readBuildRecord(dir),
+    build,
     excerpts: await listExcerpts(dir, warnings),
-    clientGenerated: existsSync(join(dir, 'client', 'index.ts')),
+    clientDir,
+    clientGenerated: existsSync(join(clientDir, 'index.ts')),
     warnings,
   }
 }

@@ -10,6 +10,9 @@
  * - {@link requestValidationInput}: used by generated clients before validating a request.
  * - {@link graphqlQuerySerializer}, {@link fetchWithoutFragment}: used by generated GraphQL functions.
  *
+ * HTML is parsed with the browser's `DOMParser` where there is one; the `browser` build (picked by
+ * bundlers through the `browser` export condition) has no other HTML parser in it.
+ *
  * Uses only web-standard APIs (`fetch`, `Request`, `Headers`, `URL`), so it runs on Node 22+,
  * Bun, Deno and Cloudflare Workers.
  *
@@ -20,7 +23,7 @@ export type { Cookie, CookieJarOptions, SerializedCookieJar, SetCookieOptions, S
 export { isSiteApiError, SiteApiError } from './errors'
 export type { SiteApiErrorInit } from './errors'
 export { extract, extractValue } from './extract'
-export type { ExtractedRecord, ExtractField, ExtractSpec, FieldType, HtmlExtractSpec, HtmlValueLocation, TextExtractSpec } from './extract'
+export type { ExtractedRecord, ExtractField, ExtractSpec, FieldType, HtmlEngine, HtmlExtractSpec, HtmlValueLocation, TextExtractSpec } from './extract'
 export { fetchWithoutFragment, graphqlQuerySerializer, withoutFragment } from './graphql'
 export { createFetch, requestValidationInput } from './http'
 export type { CreateFetchOptions, RetryOptions } from './http'

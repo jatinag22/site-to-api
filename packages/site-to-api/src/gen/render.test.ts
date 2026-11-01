@@ -4,7 +4,7 @@ import type { ExtractOperation, HostSpec } from './spec'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { HOSTILE, injected, renderMarkdown } from '../../test/markdown'
-import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
+import { exportedFunctions, nameExtracts, renderExtractModule, renderHostSiteModule, renderIndexModule, renderOptionsModule, renderReadme } from './render'
 
 const listExtract: ExtractOperation = {
   operationId: 'getList',
@@ -70,6 +70,7 @@ function host(overrides: Partial<HostSpec> = {}): HostSpec {
     baseUrl: 'https://a.example.com',
     defaultHeaders: {},
     operationIds: ['getList'],
+    readOperationIds: ['getList'],
     extracts: [listExtract],
     auth: [],
     securedOperationIds: [],
@@ -158,11 +159,12 @@ describe('renderExtractModule', () => {
     const code = renderExtractModule(nameExtracts([
       host(),
     ], []))
-    expect(code).toContain(`export const zGetListRecord = z.object({
-  "name": z.string().nullable(),
-  "count": z.number().int().nullable().optional(),
-  "on sale": z.boolean().nullable(),
-})`)
+    expect(code).toContain(`import * as z from 'zod/mini'`)
+    expect(code).toContain(`export const zGetListRecord = /* @__PURE__ */ (() => z.object({
+  "name": z.nullable(z.string()),
+  "count": z.optional(z.nullable(z.int())),
+  "on sale": z.nullable(z.boolean()),
+}))()`)
     expect(code).toContain('export function extractGetList(text: string): GetListRecord[] {\n  return z.array(zGetListRecord).parse(extract(text, getListSpec))')
   })
 
@@ -173,7 +175,7 @@ describe('renderExtractModule', () => {
       }),
     ], []))
     expect(code).toContain('export function extractGetDetail(text: string): GetDetailRecord {\n  return zGetDetailRecord.parse(')
-    expect(code).toContain('"added": z.string().nullable(),')
+    expect(code).toContain('"added": z.nullable(z.string()),')
   })
 
   it('writes an empty module when there is nothing to extract', () => {
@@ -235,20 +237,24 @@ describe('renderIndexModule', () => {
         defaultHeaders: { 'x-a': '1' },
       }),
     ], [])
+    const site = renderHostSiteModule(host({
+      defaultHeaders: { 'x-a': '1' },
+    }), [])
     expect(code).toContain(`import * as a_example_com from './a_example_com/index.js'`)
-    expect(code).toContain(`import { client as a_example_comClient } from './a_example_com/client.gen.js'`)
-    expect(code).toContain('    headers: {\n      "x-a": "1",\n    },')
+    expect(code).toContain(`export { createAExampleComClient } from './a_example_com/site.js'`)
+    expect(site).toContain(`import { createClient, createConfig } from './client/index.js'`)
+    expect(site).toContain('  headers: {\n    "x-a": "1",\n  },')
     expect(code).not.toContain(`from './extract.js'`)
-    expect(code).toContain('auth: options.auth')
+    expect(renderOptionsModule()).toContain('...(options.auth === undefined ? {} : { auth: options.auth }),')
     // Every relative specifier carries an extension, so `nodenext` resolution accepts it.
-    for (const [, specifier] of code.matchAll(/from '(\.[^']*)'/g))
+    for (const [, specifier] of `${code}\n${site}`.matchAll(/from '(\.[^']*)'/g))
       expect(specifier).toMatch(/\.js$/)
   })
 })
 
 describe('renderIndexModule credentials', () => {
   it('passes the apiKey header names, which the runtime drops on a redirect to another origin', () => {
-    const code = renderIndexModule([
+    const code = renderHostSiteModule(
       host({
         auth: [
           {
@@ -274,9 +280,10 @@ describe('renderIndexModule credentials', () => {
           },
         ],
       }),
-    ], [])
-    expect(code).toContain('    credentialHeaders: ["x-api-key"],')
-    expect(code).toContain('    credentialHeaders: defaults.credentialHeaders,')
+      [],
+    )
+    expect(code).toContain('  credentialHeaders: ["x-api-key"],')
+    expect(renderOptionsModule()).toContain('    credentialHeaders: defaults.credentialHeaders,')
   })
 })
 
@@ -297,11 +304,24 @@ describe('dispatcher wrappers (decision 0039)', () => {
   ]
 
   it('puts the wrappers in `sdk` in place of the raw functions', () => {
+    const functions = new Map([
+      [
+        'a.example.com',
+        [
+          ...exportedFunctions('export const getSymbolData = <ThrowOnError extends boolean = false>(options?: Options) => x\nexport const getRoot = <ThrowOnError extends boolean = false>(options?: Options) => x\n', 'sdk'),
+          ...exportedFunctions('export function getSymbolData<ThrowOnError extends boolean = false>(options: O) {}\n', 'dispatch'),
+        ],
+      ],
+    ])
     const code = renderIndexModule([
       host({ dispatch }),
-    ], [])
-    expect(code).toContain(`import * as a_example_comDispatch from './a_example_com/dispatch.js'`)
-    expect(code).toContain('    sdk: { ...a_example_com, ...a_example_comDispatch },')
+    ], [], [], functions)
+    const site = renderHostSiteModule(host({ dispatch }), functions.get('a.example.com') ?? [])
+    expect(site).toContain(`export { getSymbolData } from './dispatch.js'`)
+    expect(site).toContain(`export { getRoot } from './sdk.gen.js'`)
+    expect(code).toContain(`import * as a_example_comSite from './a_example_com/site.js'`)
+    expect(code).toContain('    getSymbolData: <ThrowOnError extends boolean = false>(...[options]: Parameters<typeof a_example_comSite.getSymbolData<ThrowOnError>>) => a_example_comSite.getSymbolData<ThrowOnError>({ ...options, client }),')
+    expect(code).toContain('    getRoot: <ThrowOnError extends boolean = false>(...[options]: Parameters<typeof a_example_comSite.getRoot<ThrowOnError>>) => a_example_comSite.getRoot<ThrowOnError>({ ...options, client }),')
   })
 
   it('lists the functions per endpoint in the README', () => {
@@ -434,7 +454,7 @@ describe('renderReadme auth and usage', () => {
     securedOperationIds: ['getOrders'],
   })
 
-  it('uses the sdk returned by createSiteClient and says the configuration is per host', () => {
+  it('uses the sdk returned by createSiteClient and says each call has its own client', () => {
     const readme = renderReadme([
       host(),
     ], [], [
@@ -443,15 +463,37 @@ describe('renderReadme auth and usage', () => {
     expect(readme).toContain('const { sdk } = createSiteClient({ host: "a.example.com", jar })')
     expect(readme).toContain('const { data, error } = await sdk.getList(')
     expect(readme).not.toContain('a_example_com.getList(')
-    expect(readme).toContain('calling it twice for\nthe same host replaces the first configuration')
+    expect(readme).toContain('Each call creates a hey-api client of its own and binds the host\'s functions to\nit, so two instances (one per user or account) never share cookies, credentials or settings.')
     expect(readme).toContain(`from './client/index.js'`)
   })
 
-  it('says build and probe regenerate the client and gen only regenerates this folder', () => {
+  it('calls a read operation in the examples and says what to install, commit and deploy where (decision 0058)', () => {
+    const readme = renderReadme([
+      host({
+        operationIds: ['addItem', 'getList'],
+        readOperationIds: ['getList'],
+      }),
+    ], [], [])
+    expect(readme).toContain('const { data, error } = await sdk.getList(')
+    expect(readme).toContain('- Dependencies: `@site-to-api/runtime` and `zod` (4.1 or later; the client uses `zod/mini`).')
+    expect(readme).toContain('`playwright` too, only if you use `browserSession`.')
+    expect(readme).toContain('## What to commit')
+    expect(readme).toContain('- Never commit the raw captures')
+    expect(readme).toContain('## Deploy targets')
+    expect(readme).toContain('`CookieJar.fromJSON(saved)` on each request')
+    expect(readme).toContain('- Browser: only from the site\'s own origin')
+    expect(readme).toContain(`import { createAExampleComClient, getList } from './client/a_example_com/site.js'`)
+    expect(readme).toContain('const { data, error } = await getList({ client })')
+  })
+
+  it('says build and probe regenerate the client, gen only the client, and gives real paths', () => {
     const readme = renderReadme([
       host(),
     ], [], [])
-    expect(readme).toContain('`site-to-api build` and\n`site-to-api probe` regenerate them, and `site-to-api gen` regenerates only this folder')
+    expect(readme).toContain('files: `site-to-api build` and `site-to-api probe` regenerate them, and `site-to-api gen`\nregenerates only the client')
+    expect(readme).toContain('Generated from `../specs/` and `../flows.json` (the handoff folder `api-handoff/`)')
+    expect(readme).toContain('files of your own in this folder are left alone.')
+    expect(readme).toContain('`api-handoff/client/index.js` from the project root')
     expect(readme).not.toContain('again after `build` or `probe`')
   })
 
@@ -516,6 +558,7 @@ describe('hostile operation ids, labels and headers', () => {
   const hostile = host({
     host: 'a`b$c.example',
     operationIds: [breakout],
+    readOperationIds: [breakout],
     auth: [
       {
         name: breakout,
@@ -571,8 +614,9 @@ describe('hostile operation ids, labels and headers', () => {
     const html = renderMarkdown(readme)
     expect(injected(html)).toEqual([])
     expect(html).not.toMatch(/<h\d>\s*Pwned/)
-    expect(html.match(/<h\d>/g)).toHaveLength(7)
-    expect(html.match(/<pre>/g)).toHaveLength(1)
+    // Upgrading, what to commit, deploy targets and small bundles add four headings and a code block.
+    expect(html.match(/<h\d>/g)).toHaveLength(11)
+    expect(html.match(/<pre>/g)).toHaveLength(2)
     // The example call falls back to a placeholder rather than an id that is not an identifier.
     expect(readme).toContain('sdk.someOperation(')
   })

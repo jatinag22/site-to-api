@@ -68,6 +68,7 @@ describe('createCaller', () => {
     let clock = 0
     const call = createCaller({
       handoff,
+      projectRoot: dir,
       maxRps: 2,
       timeoutMs: 5_000,
       env: { SITE_API_COOKIE: 'session=s-1; theme=dark', SITE_API_AUTH: 'Bearer t-1' },
@@ -109,6 +110,7 @@ describe('createCaller', () => {
     const handoff = await loadHandoff(dir)
     const call = createCaller({
       handoff,
+      projectRoot: dir,
       maxRps: 10,
       timeoutMs: 5_000,
       env: {},

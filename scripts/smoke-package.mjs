@@ -325,7 +325,11 @@ export default defineConfig({
   step(`${manager}: type-check the generated client`)
   writeFileSync(join(dir, 'tsconfig.json'), `${JSON.stringify({
     compilerOptions: {
+      // The strictest flags an app may turn on (decision 0058).
       strict: true,
+      noUncheckedIndexedAccess: true,
+      exactOptionalPropertyTypes: true,
+      noImplicitOverride: true,
       module: 'nodenext',
       moduleResolution: 'nodenext',
       target: 'es2023',
@@ -333,8 +337,8 @@ export default defineConfig({
       skipLibCheck: false,
       types: [],
     },
+    // The MCP server sits next to the client (api-handoff/mcp), outside this include.
     include: ['api-handoff/client/**/*.ts'],
-    exclude: ['api-handoff/client/mcp/**'],
   }, null, 2)}\n`)
   run(exec[0], [
     ...(manager === 'npm'

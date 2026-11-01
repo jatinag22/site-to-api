@@ -1,17 +1,19 @@
 /**
- * `client/mcp/`: a standalone MCP server for one site, one tool per operation, written by `gen`
+ * `mcp/`: a standalone MCP server for one site, one tool per operation, written by `gen`
  * when `gen.mcp` is `read` or `write` (decision 0043). Tools take the generated Zod schemas as
  * input schemas and call through the typed client, so requests are validated and sent the way
  * `client/` sends them. Pure: the caller passes the specs' operations and the names `zod.gen.ts`
  * exports, and writes the files.
  */
 import type { OperationEntry } from '../mcp/catalog'
+import type { GeneratedPaths } from './paths'
 import { createHash } from 'node:crypto'
 import { toCase } from '@hey-api/shared'
 import { z } from 'zod'
 import { oneLine } from '../emit/escape'
 import { sdkFunctionName } from '../emit/naming'
 import { changesData, neverSentReason } from '../probe/safety'
+import { DEFAULT_PATHS, dotted } from './paths'
 
 /** Which operations the generated server exposes. */
 export type McpMode = 'off' | 'read' | 'write'
@@ -39,7 +41,8 @@ export interface ZodExport {
 /** The exports of a hey-api `zod.gen.ts`, read from its text. */
 export function zodExports(source: string): ZodExport[] {
   return [
-    ...source.matchAll(/^export const (z\w+) = (z\.object\()?/gm),
+    // Schemas may be wrapped in a pure call by `gen` (see gen/pure).
+    ...source.matchAll(/^export const (z\w+) = (?:\/\* @__PURE__ \*\/ \(\(\) => )?(z\.object\()?/gm),
   ].map(match => ({
     name: match[1] ?? '',
     object: match[2] !== undefined,
@@ -83,7 +86,7 @@ const RequestBodySchema = z.looseObject({
 interface ToolField {
   key: 'path' | 'query' | 'body' | 'headers' | 'variables'
   expression: string
-  /** Leave the expression as it is; otherwise `.optional()` is added. */
+  /** Leave the expression as it is; otherwise it is wrapped in `z.exactOptional(…)`. */
   required: boolean
 }
 
@@ -127,7 +130,7 @@ function graphqlFields(context: FieldContext, variablesIn: 'body' | 'query' | nu
       { key: 'variables', expression: `${context.ref(holder)}.shape.variables`, required: true },
     ]
   }
-  context.warnings.push(`client/mcp: ${context.entry.operationId} has no Zod object for its GraphQL variables; its tool accepts any variables object`)
+  context.warnings.push(`mcp: ${context.entry.operationId} has no Zod object for its GraphQL variables; its tool accepts any variables object`)
   return [
     { key: 'variables', expression: ANY_OBJECT, required: false },
   ]
@@ -141,7 +144,7 @@ function dispatchFields(context: FieldContext, argument: 'query' | 'body' | null
     : 'Body')
   // The wrapper sends the dispatcher parameter itself (decision 0039).
   const expression = holder?.object === true
-    ? `${context.ref(holder)}.omit({ ${JSON.stringify(context.entry.dispatch?.parameter ?? '')}: true })`
+    ? `z.object(${context.ref(holder)}.shape).omit({ ${JSON.stringify(context.entry.dispatch?.parameter ?? '')}: true })`
     : ANY_OBJECT
   return [
     { key: argument, expression, required: argument === 'query' && context.requiredIn('query') },
@@ -236,7 +239,7 @@ function exposed(entry: OperationEntry, mode: Exclude<McpMode, 'off'>, warnings:
     return false
   if (PLAIN_IDENTIFIER.test(sdkFunctionName(entry.operationId)))
     return true
-  warnings.push(`client/mcp: ${entry.operationId} has no plain SDK function name, so it gets no tool`)
+  warnings.push(`mcp: ${entry.operationId} has no plain SDK function name, so it gets no tool`)
   return false
 }
 
@@ -287,16 +290,18 @@ function literal(value: unknown): string {
 }
 
 function renderTool(tool: McpTool): string {
-  const fields = tool.fields.map(field => `      ${field.key}: ${field.expression}${field.required
-    ? ''
-    : '.optional()'},`)
+  // `exactOptional`: a missing field stays missing instead of becoming `undefined`, which the SDK
+  // options reject under `exactOptionalPropertyTypes` (decision 0058).
+  const fields = tool.fields.map(field => `      ${field.key}: ${field.required
+    ? field.expression
+    : `z.exactOptional(${field.expression})`},`)
   return [
     `  server.registerTool(${literal(tool.name)}, {`,
     `    title: ${literal(tool.title)},`,
     `    description: ${literal(tool.description)},`,
-    `    inputSchema: z.object({`,
+    `    inputSchema: toolInput(z.object({`,
     ...fields,
-    `    }),`,
+    `    })),`,
     `    annotations: { readOnlyHint: ${!tool.changesData}, destructiveHint: ${tool.changesData}, idempotentHint: ${!tool.changesData}, openWorldHint: true },`,
     `  }, async args => respond(() => clients[${literal(tool.host)}].sdk[${literal(tool.sdkFunction)}](args)))`,
   ].join('\n')
@@ -309,8 +314,11 @@ export interface McpHost {
   baseUrl: string
 }
 
-/** `client/mcp/server.ts`. */
-export function renderMcpServer(hosts: readonly McpHost[], tools: readonly McpTool[], mode: Exclude<McpMode, 'off'>): string {
+/** The `@modelcontextprotocol/server` version the generated server is written and tested against. */
+export const MCP_SERVER_VERSION = '2.4.0'
+
+/** `mcp/server.ts`; `client` is the client folder from the server's folder (`../client`). */
+export function renderMcpServer(hosts: readonly McpHost[], tools: readonly McpTool[], mode: Exclude<McpMode, 'off'>, client = '../client'): string {
   const used = hosts.filter(host => tools.some(tool => tool.host === host.host))
   // Only hosts whose tools use a schema: hey-api writes no zod.gen.ts for a host without any.
   const withSchemas = used.filter(host => tools.some(tool => tool.host === host.host
@@ -326,18 +334,32 @@ export function renderMcpServer(hosts: readonly McpHost[], tools: readonly McpTo
     ` * Credentials come only from the SITE_API_* environment variables of the process.`,
     ` */`,
     `import type { CallToolResult } from '@modelcontextprotocol/server'`,
-    `import type { SiteHost } from '../index.js'`,
+    `import type { SiteHost } from '${client}/index.js'`,
     `import { McpServer } from '@modelcontextprotocol/server'`,
     `import { serveStdio } from '@modelcontextprotocol/server/stdio'`,
+    // Classic Zod for the tool schemas, which the MCP SDK's types expect; the client's own
+    // schemas are Zod Mini and nest inside them. The server is not part of the app's bundle.
     `import { z } from 'zod'`,
-    `import { CookieJar, createSiteClient } from '../index.js'`,
-    ...withSchemas.map(host => `import * as ${zodAlias(host.identifier)} from '../${host.identifier}/zod.gen.js'`),
+    `import { CookieJar, createSiteClient } from '${client}/index.js'`,
+    ...withSchemas.map(host => `import * as ${zodAlias(host.identifier)} from '${client}/${host.identifier}/zod.gen.js'`),
     '',
     `// Only the environment is read, so this file needs no Node type definitions.`,
     `declare const process: { env: Record<string, string | undefined> }`,
     '',
     `const HOST_COUNT = ${hosts.length}`,
     `const MAX_TEXT = 50_000`,
+    '',
+    `/**`,
+    ` * The tool's input schema with a JSON Schema the MCP SDK can read. The client's schemas are Zod`,
+    ` * Mini, which classic Zod's \`~standard.jsonSchema\` does not convert inside a classic object,`,
+    ` * while \`z.toJSONSchema\` does. Validation stays Zod's own.`,
+    ` */`,
+    `function toolInput<T extends z.ZodObject>(schema: T): T {`,
+    `  const standard = schema['~standard']`,
+    `  const convert = (io: 'input' | 'output') => (options: { target: string }) => z.toJSONSchema(schema, { io, target: options.target === 'draft-07' ? 'draft-07' : 'draft-2020-12' })`,
+    `  Object.defineProperty(schema, '~standard', { value: { ...standard, jsonSchema: { input: convert('input'), output: convert('output') } } })`,
+    `  return schema`,
+    `}`,
     '',
     `/** \`SITE_API_<NAME>_<HOST>\`, then \`SITE_API_<NAME>\` when there is a single host. */`,
     `function setting(name: string, identifier: string): string | undefined {`,
@@ -434,8 +456,9 @@ export function renderMcpServer(hosts: readonly McpHost[], tools: readonly McpTo
   ].join('\n')
 }
 
-/** `client/mcp/README.md`: how to run and register the server. */
-export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTool[], mode: Exclude<McpMode, 'off'>): string {
+/** `mcp/README.md`: how to run and register the server. */
+export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTool[], mode: Exclude<McpMode, 'off'>, paths: GeneratedPaths = DEFAULT_PATHS): string {
+  const handoff = dotted(paths.handoff)
   const single = hosts.length === 1
   const example = hosts[0]?.identifier.toUpperCase() ?? 'HOST'
   const env = single
@@ -452,24 +475,28 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
     '',
     '## Run',
     '',
-    '`site-to-api mcp --generated` brings the MCP SDK, zod and the runtime itself. To type-check the',
-    'file, or run it some other way, the project needs them next to the client:',
+    `This folder is a program of its own: the app never imports it, and the client in \`${paths.client}/\``,
+    'does not depend on it. `site-to-api mcp --generated` brings the MCP SDK, zod and the runtime',
+    'itself, so running it needs no install. A type check that includes this folder needs the MCP',
+    `server package (\`@modelcontextprotocol/server\`, not \`@modelcontextprotocol/sdk\`) besides the`,
+    'client\'s own dependencies; Node type definitions are not needed. Install it, or leave this',
+    `folder out of your tsconfig.json (\`"exclude": ["${paths.mcp}"]\`):`,
     '',
     '```sh',
-    'npm install @modelcontextprotocol/server@2.4.0 zod @site-to-api/runtime',
-    'npm install -D @types/node   # the server reads process.env; tsc needs Node\'s types',
+    `npm install -D @modelcontextprotocol/server@${MCP_SERVER_VERSION}`,
+    'npm install zod @site-to-api/runtime   # already needed by the client',
     '```',
     '',
     'Register it with Claude Code (from the folder that holds the handoff folder). `site-to-api mcp',
-    '--generated` runs this server only when this machine generated `client/` and nothing changed it',
+    `--generated\` runs this server only when this machine generated \`${paths.client}/\` and nothing changed it`,
     'since; a client from someone else (a cloned repository) is refused until you run',
     '`site-to-api gen`, or review it and add `--trust-client`:',
     '',
     '```sh',
-    `claude mcp add site-api -e ${env}='name=value; other=value' -- site-to-api mcp ./api-handoff --generated`,
+    `claude mcp add site-api -e ${env}='name=value; other=value' -- site-to-api mcp ${handoff} --generated`,
     '```',
     '',
-    'Running the file directly (`npx tsx ./api-handoff/client/mcp/server.ts`) skips that check: it',
+    `Running the file directly (\`npx tsx ${dotted(paths.mcp)}/server.ts\`) skips that check: it`,
     'runs whatever code the folder holds, with your environment. Do that only with a client you',
     'generated or reviewed.',
     '',
@@ -480,7 +507,7 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
       mcpServers: {
         'site-api': {
           command: 'site-to-api',
-          args: ['mcp', './api-handoff', '--generated'],
+          args: ['mcp', handoff, '--generated'],
           env: { [env]: 'name=value' },
         },
       },
@@ -496,7 +523,7 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
       : '_<HOST>'}\`: cookies to send, as a \`Cookie\` header (\`name=value; other=value\`).`,
     `- \`SITE_API_AUTH${single
       ? ''
-      : '_<HOST>'}\`: the credential for operations whose spec declares \`security\` (see \`client/README.md\`).`,
+      : '_<HOST>'}\`: the credential for operations whose spec declares \`security\` (see \`${paths.client}/README.md\`).`,
     `- \`SITE_API_BASE_URL${single
       ? ''
       : '_<HOST>'}\`: another base URL, e.g. a staging host.`,
@@ -508,7 +535,7 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
         ]
       : [
           '',
-          `\`<HOST>\` is the host's folder under \`client/\` in upper case: ${hosts.map(host => `\`${host.identifier.toUpperCase()}\``).join(', ')}. With several hosts the plain names are not read, so a cookie is never sent to the wrong site.`,
+          `\`<HOST>\` is the host's folder under \`${paths.client}/\` in upper case: ${hosts.map(host => `\`${host.identifier.toUpperCase()}\``).join(', ')}. With several hosts the plain names are not read, so a cookie is never sent to the wrong site.`,
         ]),
     '',
   ].join('\n')

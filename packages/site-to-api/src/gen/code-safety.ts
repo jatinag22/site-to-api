@@ -120,16 +120,16 @@ function syntaxErrors(file: string, source: ts.SourceFile): readonly ts.Diagnost
  * or has a regular expression literal other than hey-api's template ones in its `core/` folder:
  * either means a spec value changed the code. Nothing in `client/` should be used then.
  */
-export async function checkGeneratedCode(clientDir: string): Promise<void> {
+export async function checkGeneratedCode(clientDir: string, label = 'client'): Promise<void> {
   for (const file of await typeScriptFiles(clientDir)) {
     const relative = path.relative(clientDir, file).split(path.sep).join('/')
     const source = ts.createSourceFile(file, await readFile(file, 'utf8'), ts.ScriptTarget.ES2023, true, ts.ScriptKind.TS)
     const [error] = syntaxErrors(file, source)
     if (error !== undefined)
-      throw new SiteToApiError(`Generated client/${relative} does not parse (${ts.flattenDiagnosticMessageText(error.messageText, ' ')}): a spec value broke the code. Do not use client/; report the spec that caused it.`)
+      throw new SiteToApiError(`Generated ${label}/${relative} does not parse (${ts.flattenDiagnosticMessageText(error.messageText, ' ')}): a spec value broke the code. Do not use ${label}/; report the spec that caused it.`)
     const inCore = /^[^/]+\/core\//.test(relative)
     const stray = regexLiterals(source).find(literal => !inCore || !TEMPLATE_REGEXES.has(literal))
     if (stray !== undefined)
-      throw new SiteToApiError(`Generated client/${relative} has the regular expression ${stray.slice(0, 80)}, which no generated file should have: a spec value became code. Do not use client/; report the spec that caused it.`)
+      throw new SiteToApiError(`Generated ${label}/${relative} has the regular expression ${stray.slice(0, 80)}, which no generated file should have: a spec value became code. Do not use ${label}/; report the spec that caused it.`)
   }
 }

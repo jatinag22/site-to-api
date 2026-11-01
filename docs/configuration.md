@@ -79,5 +79,7 @@ when they can be: `SITE_TO_API_PROBE__MAX_RPS=0.5`, `SITE_TO_API_HOSTS__INCLUDE=
 
 | Key | Type | Default | Environment variable | Meaning |
 | --- | --- | --- | --- | --- |
-| `gen.client` | boolean | `true` | `SITE_TO_API_GEN__CLIENT` | Generate the TypeScript client into `<outDir>/client`. |
-| `gen.mcp` | `"off"`, `"read"`, `"write"` | `"off"` | `SITE_TO_API_GEN__MCP` | Also write `client/mcp/`, an MCP server with one tool per operation: `read` exposes the operations that only read data, `write` all of them, `off` writes none (decision 0043). |
+| `gen.client` | boolean | `true` | `SITE_TO_API_GEN__CLIENT` | Generate the TypeScript client (into `clientDir`). |
+| `gen.clientDir` | string or null | `null` | `SITE_TO_API_GEN__CLIENT_DIR` | Where the client goes, relative to the working directory like `outDir`; `null` means `<outDir>/client`. Lets the client live in the app's source tree apart from the handoff folder (decision 0058). |
+| `gen.mcp` | `"off"`, `"read"`, `"write"` | `"off"` | `SITE_TO_API_GEN__MCP` | Also write an MCP server with one tool per operation (into `mcpDir`): `read` exposes the operations that only read data, `write` all of them, `off` writes none (decision 0043). |
+| `gen.mcpDir` | string or null | `null` | `SITE_TO_API_GEN__MCP_DIR` | Where the MCP server goes, relative to the working directory; `null` means `mcp/` next to the client folder. Never inside the client folder: it is a separate program with its own dependencies, and the app's code never imports it (decision 0058). |

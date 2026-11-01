@@ -21,7 +21,11 @@
   ],
   "sideEffects": false,
   "exports": {
-    ".": "./dist/index.mjs",
+    ".": {
+      "types": "./dist/index.d.mts",
+      "browser": "./dist/browser.mjs",
+      "default": "./dist/index.mjs"
+    },
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.mts",
@@ -43,5 +47,8 @@
     "domutils": "catalog:prod",
     "htmlparser2": "catalog:prod",
     "zod": "catalog:prod"
+  },
+  "devDependencies": {
+    "happy-dom": "catalog:dev"
   }
 }

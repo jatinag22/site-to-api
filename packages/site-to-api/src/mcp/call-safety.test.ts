@@ -93,6 +93,7 @@ describe('call_operation through the generated client', () => {
   async function connect(options: { trustClient?: boolean, trustStore?: string, env?: Record<string, string> } = {}): Promise<Client> {
     const caller = createCaller({
       handoff,
+      projectRoot: dir,
       maxRps: 10,
       timeoutMs: 5_000,
       env: options.env ?? {},

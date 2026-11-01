@@ -224,8 +224,14 @@ export default defineConfig({
   },
   redact: { examples: 'masked' }, // 'raw' copies real values into the handoff folder
   probe: { maxRps: 1, unsafeMethods: false, minimizePerHost: 5 },
+  // The client goes to <outDir>/client unless clientDir puts it in your app's source tree.
+  gen: { client: true, clientDir: null, mcp: 'off' },
 })
 ```
+
+`build` and `gen` replace only the client files they generated (recorded with their hashes in
+`build.json`): your own files in the client folder are left alone, and a generated file you edited
+is kept and reported until `--force` overwrites it.
 
 Precedence: CLI flags > `SITE_TO_API_*` environment variables > config file > defaults. Unknown
 keys are errors, and `site-to-api config` shows which source set each value.
@@ -402,10 +408,24 @@ Endpoints where one parameter picks the function (`?functionName=getSymbolData`,
 `admin-ajax.php` with `action=`, JSON-RPC `method`) get one function per captured value, which
 sends that parameter itself: `await sdk.getSymbolData({ query: { symbol } })`.
 
-`createSiteClient` configures one shared client per host; calling it again for the same host
-replaces the configuration. Hosts that work with plain HTTP need no browser: leave out `session`, or
+Each `createSiteClient` call creates a client of its own, so one instance per user or account
+never shares cookies or credentials with another. Hosts that work with plain HTTP need no browser: leave out `session`, or
 use `tokenSession`. `api-handoff/client/README.md` says what each host needs, which operations are
 secured and how to send `auth`.
+
+### Upgrading a generated client
+
+Clients generated before this version change in ways existing code notices; `gen` warns once
+when it rewrites one:
+
+- Each `createSiteClient` call creates its own client. Call operations through the `sdk` it
+  returns: the host namespaces exported from `index.ts` no longer share that configuration and
+  throw when called without `{ client }`, instead of silently sending requests without your
+  session.
+- Schemas are Zod Mini (`z.optional(schema)` instead of `schema.optional()`; `.parse` still works).
+- The MCP server moved from `client/mcp/` to `mcp/` next to the client.
+- Files you add to the client folder are kept, and hand edits to generated files are reported
+  (`--force` overwrites them).
 
 ## Use with AI agents (MCP)
 
@@ -415,7 +435,8 @@ Two MCP servers, both over stdio (decision 0043).
 instead of reading every spec. It reads only the redacted handoff files, never the raw captures.
 It also starts before the folder exists; its tools then say to run `capture` and `build`, and pick
 the folder up once it is written. It runs no code from the project: a `site-to-api.config.ts` is
-ignored (pass the folder, or use `site-to-api.config.json`).
+not run, only a plain `outDir: '…'` string in it is read (otherwise pass the folder, or use
+`site-to-api.config.json`). The client folder comes from `build.json`.
 
 ```sh
 claude mcp add site-api -- site-to-api mcp ./api-handoff
@@ -449,12 +470,18 @@ environment. So `gen` (and `build`) records a hash of `client/` in
 project, and both refuse a client whose files do not match: "this client wasn't generated on this
 machine. If you don't trust this project, review or delete its `site-to-api.config.ts`/`.js`
 first: `gen` runs it. Then run `site-to-api gen --config site-to-api.config.json` (or with no
-config), or pass `--trust-client` if you reviewed `client/`".
+config), or pass `--trust-client` if you reviewed `client/`". The hash covers the files `gen`
+wrote. If you use the MCP server or `call_operation`, keep your own code and JSON outside the
+client and MCP folders: an unlisted `.js`, `.ts` or `.json` file, a `package.json`, a
+`tsconfig*.json` or a `node_modules` there, or any `package.json` or `node_modules` between those
+folders and the project root (the config file's folder, or the working directory), could be
+loaded instead, so the client is not run. In a monorepo, the workspace package that holds the
+client keeps its own `package.json` and `node_modules`. Non-code files such as notes are fine.
 This check is the protection; the per-host variable names are not, since code in the process can
 read any of them.
 
 **A server for one site.** `site-to-api gen --mcp` (or `build --mcp`, or `gen: { mcp: 'read' }` in
-the config) writes `api-handoff/client/mcp/server.ts`: one tool per operation, input schemas from
+the config) writes `api-handoff/mcp/server.ts`: one tool per operation, input schemas from
 the generated Zod schemas, calls through the typed client. `read` (the default) exposes only
 operations that read; `--mcp write` adds the ones that change data. Bot-protection steps never get
 a tool. Run it through the CLI, which checks the client first and brings the SDK, zod and the
@@ -464,9 +491,13 @@ runtime itself:
 claude mcp add pinewood -e SITE_API_COOKIE='…' -- site-to-api mcp ./api-handoff --generated
 ```
 
-Running `npx tsx ./api-handoff/client/mcp/server.ts` directly works too, but skips that check.
+Running `npx tsx ./api-handoff/mcp/server.ts` directly works too, but skips that check.
 
-`api-handoff/client/mcp/README.md` lists its settings and a JSON configuration for other clients.
+The server sits next to the client, not inside it, and the app never imports it. A type check that
+includes its folder needs `@modelcontextprotocol/server` installed; otherwise exclude the folder
+from `tsconfig.json`.
+
+`api-handoff/mcp/README.md` lists its settings and a JSON configuration for other clients.
 
 ### Claude Code plugin and agent skill
 

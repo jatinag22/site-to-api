@@ -8,9 +8,9 @@ import type { CommandRegistrar } from './program'
 import { readFile } from 'node:fs/promises'
 import process from 'node:process'
 import { InvalidArgumentError } from 'commander'
-import { resolve } from 'pathe'
+import { dirname, resolve } from 'pathe'
 import { serveGenerated, serveHandoff } from '../mcp'
-import { ignoredConfigChanges } from './ignored-config'
+import { configLiteral, ignoredConfigChanges } from './ignored-config'
 import { resolveConfig } from './program'
 
 interface McpFlags {
@@ -33,6 +33,13 @@ function parseRate(value: string): number {
   return parsed
 }
 
+/** The project the client belongs to: the config file's folder, or the working directory. */
+function projectRootOf(configFile: string | null, cwd: string): string {
+  return configFile === null
+    ? resolve(cwd)
+    : dirname(configFile)
+}
+
 export const mcpCommand: CommandRegistrar = (program) => {
   program
     .command('mcp')
@@ -42,31 +49,43 @@ export const mcpCommand: CommandRegistrar = (program) => {
     .option('--unsafe-methods', 'with --allow-calls: also send POST, PUT, PATCH, DELETE and GraphQL mutations (they can change data on the site)')
     .option('--max-rps <n>', 'requests per second for call_operation (default: probe.maxRps, 1)', parseRate)
     .option('--trust-client', 'run the folder\'s client/ code even though this machine did not generate it (only after reviewing it)')
-    .option('--generated', 'serve client/mcp/server.ts (written by `gen --mcp`) instead of the exploration tools, after the same trust check')
+    .option('--generated', 'serve mcp/server.ts (written by `gen --mcp`) instead of the exploration tools, after the same trust check')
     .action(async (dir: string | undefined, flags: McpFlags, command: Command) => {
       const log = (message: string): void => {
         process.stderr.write(`${message}\n`)
       }
       // A plugin starts this command in every project: a .ts or .js config file is code from the
       // project, so only flags, SITE_TO_API_* variables and site-to-api.config.json are read.
-      const { config, cwd, ignored } = await resolveConfig(command, {
+      const { config, cwd, ignored, sources, file } = await resolveConfig(command, {
         probe: { maxRps: flags.maxRps },
       }, { code: false })
+      const text = ignored === undefined
+        ? ''
+        : await readFile(ignored, 'utf8').catch(() => '')
+      // The file is not run, but a plain `outDir: '…'` in it is read as text, with the same
+      // comment- and nesting-aware scan that finds ignored settings (decision 0058).
+      const written = ignored !== undefined && dir === undefined && sources.outDir === 'default'
+        ? configLiteral(text, 'outDir')
+        : null
+      const effective = written === null
+        ? config
+        : { ...config, outDir: written }
       // Said only when the file sets something mcp uses differently: printed on every start of
       // every project otherwise, it is noise people learn to skip.
       const changes = ignored === undefined
         ? []
-        : ignoredConfigChanges(await readFile(ignored, 'utf8').catch(() => ''), config)
+        : ignoredConfigChanges(text, effective)
       if (ignored !== undefined && changes.length > 0) {
         log(`Not running ${ignored}: \`mcp\` reads only flags, SITE_TO_API_* variables and site-to-api.config.json, so its ${changes.join(', ')} ${changes.length === 1
           ? 'is'
-          : 'are'} not used (handoff folder: ${dir ?? config.outDir}). Move ${changes.length === 1
+          : 'are'} not used (handoff folder: ${dir ?? effective.outDir}). Move ${changes.length === 1
           ? 'it'
           : 'them'} to site-to-api.config.json, or pass the folder as an argument.`)
       }
-      const handoffDir = resolve(cwd, dir ?? config.outDir)
+      const handoffDir = resolve(cwd, dir ?? effective.outDir)
+      const projectRoot = projectRootOf(file ?? ignored ?? null, cwd)
       if (flags.generated) {
-        await serveGenerated({ handoffDir, trustClient: flags.trustClient === true })
+        await serveGenerated({ handoffDir, trustClient: flags.trustClient === true, projectRoot })
         return
       }
       if (flags.unsafeMethods && !flags.allowCalls)
@@ -79,6 +98,7 @@ export const mcpCommand: CommandRegistrar = (program) => {
         timeoutMs: config.probe.timeoutMs,
         env: siteApiEnv(process.env),
         trustClient: flags.trustClient === true,
+        projectRoot,
         log,
       })
     })

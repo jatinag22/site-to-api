@@ -1,5 +1,7 @@
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { FlowsDocument } from '../model'
+import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
@@ -103,24 +105,30 @@ import type { GetPricesRecord } from './handoff/client/index.js'
 export async function run(baseUrl: string) {
   const jar = new CookieJar()
   const site = createSiteClient({ host: 'shop.example.com', jar, baseUrl, retry: false, auth: () => 'Bearer t-1' })
-  const before = await shop_example_com.getApiItem({ path: { itemId: 'a1' } })
+  const before = await site.sdk.getApiItem({ path: { itemId: 'a1' } })
   const loginPage = await site.sdk.getLogin()
   const csrf = typeof loginPage.data === 'string' ? extractCsrfTokenFromGetLogin(loginPage.data) : null
   // Required headers, one of them spelled in mixed case in the spec, pass request validation.
-  const login = await shop_example_com.postApiSession({
+  const login = await site.sdk.postApiSession({
     body: { username: 'demo' },
     headers: { 'x-csrf-token': csrf ?? '', 'X-Api-Version': '2' },
   })
   const item = await site.sdk.getApiItem({ path: { itemId: 'a1' }, query: { currency: 'INR' } })
   const me = await site.sdk.getApiMe()
   // hey-api returns a failed response validation as \`error\` instead of throwing.
-  const broken = await shop_example_com.getApiItem({ path: { itemId: 'broken' } })
+  const broken = await site.sdk.getApiItem({ path: { itemId: 'broken' } })
   const invalid = broken.error instanceof Error ? broken.error.name : 'accepted'
-  const page = await shop_example_com.getPrices()
+  const page = await site.sdk.getPrices()
   const records: GetPricesRecord[] = typeof page.data === 'string' ? extractGetPrices(page.data) : []
-  // A second configuration for the same host replaces the first one, \`auth\` included.
-  createSiteClient({ host: 'shop.example.com', jar, baseUrl, retry: false })
-  const meWithoutAuth = await site.sdk.getApiMe()
+  // Every call has a client of its own: another user's instance sends its own credentials and
+  // cookies, one without auth sends none, and the first instance keeps its own (decision 0058).
+  const otherJar = new CookieJar()
+  const other = createSiteClient({ host: 'shop.example.com', jar: otherJar, baseUrl, retry: false, auth: () => 'Bearer t-2' })
+  const otherMe = await other.sdk.getApiMe()
+  const meWithoutAuth = await createSiteClient({ host: 'shop.example.com', baseUrl, retry: false }).sdk.getApiMe()
+  const meAgain = await site.sdk.getApiMe()
+  // The host namespaces are not bound to any session: called without a client they fail loudly.
+  const unbound = await shop_example_com.getApiMe().then(result => String(result.error), (error: unknown) => error instanceof Error ? error.message : String(error))
   // JSON text under the site's form content type, also after the host was configured again.
   const search = await site.sdk.postApiSearch({ body: { query: 'alpha' } })
   // A content type the caller passes is sent as is (the server here answers 415 to anything but the form type).
@@ -133,6 +141,10 @@ export async function run(baseUrl: string) {
     item: item.data ?? null,
     me: me.data ?? null,
     meWithoutAuthStatus: meWithoutAuth.response?.status ?? 0,
+    otherMe: otherMe.data ?? null,
+    meAgain: meAgain.data ?? null,
+    otherCookies: otherJar.all().map(cookie => cookie.name),
+    unbound,
     search: search.data ?? null,
     ownTypeStatus: ownType.response?.status ?? 0,
     invalid,
@@ -146,6 +158,7 @@ function typeCheck(files: string[], resolution: 'bundler' | 'nodenext' = 'bundle
   const options: ts.CompilerOptions = {
     strict: true,
     noUncheckedIndexedAccess: true,
+    exactOptionalPropertyTypes: true,
     noImplicitOverride: true,
     verbatimModuleSyntax: true,
     isolatedModules: true,
@@ -200,6 +213,8 @@ function handleSignIn(request: IncomingMessage, response: ServerResponse, json: 
   if (request.url === '/api/me') {
     if (request.headers.authorization === 'Bearer t-1')
       json(200, { name: 'demo' })
+    else if (request.headers.authorization === 'Bearer t-2')
+      json(200, { name: 'other' })
     else
       json(401, { message: 'no token' })
     return true
@@ -300,6 +315,10 @@ const DriverResultSchema = z.object({
   item: z.unknown(),
   me: z.unknown(),
   meWithoutAuthStatus: z.number(),
+  otherMe: z.unknown(),
+  meAgain: z.unknown(),
+  otherCookies: z.array(z.string()),
+  unbound: z.string(),
   search: z.unknown(),
   ownTypeStatus: z.number(),
   invalid: z.string(),
@@ -350,12 +369,12 @@ describe('generateClient', () => {
   })
 
   it('wires constant headers, the extract parser and the session notes', async () => {
-    const index = await readFile(path.join(dir, 'handoff', 'client', 'index.ts'), 'utf8')
-    expect(index).toContain('"x-requested-with": "XMLHttpRequest"')
-    expect(index).toContain('baseUrl: "https://shop.example.com"')
+    const site = await readFile(path.join(dir, 'handoff', 'client', 'shop_example_com', 'site.ts'), 'utf8')
+    expect(site).toContain('"x-requested-with": "XMLHttpRequest"')
+    expect(site).toContain('baseUrl: "https://shop.example.com"')
     const extract = await readFile(path.join(dir, 'handoff', 'client', 'extract.ts'), 'utf8')
     expect(extract).toContain('export function extractGetPrices(text: string): GetPricesRecord[]')
-    expect(extract).toContain('"link": z.string().nullable().optional(),')
+    expect(extract).toContain('"link": z.optional(z.nullable(z.string())),')
     const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
     expect(readme).toContain('- Cookie `session`: set by `postApiSession` (seen in capture).')
     expect(readme).toContain('`extractGetPrices(text)` → `GetPricesRecord[]`')
@@ -370,7 +389,7 @@ describe('generateClient', () => {
     expect(sdk).toContain('.parseAsync(requestValidationInput(data))')
   })
 
-  it('type-checks in strict mode with zero errors', () => {
+  it('type-checks with zero errors under strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes and noImplicitOverride', () => {
     const files = [
       path.join(dir, 'driver.ts'),
       ...result.files.filter(file => file.endsWith('.ts')).map(file => path.join(dir, 'handoff', file)),
@@ -408,6 +427,10 @@ describe('generateClient', () => {
     expect(output.login).toEqual({ ok: true })
     expect(output.me).toEqual({ name: 'demo' })
     expect(output.meWithoutAuthStatus).toBe(401)
+    expect(output.otherMe).toEqual({ name: 'other' })
+    expect(output.meAgain).toEqual({ name: 'demo' })
+    expect(output.otherCookies).toEqual([])
+    expect(output.unbound).toContain('leaves unconfigured so no request goes out without your session and credentials. Call it through createSiteClient({ host }).sdk, or pass { client } from createShopExampleComClient().')
     expect(output.search).toEqual({
       hits: ['{"query":"alpha"}'],
     })
@@ -420,7 +443,8 @@ describe('generateClient', () => {
       // An offset, not `Z`: response validation must accept it.
       updatedAt: '2026-10-23T16:21:08.000-05:00',
     })
-    expect(output.invalid).toBe('ZodError')
+    // Zod Mini's error class (decision 0058).
+    expect(output.invalid).toBe('$ZodError')
     expect(output.cookies).toEqual(['session'])
     expect(output.records).toEqual([
       { name: 'Alpha', price: 1250, link: '/items/a1' },
@@ -452,6 +476,142 @@ describe('generateClient', () => {
       await rm(again, { recursive: true, force: true })
     }
   }, 60_000)
+})
+
+describe('generateClient into gen.clientDir (decision 0058)', () => {
+  it('writes the client outside the handoff folder, keeps the person\'s files and names real paths', async () => {
+    const dir = await workspace()
+    try {
+      const handoff = path.join(dir, 'handoff')
+      const clientDir = path.join(dir, 'src', 'api')
+      await mkdir(clientDir, { recursive: true })
+      await writeFile(path.join(clientDir, 'mine.ts'), 'export const mine = 1\n')
+      const first = await generateClient({
+        handoffDir: handoff,
+        clientDir,
+        root: dir,
+        flows,
+      })
+      expect(first.files).toContain('../src/api/index.ts')
+      expect(first.files).not.toContain('../src/api/mine.ts')
+      expect(existsSync(path.join(handoff, 'client'))).toBe(false)
+      const readme = await readFile(path.join(clientDir, 'README.md'), 'utf8')
+      expect(readme).toContain('Generated from `../../handoff/specs/` and `../../handoff/flows.json` (the handoff folder `handoff/`)')
+      expect(readme).toContain('`src/api/index.js` from the project root')
+      // A hand edit is kept and reported; --force overwrites it; the person's file stays.
+      const index = await readFile(path.join(clientDir, 'index.ts'), 'utf8')
+      await writeFile(path.join(clientDir, 'index.ts'), `${index}// mine\n`)
+      const second = await generateClient({
+        handoffDir: handoff,
+        clientDir,
+        root: dir,
+        flows,
+        previous: first.manifest,
+      })
+      expect(second.warnings.join('\n')).toContain('Kept 1 client file(s) edited by hand instead of regenerating them: index.ts.')
+      expect(await readFile(path.join(clientDir, 'index.ts'), 'utf8')).toBe(`${index}// mine\n`)
+      await generateClient({
+        handoffDir: handoff,
+        clientDir,
+        root: dir,
+        flows,
+        previous: second.manifest,
+        force: true,
+      })
+      expect(await readFile(path.join(clientDir, 'index.ts'), 'utf8')).toBe(index)
+      expect(await readFile(path.join(clientDir, 'mine.ts'), 'utf8')).toBe('export const mine = 1\n')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+})
+
+describe('generateClient over a client from an older version (decision 0058)', () => {
+  it('warns once what changed, the old MCP folder included', async () => {
+    const dir = await workspace()
+    try {
+      const handoff = path.join(dir, 'handoff')
+      await mkdir(path.join(handoff, 'client', 'mcp'), { recursive: true })
+      await writeFile(path.join(handoff, 'client', 'index.ts'), 'export {}\n')
+      await writeFile(path.join(handoff, 'client', 'mcp', 'server.ts'), 'export {}\n')
+      const first = await generateClient({ handoffDir: handoff, flows, root: dir })
+      const warned = first.warnings.join('\n')
+      expect(warned).toContain('handoff/client/ was generated by an older site-to-api; see "Upgrading" in its README.md.')
+      expect(warned).toContain('throw when called without `{ client }`')
+      expect(warned).toContain('The MCP server moved to handoff/mcp/; delete handoff/client/mcp/.')
+      const again = await generateClient({
+        handoffDir: handoff,
+        flows,
+        root: dir,
+        previous: first.manifest,
+      })
+      expect(again.warnings.join('\n')).not.toContain('older site-to-api')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+})
+
+describe('generateClient and linked or unusual client folders (decision 0058)', () => {
+  it('refuses a default client folder that is a link, and never overwrites files it did not write elsewhere', async () => {
+    const dir = await workspace()
+    try {
+      const handoff = path.join(dir, 'handoff')
+      await writeFile(path.join(dir, 'README.md'), 'the project\'s own\n')
+      await symlink('..', path.join(handoff, 'client'))
+      await expect(generateClient({ handoffDir: handoff, flows })).rejects.toThrow(/handoff\/client is a symbolic link.*set gen\.clientDir/)
+      expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('the project\'s own\n')
+      // Set by the person, the link is followed, but without the legacy overwrite-everything mode.
+      const configured = await generateClient({
+        handoffDir: handoff,
+        clientDir: path.join(handoff, 'client'),
+        configuredFolders: { client: true, mcp: false },
+        flows,
+      })
+      expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('the project\'s own\n')
+      expect(configured.warnings.join('\n')).toContain('Did not overwrite')
+      expect(configured.warnings.join('\n')).toContain('README.md')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('keeps legacy overwriting to <handoff>/client: another folder from build.json starts with nothing recorded', async () => {
+    const dir = await workspace()
+    try {
+      const handoff = path.join(dir, 'handoff')
+      await writeFile(path.join(dir, 'README.md'), 'the project\'s own\n')
+      const result = await generateClient({ handoffDir: handoff, clientDir: dir, flows })
+      expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('the project\'s own\n')
+      expect(result.warnings.join('\n')).toContain('Did not overwrite')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+})
+
+describe('generateClient with gen.mcpDir (decision 0058)', () => {
+  it('refuses an MCP folder inside the client folder', async () => {
+    const dir = await workspace()
+    try {
+      const handoff = path.join(dir, 'handoff')
+      await expect(generateClient({
+        handoffDir: handoff,
+        flows,
+        mcp: 'read',
+        mcpDir: path.join(handoff, 'client', 'mcp'),
+      }))
+        .rejects
+        .toThrow(/is inside the client folder .*Set gen\.mcpDir to a folder outside it/)
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('generateClient and bot-protection steps', () => {
@@ -514,8 +674,17 @@ paths:
 `)
       await mkdir(path.join(handoff, 'client'), { recursive: true })
       await writeFile(path.join(handoff, 'client', 'index.ts'), 'const sdks = {}\n')
-      const result = await generateClient({ handoffDir: handoff, flows })
-      expect(result).toEqual({ files: [], warnings: [], empty: true })
+      const previous = {
+        'index.ts': createHash('sha256').update('const sdks = {}\n').digest('hex'),
+      }
+      const result = await generateClient({ handoffDir: handoff, flows, previous })
+      expect(result).toEqual({
+        files: [],
+        warnings: [],
+        empty: true,
+        manifest: {},
+        mcpManifest: {},
+      })
       await expect(readFile(path.join(handoff, 'client', 'index.ts'), 'utf8')).rejects.toThrow()
     }
     finally {
@@ -558,7 +727,7 @@ describe('generateClient errors', () => {
       const spec = (host: string): string => `openapi: 3.1.0\ninfo: { title: t, version: '1' }\nservers: [{ url: 'https://${host}' }]\npaths: {}\n`
       await writeFile(path.join(dir, 'specs', 'a.yaml'), spec('a-b.example'))
       await writeFile(path.join(dir, 'specs', 'b.yaml'), spec('a.b.example'))
-      await expect(generateClient({ handoffDir: dir, flows })).rejects.toThrow(/both map to client\/a_b_example\//)
+      await expect(generateClient({ handoffDir: dir, root: dir, flows })).rejects.toThrow(/both map to client\/a_b_example\//)
     }
     finally {
       await rm(dir, { recursive: true, force: true })
@@ -643,8 +812,9 @@ describe('generateClient with hostile specs', () => {
     try {
       const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
       const html = renderMarkdown(readme)
-      expect(html.match(/<pre>/g)).toHaveLength(1)
-      expect(html.match(/<h\d>/g)).toHaveLength(7)
+      // Two code blocks and eleven headings: the README's own, plus upgrading, what to commit, deploy targets and small bundles.
+      expect(html.match(/<pre>/g)).toHaveLength(2)
+      expect(html.match(/<h\d>/g)).toHaveLength(11)
       expect(result.files).toContain('client/README.md')
     }
     finally {

@@ -25,7 +25,7 @@ export function renderHandoffDocs(analysis: Analysis, context: AgentGuideContext
     ],
     [
       'API_MAP.md',
-      renderApiMap(analysis, context.client, index.stems),
+      renderApiMap(analysis, context.client, index.stems, context.clientPath),
     ],
     [
       BUILD_GAPS_FILE,

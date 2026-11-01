@@ -11,7 +11,7 @@ import process from 'node:process'
 import { InvalidArgumentError, Option } from 'commander'
 import { consola } from 'consola'
 import { dirname, join, resolve } from 'pathe'
-import { analyzeForProbe, buildHandoff, readBuildRecord, recordClientGenerated, stickyOptions } from '../build'
+import { analyzeForProbe, buildHandoff, configuredClientDir, configuredMcpDir, previousClient, previousMcp, readBuildRecord, recordClientGenerated, recordedClientDir, recordedMcpDir, relativePath, stickyOptions } from '../build'
 import { CHANNEL_NAMES, channelList, normalizeCaptureUrl, runCapture } from '../capture'
 import { updateClientState } from '../emit/handoff'
 import { SiteToApiError } from '../errors'
@@ -147,7 +147,7 @@ interface OutputFlags {
   mcp?: string
 }
 
-const MCP_HELP = 'also write client/mcp/, an MCP server with a tool per operation: read (the default: operations that only read) | write (all) | off'
+const MCP_HELP = 'also write mcp/ next to the client (gen.mcpDir), an MCP server with a tool per operation: read (the default: operations that only read) | write (all) | off'
 
 /** `--mcp [mode]`; `--mcp` alone means `read`. */
 function mcpOption(note: string): Option {
@@ -187,7 +187,8 @@ const buildCommand: CommandRegistrar = (program) => {
       .description('analyse all captures and write the handoff folder (specs, flows, docs, client); the options used are recorded in build.json for probe and gen'),
     '',
   )
-    .action(async (flags: OutputFlags, command: Command) => {
+    .option('--force', 'overwrite generated client files you edited by hand (they are kept and reported otherwise)')
+    .action(async (flags: OutputFlags & { force?: boolean }, command: Command) => {
       const { config, cwd, sources } = await resolveConfig(command, {
         hosts: { include: flags.include, exclude: flags.exclude },
         redact: { examples: flags.examples },
@@ -203,6 +204,7 @@ const buildCommand: CommandRegistrar = (program) => {
         config,
         cwd,
         sources,
+        force: flags.force === true,
         log: message => consola.info(message),
       })
       printWarnings(result.warnings)
@@ -298,24 +300,54 @@ const genCommand: CommandRegistrar = (program) => {
     .command('gen')
     .description('regenerate only the TypeScript client from the specs in the handoff folder (updates the client lines of AGENT.md and API_MAP.md)')
     .addOption(mcpOption(''))
-    .action(async (flags: { mcp?: string }, command: Command) => {
+    .option('--force', 'overwrite generated client files you edited by hand (they are kept and reported otherwise)')
+    .action(async (flags: { mcp?: string, force?: boolean }, command: Command) => {
       const { config, cwd, sources } = await resolveConfig(command, {
         gen: { mcp: flags.mcp },
       })
       // Works from the committed handoff folder alone: raw captures are not needed (or present) in a fresh clone.
       const handoffDir = resolve(cwd, config.outDir)
       // Fails on an unreadable build.json before anything in the folder is rewritten.
-      await readBuildRecord(handoffDir)
-      const result = await generateClient({ handoffDir, flows: await readFlowsDocument(handoffDir), mcp: config.gen.mcp })
+      const record = await readBuildRecord(handoffDir)
+      // The configured folder when one is set; otherwise the one the last build used (decision 0058).
+      const clientDir = sources['gen.clientDir'] === 'default'
+        ? recordedClientDir(handoffDir, record)
+        : configuredClientDir(config, cwd)
+      const mcpDir = sources['gen.mcpDir'] === 'default' && sources['gen.clientDir'] === 'default'
+        ? recordedMcpDir(handoffDir, record)
+        : configuredMcpDir(config, cwd)
+      const { previous, warning } = previousClient(handoffDir, record, clientDir)
+      const result = await generateClient({
+        handoffDir,
+        clientDir,
+        mcpDir,
+        configuredFolders: { client: config.gen.clientDir !== null, mcp: config.gen.mcpDir !== null },
+        root: cwd,
+        flows: await readFlowsDocument(handoffDir),
+        mcp: config.gen.mcp,
+        previous,
+        previousMcp: previousMcp(handoffDir, record, mcpDir),
+        force: flags.force === true,
+      })
+      const clientPath = relativePath(handoffDir, clientDir)
       // AGENT.md and API_MAP.md were written when the client was missing or stale; say it exists now.
       printWarnings([
+        ...(warning === null
+          ? []
+          : [warning]),
         ...result.warnings,
         ...await updateClientState(handoffDir, result.empty
           ? 'empty'
-          : 'current'),
+          : 'current', clientPath),
       ])
-      await recordClientGenerated(handoffDir, { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' })
-      consola.success(`Generated ${counted(result.files.length, 'client file')}`)
+      await recordClientGenerated(handoffDir, {
+        mcp: { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' },
+        generated: result.manifest,
+        generatedMcp: result.mcpManifest,
+        clientDir: clientPath,
+        mcpDir: relativePath(handoffDir, mcpDir),
+      })
+      consola.success(`Generated ${counted(result.files.length, 'client file')} in ${shown(clientDir, cwd)}`)
     })
 }
 

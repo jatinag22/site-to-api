@@ -12,8 +12,10 @@ import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { gzipSync } from 'node:zlib'
 import { Client } from '@modelcontextprotocol/client'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { build as esbuild } from 'esbuild'
 import { join, relative } from 'pathe'
 import { chromium } from 'playwright'
 import ts from 'typescript'
@@ -25,6 +27,7 @@ import { runCapture } from '../packages/site-to-api/src/capture'
 import { pipelineCommands } from '../packages/site-to-api/src/cli/commands'
 import { run as runCli } from '../packages/site-to-api/src/cli/program'
 import { generateClient } from '../packages/site-to-api/src/gen'
+import { toIdentifier } from '../packages/site-to-api/src/gen/spec'
 import { probeOperations, writeProbeReport } from '../packages/site-to-api/src/probe'
 import { startFixtureSite } from './fixture-site/server'
 
@@ -53,8 +56,12 @@ async function readAll(dir: string): Promise<Map<string, string>> {
 
 /** Strict type check of `files`, as a project with the given module resolution would run it. */
 function typeCheck(files: string[], resolution: 'bundler' | 'nodenext'): string[] {
+  // The strictest flags an app may turn on (decision 0058).
   const program = ts.createProgram(files, {
     strict: true,
+    noUncheckedIndexedAccess: true,
+    exactOptionalPropertyTypes: true,
+    noImplicitOverride: true,
     noEmit: true,
     target: ts.ScriptTarget.ES2022,
     module: resolution === 'bundler'
@@ -317,14 +324,16 @@ describe('handoff folder', () => {
       .find(cookie => cookie.name === 'pm_session')
       ?.value ?? ''
     expect(session.length).toBeGreaterThan(11)
-    // With --no-client build keeps client/ and checks it: a file there stands in for a leak an
-    // emitter let through.
-    const planted = join(outDir, 'client', 'planted.md')
-    // The user's own file in the folder is neither scanned nor touched.
+    // With --no-client build keeps the generated client files and checks them: a value pasted
+    // into one stands in for a leak an emitter let through (decision 0058).
+    const planted = join(outDir, 'client', 'README.md')
+    // The user's own files, in the folder or next to the client, are neither scanned nor touched.
     const own = join(outDir, 'notes', 'own.md')
+    const ownClient = join(outDir, 'client', 'own.md')
     await mkdir(join(outDir, 'notes'), { recursive: true })
-    await writeFile(planted, `copied by hand: ${session}\n`)
+    await writeFile(planted, `${await readFile(planted, 'utf8')}\ncopied by hand: ${session}\n`)
     await writeFile(own, `my note: ${session}\n`)
+    await writeFile(ownClient, `my note: ${session}\n`)
     try {
       const keepClient = {
         ...config,
@@ -336,20 +345,98 @@ describe('handoff folder', () => {
         ? error.message
         : ''
       expect(message).toContain('Leak check failed: 1 secret value(s) learnt from the capture appear in')
-      expect(message).toContain(`client/planted.md: ${session.slice(0, 3)}…${session.slice(-2)} (${session.length} chars)`)
+      expect(message).toContain(`client/README.md: ${session.slice(0, 3)}…${session.slice(-2)} (${session.length} chars)`)
       expect(message).not.toContain('notes/own.md')
+      expect(message).not.toContain('client/own.md')
       expect(message).not.toContain(session)
       expect(message).toContain('The 1 file(s) listed were deleted')
       expect(existsSync(planted)).toBe(false)
       expect(existsSync(own)).toBe(true)
+      expect(existsSync(ownClient)).toBe(true)
       expect(existsSync(join(outDir, 'AGENT.md'))).toBe(true)
     }
     finally {
-      await rm(planted, { force: true })
+      await rm(ownClient, { force: true })
       await rm(join(outDir, 'notes'), { recursive: true, force: true })
     }
     await buildHandoff({ config, cwd: work })
   }, 120_000)
+
+  it('keeps the user\'s files in client/ and hand edits to generated files unless forced (decision 0058)', async () => {
+    const own = join(outDir, 'client', 'my-helper.ts')
+    const readme = join(outDir, 'client', 'README.md')
+    const generated = await readFile(readme, 'utf8')
+    await writeFile(own, 'export const mine = 1\n')
+    await writeFile(readme, `${generated}\nMy notes.\n`)
+    try {
+      const kept = await buildHandoff({ config, cwd: work })
+      expect(await readFile(own, 'utf8')).toBe('export const mine = 1\n')
+      expect(await readFile(readme, 'utf8')).toBe(`${generated}\nMy notes.\n`)
+      expect(kept.warnings.join('\n')).toContain('Kept 1 client file(s) edited by hand instead of regenerating them: README.md.')
+      const forced = await buildHandoff({ config, cwd: work, force: true })
+      expect(await readFile(readme, 'utf8')).toBe(generated)
+      expect(await readFile(own, 'utf8')).toBe('export const mine = 1\n')
+      expect(forced.warnings.join('\n')).not.toContain('edited by hand')
+    }
+    finally {
+      await rm(own, { force: true })
+    }
+    await buildHandoff({ config, cwd: work })
+  }, 180_000)
+
+  it('keeps the MCP server across plain builds and says when --mcp off removes it (decision 0058)', async () => {
+    const server = join(outDir, 'mcp', 'server.ts')
+    await buildHandoff({
+      config: {
+        ...config,
+        gen: { ...config.gen, mcp: 'read' },
+      },
+      sources: { 'gen.mcp': 'flag' },
+      cwd: work,
+    })
+    expect(existsSync(server)).toBe(true)
+    expect(existsSync(join(outDir, 'client', 'mcp'))).toBe(false)
+    const logged: string[] = []
+    await buildHandoff({
+      config,
+      sources: { 'gen.mcp': 'default' },
+      cwd: work,
+      log: message => logged.push(message),
+    })
+    expect(existsSync(server)).toBe(true)
+    expect(logged.join('\n')).toContain('Kept the MCP server in handoff/mcp/ (gen.mcp read, from the last run)')
+    const off = await buildHandoff({
+      config,
+      sources: { 'gen.mcp': 'flag' },
+      cwd: work,
+    })
+    expect(existsSync(server)).toBe(false)
+    expect(off.warnings.join('\n')).toContain('Removed the MCP server from handoff/mcp/ because gen.mcp is off (set by flag)')
+  }, 180_000)
+
+  it('writes the client into gen.clientDir and names that folder in the docs and build.json (decision 0058)', async () => {
+    const appClient = join(work, 'app', 'api')
+    try {
+      const moved = {
+        ...config,
+        gen: {
+          ...config.gen,
+          clientDir: join('app', 'api'),
+        },
+      }
+      const result = await buildHandoff({ config: moved, cwd: work })
+      expect(existsSync(join(appClient, 'index.ts'))).toBe(true)
+      expect(await readFile(join(outDir, 'AGENT.md'), 'utf8')).toContain('`../app/api/`: typed client with Zod validation; see `../app/api/README.md`.')
+      expect(await readFile(join(outDir, 'API_MAP.md'), 'utf8')).toContain('exported by the generated `../app/api/`.')
+      expect(JSON.parse(await readFile(join(outDir, 'build.json'), 'utf8'))).toMatchObject({ clientDir: '../app/api' })
+      expect(result.warnings.join('\n')).toContain(`The client moved from ${join(outDir, 'client')} to ${appClient}`)
+      expect(await readFile(join(appClient, 'README.md'), 'utf8')).toContain('`app/api/index.js` from the project root')
+    }
+    finally {
+      await rm(join(work, 'app'), { recursive: true, force: true })
+    }
+    await buildHandoff({ config, cwd: work })
+  }, 180_000)
 })
 
 describe('operations', () => {
@@ -451,6 +538,15 @@ describe('fitted to the site, not to the captured samples', () => {
     expect(item?.properties?.name).toBeDefined()
     expect(item?.properties?.name?.enum).toBeUndefined()
     expect(operation('GET', '/api/products').query.find(param => param.name === 'category')?.schema.enum).toEqual(['beverages', 'snacks'])
+  })
+
+  it('never types referer or user-agent as parameters (decision 0058)', () => {
+    const specs = [...files].filter(([name]) => name.startsWith('specs/') && name.endsWith('.yaml'))
+    expect(specs.length).toBeGreaterThan(0)
+    for (const [name, content] of specs) {
+      expect(content, name).not.toMatch(/name: referer\b/)
+      expect(content, name).not.toMatch(/name: user-agent\b/)
+    }
   })
 
   it('keeps per-session and browser-identity headers out of constant defaults', () => {
@@ -680,7 +776,7 @@ describe('framed WebSocket protocols (decision 0038)', () => {
 })
 
 describe('generated client', () => {
-  it('type-checks in strict mode under moduleResolution bundler and nodenext', () => {
+  it('type-checks under strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes and noImplicitOverride, with moduleResolution bundler and nodenext', () => {
     expect(typeCheck(clientSources(), 'bundler')).toEqual([])
     // nodenext rejects extensionless relative imports (TS2835); the client uses `.js` throughout.
     expect(typeCheck(clientSources(), 'nodenext')).toEqual([])
@@ -711,6 +807,87 @@ describe('generated client', () => {
     ].join('\n')
     const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '-e', script], { cwd: work })
     expect(JSON.parse(stdout)).toEqual({ status: 200, csrf: true })
+  }, 60_000)
+
+  it('bundles one operation from a host\'s own entry within budget, without the other operations or an HTML parser (decision 0058)', async () => {
+    const hostDir = join(outDir, 'client', toIdentifier(host))
+    const site = await readFile(join(hostDir, 'site.ts'), 'utf8')
+    const factory = /^export function (create\w+Client)\(/m.exec(site)?.[1] ?? ''
+    expect(factory).not.toBe('')
+    const entry = join(work, 'bundle-entry.ts')
+    await writeFile(entry, `import { ${factory}, getApiCategories } from ${JSON.stringify(join(hostDir, 'site.js'))}\nconst { client } = ${factory}()\nconsole.log((await getApiCategories({ client })).data)\n`)
+    const result = await esbuild({
+      entryPoints: [entry],
+      bundle: true,
+      minify: true,
+      format: 'esm',
+      platform: 'browser',
+      write: false,
+      metafile: true,
+      logLevel: 'silent',
+    })
+    const code = result.outputFiles[0]?.text ?? ''
+    const inputs = Object.keys(result.metafile.inputs)
+    const gzip = gzipSync(code).length
+    // Measured at 19 KB gzip for this fixture (146 KB minified, 42 KB gzip through createSiteClient before).
+    expect(gzip).toBeLessThan(24_000)
+    expect(code).toContain('/api/categories')
+    expect(code).not.toContain('/api/orders')
+    expect(inputs.filter(input => /htmlparser2|css-select|domutils/.test(input))).toEqual([])
+    // One flavour of Zod: Mini, never the classic API next to it.
+    expect(inputs.filter(input => input.includes('zod/v4/classic'))).toEqual([])
+  }, 60_000)
+
+  it('extracts the same records with the browser\'s DOMParser as with htmlparser2, :contains() included (decision 0058)', async () => {
+    const extractModule = join(outDir, 'client', 'extract.ts')
+    const bundled = await esbuild({
+      entryPoints: [extractModule],
+      bundle: true,
+      format: 'iife',
+      globalName: 'siteExtract',
+      platform: 'browser',
+      write: false,
+      logLevel: 'silent',
+    })
+    const script = bundled.outputFiles[0]?.text ?? ''
+    expect(script).not.toContain('htmlparser2')
+    const stores = await (await fetch(`${site.origin}/stores`)).text()
+    const slug = /href="\/stores\/([\w-]+)"/.exec(stores)?.[1] ?? ''
+    expect(slug).not.toBe('')
+    const pages = {
+      deals: await (await fetch(`${site.origin}/deals`)).text(),
+      store: await (await fetch(`${site.origin}/stores/${slug}`)).text(),
+      login: await (await fetch(`${site.origin}/login`)).text(),
+    }
+    const node = await import(pathToFileURL(extractModule).href)
+    const parser = z.custom<(text: string) => unknown>(value => typeof value === 'function')
+    const NodeExtractSchema = z.object({
+      extractDealsFromGetDeals: parser,
+      extractGetStoresBySlug: parser,
+      extractCsrfTokenFromGetLogin: parser,
+    })
+    const parsed = NodeExtractSchema.parse(node)
+    const expected = {
+      deals: parsed.extractDealsFromGetDeals(pages.deals),
+      store: parsed.extractGetStoresBySlug(pages.store),
+      login: parsed.extractCsrfTokenFromGetLogin(pages.login),
+    }
+    // The store page's fields come from `dt:contains("…") + dd` rows.
+    expect(JSON.stringify(expected.store)).toMatch(/"address":"[^"]+"/)
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      await page.addScriptTag({ content: script })
+      const inBrowser: unknown = await page.evaluate(`({
+        deals: siteExtract.extractDealsFromGetDeals(${JSON.stringify(pages.deals)}),
+        store: siteExtract.extractGetStoresBySlug(${JSON.stringify(pages.store)}),
+        login: siteExtract.extractCsrfTokenFromGetLogin(${JSON.stringify(pages.login)}),
+      })`)
+      expect(JSON.parse(JSON.stringify(inBrowser))).toEqual(JSON.parse(JSON.stringify(expected)))
+    }
+    finally {
+      await browser.close()
+    }
   }, 60_000)
 
   it('logs in through the generated SDK and reads the orders with browser cookies and a bearer token', async () => {
@@ -1046,6 +1223,8 @@ describe('mCP servers (decision 0043)', () => {
         XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME ?? '',
         ...env,
       },
+      // The project root the trust check walks up to (decision 0058).
+      cwd: work,
       stderr: 'ignore',
     }))
     return client

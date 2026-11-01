@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ignoredConfigChanges } from './ignored-config'
+import { configLiteral, ignoredConfigChanges } from './ignored-config'
 
 const config = {
   outDir: 'api-handoff',
@@ -28,5 +28,14 @@ describe('ignoredConfigChanges', () => {
 `
     expect(ignoredConfigChanges(text, config)).toEqual([])
     expect(ignoredConfigChanges(`export default { probe: { maxRps: 2 }, outDir: 'h' }`, config)).toEqual(['outDir', 'probe.maxRps'])
+  })
+})
+
+describe('configLiteral (decision 0058)', () => {
+  it('reads a top-level literal outside comments and nested objects, and nothing computed', () => {
+    const text = `// outDir: 'commented'\nexport default defineConfig({\n  gen: { outDir: 'nested' },\n  outDir: 'src/api/shop',\n})\n`
+    expect(configLiteral(text, 'outDir')).toBe('src/api/shop')
+    expect(configLiteral(`export default { outDir: process.env.DIR }\n`, 'outDir')).toBeNull()
+    expect(configLiteral(`export default { rawDir: 'x' }\n`, 'outDir')).toBeNull()
   })
 })

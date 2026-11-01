@@ -1,23 +1,26 @@
 /**
- * `site-to-api mcp --generated`: runs `client/mcp/server.ts`, the per-site server `gen --mcp`
+ * `site-to-api mcp --generated`: runs `mcp/server.ts`, the per-site server `gen --mcp`
  * wrote, from the installed CLI (decision 0043). The file is code from the handoff folder, so it
- * runs only after the trust check: the whole `client/` must hash to what this machine's `gen`
- * recorded, unless the person passed `--trust-client`. Running the file directly (`tsx
- * client/mcp/server.ts`) skips that check.
+ * runs only after the trust check: the generated client and server files must hash to what this
+ * machine's `gen` recorded, unless the person passed `--trust-client`. Running the file directly (`tsx
+ * mcp/server.ts`) skips that check.
  */
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { createJiti } from 'jiti'
-import { dirname, join } from 'pathe'
+import { dirname, join, relative } from 'pathe'
+import { readBuildRecord, recordedClientDir, recordedMcpDir } from '../build/record'
 import { SiteToApiError } from '../errors'
-import { untrustedReason } from '../trust'
+import { trustStorePath, untrustedReason } from '../trust'
 
 /** Options for {@link serveGenerated}. */
 export interface ServeGeneratedOptions {
   handoffDir: string
   trustClient: boolean
   trustStore?: string
+  /** The project root for the trust check (decision 0058): the config file's folder or the working directory. */
+  projectRoot: string
 }
 
 /** Generated code imports these; they resolve to the copies this tool runs with. */
@@ -35,11 +38,20 @@ function aliases(): Record<string, string> {
 
 /** Checks the client and runs its server, which serves stdio until the client disconnects. */
 export async function serveGenerated(options: ServeGeneratedOptions): Promise<void> {
-  const server = join(options.handoffDir, 'client', 'mcp', 'server.ts')
+  const record = await readBuildRecord(options.handoffDir)
+  const clientDir = recordedClientDir(options.handoffDir, record)
+  const mcpDir = recordedMcpDir(options.handoffDir, record)
+  const server = join(mcpDir, 'server.ts')
   if (!existsSync(server))
     throw new SiteToApiError(`No generated MCP server at ${server}: run \`site-to-api gen --mcp\` first.`)
   if (!options.trustClient) {
-    const reason = await untrustedReason(join(options.handoffDir, 'client'), options.trustStore)
+    const reason = await untrustedReason(clientDir, options.trustStore ?? trustStorePath(), [
+      relative(clientDir, server),
+    ], {
+      folders: [mcpDir],
+      root: options.projectRoot,
+      handoff: options.handoffDir,
+    })
     if (reason !== null)
       throw new SiteToApiError(reason)
   }

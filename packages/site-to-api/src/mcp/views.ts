@@ -5,6 +5,7 @@
  */
 import type { OperationEntry, OperationInput } from './catalog'
 import type { Handoff } from './handoff'
+import { dirname, relative } from 'pathe'
 import { z } from 'zod'
 import { responseSchemaName, sdkFunctionName } from '../emit/naming'
 import { changesData, replaySkipReason } from '../probe/safety'
@@ -25,7 +26,7 @@ export function callVerdict(handoff: Handoff, entry: OperationEntry, policy: Cal
   if (!policy.allowCalls)
     return { allowed: false, reason: 'calls are off; restart the server with --allow-calls to send requests' }
   if (!handoff.clientGenerated)
-    return { allowed: false, reason: 'client/ has not been generated; run `site-to-api gen`' }
+    return { allowed: false, reason: `${clientFolder(handoff)}/ has not been generated; run \`site-to-api gen\`` }
   const reason = replaySkipReason(entry, policy.unsafeMethods)
   return reason === null
     ? { allowed: true, reason: null }
@@ -107,6 +108,11 @@ export function hostsView(handoff: Handoff, policy: CallPolicy): Record<string, 
   }
 }
 
+/** The client folder seen from the folder that holds the handoff folder (`api-handoff/client`). */
+function clientFolder(handoff: Handoff): string {
+  return relative(dirname(handoff.dir), handoff.clientDir)
+}
+
 function clientView(handoff: Handoff, entry: OperationEntry, inputs: readonly OperationInput[]): Record<string, unknown> | null {
   // Bot-protection steps get no client function (decision 0008).
   if (entry.kind === 'bot-protection')
@@ -115,7 +121,7 @@ function clientView(handoff: Handoff, entry: OperationEntry, inputs: readonly Op
   return {
     generated: handoff.clientGenerated,
     setup: [
-      `import { createSiteClient } from './client/index.js'`,
+      `import { createSiteClient } from './${clientFolder(handoff)}/index.js' // from the folder that holds the handoff folder`,
       `const { sdk } = createSiteClient({ host: ${JSON.stringify(entry.host)} })`,
     ],
     call: `const result = await sdk.${fn}(${clientArguments(entry, inputs)})`,

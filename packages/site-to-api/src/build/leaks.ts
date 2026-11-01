@@ -5,9 +5,10 @@
  * instead of trusting the rules.
  */
 import { existsSync } from 'node:fs'
-import { readdir, readFile, rm } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'pathe'
 import { SiteToApiError } from '../errors'
+import { insideAny } from '../gen/contained'
 
 /** One learnt secret found in one output file. */
 export interface Leak {
@@ -71,28 +72,21 @@ export function assertOwnOutDir(outDir: string, cwd: string, rawDir: string): vo
     throw new SiteToApiError(`outDir ${outDir} holds the raw captures (${rawDir}), which must never be shared. Set outDir to a folder of its own, such as "api-handoff", outside rawDir.`)
 }
 
-/** Files under `dir`, absolute; dependencies installed into it are skipped. A missing folder has none. */
-export async function filesUnder(dir: string): Promise<string[]> {
-  if (!existsSync(dir))
-    return []
-  const entries = await readdir(dir, { recursive: true, withFileTypes: true })
-  return entries
-    .filter(entry => entry.isFile())
-    .map(entry => join(entry.parentPath, entry.name))
-    .filter(path => !relative(dir, path).split('/').includes('node_modules'))
-}
-
 /**
- * {@link findLeaks} over `written`, the absolute paths `build` wrote or manages in `outDir`,
- * reported relative to it. Nothing else is read: the user's own files are neither the tool's
- * output nor its business.
+ * {@link findLeaks} over `written`, the absolute paths `build` wrote or manages, reported
+ * relative to `outDir` (a client in `gen.clientDir` shows as `../client/…`). Nothing else is
+ * read: the user's own files are neither the tool's output nor its business.
  */
-export async function findHandoffLeaks(outDir: string, written: readonly string[], secrets: readonly string[]): Promise<Leak[]> {
-  const paths = [
+export async function findHandoffLeaks(outDir: string, written: readonly string[], secrets: readonly string[], roots: readonly string[] = [outDir]): Promise<Leak[]> {
+  const paths: string[] = []
+  // Only regular files inside the handoff, client or MCP folder: the recorded client files come
+  // from build.json, which a repository controls (decision 0058).
+  for (const path of [
     ...new Set(written),
-  ]
-    .filter(path => containsOrEquals(outDir, path) && existsSync(path))
-    .sort()
+  ].sort()) {
+    if (existsSync(path) && await insideAny(roots, path))
+      paths.push(path)
+  }
   const files = await Promise.all(paths.map(async path => ({
     path: relative(outDir, path),
     content: await readFile(path, 'utf8'),
@@ -104,11 +98,15 @@ export async function findHandoffLeaks(outDir: string, written: readonly string[
  * Deletes the files the leak check found, so no leaking file stays on disk. Only those files:
  * they are all files `build` wrote ({@link findHandoffLeaks}). Returns what was done, for the error.
  */
-export async function discardLeakingOutput(outDir: string, leaks: readonly Leak[]): Promise<string> {
+export async function discardLeakingOutput(outDir: string, leaks: readonly Leak[], roots: readonly string[] = [outDir]): Promise<string> {
   const files = [
     ...new Set(leaks.map(leak => leak.file)),
   ]
-  await Promise.all(files.map(file => rm(join(outDir, file), { force: true })))
+  for (const file of files) {
+    // Checked again right before deleting: never through a link, never outside the folders.
+    if (await insideAny(roots, join(outDir, file)))
+      await rm(join(outDir, file), { force: true })
+  }
   return `The ${files.length} file(s) listed were deleted so the values cannot be shared; the rest of ${outDir} is incomplete until build runs again after the fix.`
 }
 

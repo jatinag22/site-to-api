@@ -60,6 +60,14 @@ function literal(text: string, path: string): { found: boolean, value: string | 
     : { found: true, value: null }
 }
 
+/**
+ * The string or number literal the file writes for `path` (`outDir`), read as text like
+ * {@link ignoredConfigChanges}; null when the key is missing or set to an expression.
+ */
+export function configLiteral(text: string, path: string): string | null {
+  return literal(text, path).value
+}
+
 /** The keys of `mcp`'s settings that the unread config file sets to something else, sorted. */
 export function ignoredConfigChanges(text: string, config: McpKeys): string[] {
   const settings: Array<[string, string]> = [

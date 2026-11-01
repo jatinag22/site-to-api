@@ -24,8 +24,10 @@ export interface AgentGuideContext {
   toolVersion: string
   /** Redaction mode used, so the reader knows whether examples are real. */
   examples: 'masked' | 'raw' | 'none'
-  /** Whether `client/` matches this build (see {@link ClientState}). */
+  /** Whether the client matches this build (see {@link ClientState}). */
   client: ClientState
+  /** The client folder relative to the handoff folder (`client`, or `../client`; decision 0058). */
+  clientPath?: string
   /**
    * Whether probe confirmed any host's needs. The gaps go by `probe` (did it run at all) instead,
    * so this only summarises; kept so callers need not change.
