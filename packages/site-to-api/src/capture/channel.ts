@@ -18,7 +18,7 @@ export function channelList(): string {
 const NOT_INSTALLED = /distribution '[^']+' is not found|executable doesn't exist/i
 
 /** True when a launch failed because the channel's browser (or the bundled Chromium) is missing. */
-export function isBrowserMissing(error: unknown): boolean {
+function isBrowserMissing(error: unknown): boolean {
   return NOT_INSTALLED.test(failureMessage(error))
 }
 
