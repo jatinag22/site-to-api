@@ -102,6 +102,16 @@ alone (`extractDealsFromGetDeals`): 202 KB (70 KB gzip) before, 39 KB (10 KB gzi
   Chromium and in Node and compares the records; another bundles one operation and checks a
   gzip budget, that no other operation and no HTML parser is in it, and that classic Zod is not.
 
+### Fewer wrong constraints
+- An enum now also needs its values seen in at least two browsing sessions. From one session the
+  client got `enum` of the few values that visit met and rejected every other one the site has;
+  such fields are plain strings (parameters keep their redacted `examples`). The other enum rules
+  (repetition, code-like names or tokens, no numbers or free text) stay.
+- `referer` and `user-agent` are no longer header parameters in the specs unless `probe` proved
+  the site needs one (`header:referer` in `x-site-to-api-requires`): every browser request
+  carries them, they describe where the browser was, and as parameters every SDK function took
+  them (with `z.url()` on the referer). The analysis and `probe` still see them.
+
 ## Consequences
 People can keep their own files next to the client. A stale file from an old version that `gen`
 no longer writes stays until it is deleted by hand.

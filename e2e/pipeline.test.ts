@@ -540,6 +540,15 @@ describe('fitted to the site, not to the captured samples', () => {
     expect(operation('GET', '/api/products').query.find(param => param.name === 'category')?.schema.enum).toEqual(['beverages', 'snacks'])
   })
 
+  it('never types referer or user-agent as parameters (decision 0057)', () => {
+    const specs = [...files].filter(([name]) => name.startsWith('specs/') && name.endsWith('.yaml'))
+    expect(specs.length).toBeGreaterThan(0)
+    for (const [name, content] of specs) {
+      expect(content, name).not.toMatch(/name: referer\b/)
+      expect(content, name).not.toMatch(/name: user-agent\b/)
+    }
+  })
+
   it('keeps per-session and browser-identity headers out of constant defaults', () => {
     const csrf = operation('POST', '/api/auth/login').headers.find(header => header.name === 'x-csrf-token')
     expect(csrf?.constant).toBe(false)

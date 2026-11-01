@@ -27,6 +27,13 @@ const METHODS: readonly string[] = [
  */
 const NOT_PARAMETERS = new Set(['accept', 'content-type', 'authorization'])
 
+/**
+ * Headers every browser request carries that say where the browser was, not what the API takes.
+ * As parameters every SDK function took them (with `z.url()` on the referer), so they are left
+ * out unless probe proved the site needs one (decision 0057). The analysis keeps them.
+ */
+const BROWSER_CONTEXT_HEADERS = new Set(['referer', 'user-agent'])
+
 const STATUS_TEXT: Record<number, string> = {
   200: 'OK',
   201: 'Created',
@@ -216,6 +223,7 @@ function parameters(operation: Operation, origins: Map<string, ValueOrigin>): Js
     ...operation.query.map(param => parameter('query', param, origins)),
     ...operation.headers
       .filter(header => !NOT_PARAMETERS.has(header.name))
+      .filter(header => !BROWSER_CONTEXT_HEADERS.has(header.name.toLowerCase()) || probedRequired(operation, `header:${header.name.toLowerCase()}`) === true)
       .map(header => parameter('header', {
         ...header,
         required: headerRequired(operation, header),

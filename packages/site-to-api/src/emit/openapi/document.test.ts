@@ -497,7 +497,13 @@ describe('required headers', () => {
     const call = (sessionId: string) => exchange({
       sessionId,
       url: 'https://shop.test/api/latest',
-      requestHeaders: { 'x-fetch-nonce': `n-${sessionId}`, 'x-api-key': `k-${sessionId}`, 'sentry-trace': `t-${sessionId}` },
+      requestHeaders: {
+        'x-fetch-nonce': `n-${sessionId}`,
+        'x-api-key': `k-${sessionId}`,
+        'sentry-trace': `t-${sessionId}`,
+        'referer': `https://shop.test/${sessionId}`,
+        'user-agent': 'Mozilla/5.0',
+      },
       responseBody: jsonBody({ ok: true }),
     })
     const headersOf = (requires: string[] | null) => {
@@ -526,6 +532,13 @@ describe('required headers', () => {
       ['x-fetch-nonce', false],
       ['x-api-key', true],
       ['sentry-trace', false],
+    ])
+    // `referer` and `user-agent` are parameters only once probe proved one needed (decision 0057).
+    expect(headersOf(['header:referer'])).toEqual([
+      ['x-fetch-nonce', false],
+      ['x-api-key', false],
+      ['sentry-trace', false],
+      ['referer', true],
     ])
   })
 })

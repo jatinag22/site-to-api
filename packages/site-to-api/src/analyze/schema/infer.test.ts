@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { coerceStrings, inferSchema, inferStringSchema, MAX_SCHEMA_DEPTH } from './infer'
 
 const s1 = (...values: unknown[]): Sample[] => values.map(value => ({ value, sessionId: 's1' }))
+/** Samples from two sessions, alternating: enums need values from more than one (decision 0057). */
+const across = (...values: unknown[]): Sample[] => values.map((value, index) => ({ value, sessionId: `s${index % 2}` }))
 
 describe('inferSchema', () => {
   it('tells integers from numbers and merges both into number', () => {
@@ -108,39 +110,47 @@ describe('inferSchema', () => {
     expect(inferSchema(s1('2026-02-30'))).toEqual({ type: 'string' })
   })
 
+  it('infers no enum from a single browsing session (decision 0057)', () => {
+    expect(inferSchema(s1('NSE', 'BSE', 'NSE', 'BSE'))).toEqual({ type: 'string' })
+    expect(inferSchema(across('NSE', 'BSE', 'NSE', 'BSE'))).toEqual({
+      type: 'string',
+      enum: ['BSE', 'NSE'],
+    })
+  })
+
   it('infers enums only with enough evidence', () => {
-    expect(inferSchema(s1('NSE', 'BSE', 'NSE', 'BSE'))).toEqual({
+    expect(inferSchema(across('NSE', 'BSE', 'NSE', 'BSE'))).toEqual({
       type: 'string',
       enum: ['BSE', 'NSE'],
     })
     // Too few samples, too little repetition, a single value, or too many distinct values.
-    expect(inferSchema(s1('NSE', 'BSE'))).toEqual({ type: 'string' })
-    expect(inferSchema(s1('NSE', 'BSE', 'NSE'))).toEqual({ type: 'string' })
-    expect(inferSchema(s1('A', 'B', 'C'))).toEqual({ type: 'string' })
+    expect(inferSchema(across('NSE', 'BSE'))).toEqual({ type: 'string' })
+    expect(inferSchema(across('NSE', 'BSE', 'NSE'))).toEqual({ type: 'string' })
+    expect(inferSchema(across('A', 'B', 'C'))).toEqual({ type: 'string' })
     expect(inferSchema(s1('A', 'A', 'A'))).toEqual({ type: 'string' })
     const many = Array.from({ length: 11 }, (_, index) => `V${index}`)
-    expect(inferSchema(s1(...many, ...many))).toEqual({ type: 'string' })
-    expect(inferSchema(s1('A', null, 'B', 'A', 'B'))).toEqual({
+    expect(inferSchema(across(...many, ...many))).toEqual({ type: 'string' })
+    expect(inferSchema(across('A', null, 'B', 'A', 'B'))).toEqual({
       type: ['string', 'null'],
       enum: ['A', 'B', null],
     })
   })
 
   it('infers enums for code-like values: UPPER_CASE, kebab and snake tokens', () => {
-    expect(inferSchema(s1('IN_STOCK', 'SOLD_OUT', 'IN_STOCK', 'SOLD_OUT'))).toMatchObject({
+    expect(inferSchema(across('IN_STOCK', 'SOLD_OUT', 'IN_STOCK', 'SOLD_OUT'))).toMatchObject({
       enum: ['IN_STOCK', 'SOLD_OUT'],
     })
-    expect(inferSchema(s1('in-stock', 'out-of-stock', 'in-stock', 'out-of-stock'))).toMatchObject({
+    expect(inferSchema(across('in-stock', 'out-of-stock', 'in-stock', 'out-of-stock'))).toMatchObject({
       enum: ['in-stock', 'out-of-stock'],
     })
-    expect(inferSchema(s1('credit_card', 'upi', 'credit_card', 'upi'), { name: 'method' })).toEqual({ type: 'string' })
-    expect(inferSchema(s1('credit_card', 'net_banking', 'credit_card', 'net_banking'))).toMatchObject({
+    expect(inferSchema(across('credit_card', 'upi', 'credit_card', 'upi'), { name: 'method' })).toEqual({ type: 'string' })
+    expect(inferSchema(across('credit_card', 'net_banking', 'credit_card', 'net_banking'))).toMatchObject({
       enum: ['credit_card', 'net_banking'],
     })
   })
 
   it('infers enums for plain words under code-like names, in nested objects and arrays too', () => {
-    const orders = s1(
+    const orders = across(
       {
         status: 'paid',
         currency: 'inr',
@@ -177,12 +187,12 @@ describe('inferSchema', () => {
       'currency_code',
       'productCategories',
     ]) {
-      expect(inferSchema(s1('alpha', 'beta', 'alpha', 'beta'), { name })).toMatchObject({
+      expect(inferSchema(across('alpha', 'beta', 'alpha', 'beta'), { name })).toMatchObject({
         enum: ['alpha', 'beta'],
       })
     }
     // Array items take the name of the array.
-    expect(inferSchema(s1(['alpha', 'beta'], ['alpha'], ['beta']), { name: 'categories' })).toMatchObject({
+    expect(inferSchema(across(['alpha', 'beta'], ['alpha'], ['beta']), { name: 'categories' })).toMatchObject({
       items: {
         enum: ['alpha', 'beta'],
       },
@@ -391,7 +401,7 @@ describe('enums of digit strings', () => {
       'areaCode',
       'countryCode',
     ]) {
-      const schema = inferStringSchema(['1234', '1234', '5678', '5678'].map(value => ({ value, sessionId: 's1' })), { name })
+      const schema = inferStringSchema(['1234', '1234', '5678', '5678'].map((value, index) => ({ value, sessionId: `s${index % 2}` })), { name })
       expect(schema, name).toEqual({ type: 'string' })
     }
     const json = inferSchema(['1234', '1234', '5678', '5678'].map(value => ({
@@ -400,7 +410,7 @@ describe('enums of digit strings', () => {
     })))
     expect(json.properties?.storeCode).toEqual({ type: 'string' })
     // Code words still get enums.
-    const letters = inferStringSchema(['IN', 'IN', 'US', 'US'].map(value => ({ value, sessionId: 's1' })), { name: 'countryCode' })
+    const letters = inferStringSchema(['IN', 'IN', 'US', 'US'].map((value, index) => ({ value, sessionId: `s${index % 2}` })), { name: 'countryCode' })
     expect(letters.enum).toEqual(['IN', 'US'])
   })
 })
@@ -485,8 +495,8 @@ describe('enums never come from live data', () => {
   })
 
   it('keeps real enums: status words, letter codes and code tokens', () => {
-    expect(inferStringSchema(['Active', 'Closed', 'Active', 'Closed'].map(value => ({ value, sessionId: 's1' })), { name: 'status' }).enum).toEqual(['Active', 'Closed'])
-    expect(inferStringSchema(['EQ', 'T0', 'EQ', 'T0'].map(value => ({ value, sessionId: 's1' })), { name: 'series' }).enum).toEqual(['EQ', 'T0'])
-    expect(inferSchema(s1('IN_STOCK', 'SOLD_OUT', 'IN_STOCK', 'SOLD_OUT')).enum).toEqual(['IN_STOCK', 'SOLD_OUT'])
+    expect(inferStringSchema(['Active', 'Closed', 'Active', 'Closed'].map((value, index) => ({ value, sessionId: `s${index % 2}` })), { name: 'status' }).enum).toEqual(['Active', 'Closed'])
+    expect(inferStringSchema(['EQ', 'T0', 'EQ', 'T0'].map((value, index) => ({ value, sessionId: `s${index % 2}` })), { name: 'series' }).enum).toEqual(['EQ', 'T0'])
+    expect(inferSchema(across('IN_STOCK', 'SOLD_OUT', 'IN_STOCK', 'SOLD_OUT')).enum).toEqual(['IN_STOCK', 'SOLD_OUT'])
   })
 })
