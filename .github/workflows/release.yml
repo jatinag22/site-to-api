@@ -1,23 +1,90 @@
 name: Release
 
-# Publishing is disabled while the repository is private. To enable it, follow RELEASING.md:
-# create the npm packages once, link this workflow as a trusted publisher, then set
-# `PUBLISH_ENABLED` to `true` in the repository variables.
+# A release starts with `pnpm run release` (bumpp --pr, see RELEASING.md): it opens a pull request
+# from `release/v<version>`. Merging it runs this workflow on the merge commit: check the version,
+# run CI and the package smoke test on that commit, tag it, create the GitHub release with the
+# packed tarballs attached (installable while the repository is private), and publish to npm
+# when `PUBLISH_ENABLED` is `true`. A `v*` tag pushed by hand runs the same checks for that tag.
 
 on:
+  pull_request:
+    types: [closed]
   push:
     tags: ['v*']
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
+    name: Check the version
+    # Only merged release pull requests from this repository: a fork can name a branch
+    # `release/…` too, so the head repository is checked as well as the name.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Commit to release
+        id: commit
+        env:
+          SHA: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.merge_commit_sha }}
+        run: echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.commit.outputs.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Package versions agree (and match the tag)
+        id: version
+        env:
+          TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+        run: node scripts/check-release-version.mjs "$TAG"
+      - name: The release branch names the same version
+        if: github.event_name == 'pull_request'
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          EXPECTED: release/${{ steps.version.outputs.tag }}
+        run: |
+          if [ "$BRANCH" != "$EXPECTED" ]; then
+            echo "::error::branch $BRANCH does not match the package version (expected $EXPECTED)"
+            exit 1
+          fi
+
+  ci:
+    name: CI on the release commit
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+
+  release:
+    name: Tag, GitHub release, npm
+    needs: [prepare, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      SHA: ${{ needs.prepare.outputs.sha }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -27,10 +94,22 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - name: Tag the release commit
+        # A tag pushed with GITHUB_TOKEN starts no workflow, so this cannot loop.
+        if: github.event_name == 'pull_request'
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$SHA"
+          git fetch --tags origin
       - name: Create GitHub release with notes from commits
         run: npx changelogithub@15.0.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attach the packed tarballs
+        # Installable from the release while the repository is private (RELEASING.md).
+        run: |
+          mkdir -p tarballs
+          pnpm --filter site-to-api --filter @site-to-api/runtime pack --pack-destination tarballs
+          gh release upload "$TAG" tarballs/*.tgz --clobber
       - name: Publish to npm (trusted publishing)
         if: vars.PUBLISH_ENABLED == 'true'
         run: pnpm -r publish --access public --no-git-checks --provenance
