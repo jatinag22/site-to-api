@@ -21,7 +21,7 @@ import { FlowsDocumentSchema } from '../model'
 import { probeOperations, summarizeProbe, unreachableWarning, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { checkCommands } from './check'
-import { warn } from './output'
+import { counted, shown, warn } from './output'
 import { resolveConfig } from './program'
 
 function parseNumber(value: string): number {
@@ -104,16 +104,24 @@ const captureCommand: CommandRegistrar = (program) => {
         cwd,
         signal: controller.signal,
         channelFallback: sources['capture.browser.channel'] === 'default',
+        instructions: process.stdin.isTTY === true,
         log: message => consola.info(message),
       })
       printWarnings(result.warnings)
+      const contents = [
+        result.requests === null
+          ? 'no readable HAR'
+          : counted(result.requests, 'request'),
+        counted(result.events, 'event'),
+        counted(result.meta.scripts.length, 'script'),
+      ].join(', ')
       if (result.meta.incomplete) {
         // Saved, but not a clean run: scripts and CI should notice.
         process.exitCode = 1
-        warn(`Saved an incomplete capture to ${result.sessionDir}`)
+        warn(`Saved an incomplete session ${result.meta.sessionId} to ${shown(result.sessionDir)} (${contents}).`)
       }
       else {
-        consola.success(`Saved capture to ${result.sessionDir}`)
+        consola.success(`Saved session ${result.meta.sessionId} to ${shown(result.sessionDir)} (${contents}).`)
       }
       // Two sessions are what separates constants from per-session values; more help less.
       consola.info(await countSessions(dirname(result.sessionDir)) >= 2
@@ -191,8 +199,8 @@ const buildCommand: CommandRegistrar = (program) => {
         log: message => consola.info(message),
       })
       printWarnings(result.warnings)
-      consola.success(`${result.analysis.operations.length} operations, ${result.analysis.flows.flows.length} flows → ${result.outDir}`)
-      consola.info(`Start with ${resolve(result.outDir, 'AGENT.md')}`)
+      consola.success(`${counted(result.analysis.operations.length, 'operation')}, ${counted(result.analysis.flows.flows.length, 'flow')} → ${shown(result.outDir)}`)
+      consola.info(`Start with ${shown(resolve(result.outDir, 'AGENT.md'))}`)
     })
 }
 
@@ -257,7 +265,7 @@ const probeCommand: CommandRegistrar = (program) => {
         process.exitCode = 1
         return
       }
-      consola.success(`Handoff folder updated with the probe results: ${outDir}`)
+      consola.success(`Handoff folder updated with the probe results: ${shown(outDir)}`)
     })
 }
 
@@ -300,7 +308,7 @@ const genCommand: CommandRegistrar = (program) => {
           : 'current'),
       ])
       await recordClientGenerated(handoffDir, { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' })
-      consola.success(`Generated ${result.files.length} client files`)
+      consola.success(`Generated ${counted(result.files.length, 'client file')}`)
     })
 }
 

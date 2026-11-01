@@ -48,6 +48,11 @@ export interface RunCaptureOptions {
   /** Overrides how long saving waits on the page and the browser; tests use short ones. */
   timeouts?: Partial<CaptureTimeouts>
   /**
+   * A person is at the terminal: say how to use the browser and end the session. Off for runs
+   * from scripts or agents, which cannot press Ctrl+C. Default true.
+   */
+  instructions?: boolean
+  /**
    * The channel is the default `chrome`, not one the person chose: if Chrome is not installed,
    * capture with Playwright's bundled Chromium instead of failing. The CLI sets it.
    */
@@ -61,6 +66,10 @@ export interface CaptureResult {
   meta: SessionMeta
   /** Non-fatal problems: missing sourcemaps, dropped events, scripts that could not be saved. */
   warnings: string[]
+  /** Requests in the saved HAR; null when the HAR was not readable. */
+  requests: number | null
+  /** Events written to `events.jsonl`. */
+  events: number
 }
 
 /** Arguments a capture script's default export receives. */
@@ -311,11 +320,15 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     } satisfies SessionMeta)
     await writeJsonAtomic(path.join(sessionDir, META_FILE), meta)
     warnings.push(...incompleteWarning(sessionId, finalIncomplete))
-    const requests = saved.har === null
-      ? 'no readable HAR'
-      : `${saved.entries} requests`
-    log(`Saved session ${sessionId} to ${sessionDir} (${requests}, ${events.count} events, ${meta.scripts.length} scripts).`)
-    return { sessionDir, meta, warnings }
+    return {
+      sessionDir,
+      meta,
+      warnings,
+      requests: saved.har === null
+        ? null
+        : saved.entries,
+      events: events.count,
+    }
   }
   finally {
     stopper.dispose()
@@ -543,8 +556,10 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
         log(`Could not open ${options.url}: ${failureMessage(error)}`)
       })
     }
-    log('Browser open. Use the site the way a person would: log in, search, open the pages you want covered.')
-    log('When you are done, close the last tab or window, quit the browser, or press Ctrl+C here. The capture is saved on exit.')
+    if (options.instructions !== false) {
+      log('Browser open. Use the site the way a person would: log in, search, open the pages you want covered.')
+      log('When you are done, close the last tab or window, quit the browser, or press Ctrl+C here. The capture is saved on exit.')
+    }
     await done
     // Ending an interactive session is the normal way to finish it, not an interruption.
     return null

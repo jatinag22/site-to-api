@@ -37,6 +37,8 @@ async function sessions(count: number): Promise<void> {
   const result: CaptureResult = {
     sessionDir: join(rawDir, sessionId),
     warnings: [],
+    requests: 1,
+    events: 0,
     meta: {
       formatVersion: 1,
       sessionId,
@@ -80,6 +82,65 @@ describe('capture', () => {
   it('only suggests build once two sessions exist', async () => {
     await sessions(2)
     expect(await nextStep()).toBe('Next: `site-to-api build`')
+  })
+})
+
+describe('capture output', () => {
+  it('says once where the session was saved, with pluralised counts', async () => {
+    await sessions(1)
+    const info = vi.spyOn(consola, 'info').mockImplementation(() => {})
+    const success = vi.spyOn(consola, 'success').mockImplementation(() => {})
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      dir,
+      '--raw-dir',
+      'captures',
+      'capture',
+      '--minimized',
+      '--script',
+      'drive.mjs',
+    ], pipelineCommands)
+    expect(success.mock.calls.map(call => String(call[0]))).toEqual([
+      `Saved session s0 to ${join(dir, 'captures', 's0')} (1 request, 0 events, 0 scripts).`,
+    ])
+    expect(info.mock.calls.some(call => String(call[0]).includes('Saved'))).toBe(false)
+  })
+
+  it('shows the browser instructions only when a person is at the terminal', async () => {
+    await sessions(1)
+    vi.spyOn(consola, 'info').mockImplementation(() => {})
+    vi.spyOn(consola, 'success').mockImplementation(() => {})
+    const tty = process.stdin.isTTY
+    try {
+      process.stdin.isTTY = false
+      await run([
+        'node',
+        'site-to-api',
+        '--cwd',
+        dir,
+        '--raw-dir',
+        'captures',
+        'capture',
+        '--minimized',
+      ], pipelineCommands)
+      process.stdin.isTTY = true
+      await run([
+        'node',
+        'site-to-api',
+        '--cwd',
+        dir,
+        '--raw-dir',
+        'captures',
+        'capture',
+        '--minimized',
+      ], pipelineCommands)
+    }
+    finally {
+      process.stdin.isTTY = tty
+    }
+    expect(vi.mocked(runCapture).mock.calls.map(call => call[1].instructions)).toEqual([false, true])
   })
 })
 
