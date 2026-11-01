@@ -39,6 +39,20 @@ npx site-to-api probe                     # optional: what plain HTTP needs, rat
 Then point your coding agent at `api-handoff/AGENT.md`. The generated client needs
 `@site-to-api/runtime` and `zod` in the project that uses it.
 
+## Upgrading a generated client
+
+Clients generated before this version change in ways existing code notices; `gen` warns once
+when it rewrites one:
+
+- Each `createSiteClient` call creates its own client. Call operations through the `sdk` it
+  returns: the host namespaces exported from `index.ts` no longer share that configuration and
+  throw when called without `{ client }`, instead of silently sending requests without your
+  session.
+- Schemas are Zod Mini (`z.optional(schema)` instead of `schema.optional()`; `.parse` still works).
+- The MCP server moved from `client/mcp/` to `mcp/` next to the client.
+- Files you add to the client folder are kept, and hand edits to generated files are reported
+  (`--force` overwrites them).
+
 ## Documentation
 
 The repository holds the full documentation:

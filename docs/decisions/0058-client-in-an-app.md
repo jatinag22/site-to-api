@@ -77,7 +77,12 @@ kept there disappeared and hand edits to generated files were lost without a wor
   functions of the same name. The bound functions are read back from the generated files, typed
   through `Parameters<typeof fn<ThrowOnError>>`, so no cast is needed.
 - The host namespaces exported from `index.ts` stay as hey-api wrote them, on its shared default
-  client; the README says so.
+  client. That client is left unconfigured on purpose: its `fetch` throws a message naming
+  `createSiteClient(...).sdk` and the host's factory, so code written for the old shared client
+  fails loudly instead of sending requests without the session.
+- Upgrading is documented in the client README, the package README and the repository README,
+  and `gen` warns once when it rewrites a client from an older version (no manifest recorded),
+  naming these changes and an old `client/mcp/` folder to delete.
 
 ### The client compiles under the strictest flags
 - The generated client, `index.ts`, the wrappers, `extract.ts`, the MCP server and the runtime's

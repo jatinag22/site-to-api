@@ -281,7 +281,7 @@ function hostPascal(identifier: string): string {
 }
 
 /** `createGithubComClient`: the per-host factory in `<host>/site.ts`. */
-function hostFactoryName(identifier: string): string {
+export function hostFactoryName(identifier: string): string {
   return `create${hostPascal(identifier)}Client`
 }
 
@@ -655,6 +655,17 @@ export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessio
     '  ES module package (`"type": "module"` in the nearest `package.json`).',
     `- Import \`index.js\` of this folder: \`${paths.client}/index.js\` from the project root (the`,
     '  folder name alone also works with a bundler).',
+    '',
+    '## Upgrading from an older site-to-api',
+    '',
+    '- Each `createSiteClient` call now creates its own client, so two instances (two users) never',
+    '  share credentials. Call operations through the `sdk` it returns. The host namespaces exported',
+    '  from `index.ts` (and `<host>/sdk.gen.ts`) no longer use what `createSiteClient` configured: called',
+    '  without `{ client }` they throw instead of sending a request without your session.',
+    '- The Zod schemas are Zod Mini: `z.optional(schema)` instead of `schema.optional()`, `z.nullable(…)`',
+    '  instead of `.nullable()`. `.parse` and `.safeParse` still work; errors are `$ZodError`.',
+    `- The MCP server moved from \`client/mcp/\` to \`${paths.mcp}/\`; delete the old folder.`,
+    '- Files you add to this folder are kept now, and hand edits to generated files are reported.',
     '',
     '## What to commit',
     '',

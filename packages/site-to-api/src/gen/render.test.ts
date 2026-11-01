@@ -614,8 +614,8 @@ describe('hostile operation ids, labels and headers', () => {
     const html = renderMarkdown(readme)
     expect(injected(html)).toEqual([])
     expect(html).not.toMatch(/<h\d>\s*Pwned/)
-    // What to commit, deploy targets and small bundles add three headings and a code block.
-    expect(html.match(/<h\d>/g)).toHaveLength(10)
+    // Upgrading, what to commit, deploy targets and small bundles add four headings and a code block.
+    expect(html.match(/<h\d>/g)).toHaveLength(11)
     expect(html.match(/<pre>/g)).toHaveLength(2)
     // The example call falls back to a placeholder rather than an id that is not an identifier.
     expect(readme).toContain('sdk.someOperation(')

@@ -413,6 +413,20 @@ never shares cookies or credentials with another. Hosts that work with plain HTT
 use `tokenSession`. `api-handoff/client/README.md` says what each host needs, which operations are
 secured and how to send `auth`.
 
+### Upgrading a generated client
+
+Clients generated before this version change in ways existing code notices; `gen` warns once
+when it rewrites one:
+
+- Each `createSiteClient` call creates its own client. Call operations through the `sdk` it
+  returns: the host namespaces exported from `index.ts` no longer share that configuration and
+  throw when called without `{ client }`, instead of silently sending requests without your
+  session.
+- Schemas are Zod Mini (`z.optional(schema)` instead of `schema.optional()`; `.parse` still works).
+- The MCP server moved from `client/mcp/` to `mcp/` next to the client.
+- Files you add to the client folder are kept, and hand edits to generated files are reported
+  (`--force` overwrites them).
+
 ## Use with AI agents (MCP)
 
 Two MCP servers, both over stdio (decision 0043).
