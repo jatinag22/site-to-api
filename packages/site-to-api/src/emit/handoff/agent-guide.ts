@@ -309,6 +309,43 @@ function challengeBanners(analysis: Analysis, index: Index): string[] {
   ]
 }
 
+/**
+ * What a session imported from a HAR file cannot show (decision 0057): a HAR records traffic,
+ * not what the page's code did, so these parts are missing, not merely unseen.
+ */
+function importedSection(analysis: Analysis): string[] {
+  const imported = analysis.imported ?? []
+  if (imported.length === 0)
+    return []
+  const names = imported.map(session => `${code(session.sessionId)}${session.creator === null
+    ? ''
+    : ` (${text(session.creator)})`}`).join(', ')
+  const stacks = imported.every(session => session.stacks)
+  const scripts = imported.every(session => session.scripts)
+  return [
+    '## Imported sessions',
+    '',
+    `${imported.length === analysis.sessions.length
+      ? 'Every session was'
+      : `${counted(imported.length, 'session')} ${imported.length === 1
+        ? 'was'
+        : 'were'}`} imported from a HAR file, not captured: ${names}. A HAR holds the requests and responses only, so for ${imported.length === 1
+      ? 'it'
+      : 'them'}:`,
+    '',
+    '- No value is shown as computed in the browser, and no value is traced to what the person typed: the HAR has no record of the page\'s crypto calls or form input. Such inputs appear with an unknown origin.',
+    stacks
+      ? '- Call sites come from the stacks the browser put in the HAR.'
+      : '- Calls are not linked to the code that made them (no request stacks in the HAR), so `sentFrom` and code excerpts are missing for them.',
+    scripts
+      ? '- Source analysis reads the script bodies the HAR held; there are no sourcemaps.'
+      : '- No scripts were in the HAR, so there is no source analysis: no endpoints found in code, no excerpts.',
+    '- Cookies a page script set are seen only in the requests that sent them, and response bodies the exporting tool left out are missing.',
+    '- Capture a session with `site-to-api capture` to fill these in.',
+    '',
+  ]
+}
+
 /** Renders `AGENT.md`. Deterministic for the same analysis and context. */
 export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext, index: Index = indexAnalysis(analysis, context)): string {
   const channels = analysis.channels ?? []
@@ -341,6 +378,7 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext,
     '',
     UNTRUSTED_NOTE,
     '',
+    ...importedSection(analysis),
     '## Reading order',
     '',
     '1. `hosts/<host>.md`: one file per host (see Hosts): session needs, cookies, operations, channels, computed values and every gap.',

@@ -331,6 +331,50 @@ describe('telemetry host files (decision 0054)', () => {
   })
 })
 
+describe('renderAgentGuide: imported sessions', () => {
+  const context = {
+    toolVersion: '0.1.0',
+    examples: 'masked' as const,
+    probed: false,
+    client: 'current' as const,
+    probe: null,
+  }
+
+  it('says plainly what a session imported from a HAR cannot show', () => {
+    const analysis: Analysis = twoHostAnalysis()
+    analysis.imported = [
+      {
+        sessionId: 's1',
+        creator: 'WebInspector 537.36',
+        stacks: false,
+        scripts: false,
+      },
+    ]
+    const guide = renderAgentGuide(analysis, context)
+    expect(guide).toContain('## Imported sessions')
+    expect(guide).toContain('imported from a HAR file, not captured: `s1` (WebInspector 537.36)')
+    expect(guide).toContain('No value is shown as computed in the browser')
+    expect(guide).toContain('Calls are not linked to the code that made them')
+    expect(guide).toContain('No scripts were in the HAR, so there is no source analysis')
+  })
+
+  it('credits the stacks and scripts a HAR held, and says nothing for captured sessions', () => {
+    const analysis: Analysis = twoHostAnalysis()
+    analysis.imported = [
+      {
+        sessionId: 's1',
+        creator: null,
+        stacks: true,
+        scripts: true,
+      },
+    ]
+    const guide = renderAgentGuide(analysis, context)
+    expect(guide).toContain('Call sites come from the stacks the browser put in the HAR.')
+    expect(guide).toContain('Source analysis reads the script bodies the HAR held; there are no sourcemaps.')
+    expect(renderAgentGuide(twoHostAnalysis(), context)).not.toContain('## Imported sessions')
+  })
+})
+
 describe('renderApiMap', () => {
   const map = renderApiMap(fixture(), 'current')
 
