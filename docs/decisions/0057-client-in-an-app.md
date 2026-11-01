@@ -112,6 +112,17 @@ alone (`extractDealsFromGetDeals`): 202 KB (70 KB gzip) before, 39 KB (10 KB gzi
   carries them, they describe where the browser was, and as parameters every SDK function took
   them (with `z.url()` on the referer). The analysis and `probe` still see them.
 
+### The client README answers integration questions
+- The example calls a read operation (a GET, without path parameters when there is one), so
+  trying it changes nothing on the site.
+- It lists every dependency (`@site-to-api/runtime`, `zod` 4.1 or later, `playwright` only for
+  `browserSession`), what to commit (the client and the handoff folder) and what never to commit
+  (raw captures, saved jars, credentials), and the deploy targets: Node; edge workers with the jar
+  saved through `toJSON()` and restored with `CookieJar.fromJSON`; and the browser only from the
+  site's own origin, since CORS, forbidden request headers and hidden `Set-Cookie` stop it
+  anywhere else.
+- `packages/runtime/README.md` documents the runtime's public API.
+
 ## Consequences
 People can keep their own files next to the client. A stale file from an old version that `gen`
 no longer writes stays until it is deleted by hand.

@@ -70,6 +70,7 @@ function host(overrides: Partial<HostSpec> = {}): HostSpec {
     baseUrl: 'https://a.example.com',
     defaultHeaders: {},
     operationIds: ['getList'],
+    readOperationIds: ['getList'],
     extracts: [listExtract],
     auth: [],
     securedOperationIds: [],
@@ -466,6 +467,25 @@ describe('renderReadme auth and usage', () => {
     expect(readme).toContain(`from './client/index.js'`)
   })
 
+  it('calls a read operation in the examples and says what to install, commit and deploy where (decision 0057)', () => {
+    const readme = renderReadme([
+      host({
+        operationIds: ['addItem', 'getList'],
+        readOperationIds: ['getList'],
+      }),
+    ], [], [])
+    expect(readme).toContain('const { data, error } = await sdk.getList(')
+    expect(readme).toContain('- Dependencies: `@site-to-api/runtime` and `zod` (4.1 or later; the client uses `zod/mini`).')
+    expect(readme).toContain('`playwright` too, only if you use `browserSession`.')
+    expect(readme).toContain('## What to commit')
+    expect(readme).toContain('- Never commit the raw captures')
+    expect(readme).toContain('## Deploy targets')
+    expect(readme).toContain('`CookieJar.fromJSON(saved)` on each request')
+    expect(readme).toContain('- Browser: only from the site\'s own origin')
+    expect(readme).toContain(`import { createAExampleComClient, getList } from './client/a_example_com/site.js'`)
+    expect(readme).toContain('const { data, error } = await getList({ client })')
+  })
+
   it('says build and probe regenerate the client, gen only the client, and gives real paths', () => {
     const readme = renderReadme([
       host(),
@@ -538,6 +558,7 @@ describe('hostile operation ids, labels and headers', () => {
   const hostile = host({
     host: 'a`b$c.example',
     operationIds: [breakout],
+    readOperationIds: [breakout],
     auth: [
       {
         name: breakout,
@@ -593,8 +614,9 @@ describe('hostile operation ids, labels and headers', () => {
     const html = renderMarkdown(readme)
     expect(injected(html)).toEqual([])
     expect(html).not.toMatch(/<h\d>\s*Pwned/)
-    expect(html.match(/<h\d>/g)).toHaveLength(7)
-    expect(html.match(/<pre>/g)).toHaveLength(1)
+    // What to commit, deploy targets and small bundles add three headings and a code block.
+    expect(html.match(/<h\d>/g)).toHaveLength(10)
+    expect(html.match(/<pre>/g)).toHaveLength(2)
     // The example call falls back to a placeholder rather than an id that is not an identifier.
     expect(readme).toContain('sdk.someOperation(')
   })

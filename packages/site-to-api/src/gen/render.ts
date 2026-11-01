@@ -646,13 +646,44 @@ export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessio
     '',
     '## Setup',
     '',
-    '- Add `@site-to-api/runtime` and `zod` (v4) to your project.',
+    '- Dependencies: `@site-to-api/runtime` and `zod` (4.1 or later; the client uses `zod/mini`).',
+    '  `playwright` too, only if you use `browserSession`. Nothing else: hey-api\'s fetch client is',
+    '  copied into each host folder.',
     '- The files are TypeScript ES modules with `.js` import specifiers, so they type-check under',
     '  `moduleResolution` `bundler` and `nodenext`. Compile them with the rest of your code, or run',
     '  them with a TypeScript runner such as `tsx`. Under `nodenext` the folder must be part of an',
     '  ES module package (`"type": "module"` in the nearest `package.json`).',
     `- Import \`index.js\` of this folder: \`${paths.client}/index.js\` from the project root (the`,
     '  folder name alone also works with a bundler).',
+    '',
+    '## What to commit',
+    '',
+    `- Commit this folder and the handoff folder \`${paths.handoff}/\`: both are redacted, and \`gen\` can`,
+    '  regenerate the client from the handoff folder alone.',
+    '- Never commit the raw captures (`rawDir`, `.site-to-api/` by default; `site-to-api init` gitignores',
+    '  it), a saved cookie jar (`jar.toJSON()`), or the credentials you pass as `auth`, sessions or',
+    '  `SITE_API_*` variables: they are real sessions.',
+    '',
+    '## Deploy targets',
+    '',
+    '- Node (and Bun, Deno): everything works. Keep the jar between runs with `jar.toJSON()` and',
+    '  `CookieJar.fromJSON(saved)`.',
+    '- Edge workers (Cloudflare Workers and the like): plain HTTP works; there is no file system and no',
+    '  browser, so store `jar.toJSON()` in the platform\'s storage, restore it with',
+    '  `CookieJar.fromJSON(saved)` on each request, and leave out `browserSession`.',
+    '- Browser: only from the site\'s own origin (an extension or a userscript on that site). From any',
+    '  other page the browser blocks the request or its answer (CORS), will not send this jar\'s cookies',
+    '  or set `Cookie`, `Referer` or `User-Agent`, and hides `Set-Cookie`. Call the site from your own',
+    '  backend and give the page your own API instead. Bundlers pick the runtime\'s `browser` build,',
+    '  which parses HTML with `DOMParser`.',
+    '',
+    '## Small bundles',
+    '',
+    '`createSiteClient` binds every function of every host into `sdk`, so a bundle that uses it holds',
+    'them all. Each host folder also has `site.ts`: the host\'s own factory and its functions. Import',
+    'only what you call, and a bundler leaves out the rest:',
+    '',
+    ...codeBlock(smallBundleExample(hosts[0]), 'ts'),
     '',
     'Each host folder holds the hey-api output (types, SDK functions, Zod schemas). `index.ts` exports',
     'every host\'s SDK as a namespace and `createSiteClient()`, which routes that host\'s SDK through',
@@ -698,8 +729,28 @@ export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessio
 /** SDK function names hey-api derives (see emit/naming); only plain identifiers go into the example. */
 const PLAIN_IDENTIFIER = /^[a-z_$][\w$]*$/i
 
+/** The `site.ts` example of the README: one host's factory and one read operation. */
+function smallBundleExample(host: HostSpec | undefined): string[] {
+  if (host === undefined)
+    return ['// No host.']
+  const operation = [
+    ...host.readOperationIds,
+    ...host.operationIds,
+  ].map(sdkFunctionName).find(name => PLAIN_IDENTIFIER.test(name)) ?? 'someOperation'
+  return [
+    `import { ${hostFactoryName(host.identifier)}, ${operation} } from './client/${host.identifier}/site.js'`,
+    '',
+    `const { client } = ${hostFactoryName(host.identifier)}({ /* same options as createSiteClient */ })`,
+    `const { data, error } = await ${operation}({ client })`,
+  ]
+}
+
 function renderHostSection(host: HostSpec, session: SessionRequirement | null): string {
-  const example = host.operationIds.map(sdkFunctionName).find(name => PLAIN_IDENTIFIER.test(name)) ?? 'someOperation'
+  // A read operation, so trying the example changes nothing on the site.
+  const example = [
+    ...host.readOperationIds,
+    ...host.operationIds,
+  ].map(sdkFunctionName).find(name => PLAIN_IDENTIFIER.test(name)) ?? 'someOperation'
   const lines = [
     `### ${text(host.host)}`,
     '',

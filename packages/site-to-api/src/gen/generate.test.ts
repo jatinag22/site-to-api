@@ -740,8 +740,9 @@ describe('generateClient with hostile specs', () => {
     try {
       const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
       const html = renderMarkdown(readme)
-      expect(html.match(/<pre>/g)).toHaveLength(1)
-      expect(html.match(/<h\d>/g)).toHaveLength(7)
+      // Two code blocks and ten headings: the README's own, plus what to commit, deploy targets and small bundles.
+      expect(html.match(/<pre>/g)).toHaveLength(2)
+      expect(html.match(/<h\d>/g)).toHaveLength(10)
       expect(result.files).toContain('client/README.md')
     }
     finally {
