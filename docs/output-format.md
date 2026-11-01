@@ -14,7 +14,10 @@ The entry point for a coding agent: a short index, at most about 25 KB on any si
 
 1. **What this folder is**: one paragraph, the first five hosts covered (then "and N more
    hosts"), the sessions used, the tool version. Hosts that answered only with bot challenges
-   get a bold banner above it (at most three).
+   get a bold banner above it (at most three). When any session was imported from a HAR file
+   (`site-to-api import`, decision 0057), an **Imported sessions** section follows and says
+   what such a session cannot show: computed values, typed inputs, call sites without the
+   HAR's request stacks, source analysis without its scripts, and sourcemaps.
 2. **Reading order**: `hosts/<host>.md` → `API_MAP.md` → `flows.md` → the spec for the host →
    `source/` excerpts (only when an excerpt was written) → `client/` usage.
 3. **Hosts**: one line per host, most important first, under three headings: the site's own hosts

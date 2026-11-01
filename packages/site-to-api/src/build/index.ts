@@ -5,7 +5,7 @@
 import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import type { ClientState } from '../emit/handoff'
-import type { Analysis, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver, ValueTrace } from '../model'
+import type { Analysis, ImportedSession, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver, ValueTrace } from '../model'
 import type { ProbeReport } from '../model/probe'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
@@ -163,6 +163,18 @@ function addCallSites(operations: Operation[], resolver: SourceResolver): Operat
 
 /** Every source reference that the output mentions, so each gets an excerpt. */
 /** The first session whose saved code can produce an excerpt for this location. */
+/** What each HAR-imported session could give, for the AGENT.md note (decision 0057). */
+function importedSessions(sessions: readonly LoadedSession[]): ImportedSession[] {
+  return sessions
+    .filter(session => session.meta.source === 'har-import')
+    .map(session => ({
+      sessionId: session.meta.sessionId,
+      creator: [session.meta.importedFrom?.creator, session.meta.importedFrom?.browser].filter(Boolean).join(', ') || null,
+      stacks: session.events.some(event => event.t === 'request' && event.stack.length > 0),
+      scripts: session.meta.scripts.length > 0,
+    }))
+}
+
 async function excerptFor(ref: SourceRef, sessions: LoadedSession[]): Promise<{ path: string, content: string } | null> {
   for (const session of sessions) {
     const excerpt = await buildExcerpt(ref, sessions, session.meta.sessionId)
@@ -368,6 +380,7 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
 
   const analysis: Analysis = {
     sessions: loaded.sessions.map(session => session.meta.sessionId),
+    imported: importedSessions(loaded.sessions),
     startUrls: [
       ...new Set(loaded.sessions.flatMap(session => session.meta.startUrl === null
         ? []

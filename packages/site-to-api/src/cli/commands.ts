@@ -16,6 +16,7 @@ import { CHANNEL_NAMES, channelList, normalizeCaptureUrl, runCapture } from '../
 import { updateClientState } from '../emit/handoff'
 import { SiteToApiError } from '../errors'
 import { generateClient } from '../gen'
+import { importHar } from '../import'
 import { countSessions } from '../load'
 import { FlowsDocumentSchema } from '../model'
 import { probeOperations, summarizeProbe, unreachableWarning, writeProbeReport } from '../probe'
@@ -318,8 +319,39 @@ const genCommand: CommandRegistrar = (program) => {
     })
 }
 
+interface ImportFlags {
+  session?: string
+  deleteSource?: boolean
+}
+
+const importCommand: CommandRegistrar = (program) => {
+  program
+    .command('import')
+    .description('turn a HAR file exported from browser DevTools or a proxy into a raw session that build, probe and gen use like a captured one')
+    .argument('<file>', 'the .har file')
+    .option('--session <id>', 'session id (default: <host>-<timestamp> of the first page)')
+    .option('--delete-source', 'delete the HAR file after importing it (it holds your cookies)')
+    .action(async (file: string, flags: ImportFlags, command: Command) => {
+      const { config, cwd } = await resolveConfig(command)
+      const result = await importHar(config, {
+        file: resolve(process.cwd(), file),
+        sessionId: flags.session,
+        cwd,
+        deleteSource: flags.deleteSource,
+      })
+      printWarnings(result.warnings)
+      consola.success(`Imported session ${result.meta.sessionId} to ${shown(result.sessionDir)} (${counted(result.entries, 'request')}, ${counted(result.events, 'event')}, ${counted(result.scripts, 'script')}).`)
+      if (result.sourceDeleted)
+        consola.info(`Deleted ${file}.`)
+      else
+        warn(`${file} holds your cookies and session tokens. Delete it once you no longer need it (or import with --delete-source).`)
+      consola.info('Next: `site-to-api build`. A HAR has no record of what the page\'s code did, so AGENT.md lists what an imported session cannot show.')
+    })
+}
+
 export const pipelineCommands: CommandRegistrar[] = [
   captureCommand,
+  importCommand,
   buildCommand,
   probeCommand,
   genCommand,

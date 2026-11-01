@@ -30,6 +30,7 @@ packages/site-to-api/   CLI + analysis engine (published as `site-to-api`)
   src/model/            shared data contracts (capture format, Exchange, flows.json, Analysis)
   src/hosts/            which host names are one site (shared by capture and analysis)
   src/capture/          Playwright session, instrumentation, sourcemaps, scripts
+  src/import/           a DevTools or proxy HAR file → a raw session (`site-to-api import`)
   src/load/             raw session → Exchange[]
   src/analyze/          classify, operations, schema inference, correlate, flows, source, html, redact
   src/emit/             OpenAPI, flows.json/md, API_MAP.md, AGENT.md, excerpts
