@@ -99,30 +99,34 @@ async function workspace(): Promise<string> {
 
 // Uses the generated client the way a person would, so the strict type check below also proves
 // the generated API is usable without casts.
-const DRIVER = `import { CookieJar, createSiteClient, extractCsrfTokenFromGetLogin, extractGetPrices, shop_example_com } from './handoff/client/index.js'
+const DRIVER = `import { CookieJar, createSiteClient, extractCsrfTokenFromGetLogin, extractGetPrices } from './handoff/client/index.js'
 import type { GetPricesRecord } from './handoff/client/index.js'
 
 export async function run(baseUrl: string) {
   const jar = new CookieJar()
   const site = createSiteClient({ host: 'shop.example.com', jar, baseUrl, retry: false, auth: () => 'Bearer t-1' })
-  const before = await shop_example_com.getApiItem({ path: { itemId: 'a1' } })
+  const before = await site.sdk.getApiItem({ path: { itemId: 'a1' } })
   const loginPage = await site.sdk.getLogin()
   const csrf = typeof loginPage.data === 'string' ? extractCsrfTokenFromGetLogin(loginPage.data) : null
   // Required headers, one of them spelled in mixed case in the spec, pass request validation.
-  const login = await shop_example_com.postApiSession({
+  const login = await site.sdk.postApiSession({
     body: { username: 'demo' },
     headers: { 'x-csrf-token': csrf ?? '', 'X-Api-Version': '2' },
   })
   const item = await site.sdk.getApiItem({ path: { itemId: 'a1' }, query: { currency: 'INR' } })
   const me = await site.sdk.getApiMe()
   // hey-api returns a failed response validation as \`error\` instead of throwing.
-  const broken = await shop_example_com.getApiItem({ path: { itemId: 'broken' } })
+  const broken = await site.sdk.getApiItem({ path: { itemId: 'broken' } })
   const invalid = broken.error instanceof Error ? broken.error.name : 'accepted'
-  const page = await shop_example_com.getPrices()
+  const page = await site.sdk.getPrices()
   const records: GetPricesRecord[] = typeof page.data === 'string' ? extractGetPrices(page.data) : []
-  // A second configuration for the same host replaces the first one, \`auth\` included.
-  createSiteClient({ host: 'shop.example.com', jar, baseUrl, retry: false })
-  const meWithoutAuth = await site.sdk.getApiMe()
+  // Every call has a client of its own: another user's instance sends its own credentials and
+  // cookies, one without auth sends none, and the first instance keeps its own (decision 0057).
+  const otherJar = new CookieJar()
+  const other = createSiteClient({ host: 'shop.example.com', jar: otherJar, baseUrl, retry: false, auth: () => 'Bearer t-2' })
+  const otherMe = await other.sdk.getApiMe()
+  const meWithoutAuth = await createSiteClient({ host: 'shop.example.com', baseUrl, retry: false }).sdk.getApiMe()
+  const meAgain = await site.sdk.getApiMe()
   // JSON text under the site's form content type, also after the host was configured again.
   const search = await site.sdk.postApiSearch({ body: { query: 'alpha' } })
   // A content type the caller passes is sent as is (the server here answers 415 to anything but the form type).
@@ -135,6 +139,9 @@ export async function run(baseUrl: string) {
     item: item.data ?? null,
     me: me.data ?? null,
     meWithoutAuthStatus: meWithoutAuth.response?.status ?? 0,
+    otherMe: otherMe.data ?? null,
+    meAgain: meAgain.data ?? null,
+    otherCookies: otherJar.all().map(cookie => cookie.name),
     search: search.data ?? null,
     ownTypeStatus: ownType.response?.status ?? 0,
     invalid,
@@ -202,6 +209,8 @@ function handleSignIn(request: IncomingMessage, response: ServerResponse, json: 
   if (request.url === '/api/me') {
     if (request.headers.authorization === 'Bearer t-1')
       json(200, { name: 'demo' })
+    else if (request.headers.authorization === 'Bearer t-2')
+      json(200, { name: 'other' })
     else
       json(401, { message: 'no token' })
     return true
@@ -302,6 +311,9 @@ const DriverResultSchema = z.object({
   item: z.unknown(),
   me: z.unknown(),
   meWithoutAuthStatus: z.number(),
+  otherMe: z.unknown(),
+  meAgain: z.unknown(),
+  otherCookies: z.array(z.string()),
   search: z.unknown(),
   ownTypeStatus: z.number(),
   invalid: z.string(),
@@ -410,6 +422,9 @@ describe('generateClient', () => {
     expect(output.login).toEqual({ ok: true })
     expect(output.me).toEqual({ name: 'demo' })
     expect(output.meWithoutAuthStatus).toBe(401)
+    expect(output.otherMe).toEqual({ name: 'other' })
+    expect(output.meAgain).toEqual({ name: 'demo' })
+    expect(output.otherCookies).toEqual([])
     expect(output.search).toEqual({
       hits: ['{"query":"alpha"}'],
     })

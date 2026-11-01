@@ -57,6 +57,17 @@ kept there disappeared and hand edits to generated files were lost without a wor
   server's files, and logs that it did. Setting it (`--mcp off`, or `gen.mcp: 'off'` in the config)
   still removes the server, with a warning that names the folder and what set `off`.
 
+### One client per `createSiteClient` call
+- `createSiteClient` used to configure hey-api's one shared client per host (`setConfig`), so a
+  second call, for a second user of a server app, replaced the first user's `auth`, `fetch` and
+  cookie jar under the `sdk` the first call returned. Each call now creates its own hey-api client
+  (`createClient(createConfig(…))`) and returns `sdk` with every function of the host bound to it
+  (`{ ...options, client }`); the GraphQL and dispatcher wrappers take the place of the raw
+  functions of the same name. The bound functions are read back from the generated files, typed
+  through `Parameters<typeof fn<ThrowOnError>>`, so no cast is needed.
+- The host namespaces exported from `index.ts` stay as hey-api wrote them, on its shared default
+  client; the README says so.
+
 ## Consequences
 People can keep their own files next to the client. A stale file from an old version that `gen`
 no longer writes stays until it is deleted by hand.

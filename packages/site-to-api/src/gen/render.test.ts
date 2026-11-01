@@ -4,7 +4,7 @@ import type { ExtractOperation, HostSpec } from './spec'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { HOSTILE, injected, renderMarkdown } from '../../test/markdown'
-import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
+import { exportedFunctions, nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
 
 const listExtract: ExtractOperation = {
   operationId: 'getList',
@@ -236,10 +236,10 @@ describe('renderIndexModule', () => {
       }),
     ], [])
     expect(code).toContain(`import * as a_example_com from './a_example_com/index.js'`)
-    expect(code).toContain(`import { client as a_example_comClient } from './a_example_com/client.gen.js'`)
+    expect(code).toContain(`import { createClient as createA_example_comClient, createConfig as createA_example_comConfig } from './a_example_com/client/index.js'`)
     expect(code).toContain('    headers: {\n      "x-a": "1",\n    },')
     expect(code).not.toContain(`from './extract.js'`)
-    expect(code).toContain('auth: options.auth')
+    expect(code).toContain('...(options.auth === undefined ? {} : { auth: options.auth }),')
     // Every relative specifier carries an extension, so `nodenext` resolution accepts it.
     for (const [, specifier] of code.matchAll(/from '(\.[^']*)'/g))
       expect(specifier).toMatch(/\.js$/)
@@ -297,11 +297,21 @@ describe('dispatcher wrappers (decision 0039)', () => {
   ]
 
   it('puts the wrappers in `sdk` in place of the raw functions', () => {
+    const functions = new Map([
+      [
+        'a.example.com',
+        [
+          ...exportedFunctions('export const getSymbolData = <ThrowOnError extends boolean = false>(options?: Options) => x\nexport const getRoot = <ThrowOnError extends boolean = false>(options?: Options) => x\n', 'sdk'),
+          ...exportedFunctions('export function getSymbolData<ThrowOnError extends boolean = false>(options: O) {}\n', 'dispatch'),
+        ],
+      ],
+    ])
     const code = renderIndexModule([
       host({ dispatch }),
-    ], [])
+    ], [], [], functions)
     expect(code).toContain(`import * as a_example_comDispatch from './a_example_com/dispatch.js'`)
-    expect(code).toContain('    sdk: { ...a_example_com, ...a_example_comDispatch },')
+    expect(code).toContain('    getSymbolData: <ThrowOnError extends boolean = false>(...[options]: Parameters<typeof a_example_comDispatch.getSymbolData<ThrowOnError>>) => a_example_comDispatch.getSymbolData<ThrowOnError>({ ...options, client }),')
+    expect(code).toContain('    getRoot: <ThrowOnError extends boolean = false>(...[options]: Parameters<typeof a_example_comSdk.getRoot<ThrowOnError>>) => a_example_comSdk.getRoot<ThrowOnError>({ ...options, client }),')
   })
 
   it('lists the functions per endpoint in the README', () => {
@@ -434,7 +444,7 @@ describe('renderReadme auth and usage', () => {
     securedOperationIds: ['getOrders'],
   })
 
-  it('uses the sdk returned by createSiteClient and says the configuration is per host', () => {
+  it('uses the sdk returned by createSiteClient and says each call has its own client', () => {
     const readme = renderReadme([
       host(),
     ], [], [
@@ -443,7 +453,7 @@ describe('renderReadme auth and usage', () => {
     expect(readme).toContain('const { sdk } = createSiteClient({ host: "a.example.com", jar })')
     expect(readme).toContain('const { data, error } = await sdk.getList(')
     expect(readme).not.toContain('a_example_com.getList(')
-    expect(readme).toContain('calling it twice for\nthe same host replaces the first configuration')
+    expect(readme).toContain('Each call creates a hey-api client of its own and binds the host\'s functions to\nit, so two instances (one per user or account) never share cookies, credentials or settings.')
     expect(readme).toContain(`from './client/index.js'`)
   })
 

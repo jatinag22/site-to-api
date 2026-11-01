@@ -3,6 +3,7 @@ import type { FlowsDocument } from '../model'
 import type { ClientManifest } from './manifest'
 import type { McpMode, ZodExport } from './mcp'
 import type { GeneratedPaths } from './paths'
+import type { HostFunction } from './render'
 import type { ChannelSummary, HostSpec, OpenApiDocument } from './spec'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -22,7 +23,7 @@ import { nameHtmlValues } from './html-values'
 import { syncGenerated } from './manifest'
 import { MCP_SERVER_VERSION, mcpTools, renderMcpReadme, renderMcpServer, zodExports } from './mcp'
 import { generatedPaths, posixPath } from './paths'
-import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
+import { exportedFunctions, nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
 import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema, withoutBrowserOnlySteps } from './spec'
 
 /** Input for {@link generateClient}. */
@@ -151,6 +152,7 @@ async function writeClientFiles(clientDir: string, mcpDir: string, loaded: reado
   assertTypeScript6()
   await mkdir(clientDir, { recursive: true })
   const hosts: HostSpec[] = []
+  const functions = new Map<string, HostFunction[]>()
   for (const { host, document } of loaded) {
     // hey-api writes some spec text into code unescaped: it gets a copy without patterns,
     // documentation and examples, and the output is checked below (decision 0043).
@@ -164,12 +166,22 @@ async function writeClientFiles(clientDir: string, mcpDir: string, loaded: reado
     if (dispatch.length > 0)
       await writeFile(path.join(clientDir, host.identifier, 'dispatch.ts'), renderDispatchModule(dispatch))
     hosts.push({ ...host, graphql, dispatch })
+    // Read back from the files just written, so createSiteClient binds exactly what they export.
+    const hostDir = path.join(clientDir, host.identifier)
+    const read = async (file: string, module: HostFunction['module']): Promise<HostFunction[]> => existsSync(path.join(hostDir, file))
+      ? exportedFunctions(await readFile(path.join(hostDir, file), 'utf8'), module)
+      : []
+    functions.set(host.host, [
+      ...await read('sdk.gen.ts', 'sdk'),
+      ...await read('graphql.ts', 'graphql'),
+      ...await read('dispatch.ts', 'dispatch'),
+    ])
   }
 
   const extracts = nameExtracts(hosts, warnings)
   const htmlValues = nameHtmlValues(input.flows, new Set(extracts.map(entry => entry.functionName)), warnings)
   await writeFile(path.join(clientDir, 'extract.ts'), renderExtractModule(extracts, htmlValues))
-  await writeFile(path.join(clientDir, 'index.ts'), renderIndexModule(hosts, extracts, htmlValues))
+  await writeFile(path.join(clientDir, 'index.ts'), renderIndexModule(hosts, extracts, htmlValues, functions))
   await writeFile(path.join(clientDir, 'README.md'), renderReadme(hosts, extracts, input.flows.session, htmlValues, channels, paths))
   if (input.mcp !== undefined && input.mcp !== 'off')
     await writeMcpServer(clientDir, mcpDir, loaded, input.flows, input.mcp, paths, warnings)

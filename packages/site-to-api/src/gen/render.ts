@@ -240,26 +240,79 @@ function credentialHeaders(host: HostSpec): string[] {
   ].sort()
 }
 
-function sdkEntry(host: HostSpec): string {
-  const wrappers = [
-    ...(host.graphql.length > 0
-      ? [`${host.identifier}Graphql`]
-      : []),
-    ...(host.dispatch.length > 0
-      ? [`${host.identifier}Dispatch`]
-      : []),
+/** An SDK function a host exports, as `createSiteClient` binds it to its own client. */
+export interface HostFunction {
+  name: string
+  /** The module that exports it: hey-api's SDK, or a GraphQL or dispatcher wrapper of the same name. */
+  module: 'sdk' | 'graphql' | 'dispatch'
+  /** Generic in `ThrowOnError`, as hey-api's functions and the wrappers are. */
+  generic: boolean
+}
+
+const EXPORTED_FUNCTION = /^export (?:const|function) ([A-Za-z_$][\w$]*)(?: = )?(<ThrowOnError extends boolean)?/gm
+
+/** The functions a generated module exports (`sdk.gen.ts`, `graphql.ts`, `dispatch.ts`). */
+export function exportedFunctions(source: string, module: HostFunction['module']): HostFunction[] {
+  return [
+    ...source.matchAll(EXPORTED_FUNCTION),
+  ].flatMap(match => match[1] === undefined
+    ? []
+    : [
+        { name: match[1], module, generic: match[2] !== undefined },
+      ])
+}
+
+/** `localhost_4173` → `Localhost_4173`, for per-host names in `index.ts`. */
+function pascal(identifier: string): string {
+  return `${identifier.charAt(0).toUpperCase()}${identifier.slice(1)}`
+}
+
+/** The functions `createSiteClient` binds for a host: each name once, a wrapper over hey-api's. */
+function boundFunctions(functions: readonly HostFunction[]): HostFunction[] {
+  const byName = new Map<string, HostFunction>()
+  for (const fn of functions) {
+    const known = byName.get(fn.name)
+    if (known === undefined || known.module === 'sdk')
+      byName.set(fn.name, fn)
+  }
+  return [
+    ...byName.values(),
+  ].sort((a, b) => a.name < b.name
+    ? -1
+    : a.name > b.name
+      ? 1
+      : 0)
+}
+
+/** `bind<Host>(client)`: every function of the host with `client` filled in. */
+function renderBinder(host: HostSpec, functions: readonly HostFunction[]): string[] {
+  const id = host.identifier
+  const modules = { sdk: `${id}Sdk`, graphql: `${id}Graphql`, dispatch: `${id}Dispatch` }
+  const lines = boundFunctions(functions).map((fn) => {
+    const target = `${modules[fn.module]}.${fn.name}`
+    return fn.generic
+      ? `    ${fn.name}: <ThrowOnError extends boolean = false>(...[options]: Parameters<typeof ${target}<ThrowOnError>>) => ${target}<ThrowOnError>({ ...options, client }),`
+      : `    ${fn.name}: (...[options]: Parameters<typeof ${target}>) => ${target}({ ...options, client }),`
+  })
+  return [
+    `/** The SDK functions of ${host.host}, sending through \`client\` instead of the shared default one. */`,
+    `function bind${pascal(id)}(client: ${pascal(id)}Client) {`,
+    `  return {`,
+    ...lines,
+    `  }`,
+    `}`,
+    '',
   ]
-  return wrappers.length === 0
-    ? `    sdk: ${host.identifier},`
-    : `    sdk: { ...${[host.identifier, ...wrappers].join(', ...')} },`
 }
 
 /** `client/index.ts`: every host's SDK under its namespace, plus `createSiteClient`. */
-export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], htmlValues: NamedHtmlValue[] = []): string {
+export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], htmlValues: NamedHtmlValue[] = [], functions: ReadonlyMap<string, readonly HostFunction[]> = new Map()): string {
   // `.js` specifiers work under `moduleResolution: bundler` and `nodenext` alike.
   const imports = hosts.flatMap(host => [
+    `import type { Client as ${pascal(host.identifier)}Client } from './${host.identifier}/client/index.js'`,
     `import * as ${host.identifier} from './${host.identifier}/index.js'`,
-    `import { client as ${host.identifier}Client } from './${host.identifier}/client.gen.js'`,
+    `import { createClient as create${pascal(host.identifier)}Client, createConfig as create${pascal(host.identifier)}Config } from './${host.identifier}/client/index.js'`,
+    `import * as ${host.identifier}Sdk from './${host.identifier}/sdk.gen.js'`,
     ...(host.graphql.length > 0
       ? [`import * as ${host.identifier}Graphql from './${host.identifier}/graphql.js'`]
       : []),
@@ -267,11 +320,12 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
       ? [`import * as ${host.identifier}Dispatch from './${host.identifier}/dispatch.js'`]
       : []),
   ])
-  // GraphQL functions take `{ variables }` and replace the raw SDK functions of the same name.
-  const entries = hosts.map(host => [
-    `  ${literal(host.host)}: {`,
-    `    client: ${host.identifier}Client,`,
-    sdkEntry(host),
+  const binders = hosts.flatMap(host => renderBinder(host, functions.get(host.host) ?? []))
+  const clientTypes = hosts.map(host => `  ${literal(host.host)}: { client: ${pascal(host.identifier)}Client, sdk: ReturnType<typeof bind${pascal(host.identifier)}> }`)
+  const factories = hosts.map(host => [
+    `  ${literal(host.host)}: (config) => {`,
+    `    const client = create${pascal(host.identifier)}Client(create${pascal(host.identifier)}Config(config))`,
+    `    return { client, sdk: bind${pascal(host.identifier)}(client) }`,
     `  },`,
   ].join('\n'))
   const defaults = hosts.map(host => [
@@ -306,15 +360,13 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     `export { browserSession, combineSessions, CookieJar, cookieSession, extractValue, isSiteApiError, SiteApiError, tokenSession } from '@site-to-api/runtime'`,
     `export type { BrowserCookie, Session } from '@site-to-api/runtime'`,
     '',
-    `const sdks = {\n${entries.join('\n')}\n}`,
+    ...binders,
+    `/** Per host: the hey-api client a {@link createSiteClient} call creates, and its SDK bound to it. */`,
+    `interface HostClients {\n${clientTypes.join('\n')}\n}`,
     '',
     `/** Hosts this client was generated for. */`,
-    `export type SiteHost = keyof typeof sdks`,
+    `export type SiteHost = keyof HostClients`,
     '',
-    `/** Per host: the base URL, the constant headers, and the headers that carry credentials (dropped on a redirect to another origin). */`,
-    `const hostDefaults: Record<SiteHost, { baseUrl: string, headers: Record<string, string>, credentialHeaders: string[] }> = {\n${defaults.join('\n')}\n}`,
-    '',
-    ...contentTypes.declarations,
     `/** A security scheme of the spec, as the client passes it to {@link SiteClientOptions.auth}. */`,
     `export interface SiteAuthScheme {`,
     `  type: 'apiKey' | 'http'`,
@@ -325,6 +377,23 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     `  scheme?: 'basic' | 'bearer'`,
     `}`,
     '',
+    `/** Credentials for secured operations; see {@link SiteClientOptions.auth}. */`,
+    `export type SiteAuth = string | ((scheme: SiteAuthScheme) => string | undefined | Promise<string | undefined>)`,
+    '',
+    `/** What a host's factory needs to create its client. */`,
+    `interface HostConfig {`,
+    `  baseUrl: string`,
+    `  fetch: typeof fetch`,
+    `  auth?: SiteAuth`,
+    `}`,
+    '',
+    `// A mapped type, so indexing it with a generic host gives that host's own client type.`,
+    `const hostFactories: { [H in SiteHost]: (config: HostConfig) => HostClients[H] } = {\n${factories.join('\n')}\n}`,
+    '',
+    `/** Per host: the base URL, the constant headers, and the headers that carry credentials (dropped on a redirect to another origin). */`,
+    `const hostDefaults: Record<SiteHost, { baseUrl: string, headers: Record<string, string>, credentialHeaders: string[] }> = {\n${defaults.join('\n')}\n}`,
+    '',
+    ...contentTypes.declarations,
     `/** Options for {@link createSiteClient}. */`,
     `export interface SiteClientOptions<H extends SiteHost> {`,
     `  host: H`,
@@ -336,7 +405,7 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     `   * it); for \`http\` bearer the client adds \`Bearer \`. Return \`undefined\` to send nothing.`,
     `   * Works alongside \`session\`, e.g. browser cookies plus a token from the login response.`,
     `   */`,
-    `  auth?: string | ((scheme: SiteAuthScheme) => string | undefined | Promise<string | undefined>)`,
+    `  auth?: SiteAuth`,
     `  /** Cookie jar; defaults to the session's jar or a new one. Persist it with \`jar.toJSON()\`. */`,
     `  jar?: CookieJar`,
     `  /** Underlying fetch; defaults to \`globalThis.fetch\`. */`,
@@ -351,35 +420,40 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     `/** A configured host: its SDK functions use \`fetch\` (cookie jar, session, retries). */`,
     `export interface SiteClient<H extends SiteHost> {`,
     `  host: H`,
-    `  client: (typeof sdks)[H]['client']`,
-    `  sdk: (typeof sdks)[H]['sdk']`,
+    `  /** The hey-api client of this call alone; the \`sdk\` functions send through it. */`,
+    `  client: HostClients[H]['client']`,
+    `  sdk: HostClients[H]['sdk']`,
     `  jar: CookieJar`,
     `  fetch: typeof fetch`,
     `}`,
     '',
     `/**`,
-    ` * Configures the shared hey-api client of \`host\` to send requests through the runtime's`,
+    ` * Creates a hey-api client of \`host\` that sends requests through the runtime's`,
     ` * \`createFetch\`: cookies from \`jar\`, the session's credentials, \`auth\` for secured`,
-    ` * operations, retries with backoff and the constant headers captured for that host. Every SDK`,
-    ` * function of the host then uses it.`,
+    ` * operations, retries with backoff and the constant headers captured for that host. \`sdk\``,
+    ` * holds the host's functions bound to that client.`,
     ` *`,
-    ` * There is one configuration per host: calling it again for the same host replaces the`,
-    ` * previous configuration, also for the \`sdk\` the earlier call returned.`,
+    ` * Each call gets a client of its own, so two calls (two users, two accounts) never share`,
+    ` * cookies, credentials or settings. The host namespaces exported from this file are not bound:`,
+    ` * they use hey-api's shared default client unless you pass \`client\`.`,
     ` */`,
     `export function createSiteClient<H extends SiteHost>(options: SiteClientOptions<H>): SiteClient<H> {`,
     `  const defaults = hostDefaults[options.host]`,
     `  const jar = options.jar ?? options.session?.jar ?? new CookieJar()`,
     `  const siteFetch = createFetch({`,
     `    jar,`,
-    `    session: options.session,`,
-    `    fetch: options.fetch,`,
-    `    retry: options.retry,`,
+    `    ...(options.session === undefined ? {} : { session: options.session }),`,
+    `    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),`,
+    `    ...(options.retry === undefined ? {} : { retry: options.retry }),`,
     `    defaultHeaders: { ...defaults.headers, ...options.headers },`,
     `    credentialHeaders: defaults.credentialHeaders,`,
     `  })`,
-    `  const { client, sdk } = sdks[options.host]`,
-    `  // \`auth\` is always set so a second call without it clears the first call's credentials.`,
-    `  client.setConfig({ baseUrl: options.baseUrl ?? defaults.baseUrl, fetch: siteFetch, auth: options.auth })`,
+    `  const create: (config: HostConfig) => HostClients[H] = hostFactories[options.host]`,
+    `  const { client, sdk } = create({`,
+    `    baseUrl: options.baseUrl ?? defaults.baseUrl,`,
+    `    fetch: siteFetch,`,
+    `    ...(options.auth === undefined ? {} : { auth: options.auth }),`,
+    `  })`,
     ...contentTypes.setup,
     `  return { host: options.host, client, sdk, jar, fetch: siteFetch }`,
     `}`,
@@ -405,14 +479,10 @@ function renderContentTypes(hosts: HostSpec[]): { declarations: string[], setup:
       ` */`,
       `const sentContentTypes: Record<SiteHost, Record<string, string>> = {\n${entries.join('\n')}\n}`,
       '',
-      `/** Hosts whose client already has the content-type interceptor (it is added once). */`,
-      `const contentTypeHosts = new Set<SiteHost>()`,
-      '',
     ],
     setup: [
       `  const contentTypes = sentContentTypes[options.host]`,
-      `  if (Object.keys(contentTypes).length > 0 && !contentTypeHosts.has(options.host)) {`,
-      `    contentTypeHosts.add(options.host)`,
+      `  if (Object.keys(contentTypes).length > 0) {`,
       `    client.interceptors.request.use((request, opts) => {`,
       `      const sent = contentTypes[\`\${opts.method} \${opts.url}\`]`,
       `      // Replaces the SDK's own \`application/json\` label. A caller who passes another content`,
@@ -517,10 +587,10 @@ export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessio
     '## Using `createSiteClient`',
     '',
     '`createSiteClient({ host, ... })` returns `{ sdk, client, jar, fetch }`; call the operations',
-    'through `sdk`. It configures the one shared hey-api client of that host, so calling it twice for',
-    'the same host replaces the first configuration, including for the `sdk` the first call returned',
-    '(the host namespaces exported from `index.ts` are the same functions). Call it once per host at',
-    'start-up and pass the result around.',
+    'through `sdk`. Each call creates a hey-api client of its own and binds the host\'s functions to',
+    'it, so two instances (one per user or account) never share cookies, credentials or settings.',
+    'The host namespaces exported from `index.ts` are the unbound functions: they use hey-api\'s',
+    'shared default client, with none of the runtime\'s handling, unless you pass `client`.',
     '',
     'Credentials:',
     '',

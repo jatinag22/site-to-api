@@ -388,8 +388,8 @@ Endpoints where one parameter picks the function (`?functionName=getSymbolData`,
 `admin-ajax.php` with `action=`, JSON-RPC `method`) get one function per captured value, which
 sends that parameter itself: `await sdk.getSymbolData({ query: { symbol } })`.
 
-`createSiteClient` configures one shared client per host; calling it again for the same host
-replaces the configuration. Hosts that work with plain HTTP need no browser: leave out `session`, or
+Each `createSiteClient` call creates a client of its own, so one instance per user or account
+never shares cookies or credentials with another. Hosts that work with plain HTTP need no browser: leave out `session`, or
 use `tokenSession`. `api-handoff/client/README.md` says what each host needs, which operations are
 secured and how to send `auth`.
 

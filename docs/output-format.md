@@ -337,7 +337,8 @@ Zod schemas, request and response validation; hey-api works from a copy of the s
 `pattern`, descriptions, titles, summaries, examples and extensions, so the client checks no
 patterns and has no doc comments from the site, decision 0043), `index.ts` exporting each host's SDK as a namespace
 and `createSiteClient({ host, session?, auth?, jar?, fetch?, baseUrl?, retry?, headers? })` wired
-to `@site-to-api/runtime` (one shared configuration per host; it passes the spec's apiKey header
+to `@site-to-api/runtime` (each call creates its own hey-api client and returns `sdk` with the
+host's functions bound to it, so instances never share credentials, decision 0057; it passes the spec's apiKey header
 names as `credentialHeaders`, so the runtime drops them, `authorization`, `cookie` and the
 session's headers when a redirect leaves the site's origin), `extract.ts` with
 a record schema and a parser per HTML/text operation, `extract<Records>From<Operation>(text)`
