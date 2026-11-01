@@ -1,6 +1,6 @@
 import type { ExtractField, HtmlExtractSpec, TextExtractSpec } from './types'
 import { describe, expect, it } from 'vitest'
-import { extract } from './extract'
+import { extract } from './index'
 
 function field(selector: string, overrides: Partial<ExtractField> = {}): ExtractField {
   return {

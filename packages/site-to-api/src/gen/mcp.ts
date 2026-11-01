@@ -41,7 +41,8 @@ export interface ZodExport {
 /** The exports of a hey-api `zod.gen.ts`, read from its text. */
 export function zodExports(source: string): ZodExport[] {
   return [
-    ...source.matchAll(/^export const (z\w+) = (z\.object\()?/gm),
+    // Schemas may be wrapped in a pure call by `gen` (see gen/pure).
+    ...source.matchAll(/^export const (z\w+) = (?:\/\* @__PURE__ \*\/ \(\(\) => )?(z\.object\()?/gm),
   ].map(match => ({
     name: match[1] ?? '',
     object: match[2] !== undefined,
@@ -143,7 +144,7 @@ function dispatchFields(context: FieldContext, argument: 'query' | 'body' | null
     : 'Body')
   // The wrapper sends the dispatcher parameter itself (decision 0039).
   const expression = holder?.object === true
-    ? `${context.ref(holder)}.omit({ ${JSON.stringify(context.entry.dispatch?.parameter ?? '')}: true })`
+    ? `z.object(${context.ref(holder)}.shape).omit({ ${JSON.stringify(context.entry.dispatch?.parameter ?? '')}: true })`
     : ANY_OBJECT
   return [
     { key: argument, expression, required: argument === 'query' && context.requiredIn('query') },
@@ -298,9 +299,9 @@ function renderTool(tool: McpTool): string {
     `  server.registerTool(${literal(tool.name)}, {`,
     `    title: ${literal(tool.title)},`,
     `    description: ${literal(tool.description)},`,
-    `    inputSchema: z.object({`,
+    `    inputSchema: toolInput(z.object({`,
     ...fields,
-    `    }),`,
+    `    })),`,
     `    annotations: { readOnlyHint: ${!tool.changesData}, destructiveHint: ${tool.changesData}, idempotentHint: ${!tool.changesData}, openWorldHint: true },`,
     `  }, async args => respond(() => clients[${literal(tool.host)}].sdk[${literal(tool.sdkFunction)}](args)))`,
   ].join('\n')
@@ -336,6 +337,8 @@ export function renderMcpServer(hosts: readonly McpHost[], tools: readonly McpTo
     `import type { SiteHost } from '${client}/index.js'`,
     `import { McpServer } from '@modelcontextprotocol/server'`,
     `import { serveStdio } from '@modelcontextprotocol/server/stdio'`,
+    // Classic Zod for the tool schemas, which the MCP SDK's types expect; the client's own
+    // schemas are Zod Mini and nest inside them. The server is not part of the app's bundle.
     `import { z } from 'zod'`,
     `import { CookieJar, createSiteClient } from '${client}/index.js'`,
     ...withSchemas.map(host => `import * as ${zodAlias(host.identifier)} from '${client}/${host.identifier}/zod.gen.js'`),
@@ -345,6 +348,18 @@ export function renderMcpServer(hosts: readonly McpHost[], tools: readonly McpTo
     '',
     `const HOST_COUNT = ${hosts.length}`,
     `const MAX_TEXT = 50_000`,
+    '',
+    `/**`,
+    ` * The tool's input schema with a JSON Schema the MCP SDK can read. The client's schemas are Zod`,
+    ` * Mini, which classic Zod's \`~standard.jsonSchema\` does not convert inside a classic object,`,
+    ` * while \`z.toJSONSchema\` does. Validation stays Zod's own.`,
+    ` */`,
+    `function toolInput<T extends z.ZodObject>(schema: T): T {`,
+    `  const standard = schema['~standard']`,
+    `  const convert = (io: 'input' | 'output') => (options: { target: string }) => z.toJSONSchema(schema, { io, target: options.target === 'draft-07' ? 'draft-07' : 'draft-2020-12' })`,
+    `  Object.defineProperty(schema, '~standard', { value: { ...standard, jsonSchema: { input: convert('input'), output: convert('output') } } })`,
+    `  return schema`,
+    `}`,
     '',
     `/** \`SITE_API_<NAME>_<HOST>\`, then \`SITE_API_<NAME>\` when there is a single host. */`,
     `function setting(name: string, identifier: string): string | undefined {`,

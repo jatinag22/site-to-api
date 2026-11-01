@@ -112,7 +112,7 @@ describe('generateClient with mcp', () => {
       'productStock',
     ])
     expect(read).toContain('path: shop_example_comZod.zGetApiProductsByProductIdPath,')
-    expect(read).toContain('query: shop_example_comZod.zGetStoreInfoQuery.omit({ "functionName": true }),')
+    expect(read).toContain('query: z.object(shop_example_comZod.zGetStoreInfoQuery.shape).omit({ "functionName": true }),')
     expect(read).toContain('variables: shop_example_comZod.zProductStockBody.shape.variables,')
     expect(read).toContain('readOnlyHint: true, destructiveHint: false')
     expect(read).not.toMatch(/readOnlyHint: false/)

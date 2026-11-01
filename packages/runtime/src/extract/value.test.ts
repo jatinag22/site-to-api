@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractValue } from './value'
+import { extractValue } from './index'
 
 const LOGIN = `<!doctype html><html><head>
 <meta name="csrf-token" content="abc.123">

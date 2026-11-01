@@ -4,7 +4,7 @@ import type { ExtractOperation, HostSpec } from './spec'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { HOSTILE, injected, renderMarkdown } from '../../test/markdown'
-import { exportedFunctions, nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
+import { exportedFunctions, nameExtracts, renderExtractModule, renderHostSiteModule, renderIndexModule, renderOptionsModule, renderReadme } from './render'
 
 const listExtract: ExtractOperation = {
   operationId: 'getList',
@@ -158,11 +158,12 @@ describe('renderExtractModule', () => {
     const code = renderExtractModule(nameExtracts([
       host(),
     ], []))
-    expect(code).toContain(`export const zGetListRecord = z.object({
-  "name": z.string().nullable(),
-  "count": z.number().int().nullable().optional(),
-  "on sale": z.boolean().nullable(),
-})`)
+    expect(code).toContain(`import * as z from 'zod/mini'`)
+    expect(code).toContain(`export const zGetListRecord = /* @__PURE__ */ (() => z.object({
+  "name": z.nullable(z.string()),
+  "count": z.optional(z.nullable(z.int())),
+  "on sale": z.nullable(z.boolean()),
+}))()`)
     expect(code).toContain('export function extractGetList(text: string): GetListRecord[] {\n  return z.array(zGetListRecord).parse(extract(text, getListSpec))')
   })
 
@@ -173,7 +174,7 @@ describe('renderExtractModule', () => {
       }),
     ], []))
     expect(code).toContain('export function extractGetDetail(text: string): GetDetailRecord {\n  return zGetDetailRecord.parse(')
-    expect(code).toContain('"added": z.string().nullable(),')
+    expect(code).toContain('"added": z.nullable(z.string()),')
   })
 
   it('writes an empty module when there is nothing to extract', () => {
@@ -235,20 +236,24 @@ describe('renderIndexModule', () => {
         defaultHeaders: { 'x-a': '1' },
       }),
     ], [])
+    const site = renderHostSiteModule(host({
+      defaultHeaders: { 'x-a': '1' },
+    }), [])
     expect(code).toContain(`import * as a_example_com from './a_example_com/index.js'`)
-    expect(code).toContain(`import { createClient as createA_example_comClient, createConfig as createA_example_comConfig } from './a_example_com/client/index.js'`)
-    expect(code).toContain('    headers: {\n      "x-a": "1",\n    },')
+    expect(code).toContain(`export { createAExampleComClient } from './a_example_com/site.js'`)
+    expect(site).toContain(`import { createClient, createConfig } from './client/index.js'`)
+    expect(site).toContain('  headers: {\n    "x-a": "1",\n  },')
     expect(code).not.toContain(`from './extract.js'`)
-    expect(code).toContain('...(options.auth === undefined ? {} : { auth: options.auth }),')
+    expect(renderOptionsModule()).toContain('...(options.auth === undefined ? {} : { auth: options.auth }),')
     // Every relative specifier carries an extension, so `nodenext` resolution accepts it.
-    for (const [, specifier] of code.matchAll(/from '(\.[^']*)'/g))
+    for (const [, specifier] of `${code}\n${site}`.matchAll(/from '(\.[^']*)'/g))
       expect(specifier).toMatch(/\.js$/)
   })
 })
 
 describe('renderIndexModule credentials', () => {
   it('passes the apiKey header names, which the runtime drops on a redirect to another origin', () => {
-    const code = renderIndexModule([
+    const code = renderHostSiteModule(
       host({
         auth: [
           {
@@ -274,9 +279,10 @@ describe('renderIndexModule credentials', () => {
           },
         ],
       }),
-    ], [])
-    expect(code).toContain('    credentialHeaders: ["x-api-key"],')
-    expect(code).toContain('    credentialHeaders: defaults.credentialHeaders,')
+      [],
+    )
+    expect(code).toContain('  credentialHeaders: ["x-api-key"],')
+    expect(renderOptionsModule()).toContain('    credentialHeaders: defaults.credentialHeaders,')
   })
 })
 
@@ -309,9 +315,12 @@ describe('dispatcher wrappers (decision 0039)', () => {
     const code = renderIndexModule([
       host({ dispatch }),
     ], [], [], functions)
-    expect(code).toContain(`import * as a_example_comDispatch from './a_example_com/dispatch.js'`)
-    expect(code).toContain('    getSymbolData: <ThrowOnError extends boolean = false>(...[options]: Parameters<typeof a_example_comDispatch.getSymbolData<ThrowOnError>>) => a_example_comDispatch.getSymbolData<ThrowOnError>({ ...options, client }),')
-    expect(code).toContain('    getRoot: <ThrowOnError extends boolean = false>(...[options]: Parameters<typeof a_example_comSdk.getRoot<ThrowOnError>>) => a_example_comSdk.getRoot<ThrowOnError>({ ...options, client }),')
+    const site = renderHostSiteModule(host({ dispatch }), functions.get('a.example.com') ?? [])
+    expect(site).toContain(`export { getSymbolData } from './dispatch.js'`)
+    expect(site).toContain(`export { getRoot } from './sdk.gen.js'`)
+    expect(code).toContain(`import * as a_example_comSite from './a_example_com/site.js'`)
+    expect(code).toContain('    getSymbolData: <ThrowOnError extends boolean = false>(...[options]: Parameters<typeof a_example_comSite.getSymbolData<ThrowOnError>>) => a_example_comSite.getSymbolData<ThrowOnError>({ ...options, client }),')
+    expect(code).toContain('    getRoot: <ThrowOnError extends boolean = false>(...[options]: Parameters<typeof a_example_comSite.getRoot<ThrowOnError>>) => a_example_comSite.getRoot<ThrowOnError>({ ...options, client }),')
   })
 
   it('lists the functions per endpoint in the README', () => {

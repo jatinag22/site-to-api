@@ -78,6 +78,30 @@ kept there disappeared and hand edits to generated files were lost without a wor
   as is, and does not compile under `exactOptionalPropertyTypes`; those files alone start with
   `// @ts-nocheck`. Patching hey-api's template would break with each hey-api release.
 
+### Small bundles
+Measured on a generated client of the fixture shop (esbuild, minified, browser), one operation:
+146 KB (42 KB gzip) through `createSiteClient` before; 75 KB (20 KB gzip) through
+`createSiteClient` and 57 KB (19 KB gzip) through the host's own entry after. One HTML parser
+alone (`extractDealsFromGetDeals`): 202 KB (70 KB gzip) before, 39 KB (10 KB gzip) after.
+- One Zod flavour: hey-api writes Zod Mini (`compatibilityVersion: 'mini'`), like the runtime
+  and `extract.ts`; the classic API was in every bundle next to Mini. Only the MCP server, which
+  is never bundled into the app, builds its tool schemas with classic Zod, and gives the MCP SDK a
+  JSON Schema through `z.toJSONSchema`, since classic Zod's `~standard.jsonSchema` does not
+  convert Mini schemas nested in a classic object.
+- `zod.gen.ts` and the record schemas of `extract.ts` define each schema inside a call marked
+  `@__PURE__`, so a bundler drops the schemas no imported function uses.
+- `<host>/site.ts` exports the host's factory (`createGithubComClient(options)` → `{ client, jar,
+  fetch }`) and its functions (the wrappers in place of the raw functions), sharing the option
+  handling in `options.ts`. Importing one function from there bundles that function only.
+  `createSiteClient` is built on the factories and still binds every function into `sdk`, so it
+  stays the convenient entry, with every operation in the bundle.
+- The runtime parses HTML with `DOMParser` where there is one, and its `browser` build (the
+  `browser` export condition) has no htmlparser2 at all. `DOMParser` has no `:contains()`, which
+  `build` uses for label rows: each such clause becomes an attribute set on the elements holding
+  the text, and the rest of the selector stays native. A test runs the fixture's parsers in
+  Chromium and in Node and compares the records; another bundles one operation and checks a
+  gzip budget, that no other operation and no HTML parser is in it, and that classic Zod is not.
+
 ## Consequences
 People can keep their own files next to the client. A stale file from an old version that `gen`
 no longer writes stays until it is deleted by hand.

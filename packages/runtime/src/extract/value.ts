@@ -1,4 +1,5 @@
-import { extract } from './extract'
+import type { HtmlEngine } from './engine'
+import { extractWith } from './extract'
 
 /** Where a single value sits in an HTML page: the `html` origins of `flows.json`. */
 export interface HtmlValueLocation {
@@ -11,7 +12,7 @@ export interface HtmlValueLocation {
 }
 
 /**
- * Reads one value from an HTML page, such as a CSRF token in
+ * {@link extractValue} with the given HTML engine. Reads one value from an HTML page, such as a CSRF token in
  * `<meta name="csrf-token" content="...">`. Uses the same rules as {@link extract}, so it reads
  * exactly what `site-to-api build` verified. Returns `null` when the element, the attribute or
  * the pattern does not match. Throws a `TypeError` for an invalid selector or pattern.
@@ -20,8 +21,8 @@ export interface HtmlValueLocation {
  * const csrf = extractValue(html, { selector: 'meta[name="csrf-token"]', attr: 'content', pattern: null })
  * ```
  */
-export function extractValue(html: string, location: HtmlValueLocation): string | null {
-  const record = extract(html, {
+export function extractValueWith<N>(engine: HtmlEngine<N>, html: string, location: HtmlValueLocation): string | null {
+  const record = extractWith(engine, html, {
     kind: 'html',
     records: ':root',
     many: false,

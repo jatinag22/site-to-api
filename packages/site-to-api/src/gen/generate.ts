@@ -23,7 +23,8 @@ import { nameHtmlValues } from './html-values'
 import { syncGenerated } from './manifest'
 import { MCP_SERVER_VERSION, mcpTools, renderMcpReadme, renderMcpServer, zodExports } from './mcp'
 import { generatedPaths, posixPath } from './paths'
-import { exportedFunctions, nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
+import { pureTopLevel } from './pure'
+import { exportedFunctions, nameExtracts, renderExtractModule, renderHostSiteModule, renderIndexModule, renderOptionsModule, renderReadme } from './render'
 import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema, withoutBrowserOnlySteps } from './spec'
 
 /** Input for {@link generateClient}. */
@@ -158,6 +159,9 @@ async function writeClientFiles(clientDir: string, mcpDir: string, loaded: reado
     // documentation and examples, and the output is checked below (decision 0043).
     await runHeyApi(OpenApiDocumentSchema.parse(heyApiInput(document)), path.join(clientDir, host.identifier), host.file)
     await markVendoredCore(path.join(clientDir, host.identifier))
+    const zodFile = path.join(clientDir, host.identifier, 'zod.gen.ts')
+    if (existsSync(zodFile))
+      await writeFile(zodFile, pureTopLevel(await readFile(zodFile, 'utf8')))
     // GraphQL operations get a `{ variables }` function beside hey-api's (decision 0027).
     const graphql = graphqlFunctions(host, warnings)
     if (graphql.length > 0)
@@ -182,6 +186,9 @@ async function writeClientFiles(clientDir: string, mcpDir: string, loaded: reado
   const extracts = nameExtracts(hosts, warnings)
   const htmlValues = nameHtmlValues(input.flows, new Set(extracts.map(entry => entry.functionName)), warnings)
   await writeFile(path.join(clientDir, 'extract.ts'), renderExtractModule(extracts, htmlValues))
+  await writeFile(path.join(clientDir, 'options.ts'), renderOptionsModule())
+  for (const host of hosts)
+    await writeFile(path.join(clientDir, host.identifier, 'site.ts'), renderHostSiteModule(host, functions.get(host.host) ?? []))
   await writeFile(path.join(clientDir, 'index.ts'), renderIndexModule(hosts, extracts, htmlValues, functions))
   await writeFile(path.join(clientDir, 'README.md'), renderReadme(hosts, extracts, input.flows.session, htmlValues, channels, paths))
   if (input.mcp !== undefined && input.mcp !== 'off')
@@ -284,8 +291,10 @@ async function runHeyApi(document: OpenApiDocument, output: string, file: string
         '@hey-api/client-fetch',
         {
           name: 'zod',
-          // Pinned so the output does not depend on the zod version found in the user's project.
-          compatibilityVersion: 4,
+          // Zod Mini, the flavour the runtime uses: one copy of Zod in an app's bundle, and its
+          // functions tree-shake where the classic API's methods cannot (decision 0057). Pinned,
+          // so the output does not depend on the zod version found in the user's project.
+          compatibilityVersion: 'mini',
           // Sites send date-times with offsets (`-05:00`) and without a zone; Zod's default
           // accepts only `Z`, so valid live data failed response validation.
           dates: { offset: true, local: true },

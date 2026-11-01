@@ -365,12 +365,12 @@ describe('generateClient', () => {
   })
 
   it('wires constant headers, the extract parser and the session notes', async () => {
-    const index = await readFile(path.join(dir, 'handoff', 'client', 'index.ts'), 'utf8')
-    expect(index).toContain('"x-requested-with": "XMLHttpRequest"')
-    expect(index).toContain('baseUrl: "https://shop.example.com"')
+    const site = await readFile(path.join(dir, 'handoff', 'client', 'shop_example_com', 'site.ts'), 'utf8')
+    expect(site).toContain('"x-requested-with": "XMLHttpRequest"')
+    expect(site).toContain('baseUrl: "https://shop.example.com"')
     const extract = await readFile(path.join(dir, 'handoff', 'client', 'extract.ts'), 'utf8')
     expect(extract).toContain('export function extractGetPrices(text: string): GetPricesRecord[]')
-    expect(extract).toContain('"link": z.string().nullable().optional(),')
+    expect(extract).toContain('"link": z.optional(z.nullable(z.string())),')
     const readme = await readFile(path.join(dir, 'handoff', 'client', 'README.md'), 'utf8')
     expect(readme).toContain('- Cookie `session`: set by `postApiSession` (seen in capture).')
     expect(readme).toContain('`extractGetPrices(text)` → `GetPricesRecord[]`')
@@ -438,7 +438,8 @@ describe('generateClient', () => {
       // An offset, not `Z`: response validation must accept it.
       updatedAt: '2026-10-23T16:21:08.000-05:00',
     })
-    expect(output.invalid).toBe('ZodError')
+    // Zod Mini's error class (decision 0057).
+    expect(output.invalid).toBe('$ZodError')
     expect(output.cookies).toEqual(['session'])
     expect(output.records).toEqual([
       { name: 'Alpha', price: 1250, link: '/items/a1' },

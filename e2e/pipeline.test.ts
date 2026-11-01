@@ -12,8 +12,10 @@ import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { gzipSync } from 'node:zlib'
 import { Client } from '@modelcontextprotocol/client'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { build as esbuild } from 'esbuild'
 import { join, relative } from 'pathe'
 import { chromium } from 'playwright'
 import ts from 'typescript'
@@ -25,6 +27,7 @@ import { runCapture } from '../packages/site-to-api/src/capture'
 import { pipelineCommands } from '../packages/site-to-api/src/cli/commands'
 import { run as runCli } from '../packages/site-to-api/src/cli/program'
 import { generateClient } from '../packages/site-to-api/src/gen'
+import { toIdentifier } from '../packages/site-to-api/src/gen/spec'
 import { probeOperations, writeProbeReport } from '../packages/site-to-api/src/probe'
 import { startFixtureSite } from './fixture-site/server'
 
@@ -795,6 +798,87 @@ describe('generated client', () => {
     ].join('\n')
     const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '-e', script], { cwd: work })
     expect(JSON.parse(stdout)).toEqual({ status: 200, csrf: true })
+  }, 60_000)
+
+  it('bundles one operation from a host\'s own entry within budget, without the other operations or an HTML parser (decision 0057)', async () => {
+    const hostDir = join(outDir, 'client', toIdentifier(host))
+    const site = await readFile(join(hostDir, 'site.ts'), 'utf8')
+    const factory = /^export function (create\w+Client)\(/m.exec(site)?.[1] ?? ''
+    expect(factory).not.toBe('')
+    const entry = join(work, 'bundle-entry.ts')
+    await writeFile(entry, `import { ${factory}, getApiCategories } from ${JSON.stringify(join(hostDir, 'site.js'))}\nconst { client } = ${factory}()\nconsole.log((await getApiCategories({ client })).data)\n`)
+    const result = await esbuild({
+      entryPoints: [entry],
+      bundle: true,
+      minify: true,
+      format: 'esm',
+      platform: 'browser',
+      write: false,
+      metafile: true,
+      logLevel: 'silent',
+    })
+    const code = result.outputFiles[0]?.text ?? ''
+    const inputs = Object.keys(result.metafile.inputs)
+    const gzip = gzipSync(code).length
+    // Measured at 19 KB gzip for this fixture (146 KB minified, 42 KB gzip through createSiteClient before).
+    expect(gzip).toBeLessThan(24_000)
+    expect(code).toContain('/api/categories')
+    expect(code).not.toContain('/api/orders')
+    expect(inputs.filter(input => /htmlparser2|css-select|domutils/.test(input))).toEqual([])
+    // One flavour of Zod: Mini, never the classic API next to it.
+    expect(inputs.filter(input => input.includes('zod/v4/classic'))).toEqual([])
+  }, 60_000)
+
+  it('extracts the same records with the browser\'s DOMParser as with htmlparser2, :contains() included (decision 0057)', async () => {
+    const extractModule = join(outDir, 'client', 'extract.ts')
+    const bundled = await esbuild({
+      entryPoints: [extractModule],
+      bundle: true,
+      format: 'iife',
+      globalName: 'siteExtract',
+      platform: 'browser',
+      write: false,
+      logLevel: 'silent',
+    })
+    const script = bundled.outputFiles[0]?.text ?? ''
+    expect(script).not.toContain('htmlparser2')
+    const stores = await (await fetch(`${site.origin}/stores`)).text()
+    const slug = /href="\/stores\/([\w-]+)"/.exec(stores)?.[1] ?? ''
+    expect(slug).not.toBe('')
+    const pages = {
+      deals: await (await fetch(`${site.origin}/deals`)).text(),
+      store: await (await fetch(`${site.origin}/stores/${slug}`)).text(),
+      login: await (await fetch(`${site.origin}/login`)).text(),
+    }
+    const node = await import(pathToFileURL(extractModule).href)
+    const parser = z.custom<(text: string) => unknown>(value => typeof value === 'function')
+    const NodeExtractSchema = z.object({
+      extractDealsFromGetDeals: parser,
+      extractGetStoresBySlug: parser,
+      extractCsrfTokenFromGetLogin: parser,
+    })
+    const parsed = NodeExtractSchema.parse(node)
+    const expected = {
+      deals: parsed.extractDealsFromGetDeals(pages.deals),
+      store: parsed.extractGetStoresBySlug(pages.store),
+      login: parsed.extractCsrfTokenFromGetLogin(pages.login),
+    }
+    // The store page's fields come from `dt:contains("…") + dd` rows.
+    expect(JSON.stringify(expected.store)).toMatch(/"address":"[^"]+"/)
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      await page.addScriptTag({ content: script })
+      const inBrowser: unknown = await page.evaluate(`({
+        deals: siteExtract.extractDealsFromGetDeals(${JSON.stringify(pages.deals)}),
+        store: siteExtract.extractGetStoresBySlug(${JSON.stringify(pages.store)}),
+        login: siteExtract.extractCsrfTokenFromGetLogin(${JSON.stringify(pages.login)}),
+      })`)
+      expect(JSON.parse(JSON.stringify(inBrowser))).toEqual(JSON.parse(JSON.stringify(expected)))
+    }
+    finally {
+      await browser.close()
+    }
   }, 60_000)
 
   it('logs in through the generated SDK and reads the orders with browser cookies and a bearer token', async () => {

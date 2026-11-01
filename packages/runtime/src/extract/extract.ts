@@ -1,8 +1,5 @@
-import type { AnyNode, Element } from 'domhandler'
+import type { HtmlEngine } from './engine'
 import type { ExtractField, ExtractSpec, FieldType, HtmlExtractSpec, TextExtractSpec } from './types'
-import { selectAll, selectOne } from 'css-select'
-import { getAttributeValue, textContent } from 'domutils'
-import { parseDocument } from 'htmlparser2'
 import { coerce } from './coerce'
 import { parseDelimited } from './delimited'
 
@@ -24,14 +21,14 @@ export type ExtractedRecord = Record<string, unknown>
  * Returns an array, or a single record for an HTML spec with `many: false`.
  * Throws a `TypeError` when the spec holds an invalid selector or regex.
  */
-export function extract(text: string, spec: ExtractSpec): ExtractedRecord[] | ExtractedRecord {
+export function extractWith<N>(engine: HtmlEngine<N>, text: string, spec: ExtractSpec): ExtractedRecord[] | ExtractedRecord {
   return spec.kind === 'html'
-    ? extractHtml(text, spec)
+    ? extractHtml(engine, text, spec)
     : extractText(text, spec)
 }
 
-function extractHtml(html: string, spec: HtmlExtractSpec): ExtractedRecord[] | ExtractedRecord {
-  const document = parseDocument(html)
+function extractHtml<N>(engine: HtmlEngine<N>, html: string, spec: HtmlExtractSpec): ExtractedRecord[] | ExtractedRecord {
+  const document = engine.parse(html)
   const fieldPatterns = new Map<string, RegExp>()
   for (const [name, field] of Object.entries(spec.fields)) {
     if (field.pattern !== null)
@@ -41,15 +38,15 @@ function extractHtml(html: string, spec: HtmlExtractSpec): ExtractedRecord[] | E
   // `:root` (or no selector) means the whole page is one record; using the document node keeps
   // that working for fragments without an <html> element.
   const wholeDocument = spec.records === '' || spec.records === ':root'
-  const roots: AnyNode[] = wholeDocument
+  const roots: N[] = wholeDocument
     ? [document]
-    : select(spec.records, document, 'records')
+    : select(engine, spec.records, document, 'records')
   const records = (spec.many
     ? roots
     : roots.slice(0, 1)).map((root) => {
     const record = newRecord()
     for (const [name, field] of Object.entries(spec.fields)) {
-      const raw = readField(root, field, fieldPatterns.get(name) ?? null, name)
+      const raw = readField(engine, root, field, fieldPatterns.get(name) ?? null, name)
       assign(record, name, raw, field.type, field.optional)
     }
     return record
@@ -59,21 +56,15 @@ function extractHtml(html: string, spec: HtmlExtractSpec): ExtractedRecord[] | E
   return records[0] ?? emptyRecord(spec.fields)
 }
 
-function readField(root: AnyNode, field: ExtractField, pattern: RegExp | null, name: string): string | null {
+function readField<N>(engine: HtmlEngine<N>, root: N, field: ExtractField, pattern: RegExp | null, name: string): string | null {
   const node = field.selector === ''
     ? root
-    : selectFirst(field.selector, root, `field "${name}"`)
+    : selectFirst(engine, field.selector, root, `field "${name}"`)
   if (node === null)
     return null
-  let value: string | null
-  if (field.attr === null) {
-    value = collapse(textContent(node))
-  }
-  else {
-    value = isElement(node)
-      ? getAttributeValue(node, field.attr) ?? null
-      : null
-  }
+  const value = field.attr === null
+    ? collapse(engine.text(node))
+    : engine.attribute(node, field.attr)
   if (value === null || pattern === null)
     return value
   const match = pattern.exec(value)
@@ -151,18 +142,18 @@ function emptyRecord(fields: Record<string, ExtractField>): ExtractedRecord {
   return record
 }
 
-function select(selector: string, root: AnyNode, what: string): Element[] {
+function select<N>(engine: HtmlEngine<N>, selector: string, root: N, what: string): N[] {
   try {
-    return selectAll<AnyNode, Element>(selector, root)
+    return engine.selectAll(selector, root)
   }
   catch (error) {
     throw new TypeError(`extract: invalid CSS selector for ${what}: ${JSON.stringify(selector)}`, { cause: error })
   }
 }
 
-function selectFirst(selector: string, root: AnyNode, what: string): Element | null {
+function selectFirst<N>(engine: HtmlEngine<N>, selector: string, root: N, what: string): N | null {
   try {
-    return selectOne<AnyNode, Element>(selector, root)
+    return engine.selectOne(selector, root)
   }
   catch (error) {
     throw new TypeError(`extract: invalid CSS selector for ${what}: ${JSON.stringify(selector)}`, { cause: error })
@@ -176,10 +167,6 @@ function compileRegex(source: string, flags: string, what: string): RegExp {
   catch (error) {
     throw new TypeError(`extract: invalid pattern for ${what}: ${JSON.stringify(source)}`, { cause: error })
   }
-}
-
-function isElement(node: AnyNode): node is Element {
-  return 'attribs' in node
 }
 
 function collapse(text: string): string {
