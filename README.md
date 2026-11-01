@@ -471,9 +471,11 @@ project, and both refuse a client whose files do not match: "this client wasn't 
 machine. If you don't trust this project, review or delete its `site-to-api.config.ts`/`.js`
 first: `gen` runs it. Then run `site-to-api gen --config site-to-api.config.json` (or with no
 config), or pass `--trust-client` if you reviewed `client/`". The hash covers the files `gen`
-wrote; your own notes may sit next to them, but no other code, `package.json`, `tsconfig*.json`
-or `node_modules` may be in the client or MCP folder (they could be loaded instead), so keep
-your own code elsewhere in the project.
+wrote. If you use the MCP server or `call_operation`, keep your own code and JSON outside the
+client and MCP folders: an unlisted `.js`, `.ts` or `.json` file, a `package.json`, a
+`tsconfig*.json` or a `node_modules` there, or any `package.json` or `node_modules` between those
+folders and the project root (the config file's folder, or the working directory), could be
+loaded instead, so the client is not run. Non-code files such as notes are fine.
 This check is the protection; the per-host variable names are not, since code in the process can
 read any of them.
 

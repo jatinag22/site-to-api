@@ -34,6 +34,8 @@ export interface CallerOptions {
   trustClient?: boolean
   /** Trust store to check against; defaults to the person's config directory. */
   trustStore?: string
+  /** The project root for the trust check (decision 0058); the handoff folder's parent when absent. */
+  projectRoot?: string
   fetch?: typeof fetch
   now?: () => number
   sleep?: (ms: number) => Promise<void>
@@ -170,7 +172,7 @@ export function createCaller(options: CallerOptions): (entry: OperationEntry, ar
     // The client is code, and the folder may come from anyone: run it only when this machine
     // generated it, or the person said they reviewed it.
     if (options.trustClient !== true) {
-      const reason = await untrustedReason(options.handoff.clientDir, options.trustStore)
+      const reason = await untrustedReason(options.handoff.clientDir, options.trustStore, [], { root: options.projectRoot ?? dirname(options.handoff.dir) })
       if (reason !== null)
         throw new SiteToApiError(reason)
     }

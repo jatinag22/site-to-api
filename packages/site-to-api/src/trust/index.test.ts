@@ -129,6 +129,22 @@ describe('trust store', () => {
     })).toContain(`${path.join(root, 'api-handoff', 'node_modules')} would shadow`)
   })
 
+  it('refuses any package.json or node_modules between the client and the project root, and a client outside it (decision 0058)', async () => {
+    const { root, dir, store } = await client()
+    await trustClient(dir, store, ['index.ts', 'mcp/server.ts'])
+    // A package.json planted in the handoff folder must not pass for the package root.
+    await writeFile(path.join(root, 'api-handoff', 'package.json'), '{}\n')
+    expect(await untrustedReason(dir, store, [], { root })).toContain(`${path.join(root, 'api-handoff', 'package.json')} can redirect`)
+    await mkdir(path.join(root, 'api-handoff', 'node_modules', '@site-to-api', 'runtime'), { recursive: true })
+    expect(await untrustedReason(dir, store, [], { root })).toContain(`${path.join(root, 'api-handoff', 'node_modules')} would shadow`)
+    await rm(path.join(root, 'api-handoff', 'package.json'))
+    await rm(path.join(root, 'api-handoff', 'node_modules'), { recursive: true })
+    expect(await untrustedReason(dir, store, [], { root })).toBeNull()
+    expect(await untrustedReason(dir, store, [], {
+      root: path.join(root, 'elsewhere'),
+    })).toContain('is outside the project')
+  })
+
   it('keeps every entry when many gen runs record clients at once', async () => {
     const { root, store } = await client()
     const clients = await Promise.all(Array.from({ length: 20 }, async (_, index) => {

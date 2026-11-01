@@ -554,6 +554,46 @@ describe('generateClient over a client from an older version (decision 0058)', (
   }, 60_000)
 })
 
+describe('generateClient and linked or unusual client folders (decision 0058)', () => {
+  it('refuses a default client folder that is a link, and never overwrites files it did not write elsewhere', async () => {
+    const dir = await workspace()
+    try {
+      const handoff = path.join(dir, 'handoff')
+      await writeFile(path.join(dir, 'README.md'), 'the project\'s own\n')
+      await symlink('..', path.join(handoff, 'client'))
+      await expect(generateClient({ handoffDir: handoff, flows })).rejects.toThrow(/handoff\/client is a symbolic link.*set gen\.clientDir/)
+      expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('the project\'s own\n')
+      // Set by the person, the link is followed, but without the legacy overwrite-everything mode.
+      const configured = await generateClient({
+        handoffDir: handoff,
+        clientDir: path.join(handoff, 'client'),
+        configuredFolders: { client: true, mcp: false },
+        flows,
+      })
+      expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('the project\'s own\n')
+      expect(configured.warnings.join('\n')).toContain('Did not overwrite')
+      expect(configured.warnings.join('\n')).toContain('README.md')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('keeps legacy overwriting to <handoff>/client: another folder from build.json starts with nothing recorded', async () => {
+    const dir = await workspace()
+    try {
+      const handoff = path.join(dir, 'handoff')
+      await writeFile(path.join(dir, 'README.md'), 'the project\'s own\n')
+      const result = await generateClient({ handoffDir: handoff, clientDir: dir, flows })
+      expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('the project\'s own\n')
+      expect(result.warnings.join('\n')).toContain('Did not overwrite')
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+})
+
 describe('generateClient with gen.mcpDir (decision 0058)', () => {
   it('refuses an MCP folder inside the client folder', async () => {
     const dir = await workspace()

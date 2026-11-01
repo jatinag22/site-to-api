@@ -321,6 +321,7 @@ const genCommand: CommandRegistrar = (program) => {
         handoffDir,
         clientDir,
         mcpDir,
+        configuredFolders: { client: config.gen.clientDir !== null, mcp: config.gen.mcpDir !== null },
         root: cwd,
         flows: await readFlowsDocument(handoffDir),
         mcp: config.gen.mcp,

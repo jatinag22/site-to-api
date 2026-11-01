@@ -8,7 +8,7 @@ import type { CommandRegistrar } from './program'
 import { readFile } from 'node:fs/promises'
 import process from 'node:process'
 import { InvalidArgumentError } from 'commander'
-import { resolve } from 'pathe'
+import { dirname, resolve } from 'pathe'
 import { serveGenerated, serveHandoff } from '../mcp'
 import { configLiteral, ignoredConfigChanges } from './ignored-config'
 import { resolveConfig } from './program'
@@ -33,6 +33,13 @@ function parseRate(value: string): number {
   return parsed
 }
 
+/** The project the client belongs to: the config file's folder, or the working directory. */
+function projectRootOf(configFile: string | null, cwd: string): string {
+  return configFile === null
+    ? resolve(cwd)
+    : dirname(configFile)
+}
+
 export const mcpCommand: CommandRegistrar = (program) => {
   program
     .command('mcp')
@@ -49,7 +56,7 @@ export const mcpCommand: CommandRegistrar = (program) => {
       }
       // A plugin starts this command in every project: a .ts or .js config file is code from the
       // project, so only flags, SITE_TO_API_* variables and site-to-api.config.json are read.
-      const { config, cwd, ignored, sources } = await resolveConfig(command, {
+      const { config, cwd, ignored, sources, file } = await resolveConfig(command, {
         probe: { maxRps: flags.maxRps },
       }, { code: false })
       const text = ignored === undefined
@@ -76,8 +83,9 @@ export const mcpCommand: CommandRegistrar = (program) => {
           : 'them'} to site-to-api.config.json, or pass the folder as an argument.`)
       }
       const handoffDir = resolve(cwd, dir ?? effective.outDir)
+      const projectRoot = projectRootOf(file ?? ignored ?? null, cwd)
       if (flags.generated) {
-        await serveGenerated({ handoffDir, trustClient: flags.trustClient === true })
+        await serveGenerated({ handoffDir, trustClient: flags.trustClient === true, projectRoot })
         return
       }
       if (flags.unsafeMethods && !flags.allowCalls)
@@ -90,6 +98,7 @@ export const mcpCommand: CommandRegistrar = (program) => {
         timeoutMs: config.probe.timeoutMs,
         env: siteApiEnv(process.env),
         trustClient: flags.trustClient === true,
+        projectRoot,
         log,
       })
     })

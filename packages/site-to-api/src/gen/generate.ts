@@ -6,7 +6,7 @@ import type { GeneratedPaths } from './paths'
 import type { HostFunction } from './render'
 import type { ChannelSummary, HostSpec, OpenApiDocument } from './spec'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
@@ -38,6 +38,11 @@ export interface GenerateClientInput {
    * inside the client folder: the app imports the client, and the server is a program of its own.
    */
   mcpDir?: string
+  /**
+   * `clientDir` and `mcpDir` were set by the person (`gen.clientDir`, `gen.mcpDir`), so they may
+   * be reached through a symbolic link; a default folder may not (decision 0058).
+   */
+  configuredFolders?: { client: boolean, mcp: boolean }
   /** What the last run generated into `mcpDir`, like `previous`; nothing when absent. */
   previousMcp?: ClientManifest
   /** The project root the READMEs give paths from; the handoff folder's parent when absent. */
@@ -92,6 +97,7 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
   if (!inside.startsWith('..') && !path.isAbsolute(inside))
     throw new SiteToApiError(`gen.mcpDir ${mcpDir} is inside the client folder ${clientDir}; the MCP server is a program of its own that the app never imports. Set gen.mcpDir to a folder outside it, such as ${path.join(path.dirname(clientDir), 'mcp')}.`)
   const paths = generatedPaths(input.root ?? path.dirname(input.handoffDir), input.handoffDir, clientDir, mcpDir)
+  await refuseLinkedDefaults(clientDir, mcpDir, input.configuredFolders)
   const { loaded, channels } = await loadSpecs(specsDir, warnings)
 
   const seen = new Map<string, string>()
@@ -114,7 +120,7 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
     // call, so the generated files of an earlier run are removed and nothing is written.
     if (loaded.length > 0)
       await writeClientFiles(stagedClient, stagedMcp, loaded, channels, input, paths, warnings)
-    const synced = await syncGenerated(stagedClient, clientDir, input.previous ?? null, input.force === true)
+    const synced = await syncGenerated(stagedClient, clientDir, await previousFor(clientDir, input), input.force === true)
     const syncedMcp = await syncGenerated(stagedMcp, mcpDir, input.previousMcp ?? {}, input.force === true)
     warnings.push(...synced.warnings, ...syncedMcp.warnings)
     if (loaded.length === 0) {
@@ -424,4 +430,33 @@ function upgradeWarning(paths: GeneratedPaths, oldMcp: boolean): string {
       ? [`The MCP server moved to ${paths.mcp}/; delete ${paths.client}/mcp/.`]
       : []),
   ].join(' ')
+}
+
+/** Whether `folder` is a symbolic link (a dangling one included); false when nothing is there. */
+async function isLink(folder: string): Promise<boolean> {
+  return lstat(folder).then(stat => stat.isSymbolicLink(), () => false)
+}
+
+/** A default client or MCP folder that is a symbolic link is refused; a configured one may be one. */
+async function refuseLinkedDefaults(clientDir: string, mcpDir: string, configured: GenerateClientInput['configuredFolders']): Promise<void> {
+  const folders = [
+    [clientDir, configured?.client === true, 'gen.clientDir'],
+    [mcpDir, configured?.mcp === true, 'gen.mcpDir'],
+  ] as const
+  for (const [folder, set, key] of folders) {
+    if (!set && await isLink(folder))
+      throw new SiteToApiError(`${folder} is a symbolic link, so writing the generated files there could change files elsewhere. Remove the link, or set ${key} to the folder you want if the link is yours.`)
+  }
+}
+
+/**
+ * The manifest to sync against. Only the folder older versions wrote, `<handoff>/client` and not
+ * a link, gets the legacy mode that overwrites every generated path; any other folder starts with
+ * nothing recorded, so files already there are not overwritten.
+ */
+async function previousFor(clientDir: string, input: GenerateClientInput): Promise<ClientManifest | null> {
+  const legacyFolder = path.resolve(clientDir) === path.resolve(input.handoffDir, 'client') && !await isLink(clientDir)
+  return legacyFolder
+    ? input.previous ?? null
+    : input.previous ?? {}
 }

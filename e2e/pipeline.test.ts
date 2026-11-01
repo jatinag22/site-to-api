@@ -1223,6 +1223,8 @@ describe('mCP servers (decision 0043)', () => {
         XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME ?? '',
         ...env,
       },
+      // The project root the trust check walks up to (decision 0058).
+      cwd: work,
       stderr: 'ignore',
     }))
     return client

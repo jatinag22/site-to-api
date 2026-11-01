@@ -17,7 +17,12 @@ kept there disappeared and hand edits to generated files were lost without a wor
 - A recorded file `gen` no longer writes is deleted only when unchanged; files `gen` never
   recorded are never deleted, and one at a path `gen` now generates is not overwritten.
 - A folder without a recorded manifest (from an older version) has its generated paths
-  overwritten and nothing deleted.
+  overwritten and nothing deleted, but only `<handoff>/client` itself, where older versions wrote,
+  and only when it is not a symbolic link. Any other folder starts with nothing recorded, so files
+  already there are not overwritten. A default client or MCP folder that is a symbolic link is
+  refused; one set with `gen.clientDir` or `gen.mcpDir` may be reached through a link. Generated
+  files are written to a temporary file in the same folder and renamed into place, so a link
+  planted after the checks is replaced, not written through.
 - `build.json` is repository data. A recorded generated file must be a relative path inside its
   folder (no absolute path, drive letter, backslash or `.`/`..` segment); a record with any other
   key is refused when read. Before every hash read, copy and delete, `gen` checks again that no
@@ -42,8 +47,11 @@ kept there disappeared and hand edits to generated files were lost without a wor
   untrusted, as long as they cannot run in place of generated code. The client and MCP folders
   may hold no unlisted `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`, `.tsx` or `.json` file (an
   `index.js` next to `index.ts` is loaded first), no `package.json` or `tsconfig*.json` (they can
-  redirect imports) and no `node_modules`, and no `node_modules` may sit between them and the
-  package that holds them (the nearest folder above with a `package.json`). Otherwise
+  redirect imports) and no `node_modules`, and no `package.json` or `node_modules` may sit
+  between them and the project root (the config file's folder, or the working directory; the
+  handoff folder's parent without one). A `package.json` planted in the handoff folder would
+  otherwise pass for the package root and hide a `node_modules` beside it. A client outside the
+  project root is not run either. Otherwise
   `mcp --generated` and `call_operation` refuse to run the client and say which file to move.
 - `mcp` still never runs a `.ts`/`.js` config file, but reads a plain string `outDir: '…'` from it
   with the TypeScript parser; anything computed is not read, and the message says to pass the

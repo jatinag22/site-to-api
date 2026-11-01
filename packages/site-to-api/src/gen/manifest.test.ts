@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -29,6 +29,8 @@ describe('syncGenerated', () => {
     expect(Object.keys(first.manifest)).toEqual(['index.ts', 'shop/sdk.gen.ts'])
     expect(await readFile(path.join(target, 'notes.md'), 'utf8')).toBe('mine')
     expect(first.warnings).toEqual([])
+    // Written through a temporary file and a rename in the same folder; none is left behind.
+    expect((await readdir(target, { recursive: true })).filter(name => name.endsWith('.tmp'))).toEqual([])
   })
 
   it('keeps a generated file edited by hand and warns, unless forced', async () => {

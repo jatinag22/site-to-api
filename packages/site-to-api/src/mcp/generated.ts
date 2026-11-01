@@ -19,6 +19,8 @@ export interface ServeGeneratedOptions {
   handoffDir: string
   trustClient: boolean
   trustStore?: string
+  /** The project root for the trust check (decision 0058); the handoff folder's parent when absent. */
+  projectRoot?: string
 }
 
 /** Generated code imports these; they resolve to the copies this tool runs with. */
@@ -47,6 +49,7 @@ export async function serveGenerated(options: ServeGeneratedOptions): Promise<vo
       relative(clientDir, server),
     ], {
       folders: [mcpDir],
+      root: options.projectRoot ?? dirname(options.handoffDir),
     })
     if (reason !== null)
       throw new SiteToApiError(reason)

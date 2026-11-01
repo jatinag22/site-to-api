@@ -17,6 +17,8 @@ export interface ServeHandoffOptions {
   env: Record<string, string | undefined>
   /** `--trust-client`: run a `client/` this machine did not generate (decision 0043). */
   trustClient: boolean
+  /** The project root for the trust check: the config file's folder or the working directory. */
+  projectRoot?: string
   /** Where to report problems; stdout carries the protocol, so the CLI passes stderr. */
   log: (message: string) => void
 }
@@ -37,6 +39,9 @@ export async function serveHandoff(options: ServeHandoffOptions): Promise<() => 
       timeoutMs: options.timeoutMs,
       env: options.env,
       trustClient: options.trustClient,
+      ...(options.projectRoot === undefined
+        ? {}
+        : { projectRoot: options.projectRoot }),
     })
     callers.set(handoff, caller)
     return caller(entry, args)

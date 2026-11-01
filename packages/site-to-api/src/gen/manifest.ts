@@ -7,9 +7,9 @@
  * file `gen` no longer generates is deleted only when unchanged. Files it never wrote are never
  * touched.
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, rmdir } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, rmdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { containedPath } from './contained'
@@ -121,7 +121,11 @@ export async function syncGenerated(staging: string, target: string, previous: C
       continue
     }
     await mkdir(path.dirname(to), { recursive: true })
-    await copyFile(from, to)
+    // A temporary file and a rename in the same folder: a link planted after the check above is
+    // replaced, never written through.
+    const temporary = path.join(path.dirname(to), `.${path.basename(to)}.${randomUUID()}.tmp`)
+    await copyFile(from, temporary)
+    await rename(temporary, to)
     manifest[file] = hash
   }
   await removeStale(target, previous ?? {}, new Set(generated), force, edited, refused)

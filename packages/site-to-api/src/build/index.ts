@@ -474,6 +474,7 @@ async function writeClient(outDir: string, layout: ClientLayout, analysis: Analy
       handoffDir: outDir,
       clientDir,
       mcpDir,
+      configuredFolders: { client: config.gen.clientDir !== null, mcp: config.gen.mcpDir !== null },
       root,
       flows: analysis.flows,
       mcp: config.gen.mcp,
