@@ -52,9 +52,9 @@ so credentials stay on the site.
 
 `build --mcp`, `gen --mcp`, or `gen: { mcp: 'read' }` in the config writes `server.ts` and its
 README to `mcp/` next to the client folder (or to `gen.mcpDir`): one tool per operation, input
-schemas from the generated Zod schemas, calls through the typed client. `read` exposes only the
-operations that read; `write` adds the ones that change data. Bot-protection steps never get a
-tool. A later `build` without `--mcp` keeps the server; `--mcp off` removes it.
+schemas from the generated Zod schemas, calls through the typed client. With `read` (the default) it gets
+a tool for each operation that only reads data; `write` also adds tools for the operations that
+change data. Bot-protection steps never get a tool. A later `build` without `--mcp` keeps the server; `--mcp off` removes it.
 
 Run it through the CLI, which checks the client first and brings the MCP SDK, zod and the runtime
 itself:
@@ -63,8 +63,8 @@ itself:
 claude mcp add pinewood -e SITE_API_COOKIE='…' -- npx site-to-api mcp ./api-handoff --generated
 ```
 
-Running `npx tsx <mcp folder>/server.ts` directly works too, but skips that check. The server's
-README lists its settings and a JSON configuration for other clients. A type check that includes
+Do not run `server.ts` directly (with `tsx` or `node`): that skips the check that this machine
+generated the client, so it would run whatever code the folder holds. The server's README lists its settings and a JSON configuration for other clients. A type check that includes
 its folder needs `@modelcontextprotocol/server` installed; otherwise exclude the folder in
 `tsconfig.json`.
 

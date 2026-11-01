@@ -1,7 +1,10 @@
 # site-to-api
 
-**Browse a website once. Get everything a coding agent needs to build a wrapper for its internal
-API.**
+**Record one browsing session of a website. Get the OpenAPI specs, request flows and typed client
+a coding agent needs to build a wrapper for its internal API.**
+
+For developers who need to integrate with a website that has no public API. Use it only on sites
+you are allowed to use; it never bypasses bot protection, captchas or access controls.
 
 `site-to-api` records what a site's own pages do while you use it (or reads a HAR you exported),
 then works out the endpoints, their parameters and schemas, the order requests happen in, which

@@ -53,8 +53,8 @@ Both packages need Node 22.12 or later (`engines` in each `package.json`). CI te
 on Node 22 and Node 24. A Node line stays supported while it is in active or maintenance LTS;
 dropping one happens only in a release that may break, and the changelog says so first.
 
-The runtime also runs on Bun, Deno and edge workers, since it uses only web-standard APIs; those
-are checked by bundling it without Node APIs, not by running a test suite on each.
+The runtime uses only web-standard APIs. CI checks that by bundling it without Node APIs; it does
+not run a test suite on Bun or on edge workers.
 
 ## Deprecation
 
