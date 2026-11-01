@@ -19,7 +19,7 @@ import { buildAsyncApiDocuments } from '../emit/asyncapi'
 import { toYaml } from '../emit/openapi'
 import { SiteToApiError } from '../errors'
 import { FLOWS_FORMAT_VERSION } from '../model'
-import { generateClient, typeScriptVersionForHeyApi } from './generate'
+import { generateClient } from './generate'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const fixture = path.join(here, 'fixtures', 'shop.example.com.yaml')
@@ -821,12 +821,6 @@ describe('generateClient with hostile specs', () => {
       await rm(dir, { recursive: true, force: true })
     }
   }, 60_000)
-})
-
-describe('typeScriptVersionForHeyApi', () => {
-  it('resolves TypeScript 6 for hey-api', () => {
-    expect(typeScriptVersionForHeyApi()).toMatch(/^6\./)
-  })
 })
 
 describe('generateClient with WebSocket channels', () => {

@@ -5,12 +5,10 @@ import type { McpMode, ZodExport } from './mcp'
 import type { GeneratedPaths } from './paths'
 import type { HostFunction } from './render'
 import type { ChannelSummary, HostSpec, OpenApiDocument } from './spec'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
-import { createClient } from '@hey-api/openapi-ts'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
@@ -19,6 +17,7 @@ import { trustClient } from '../trust'
 import { checkGeneratedCode, heyApiInput } from './code-safety'
 import { dispatchFunctions, renderDispatchModule } from './dispatch'
 import { graphqlFunctions, renderGraphqlModule } from './graphql'
+import { loadHeyApi } from './hey-api'
 import { nameHtmlValues } from './html-values'
 import { syncGenerated } from './manifest'
 import { MCP_SERVER_VERSION, mcpTools, renderMcpReadme, renderMcpServer, zodExports } from './mcp'
@@ -160,7 +159,8 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
 
 /** Writes the whole client into `clientDir` (a staging folder) and checks the code. */
 async function writeClientFiles(clientDir: string, mcpDir: string, loaded: readonly LoadedSpec[], channels: ChannelSummary[], input: GenerateClientInput, paths: GeneratedPaths, warnings: string[]): Promise<void> {
-  assertTypeScript6()
+  // Fails before anything is written when hey-api cannot run (decision 0002).
+  await loadHeyApi()
   await mkdir(clientDir, { recursive: true })
   const hosts: HostSpec[] = []
   const functions = new Map<string, HostFunction[]>()
@@ -290,6 +290,7 @@ async function loadSpecs(specsDir: string, warnings: string[]): Promise<{ loaded
 
 async function runHeyApi(document: OpenApiDocument, output: string, file: string): Promise<void> {
   try {
+    const { createClient } = await loadHeyApi()
     await createClient({
       input: document,
       // `.js` specifiers resolve under both `bundler` and `nodenext`, and in compiled output that
@@ -339,27 +340,6 @@ async function runHeyApi(document: OpenApiDocument, output: string, file: string
       ? error.message
       : String(error)}`, { cause: error })
   }
-}
-
-const PackageVersionSchema = z.object({
-  version: z.string(),
-})
-
-/**
- * hey-api drives the TypeScript compiler API, which TypeScript 7 removed (decision 0002). A
- * package manager may still hand hey-api a different TypeScript than the one `site-to-api`
- * depends on, so check the copy hey-api itself resolves.
- */
-export function typeScriptVersionForHeyApi(): string {
-  const requireFromHeyApi = createRequire(import.meta.resolve('@hey-api/openapi-ts'))
-  const manifest = PackageVersionSchema.parse(JSON.parse(readFileSync(requireFromHeyApi.resolve('typescript/package.json'), 'utf8')))
-  return manifest.version
-}
-
-function assertTypeScript6(): void {
-  const version = typeScriptVersionForHeyApi()
-  if (!version.startsWith('6.'))
-    throw new SiteToApiError(`hey-api found TypeScript ${version}, but code generation needs TypeScript 6. Install typescript@6 next to site-to-api (for example \`npm install -D typescript@6\`) and run \`site-to-api gen\` again`)
 }
 
 /** Whether a `node_modules/<specifier>` is in `dir` or a folder above it, where a type check finds it. */
