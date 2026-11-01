@@ -1,6 +1,7 @@
 import type { CaptureResult } from '../capture'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import process from 'node:process'
 import { consola } from 'consola'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,13 +9,15 @@ import { runCapture } from '../capture'
 import { pipelineCommands } from './commands'
 import { run } from './program'
 
-vi.mock('../capture', () => ({
+vi.mock('../capture', async importOriginal => ({
+  ...await importOriginal<typeof import('../capture')>(),
   runCapture: vi.fn(),
 }))
 
 let dir: string
 
 beforeEach(async () => {
+  vi.mocked(runCapture).mockClear()
   dir = await mkdtemp(join(tmpdir(), 'site-to-api-capture-'))
 })
 
@@ -62,6 +65,8 @@ async function nextStep(): Promise<string | undefined> {
     'captures',
     'capture',
     '--headless',
+    '--script',
+    'drive.mjs',
   ], pipelineCommands)
   return info.mock.calls.map(call => String(call[0])).find(message => message.startsWith('Next:'))
 }
@@ -75,5 +80,43 @@ describe('capture', () => {
   it('only suggests build once two sessions exist', async () => {
     await sessions(2)
     expect(await nextStep()).toBe('Next: `site-to-api build`')
+  })
+})
+
+describe('capture arguments', () => {
+  async function capture(...args: string[]): Promise<string[]> {
+    const errors: string[] = []
+    vi.spyOn(consola, 'error').mockImplementation((message: unknown) => {
+      errors.push(String(message))
+    })
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      dir,
+      'capture',
+      ...args,
+    ], pipelineCommands)
+    process.exitCode = undefined
+    return errors
+  }
+
+  it('refuses --headless without --script, before any browser starts', async () => {
+    expect(await capture('https://shop.test', '--headless')).toEqual([
+      expect.stringMatching(/^--headless needs a capture script: .*Add --script <file>/),
+    ])
+    expect(runCapture).not.toHaveBeenCalled()
+  })
+
+  it('refuses a junk URL with an example and adds a scheme to a bare host', async () => {
+    expect(await capture('not a url')).toEqual([
+      expect.stringContaining('"not a url" is not a URL. Pass the page to open first, for example https://example.com'),
+    ])
+    expect(runCapture).not.toHaveBeenCalled()
+    await sessions(1)
+    vi.spyOn(consola, 'info').mockImplementation(() => {})
+    vi.spyOn(consola, 'success').mockImplementation(() => {})
+    expect(await capture('localhost:4173/shop', '--minimized', '--script', 'drive.mjs')).toEqual([])
+    expect(vi.mocked(runCapture).mock.calls[0]?.[1].url).toBe('http://localhost:4173/shop')
   })
 })

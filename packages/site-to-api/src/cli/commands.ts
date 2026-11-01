@@ -12,7 +12,7 @@ import { InvalidArgumentError, Option } from 'commander'
 import { consola } from 'consola'
 import { dirname, join, resolve } from 'pathe'
 import { analyzeForProbe, buildHandoff, readBuildRecord, recordClientGenerated, stickyOptions } from '../build'
-import { runCapture } from '../capture'
+import { normalizeCaptureUrl, runCapture } from '../capture'
 import { updateClientState } from '../emit/handoff'
 import { SiteToApiError } from '../errors'
 import { generateClient } from '../gen'
@@ -40,6 +40,16 @@ function printWarnings(warnings: string[]): void {
     warn(warning)
 }
 
+/** Without a script nobody can use a headless browser, and the capture would never end. */
+function headlessWithoutScript(source: string | undefined): string {
+  const where = source === 'flag'
+    ? '--headless'
+    : `capture.browser.headless (set in ${source === 'env'
+      ? 'SITE_TO_API_CAPTURE__BROWSER__HEADLESS'
+      : 'the config file'})`
+  return `${where} needs a capture script: a headless browser has no window to use the site in. Add --script <file> to drive it with a script, or drop --headless to use the site by hand (--minimized keeps a scripted capture off the screen).`
+}
+
 interface CaptureFlags {
   session?: string
   headless?: boolean
@@ -61,7 +71,10 @@ const captureCommand: CommandRegistrar = (program) => {
     .option('--script <file>', 'drive the browser with a script instead of by hand: export default async ({ page, baseUrl }) => {}')
     .option('--user-data-dir <dir>', 'reuse a browser profile so logins persist')
     .action(async (url: string | undefined, flags: CaptureFlags, command: Command) => {
-      const { config, cwd } = await resolveConfig(command, {
+      const startUrl = url === undefined
+        ? null
+        : normalizeCaptureUrl(url)
+      const { config, cwd, sources } = await resolveConfig(command, {
         capture: {
           browser: {
             headless: flags.headless,
@@ -76,9 +89,11 @@ const captureCommand: CommandRegistrar = (program) => {
             : undefined,
         },
       })
+      if (config.capture.browser.headless && config.capture.script === null)
+        throw new SiteToApiError(headlessWithoutScript(sources['capture.browser.headless']))
       const controller = new AbortController()
       const result = await runCapture(config, {
-        url: url ?? null,
+        url: startUrl,
         sessionId: flags.session,
         cwd,
         signal: controller.signal,
