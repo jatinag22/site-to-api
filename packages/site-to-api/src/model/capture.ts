@@ -66,6 +66,17 @@ export const SessionMetaSchema = z.object({
     ]),
     error: z.string().nullable(),
   }).optional(),
+  /**
+   * How the session was made (decision 0057): `capture` when absent, or `har-import` for a HAR
+   * exported from browser DevTools or a proxy and imported with `site-to-api import`. Optional and
+   * additive, so the format version is unchanged.
+   */
+  source: z.enum(['capture', 'har-import']).optional(),
+  /** For `har-import`: the tool the HAR's `log.creator` and `log.browser` name, when given. */
+  importedFrom: z.object({
+    creator: z.string().nullable(),
+    browser: z.string().nullable(),
+  }).optional(),
 })
 export type SessionMeta = z.infer<typeof SessionMetaSchema>
 
