@@ -2,8 +2,8 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { chromeHar, firefoxHar } from '../../test/har-fixtures'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { chromeHar, firefoxHar, harEntry } from '../../test/har-fixtures'
 import { SiteToApiError } from '../errors'
 import { loadSessions } from '../load'
 import { importHar } from './index'
@@ -119,5 +119,40 @@ describe('importHar', () => {
     expect(path.basename(result.sessionDir)).toBe('escape')
     await expect(importHar(config, { file, cwd: dir, sessionId: 'escape' })).rejects.toThrow(SiteToApiError)
     await expect(importHar(config, { file, cwd: dir, sessionId: '../..' })).rejects.toThrow(/no usable characters/)
+  })
+
+  it('imports a HAR whose vendor fields nest 200,000 levels deep', async () => {
+    const har = chromeHar()
+    const log = har.log as { entries: unknown[] }
+    log.entries.push(harEntry({
+      url: 'https://shop.test/api/deep',
+      started: '2026-01-01T10:00:04.000Z',
+      extra: {
+        _initiator: { type: 'script', stack: '@DEEP@' },
+        _vendorBlob: '@DEEP@',
+      },
+    }))
+    // Spliced in as text: JSON.stringify itself cannot serialise this depth.
+    const nested = `${'{"parent":'.repeat(200_000)}{}${'}'.repeat(200_000)}`
+    const file = await harFile('deep.har', JSON.stringify(har).replaceAll('"@DEEP@"', nested))
+    const result = await importHar(config, { file, cwd: dir, sessionId: 'deep' })
+    expect(result.entries).toBe(7)
+    expect(await readFile(path.join(result.sessionDir, 'traffic.har'), 'utf8')).not.toContain('_vendorBlob')
+  })
+
+  it('removes the half-written session on an unexpected failure, names the file, and lets the import run again', async () => {
+    const file = await harFile('shop.har', chromeHar())
+    const stringify = vi.spyOn(JSON, 'stringify').mockImplementationOnce(() => {
+      throw new RangeError('Maximum call stack size exceeded')
+    })
+    try {
+      await expect(importHar(config, { file, cwd: dir, sessionId: 'retry' })).rejects.toThrow(new RegExp(`^Could not import ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: Maximum call stack size exceeded\\. Nothing was saved`))
+    }
+    finally {
+      stringify.mockRestore()
+    }
+    expect(await readdir(path.join(dir, config.rawDir))).toEqual(['.gitignore'])
+    const result = await importHar(config, { file, cwd: dir, sessionId: 'retry' })
+    expect(existsSync(path.join(result.sessionDir, 'meta.json'))).toBe(true)
   })
 })

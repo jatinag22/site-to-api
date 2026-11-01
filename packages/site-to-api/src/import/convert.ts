@@ -21,7 +21,7 @@ const BODY_PREVIEW = 2048
 
 /** What {@link convertHar} produces. */
 export interface ConvertedHar {
-  /** The valid entries, as found, without `_webSocketMessages` (their frames are events). */
+  /** The valid entries with known fields only (their WebSocket frames are events instead). */
   entries: Array<Record<string, unknown>>
   /** Capture events in time order. */
   events: CaptureEvent[]
@@ -152,6 +152,19 @@ function isScript(entry: Record<string, unknown>, mimeType: string | null | unde
   return /javascript|ecmascript/i.test(mimeType ?? '')
 }
 
+/**
+ * The body of a script entry worth saving for source analysis, or null. A `data:` or `file:`
+ * script has no host to file it under and is not the site's code.
+ */
+function scriptBody(raw: Record<string, unknown>, entry: ValidEntry['entry']): string | null {
+  if (!/^https?:/i.test(entry.request.url) || !isScript(raw, entry.response.content?.mimeType))
+    return null
+  const content = bodyText(entry.response.content)
+  return content !== null && Buffer.byteLength(content) <= MAX_SCRIPT_BYTES
+    ? content
+    : null
+}
+
 /** A navigation's label: the page title, or the path when the title is a URL (Firefox). */
 function pageLabel(title: string | null | undefined, url: string): string {
   if (title && !/^[a-z]+:\/\//i.test(title))
@@ -214,6 +227,52 @@ function navigations(har: ImportHar, entries: readonly ValidEntry[], urls: Reado
     .map(({ entry, startedAt }) => action(startedAt, entry.request.url, pageLabel(null, entry.request.url)))
 }
 
+/**
+ * Chrome's `_initiator` cut to what load and a reader need: its type and at most
+ * {@link MAX_STACK_LEVELS} stack levels of {@link MAX_STACK_FRAMES} frames in all. An exporter's
+ * (or an attacker's) chain of any depth must not reach `JSON.stringify`, which recurses.
+ */
+function boundedInitiator(value: unknown): Record<string, unknown> | null {
+  const initiator = InitiatorSchema.safeParse(value)
+  if (!initiator.success)
+    return null
+  const bounded: Record<string, unknown> = { type: initiator.data.type }
+  let budget = MAX_STACK_FRAMES
+  let level: unknown = initiator.data.stack
+  let parentOf: Record<string, unknown> = bounded
+  let key = 'stack'
+  for (let depth = 0; depth < MAX_STACK_LEVELS && budget > 0 && level !== undefined && level !== null; depth++) {
+    const parsed = InitiatorStackSchema.safeParse(level)
+    if (!parsed.success)
+      break
+    const callFrames = parsed.data.callFrames.slice(0, budget)
+    budget -= callFrames.length
+    const copy: Record<string, unknown> = { callFrames }
+    parentOf[key] = copy
+    parentOf = copy
+    key = 'parent'
+    level = parsed.data.parent
+  }
+  return bounded
+}
+
+/**
+ * The entry as stored: load's parsed fields (Zod drops every key it does not list), the vendor
+ * fields load reads when they have the expected simple type, and a bounded `_initiator`.
+ */
+function knownFields(raw: Record<string, unknown>, entry: ValidEntry['entry']): Record<string, unknown> {
+  const kept: Record<string, unknown> = { ...entry }
+  for (const key of ['pageref', '_frameref']) {
+    const value = raw[key]
+    if (typeof value === 'string' || typeof value === 'number')
+      kept[key] = value
+  }
+  const initiator = boundedInitiator(raw._initiator)
+  if (initiator !== null)
+    kept._initiator = initiator
+  return kept
+}
+
 /** The entries that pass load's schema and have a date; one warning counts the rest. */
 function validEntries(raws: readonly unknown[]): { valid: ValidEntry[], warnings: string[] } {
   const valid: ValidEntry[] = []
@@ -266,23 +325,21 @@ export function convertHar(har: ImportHar): ConvertedHar {
     const pageUrl = (typeof pageref === 'string'
       ? urls.get(pageref)
       : undefined) ?? header(entry.request.headers, 'referer') ?? url
+    // Only known fields are kept: an exporter's (or an attacker's) other fields, however deep,
+    // never reach traffic.har.
+    entries.push(knownFields(raw, entry))
     if (/^wss?:/i.test(url) || Array.isArray(raw._webSocketMessages)) {
       events.push(...socketEvents(raw, url, pageUrl, startedAt, socket++))
-      const { _webSocketMessages: _frames, ...rest } = raw
-      entries.push(rest)
       continue
     }
-    entries.push(raw)
     const request = requestEvent(raw, entry.request.method.toUpperCase(), url, pageUrl, startedAt, entry.request.postData?.text ?? null)
     if (request !== null) {
       events.push(request)
       stacks++
     }
-    if (isScript(raw, entry.response.content?.mimeType)) {
-      const content = bodyText(entry.response.content)
-      if (content !== null && Buffer.byteLength(content) <= MAX_SCRIPT_BYTES)
-        scripts.push({ url, content })
-    }
+    const content = scriptBody(raw, entry)
+    if (content !== null)
+      scripts.push({ url, content })
   }
 
   return {

@@ -126,3 +126,65 @@ describe('convertHar: untrusted entries', () => {
     expect(result.stacks).toBe(2)
   })
 })
+
+describe('convertHar: stored entries and warnings', () => {
+  it('keeps only known fields and a bounded _initiator, so a 200,000-level chain still serialises', () => {
+    let deep: Record<string, unknown> = { callFrames: [] }
+    for (let i = 0; i < 200_000; i++) {
+      deep = {
+        callFrames: [
+          { url: 'https://shop.test/a.js', lineNumber: i, columnNumber: 0 },
+        ],
+        parent: deep,
+      }
+    }
+    const har = chromeHar()
+    const log = har.log as { entries: unknown[] }
+    log.entries.push(harEntry({
+      url: 'https://shop.test/api/deep',
+      started: '2026-01-01T10:00:04.000Z',
+      extra: {
+        pageref: 'page_1',
+        _initiator: {
+          type: 'script',
+          stack: deep,
+          _extra: { nested: deep },
+        },
+        _vendorBlob: { nested: deep },
+      },
+    }))
+    const result = convert(har)
+    const stored = result.entries.at(-1)
+    expect(() => JSON.stringify(result.entries)).not.toThrow()
+    expect(Object.keys(stored ?? {}).sort()).toEqual([
+      '_initiator',
+      'pageref',
+      'request',
+      'response',
+      'startedDateTime',
+    ])
+    let levels = 0
+    let level: unknown = (stored?._initiator as { stack?: unknown }).stack
+    while (typeof level === 'object' && level !== null) {
+      levels++
+      level = (level as { parent?: unknown }).parent
+    }
+    expect(levels).toBe(8)
+    expect(result.events.find(event => event.t === 'request' && event.url === 'https://shop.test/api/deep')).toBeDefined()
+  })
+
+  it('skips data: and file: scripts instead of filing them under a made-up host', () => {
+    const har = chromeHar()
+    const log = har.log as { entries: unknown[] }
+    for (const url of ['data:text/javascript,alert(1)', 'file:///home/someone/local.js']) {
+      log.entries.push(harEntry({
+        url,
+        started: '2026-01-01T10:00:06.000Z',
+        mimeType: 'application/javascript',
+        text: 'void 0',
+        extra: { _resourceType: 'script' },
+      }))
+    }
+    expect(convert(har).scripts.map(script => script.url)).toEqual(['https://shop.test/static/app.js'])
+  })
+})

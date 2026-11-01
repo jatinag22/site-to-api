@@ -6,8 +6,10 @@
  */
 import type { ResolvedConfig } from '../config/schema'
 import type { SessionMeta } from '../model'
+import type { ConvertedHar } from './convert'
+import type { ImportHar } from './har-input'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import pkg from '../../package.json' with { type: 'json' }
 import { compactHar, defaultSessionId, safeJoin, sanitizeSessionId, scriptFilePath } from '../capture'
@@ -16,8 +18,12 @@ import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { convertHar } from './convert'
 import { ImportHarSchema } from './har-input'
 
-/** HAR files larger than this are refused: parsing one means holding all of it in memory. */
-const MAX_IMPORT_BYTES = 512 * 1024 * 1024
+/**
+ * HAR files larger than this are refused: parsing one means holding the text and the parsed
+ * object in memory at once, and above this Node's default heap runs out inside `JSON.parse`
+ * before the friendly message could be shown.
+ */
+const MAX_IMPORT_BYTES = 256 * 1024 * 1024
 
 const HAR_FILE = 'traffic.har'
 const EVENTS_FILE = 'events.jsonl'
@@ -78,6 +84,13 @@ async function readHar(file: string, maxBytes: number): Promise<unknown> {
   }
 }
 
+/** A {@link SiteToApiError} naming the file for anything the checks above did not foresee. */
+function unexpected(file: string, error: unknown): SiteToApiError {
+  if (error instanceof SiteToApiError)
+    return error
+  return new SiteToApiError(`Could not import ${file}: ${errorMessage(error)}. Nothing was saved. Export the HAR again from browser DevTools or your proxy; if it still fails, report it with the exporter's name.`, { cause: error })
+}
+
 /** Creates the raw directory with a `.gitignore` of `*`, as capture does. */
 async function prepareRawDir(rawDir: string): Promise<void> {
   await mkdir(rawDir, { recursive: true })
@@ -94,33 +107,8 @@ function creatorOf(value: { name?: string | null, version?: string | null } | nu
     : value.name
 }
 
-/**
- * Imports one HAR file into a new raw session. Throws {@link SiteToApiError} for an unreadable,
- * oversized, non-JSON or non-HAR file, an existing session id, or a HAR without valid entries.
- */
-export async function importHar(config: Pick<ResolvedConfig, 'rawDir'>, options: ImportHarOptions): Promise<ImportHarResult> {
-  const file = path.resolve(options.cwd, options.file)
-  const parsed = ImportHarSchema.safeParse(await readHar(file, options.maxBytes ?? MAX_IMPORT_BYTES))
-  if (!parsed.success)
-    throw new SiteToApiError(`${file} is not a HAR file: it needs a "log" object with an "entries" array (${parsed.error.issues[0]?.message ?? 'invalid'}). Export it again as HAR.`)
-  const converted = convertHar(parsed.data)
-  if (converted.entries.length === 0) {
-    throw new SiteToApiError(`${file} has no valid HAR entries to import.${converted.warnings.length > 0
-      ? ` ${converted.warnings.join(' ')}`
-      : ''}`)
-  }
-
-  const rawDir = path.resolve(options.cwd, config.rawDir)
-  const now = options.now ?? new Date()
-  const sessionId = options.sessionId === undefined
-    ? defaultSessionId(converted.startUrl, now)
-    : sanitizeSessionId(options.sessionId)
-  const sessionDir = safeJoin(rawDir, sessionId)
-  await prepareRawDir(rawDir)
-  if (existsSync(sessionDir))
-    throw new SiteToApiError(`Session ${sessionId} already exists in ${rawDir}. Pass a different --session or delete that folder.`)
-  await mkdir(sessionDir, { recursive: true })
-
+/** Writes the session files into `dir`: script bodies, `traffic.har`, `events.jsonl` and `meta.json`. */
+async function writeSession(dir: string, sessionId: string, converted: ConvertedHar, har: ImportHar, now: Date): Promise<SessionMeta> {
   // Script bodies go under scripts/ (source analysis reads them there), then asset bodies leave
   // the HAR as they do for a capture.
   const scripts: SessionMeta['scripts'] = []
@@ -136,21 +124,21 @@ export async function importHar(config: Pick<ResolvedConfig, 'rawDir'>, options:
     if (savedFiles.has(relative))
       continue
     savedFiles.add(relative)
-    const target = safeJoin(sessionDir, relative)
+    const target = safeJoin(dir, relative)
     await mkdir(path.dirname(target), { recursive: true })
     await writeFile(target, script.content)
     scripts.push({ url: script.url, file: relative, sourceMap: null })
   }
-  const har = {
+  const output = {
     log: {
       version: '1.2',
       creator: { name: 'site-to-api import', version: pkg.version },
       entries: converted.entries,
     },
   }
-  compactHar(har)
-  await writeFile(path.join(sessionDir, HAR_FILE), JSON.stringify(har))
-  await writeFile(path.join(sessionDir, EVENTS_FILE), converted.events.map(event => JSON.stringify(event)).join('\n') + (converted.events.length > 0
+  compactHar(output)
+  await writeFile(path.join(dir, HAR_FILE), JSON.stringify(output))
+  await writeFile(path.join(dir, EVENTS_FILE), converted.events.map(event => JSON.stringify(event)).join('\n') + (converted.events.length > 0
     ? '\n'
     : ''))
 
@@ -167,11 +155,59 @@ export async function importHar(config: Pick<ResolvedConfig, 'rawDir'>, options:
     scripts: scripts.toSorted((a, b) => a.url.localeCompare(b.url)),
     source: 'har-import',
     importedFrom: {
-      creator: creatorOf(parsed.data.log.creator),
-      browser: creatorOf(parsed.data.log.browser),
+      creator: creatorOf(har.log.creator),
+      browser: creatorOf(har.log.browser),
     },
   } satisfies SessionMeta)
-  await writeFile(path.join(sessionDir, META_FILE), `${JSON.stringify(meta, null, 2)}\n`)
+  await writeFile(path.join(dir, META_FILE), `${JSON.stringify(meta, null, 2)}\n`)
+  return meta
+}
+
+/**
+ * Imports one HAR file into a new raw session. Throws {@link SiteToApiError} for an unreadable,
+ * oversized, non-JSON or non-HAR file, an existing session id, or a HAR without valid entries.
+ */
+export async function importHar(config: Pick<ResolvedConfig, 'rawDir'>, options: ImportHarOptions): Promise<ImportHarResult> {
+  const file = path.resolve(options.cwd, options.file)
+  const parsed = ImportHarSchema.safeParse(await readHar(file, options.maxBytes ?? MAX_IMPORT_BYTES))
+  if (!parsed.success)
+    throw new SiteToApiError(`${file} is not a HAR file: it needs a "log" object with an "entries" array (${parsed.error.issues[0]?.message ?? 'invalid'}). Export it again as HAR.`)
+  let converted: ConvertedHar
+  try {
+    converted = convertHar(parsed.data)
+  }
+  catch (error) {
+    throw unexpected(file, error)
+  }
+  if (converted.entries.length === 0) {
+    throw new SiteToApiError(`${file} has no valid HAR entries to import.${converted.warnings.length > 0
+      ? ` ${converted.warnings.join(' ')}`
+      : ''}`)
+  }
+
+  const rawDir = path.resolve(options.cwd, config.rawDir)
+  const now = options.now ?? new Date()
+  const sessionId = options.sessionId === undefined
+    ? defaultSessionId(converted.startUrl, now)
+    : sanitizeSessionId(options.sessionId)
+  const sessionDir = safeJoin(rawDir, sessionId)
+  await prepareRawDir(rawDir)
+  if (existsSync(sessionDir))
+    throw new SiteToApiError(`Session ${sessionId} already exists in ${rawDir}. Pass a different --session or delete that folder.`)
+  // The session is written into a temporary folder beside it and renamed at the end, so a
+  // failure never leaves a half-written session that blocks importing again.
+  const tempDir = await mkdtemp(path.join(rawDir, `.${sessionId}.importing-`))
+  let meta: SessionMeta
+  try {
+    meta = await writeSession(tempDir, sessionId, converted, parsed.data, now)
+    if (existsSync(sessionDir))
+      throw new SiteToApiError(`Session ${sessionId} already exists in ${rawDir}. Pass a different --session or delete that folder.`)
+    await rename(tempDir, sessionDir)
+  }
+  catch (error) {
+    await rm(tempDir, { recursive: true, force: true })
+    throw unexpected(file, error)
+  }
 
   let sourceDeleted = false
   if (options.deleteSource === true) {
@@ -183,7 +219,7 @@ export async function importHar(config: Pick<ResolvedConfig, 'rawDir'>, options:
     meta,
     entries: converted.entries.length,
     events: converted.events.length,
-    scripts: scripts.length,
+    scripts: meta.scripts.length,
     warnings: converted.warnings,
     sourceDeleted,
   }
