@@ -1,5 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { register } from 'node:module'
+import { describe, expect, it, vi } from 'vitest'
 import { loadHeyApi, redirectHookSource, typeScriptVersionForHeyApi } from './hey-api'
+
+// The hook would apply to the whole vitest worker, and so to other test files: register is
+// replaced, and the test checks what would have been registered. The real hook runs in the
+// package smoke test (scripts/smoke-package.mjs, TypeScript 7 cell).
+vi.mock('node:module', async importOriginal => ({
+  ...await importOriginal<typeof import('node:module')>(),
+  register: vi.fn(),
+}))
 
 interface ResolveResult { url: string, shortCircuit?: boolean }
 type Resolve = (specifier: string, context: { parentURL?: string }, next: (specifier: string, context: { parentURL?: string }) => Promise<ResolveResult>) => Promise<ResolveResult>
@@ -30,8 +39,12 @@ describe('hey-api loader', () => {
     expect(await resolve('zod', { parentURL: 'file:///app/node_modules/@hey-api/openapi-ts/dist/init.mjs' }, next)).toEqual({ url: 'default:zod' })
   })
 
-  it('gives hey-api TypeScript 6 and loads it', async () => {
+  it('registers the hook for site-to-api\'s TypeScript 6 once, then loads hey-api', async () => {
     expect(typeScriptVersionForHeyApi()).toMatch(/^6\./)
     expect(typeof (await loadHeyApi()).createClient).toBe('function')
+    await loadHeyApi()
+    expect(vi.mocked(register)).toHaveBeenCalledTimes(1)
+    const [source] = vi.mocked(register).mock.calls[0] ?? []
+    expect(decodeURIComponent(String(source))).toBe(`data:text/javascript,${redirectHookSource(import.meta.resolve('typescript'))}`)
   })
 })
