@@ -61,11 +61,6 @@ The generated client runs in your app with two runtime dependencies:
 npm install @site-to-api/runtime zod
 ```
 
-> [!NOTE]
-> If your project has TypeScript installed, use TypeScript 6 for now (`npm install -D
-> typescript@6`). With npm, TypeScript 7 in the project stops the CLI from starting (see
-> [Limitations](#limitations)).
-
 ## What you get
 
 ```
@@ -190,9 +185,13 @@ Project setup, a complete wrapper for the fixture shop, and where the client run
 `npx site-to-api mcp ./api-handoff` serves the handoff folder to an agent over MCP, so it can look
 up one operation at a time instead of reading every spec. `build --mcp` also writes a server for
 the site with a tool for each operation that only reads data; `--mcp write` adds tools for the
-operations that change data. The repository is also a Claude Code plugin marketplace
-(`claude plugin marketplace add jatinag22/site-to-api`). Tools, live calls, the trust check and the
-plugin: [docs/mcp.md](docs/mcp.md).
+operations that change data. To add the server to Claude Code for your project:
+`claude mcp add site-api -- npx --no-install site-to-api mcp ./api-handoff`.
+
+The repository is also a Claude Code plugin marketplace
+(`claude plugin marketplace add jatinag22/site-to-api`). The plugin runs the globally installed
+CLI, so it needs `npm install -g site-to-api`. Tools, live calls, the trust check and the plugin:
+[docs/mcp.md](docs/mcp.md).
 
 ## Probe and check
 
@@ -258,14 +257,13 @@ Projects: [site2api](https://github.com/flyingsquirrel0419/site2api),
 The ones a first run is most likely to meet; the full list is in
 [docs/limitations.md](docs/limitations.md).
 
-- With npm, a project that has TypeScript 7 installed cannot run the CLI: the client generator's
-  `typescript` dependency resolves to the project's TypeScript 7, whose API it does not support.
-  Install `typescript@6` in the project until this is fixed.
 - Redaction and value tracing are heuristics. Personal data with no telling field name or shape
   (a name in a free-text bio) can get through. Review the handoff folder before publishing it.
 - From one session, HTML and text extraction is low confidence and no field becomes an enum;
   capture the same pages a second time.
 - An imported HAR cannot explain values the page computed; capture the same pages for that.
+- The generated code covers HTTP only; WebSocket channels are documented in AsyncAPI, to open with
+  any WebSocket client.
 
 ## Contributing and docs
 

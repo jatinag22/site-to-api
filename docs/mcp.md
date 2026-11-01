@@ -9,11 +9,13 @@ server reads the handoff folder; the per-site server calls the site through the 
 spec:
 
 ```sh
-claude mcp add site-api -- npx site-to-api mcp ./api-handoff
+claude mcp add site-api -- npx --no-install site-to-api mcp ./api-handoff
 ```
 
 Other clients take the same command in their MCP settings
-(`"command": "npx", "args": ["site-to-api", "mcp", "./api-handoff"]`).
+(`"command": "npx", "args": ["--no-install", "site-to-api", "mcp", "./api-handoff"]`, run in the
+project folder): `npx` finds the project's own `site-to-api`, usually a dev dependency and not on
+`PATH`, and `--no-install` stops it from downloading one.
 
 | Tool | What it returns |
 |---|---|
@@ -40,7 +42,7 @@ writes. Credentials come only from environment variables you set:
 
 ```sh
 claude mcp add site-api -e SITE_API_COOKIE='session=…' -e SITE_API_AUTH='Bearer …' \
-  -- npx site-to-api mcp ./api-handoff --allow-calls
+  -- npx --no-install site-to-api mcp ./api-handoff --allow-calls
 ```
 
 With several hosts, use `SITE_API_COOKIE_<HOST>` and `SITE_API_AUTH_<HOST>` (the host's folder name
@@ -60,7 +62,7 @@ Run it through the CLI, which checks the client first and brings the MCP SDK, zo
 itself:
 
 ```sh
-claude mcp add pinewood -e SITE_API_COOKIE='…' -- npx site-to-api mcp ./api-handoff --generated
+claude mcp add pinewood -e SITE_API_COOKIE='…' -- npx --no-install site-to-api mcp ./api-handoff --generated
 ```
 
 Do not run `server.ts` directly (with `tsx` or `node`): that skips the check that this machine
@@ -102,13 +104,20 @@ claude plugin install site-to-api@site-to-api
 ```
 
 Inside Claude Code, `/plugin marketplace add jatinag22/site-to-api` and
-`/plugin install site-to-api@site-to-api` do the same. The plugin adds:
+`/plugin install site-to-api@site-to-api` do the same. The plugin runs the globally installed CLI,
+so install it globally too:
 
-- the exploration server on the project's `api-handoff/`. It starts `site-to-api` from your
-  `PATH`, so install the CLI globally too (`npm install -g site-to-api`);
+```sh
+npm install -g site-to-api
+```
+
+It never runs a copy from the opened project: Claude Code starts the plugin's server in every
+project, a cloned one included, and `npx` there could run a binary the project supplies. The
+plugin adds:
+
+- the exploration server on the project's `api-handoff/`;
 - `/site-to-api:capture` (a normal Chrome window; minimized only with `--script`),
-  `/site-to-api:build`, `/site-to-api:probe` and `/site-to-api:check`, which run the project's copy
-  through `npx`. They pre-approve nothing: they run the project's config file, which can be code,
+  `/site-to-api:build`, `/site-to-api:probe` and `/site-to-api:check`. They pre-approve nothing: they run the project's config file, which can be code,
   so Claude Code asks before each run;
 - a skill that walks an agent through capture, reading the handoff folder, writing the wrapper and
   the safety rules.

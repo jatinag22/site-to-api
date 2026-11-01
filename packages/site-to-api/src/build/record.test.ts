@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ConfigSchema } from '../config/schema'
-import { buildRecordFor, mcpChoice, readBuildRecord, recordClientGenerated, stickyOptions, writeBuildRecord } from './record'
+import { buildRecordFor, mcpChoice, previousClient, readBuildRecord, recordClientGenerated, stickyOptions, writeBuildRecord } from './record'
 
 let dir: string
 beforeEach(async () => {
@@ -164,5 +164,16 @@ describe('generated paths in build.json (decision 0058)', () => {
       generatedMcp: { '/etc/hosts': 'x' },
     }))
     await expect(readBuildRecord(dir)).rejects.toThrow(/Invalid key in record;\s+→ at generatedMcp\["\/etc\/hosts"\]/)
+  })
+})
+
+describe('previousClient', () => {
+  it('says the client moved with both folders relative to the project, as the CLI prints paths', async () => {
+    const outDir = join(dir, 'api-handoff')
+    await mkdir(join(outDir, 'client'), { recursive: true })
+    const record = buildRecordFor(config, {}, 'test')
+    const moved = previousClient(outDir, record, join(dir, 'app', 'api'), dir)
+    expect(moved.warning).toBe('The client moved from api-handoff/client to app/api (gen.clientDir); the old folder was left as it is. Delete it once nothing imports it.')
+    expect(previousClient(outDir, record, join(tmpdir(), 'elsewhere-client'), dir).warning).toContain(`to ${join(tmpdir(), 'elsewhere-client')} (gen.clientDir)`)
   })
 })

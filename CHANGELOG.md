@@ -74,7 +74,9 @@ The first release. Everything below is new.
   plus `call_operation` under probe's rules with `--allow-calls`. `--mcp` writes a per-site MCP
   server with one tool per operation. Both run only a client this machine generated.
 - **Claude Code plugin and agent skill.** The repository is a plugin marketplace with capture,
-  build, probe and check commands and a skill for any agent that reads Agent Skills.
+  build, probe and check commands and a skill for any agent that reads Agent Skills. The plugin
+  runs the globally installed CLI (`npm install -g site-to-api`), never a copy from the opened
+  project.
 
 #### Configuration
 
@@ -98,13 +100,9 @@ rewrites one:
 
 ### Known issues
 
-- **With npm, TypeScript 7 in your project stops the CLI from starting.** The client generator's
-  `typescript` peer dependency resolves to the project's TypeScript 7, whose API it does not
-  support, so every command fails at start-up with `Cannot read properties of undefined (reading
-  'AnyKeyword')`. Install `typescript@6` in the project.
 - **Not decoded:** fetch streams that never end, zstd request bodies, binary Connect bodies,
-  gRPC-web, tRPC over WebSocket and encrypted SmartFoxServer packets. The README lists the other
-  known limits.
+  gRPC-web, tRPC over WebSocket and encrypted SmartFoxServer packets.
+  [docs/limitations.md](docs/limitations.md) lists the other known limits.
 
 ### Deliberate omissions
 

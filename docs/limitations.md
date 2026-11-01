@@ -3,12 +3,6 @@
 What `site-to-api` does not do, or does only partly. The README lists the four a first run is most
 likely to meet; this page has all of them.
 
-## Installation
-
-- With npm, a project that has TypeScript 7 installed cannot run the CLI: the client generator's
-  `typescript` dependency resolves to the project's TypeScript 7, whose API it does not support.
-  Install `typescript@6` in the project until this is fixed.
-
 ## Capture and import
 
 - Web Workers and Service Workers are not instrumented (their traffic is captured, without stacks).

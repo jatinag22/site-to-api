@@ -14,11 +14,8 @@ folder you ran `init` in:
 npm init -y && npm pkg set type=module        # ES modules
 npm install @site-to-api/runtime zod
 npm install playwright tsx                     # playwright only for browserSession; tsx to run .ts
-npm install -D site-to-api typescript@6 @types/node
+npm install -D site-to-api typescript @types/node
 ```
-
-TypeScript 6, not 7: with npm, TypeScript 7 in the project stops the `site-to-api` CLI from
-starting (see the README's limitations).
 
 A `tsconfig.json` that type-checks the whole folder, the client included:
 

@@ -8,7 +8,7 @@ import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'pathe'
+import { dirname, isAbsolute, join, relative, resolve } from 'pathe'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 import { isFolderRelative } from '../gen/contained'
@@ -252,6 +252,14 @@ export function relativePath(from: string, to: string): string {
   return relative(from, to) || '.'
 }
 
+/** `dir` relative to the project folder `root` when inside it, as the CLI shows paths; else as it is. */
+function fromRoot(root: string, dir: string): string {
+  const shown = relative(root, dir)
+  return shown === '' || shown.startsWith('..') || isAbsolute(shown)
+    ? dir
+    : shown
+}
+
 /** The manifest of the last run for a client now in `clientDir`, and a warning when it moved. */
 export interface PreviousClient {
   /** `null` for a folder from an older version without a manifest (decision 0058). */
@@ -262,9 +270,9 @@ export interface PreviousClient {
 /**
  * What the last run generated into `clientDir`. When `gen.clientDir` changed since, the recorded
  * files are in the old folder: the new folder starts with nothing generated, and the old one is
- * left for the person to delete.
+ * left for the person to delete. The warning shows both folders relative to the project `root`.
  */
-export function previousClient(outDir: string, record: BuildRecord | null, clientDir: string): PreviousClient {
+export function previousClient(outDir: string, record: BuildRecord | null, clientDir: string, root: string): PreviousClient {
   if (record === null)
     return { previous: null, warning: null }
   const recorded = recordedClientDir(outDir, record)
@@ -273,7 +281,7 @@ export function previousClient(outDir: string, record: BuildRecord | null, clien
   return {
     previous: {},
     warning: existsSync(recorded)
-      ? `The client moved from ${recorded} to ${clientDir} (gen.clientDir); the old folder was left as it is. Delete it once nothing imports it.`
+      ? `The client moved from ${fromRoot(root, recorded)} to ${fromRoot(root, clientDir)} (gen.clientDir); the old folder was left as it is. Delete it once nothing imports it.`
       : null,
   }
 }

@@ -33,9 +33,6 @@ download that once with `npx playwright install chromium`. With pnpm, which does
 Playwright's command, add `playwright` at the version `site-to-api` depends on before running
 `pnpm exec playwright install chromium`.
 
-If the project has TypeScript installed, use TypeScript 6 (`npm install -D typescript@6`): with
-npm, TypeScript 7 in the project stops the CLI from starting.
-
 ## Use
 
 ```sh

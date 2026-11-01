@@ -3,7 +3,7 @@ description: Analyse the captures and write the api-handoff folder (specs, flows
 argument-hint: [--include <host>] [--exclude <host>] [--examples masked|none] [--no-client] [--mcp [read|write|off]] [--force]
 ---
 
-Run `npx site-to-api build $ARGUMENTS` from the project root and report the warnings it prints.
+Run `site-to-api build $ARGUMENTS` from the project root and report the warnings it prints.
 
 Do not pass `--examples raw` unless the person asks for it and understands that captured values,
 including personal data, are then written into the handoff folder. Pass `--force` only when the

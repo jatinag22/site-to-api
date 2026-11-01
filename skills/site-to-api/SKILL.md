@@ -19,8 +19,9 @@ npm install @site-to-api/runtime zod    # what the generated client imports
 npx site-to-api init                    # config + gitignore for .site-to-api/
 ```
 
-If the project has TypeScript installed, it must be TypeScript 6 (`npm install -D typescript@6`):
-with npm, TypeScript 7 stops the CLI from starting.
+The Claude Code plugin needs the CLI installed globally (`npm install -g site-to-api`). With the
+plugin, run `site-to-api` (that global copy) wherever this skill says `npx site-to-api`: in a
+project you did not create, `npx` could run a binary the project supplies.
 
 ## 1. Capture (the person browses, you wait)
 
