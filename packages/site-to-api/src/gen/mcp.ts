@@ -457,6 +457,7 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
     '',
     '```sh',
     'npm install @modelcontextprotocol/server@2.4.0 zod @site-to-api/runtime',
+    'npm install -D @types/node   # the server reads process.env; tsc needs Node\'s types',
     '```',
     '',
     'Register it with Claude Code (from the folder that holds the handoff folder). `site-to-api mcp',
