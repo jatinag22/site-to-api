@@ -3,7 +3,9 @@
 // the packed manifests hold no `workspace:`/`catalog:` ranges and pass publint, the runtime
 // bundles for a neutral (non-Node) platform, and the tarballs install with npm and with pnpm
 // into fresh projects where `--help`, `init`, `capture` (headless, Playwright's Chromium) against
-// the e2e fixture site, `build` and `gen` work and the generated client type-checks.
+// the e2e fixture site, `build` and `gen` work and the generated client type-checks. A third
+// project installs with npm next to TypeScript 7, whose peer range npm would hand hey-api: there
+// `--version`, `build` and `gen` must work too, on the npm project's capture.
 //
 // Usage: node scripts/smoke-package.mjs [--static] [--tarballs <dir>] [--keep] [--only npm|pnpm] [--with-deps]
 //   --static     only the quick checks: pack, manifests, publint, and the runtime's neutrality
@@ -17,7 +19,7 @@
 // `pnpm install`.
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -349,6 +351,42 @@ export default defineConfig({
     'tsconfig.json',
   ], { cwd: dir })
   console.log(`${manager}: generated client type-checks`)
+}
+
+// 6. A project on TypeScript 7 (npm's latest): npm dedupes hey-api's `typescript` peer onto it,
+// which crashed the whole CLI at start before hey-api was loaded lazily with site-to-api's own
+// TypeScript 6 (decision 0002). The capture is the npm project's; capturing again adds nothing.
+const npmProject = projects.find(project => project.manager === 'npm')
+if (npmProject !== undefined) {
+  step('npm with TypeScript 7 in the project: --version, build, gen')
+  const dir = join(work, 'npm-ts7-app')
+  mkdirSync(dir)
+  writeFileSync(join(dir, 'package.json'), `${JSON.stringify({
+    name: 'smoke-npm-ts7',
+    private: true,
+    type: 'module',
+    dependencies: {
+      '@site-to-api/runtime': `file:${join(tarballs, runtimeTarball)}`,
+      'site-to-api': `file:${join(tarballs, cliTarball)}`,
+      'typescript': '^7.0.2',
+      'zod': catalogVersion('zod'),
+    },
+  }, null, 2)}\n`)
+  run('npm', ['install', '--no-audit', '--no-fund'], { cwd: dir })
+  const projectTs = JSON.parse(readFileSync(join(dir, 'node_modules', 'typescript', 'package.json'), 'utf8')).version
+  if (!projectTs.startsWith('7.'))
+    fail(`npm-ts7: the project got TypeScript ${projectTs}, expected 7`)
+  cpSync(join(npmProject.dir, '.site-to-api'), join(dir, '.site-to-api'), { recursive: true })
+  cpSync(join(npmProject.dir, 'site-to-api.config.ts'), join(dir, 'site-to-api.config.ts'))
+  const cli = cliArgs => run('npx', ['--no-install', 'site-to-api', ...cliArgs], { cwd: dir, capture: true })
+  const shown = cli(['--version']).trim()
+  if (shown === '')
+    fail('npm-ts7: --version printed nothing')
+  cli(['build'])
+  cli(['gen'])
+  if (!readdirSync(join(dir, 'api-handoff', 'client')).includes('index.ts'))
+    fail('npm-ts7: gen wrote no client/index.ts')
+  console.log(`npm-ts7: --version (${shown}), build and gen work with TypeScript ${projectTs} in the project`)
 }
 
 console.log('\nsmoke-package: OK')

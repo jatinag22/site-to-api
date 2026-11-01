@@ -72,6 +72,9 @@ describe('agent skill and plugin commands', () => {
       })),
     })
       .parse(JSON.parse(await readFile(join(plugin, '.mcp.json'), 'utf8')))
+    // The globally installed binary from PATH, never a bin the opened project supplies (`npx`
+    // would run a committed node_modules/.bin or a package named site-to-api): Claude Code starts
+    // the server in every project, untrusted clones included.
     expect(config.mcpServers['site-to-api']).toEqual({
       command: 'site-to-api',
       args: [

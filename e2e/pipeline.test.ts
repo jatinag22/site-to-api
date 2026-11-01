@@ -429,7 +429,8 @@ describe('handoff folder', () => {
       expect(await readFile(join(outDir, 'AGENT.md'), 'utf8')).toContain('`../app/api/`: typed client with Zod validation; see `../app/api/README.md`.')
       expect(await readFile(join(outDir, 'API_MAP.md'), 'utf8')).toContain('exported by the generated `../app/api/`.')
       expect(JSON.parse(await readFile(join(outDir, 'build.json'), 'utf8'))).toMatchObject({ clientDir: '../app/api' })
-      expect(result.warnings.join('\n')).toContain(`The client moved from ${join(outDir, 'client')} to ${appClient}`)
+      // Paths relative to the project, as the CLI prints them.
+      expect(result.warnings.join('\n')).toContain(`The client moved from ${relative(work, join(outDir, 'client'))} to app/api (gen.clientDir)`)
       expect(await readFile(join(appClient, 'README.md'), 'utf8')).toContain('`app/api/index.js` from the project root')
     }
     finally {
