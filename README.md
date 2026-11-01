@@ -520,7 +520,7 @@ access controls, and never hides that the browser is automated. See
 ## Contributing and docs
 
 [CONTRIBUTING.md](CONTRIBUTING.md) · [Architecture](docs/architecture.md) ·
-[Decision records](docs/decisions/README.md) · [Testing](docs/testing.md) · [Security policy](SECURITY.md)
+[Decision records](docs/decisions/README.md) · [Testing](docs/testing.md) · [Maintaining](docs/maintaining.md) · [Security policy](SECURITY.md)
 
 ## Licence
 

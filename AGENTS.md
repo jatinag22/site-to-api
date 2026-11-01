@@ -107,7 +107,8 @@ it passes. Fix root causes; do not add ignores.
 - Conventional Commits with a body that explains why (enforced by the commit-msg hook), signed off
   (`git commit -s`, DCO).
 - One logical change per commit. Merge to `main` through a pull request (squash merge) after CI
-  passes.
+  passes. How pull requests are reviewed and merged, the squash commit format and Dependabot
+  handling: [docs/maintaining.md](docs/maintaining.md).
 
 ## Responsible use
 
