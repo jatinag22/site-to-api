@@ -439,14 +439,16 @@ not run, only a plain `outDir: '…'` string in it is read (otherwise pass the f
 `site-to-api.config.json`). The client folder comes from `build.json`.
 
 ```sh
-claude mcp add site-api -- site-to-api mcp ./api-handoff
+claude mcp add site-api -- npx --no-install site-to-api mcp ./api-handoff
 ```
 
 Tools: `list_hosts` (hosts, session needs, flows), `search_operations` (by words, host, kind),
 `get_operation` (spec slice, each input and where its value comes from, session needs, the client
 call), `get_flow`, `get_examples` (masked examples only; refused for `--examples raw` folders) and
 `get_source` (excerpts in `source/`). Other clients take the same command in their MCP settings
-(`"command": "site-to-api", "args": ["mcp", "./api-handoff"]`).
+(`"command": "npx", "args": ["--no-install", "site-to-api", "mcp", "./api-handoff"]`, run in the
+project folder; `npx` finds the project's own `site-to-api`, which is usually a dev dependency and
+not on `PATH`).
 
 `--allow-calls` adds `call_operation`, which sends a request through the generated client with
 probe's rules: safe methods and GraphQL queries only, never bot-protection steps or state-changing
@@ -455,7 +457,7 @@ writes. Credentials come only from environment variables you set:
 
 ```sh
 claude mcp add site-api -e SITE_API_COOKIE='session=…' -e SITE_API_AUTH='Bearer …' \
-  -- site-to-api mcp ./api-handoff --allow-calls
+  -- npx --no-install site-to-api mcp ./api-handoff --allow-calls
 ```
 
 With several hosts, use `SITE_API_COOKIE_<HOST>` / `SITE_API_AUTH_<HOST>` (the host's folder
@@ -488,7 +490,7 @@ a tool. Run it through the CLI, which checks the client first and brings the SDK
 runtime itself:
 
 ```sh
-claude mcp add pinewood -e SITE_API_COOKIE='…' -- site-to-api mcp ./api-handoff --generated
+claude mcp add pinewood -e SITE_API_COOKIE='…' -- npx --no-install site-to-api mcp ./api-handoff --generated
 ```
 
 Running `npx tsx ./api-handoff/mcp/server.ts` directly works too, but skips that check.

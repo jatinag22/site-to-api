@@ -72,12 +72,19 @@ describe('agent skill and plugin commands', () => {
       })),
     })
       .parse(JSON.parse(await readFile(join(plugin, '.mcp.json'), 'utf8')))
+    // Claude Code substitutes the variable; the file holds it literally.
+    const project = ['$', '{CLAUDE_PROJECT_DIR}'].join('')
+    // site-to-api is usually a dev dependency, not on PATH: npx runs the project's own bin, and
+    // --no-install never downloads a package in its place.
     expect(config.mcpServers['site-to-api']).toEqual({
-      command: 'site-to-api',
+      command: 'npx',
       args: [
+        '--no-install',
+        '--prefix',
+        project,
+        'site-to-api',
         '--cwd',
-        // Claude Code substitutes the variable; the file holds it literally.
-        ['$', '{CLAUDE_PROJECT_DIR}'].join(''),
+        project,
         'mcp',
         './api-handoff',
       ],
