@@ -20,7 +20,7 @@
     "test:e2e": "pnpm run build && vitest --project e2e",
     "ci": "pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run knip && vitest --run",
     "ci:push": "pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run knip && vitest --run --changed origin/main --passWithNoTests",
-    "release": "bumpp -r",
+    "release": "bumpp",
     "prepare": "simple-git-hooks"
   },
   "devDependencies": {
