@@ -53,8 +53,12 @@ async function readAll(dir: string): Promise<Map<string, string>> {
 
 /** Strict type check of `files`, as a project with the given module resolution would run it. */
 function typeCheck(files: string[], resolution: 'bundler' | 'nodenext'): string[] {
+  // The strictest flags an app may turn on (decision 0057).
   const program = ts.createProgram(files, {
     strict: true,
+    noUncheckedIndexedAccess: true,
+    exactOptionalPropertyTypes: true,
+    noImplicitOverride: true,
     noEmit: true,
     target: ts.ScriptTarget.ES2022,
     module: resolution === 'bundler'
@@ -760,7 +764,7 @@ describe('framed WebSocket protocols (decision 0038)', () => {
 })
 
 describe('generated client', () => {
-  it('type-checks in strict mode under moduleResolution bundler and nodenext', () => {
+  it('type-checks under strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes and noImplicitOverride, with moduleResolution bundler and nodenext', () => {
     expect(typeCheck(clientSources(), 'bundler')).toEqual([])
     // nodenext rejects extensionless relative imports (TS2835); the client uses `.js` throughout.
     expect(typeCheck(clientSources(), 'nodenext')).toEqual([])

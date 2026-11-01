@@ -85,7 +85,7 @@ const RequestBodySchema = z.looseObject({
 interface ToolField {
   key: 'path' | 'query' | 'body' | 'headers' | 'variables'
   expression: string
-  /** Leave the expression as it is; otherwise `.optional()` is added. */
+  /** Leave the expression as it is; otherwise it is wrapped in `z.exactOptional(…)`. */
   required: boolean
 }
 
@@ -289,9 +289,11 @@ function literal(value: unknown): string {
 }
 
 function renderTool(tool: McpTool): string {
-  const fields = tool.fields.map(field => `      ${field.key}: ${field.expression}${field.required
-    ? ''
-    : '.optional()'},`)
+  // `exactOptional`: a missing field stays missing instead of becoming `undefined`, which the SDK
+  // options reject under `exactOptionalPropertyTypes` (decision 0057).
+  const fields = tool.fields.map(field => `      ${field.key}: ${field.required
+    ? field.expression
+    : `z.exactOptional(${field.expression})`},`)
   return [
     `  server.registerTool(${literal(tool.name)}, {`,
     `    title: ${literal(tool.title)},`,

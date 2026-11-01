@@ -157,6 +157,7 @@ async function writeClientFiles(clientDir: string, mcpDir: string, loaded: reado
     // hey-api writes some spec text into code unescaped: it gets a copy without patterns,
     // documentation and examples, and the output is checked below (decision 0043).
     await runHeyApi(OpenApiDocumentSchema.parse(heyApiInput(document)), path.join(clientDir, host.identifier), host.file)
+    await markVendoredCore(path.join(clientDir, host.identifier))
     // GraphQL operations get a `{ variables }` function beside hey-api's (decision 0027).
     const graphql = graphqlFunctions(host, warnings)
     if (graphql.length > 0)
@@ -348,5 +349,26 @@ function resolvable(specifier: string, dir: string): boolean {
       return true
     if (path.dirname(current) === current)
       return false
+  }
+}
+
+/**
+ * The first line of hey-api's bundled fetch client (`client/`, `core/`): that code is hey-api's
+ * own template, copied into every client, and is not written for `exactOptionalPropertyTypes`, so
+ * an app that turns it on failed to compile the client. Only those files skip the check; the
+ * generated SDK, types, schemas and our own modules are checked under the strictest flags
+ * (decision 0057).
+ */
+const VENDORED_NOCHECK = '// @ts-nocheck: hey-api\'s bundled fetch client, not written for exactOptionalPropertyTypes (site-to-api decision 0057).\n'
+
+async function markVendoredCore(hostDir: string): Promise<void> {
+  for (const folder of ['client', 'core']) {
+    const dir = path.join(hostDir, folder)
+    if (!existsSync(dir))
+      continue
+    for (const name of (await readdir(dir)).filter(entry => entry.endsWith('.ts')).sort()) {
+      const file = path.join(dir, name)
+      await writeFile(file, `${VENDORED_NOCHECK}${await readFile(file, 'utf8')}`)
+    }
   }
 }

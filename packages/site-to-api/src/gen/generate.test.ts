@@ -155,6 +155,7 @@ function typeCheck(files: string[], resolution: 'bundler' | 'nodenext' = 'bundle
   const options: ts.CompilerOptions = {
     strict: true,
     noUncheckedIndexedAccess: true,
+    exactOptionalPropertyTypes: true,
     noImplicitOverride: true,
     verbatimModuleSyntax: true,
     isolatedModules: true,
@@ -384,7 +385,7 @@ describe('generateClient', () => {
     expect(sdk).toContain('.parseAsync(requestValidationInput(data))')
   })
 
-  it('type-checks in strict mode with zero errors', () => {
+  it('type-checks with zero errors under strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes and noImplicitOverride', () => {
     const files = [
       path.join(dir, 'driver.ts'),
       ...result.files.filter(file => file.endsWith('.ts')).map(file => path.join(dir, 'handoff', file)),

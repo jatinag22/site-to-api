@@ -31,6 +31,8 @@ function typeCheck(files: string[], types: string[] = []): string {
   const program = ts.createProgram(files, {
     strict: true,
     noUncheckedIndexedAccess: true,
+    exactOptionalPropertyTypes: true,
+    noImplicitOverride: true,
     verbatimModuleSyntax: true,
     isolatedModules: true,
     noEmit: true,

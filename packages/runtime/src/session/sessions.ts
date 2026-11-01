@@ -49,7 +49,9 @@ export function tokenSession(options: TokenSessionOptions): Session {
       })
     : null
   return {
-    jar: options.jar,
+    ...(options.jar === undefined
+      ? {}
+      : { jar: options.jar }),
     async prepare(request) {
       const token = await options.getToken()
       request.headers.set(header, scheme === null
@@ -191,7 +193,9 @@ export function combineSessions(...sessions: Session[]): Session {
     throw new TypeError('combineSessions: the sessions use different cookie jars; create them with the same jar')
   const [jar] = jars
   return {
-    jar,
+    ...(jar === undefined
+      ? {}
+      : { jar }),
     async prepare(request) {
       let current = request
       for (const session of sessions)

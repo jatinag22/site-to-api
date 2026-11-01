@@ -68,6 +68,16 @@ kept there disappeared and hand edits to generated files were lost without a wor
 - The host namespaces exported from `index.ts` stay as hey-api wrote them, on its shared default
   client; the README says so.
 
+### The client compiles under the strictest flags
+- The generated client, `index.ts`, the wrappers, `extract.ts`, the MCP server and the runtime's
+  source type-check under `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and
+  `noImplicitOverride`, with `moduleResolution` `bundler` and `nodenext`; the tests compile them
+  with exactly these flags. Optional values are passed with conditional spreads, and the MCP
+  server's optional input fields use `z.exactOptional`, so a missing field is never `undefined`.
+- hey-api's bundled fetch client (`<host>/client/`, `<host>/core/`) is its own template, copied
+  as is, and does not compile under `exactOptionalPropertyTypes`; those files alone start with
+  `// @ts-nocheck`. Patching hey-api's template would break with each hey-api release.
+
 ## Consequences
 People can keep their own files next to the client. A stale file from an old version that `gen`
 no longer writes stays until it is deleted by hand.

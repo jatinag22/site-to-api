@@ -355,7 +355,9 @@ dispatcher parameter itself; also in `sdk` in place of the raw functions), and
 `hosts/<host>.md`, read from `x-site-to-api-requires` after `probe`) and, when there are AsyncAPI
 files, each WebSocket channel's URL and the message to send after connecting (the code itself is
 HTTP only). Relative imports end in `.js`, so
-the client works under `moduleResolution` `bundler` and `nodenext`. The generated code needs
+the client works under `moduleResolution` `bundler` and `nodenext`, and it type-checks under
+`strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and `noImplicitOverride`
+(hey-api's bundled `client/` and `core/` files carry `// @ts-nocheck`, decision 0057). The generated code needs
 `zod` 4 and `@site-to-api/runtime` in the consuming project.
 
 ### `mcp/`
