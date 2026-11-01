@@ -391,8 +391,21 @@ export interface BotProtectionFinding {
   exchangeIds: string[]
 }
 
+/** A session made by `site-to-api import` from a HAR file, and what that HAR could give (decision 0057). */
+export interface ImportedSession {
+  sessionId: string
+  /** The exporting tool, from the HAR's `log.creator` and `log.browser`, when given. */
+  creator: string | null
+  /** Some requests carry the JavaScript stack that sent them (Chrome's `_initiator`). */
+  stacks: boolean
+  /** The HAR held script bodies, saved for source analysis. */
+  scripts: boolean
+}
+
 export interface Analysis {
   sessions: string[]
+  /** Sessions imported from HAR files; absent or empty when every session was captured. */
+  imported?: ImportedSession[]
   /**
    * The URLs the capture sessions started at (`meta.json` `startUrl`), sorted, once each. When no
    * page was browsed (every navigation was answered by a script, or the capture had none), their
