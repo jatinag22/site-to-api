@@ -8,12 +8,47 @@ import type { ResolvedConfig } from '../config/schema'
 
 type McpKeys = Pick<ResolvedConfig, 'outDir'> & { probe: Pick<ResolvedConfig['probe'], 'maxRps' | 'timeoutMs'> }
 
-/** A key's value as written: a quoted string or a number literal, else null (an expression). */
-function literal(text: string, key: string): { found: boolean, value: string | null } {
-  const match = new RegExp(`\\b${key}\\s*:\\s*([^,}\\n]+)`).exec(text)
-  if (match === null)
+/**
+ * Comments, strings, `key:` and braces, in order. Comments and strings are matched whole first, so
+ * a key inside them (`// outDir: 'x'`, `'https://…'`) is never read as one.
+ */
+const TOKEN = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|(['"`])(?:\\.|(?!\1)[^\\])*\1|([A-Z_$][\w$]*)\s*:|[{}]/gi
+
+/** Each `key:` outside comments and strings, with its object path and where its value starts. */
+function keys(text: string): Array<{ path: string, valueAt: number }> {
+  const found: Array<{ path: string, valueAt: number }> = []
+  const stack: string[] = []
+  let pending = ''
+  for (const match of text.matchAll(TOKEN)) {
+    const [token, , key] = match
+    if (token === '{') {
+      stack.push(pending)
+      pending = ''
+    }
+    else if (token === '}') {
+      stack.pop()
+      pending = ''
+    }
+    else if (key !== undefined) {
+      found.push({
+        path: [
+          ...stack.filter(name => name !== ''),
+          key,
+        ].join('.'),
+        valueAt: (match.index ?? 0) + token.length,
+      })
+      pending = key
+    }
+  }
+  return found
+}
+
+/** The value written for `path`: a quoted string or a number literal, else null (an expression). */
+function literal(text: string, path: string): { found: boolean, value: string | null } {
+  const at = keys(text).find(entry => entry.path === path)
+  if (at === undefined)
     return { found: false, value: null }
-  const raw = (match[1] ?? '').trim()
+  const raw = (/^[^,}\n]*/.exec(text.slice(at.valueAt))?.[0] ?? '').trim()
   const quoted = /^(['"`])([^'"`$]*)\1$/.exec(raw)
   if (quoted !== null)
     return { found: true, value: quoted[2] ?? '' }
@@ -27,18 +62,18 @@ function literal(text: string, key: string): { found: boolean, value: string | n
 
 /** The keys of `mcp`'s settings that the unread config file sets to something else, sorted. */
 export function ignoredConfigChanges(text: string, config: McpKeys): string[] {
-  const keys: Array<[string, string]> = [
+  const settings: Array<[string, string]> = [
     ['outDir', config.outDir],
     [
-      'maxRps',
+      'probe.maxRps',
       String(config.probe.maxRps),
     ],
     [
-      'timeoutMs',
+      'probe.timeoutMs',
       String(config.probe.timeoutMs),
     ],
   ]
-  return keys.flatMap(([key, current]) => {
+  return settings.flatMap(([key, current]) => {
     const written = literal(text, key)
     return written.found && written.value !== current
       ? [key]
