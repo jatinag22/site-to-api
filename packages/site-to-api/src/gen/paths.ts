@@ -13,6 +13,10 @@ export interface GeneratedPaths {
   handoff: string
   /** The handoff folder from the client folder (`..`). */
   handoffFromClient: string
+  /** The MCP server folder from the project root (`api-handoff/mcp`). */
+  mcp: string
+  /** The client folder from the MCP folder, as an import prefix (`../client`). */
+  clientFromMcp: string
 }
 
 /** The layout of a handoff folder `api-handoff` with the client in it, for callers that give none. */
@@ -20,18 +24,23 @@ export const DEFAULT_PATHS: GeneratedPaths = {
   client: 'api-handoff/client',
   handoff: 'api-handoff',
   handoffFromClient: '..',
+  mcp: 'api-handoff/mcp',
+  clientFromMcp: '../client',
 }
 
-function posix(relative: string): string {
+/** A relative path with `/` separators; `.` for the same folder. */
+export function posixPath(relative: string): string {
   return relative.split(path.sep).join('/') || '.'
 }
 
-/** The paths for a client in `clientDir` built from `handoffDir`, seen from `root`. */
-export function generatedPaths(root: string, handoffDir: string, clientDir: string): GeneratedPaths {
+/** The paths for a client in `clientDir` and a server in `mcpDir` built from `handoffDir`, seen from `root`. */
+export function generatedPaths(root: string, handoffDir: string, clientDir: string, mcpDir: string = path.join(path.dirname(clientDir), 'mcp')): GeneratedPaths {
   return {
-    client: posix(path.relative(root, clientDir)),
-    handoff: posix(path.relative(root, handoffDir)),
-    handoffFromClient: posix(path.relative(clientDir, handoffDir)),
+    client: posixPath(path.relative(root, clientDir)),
+    handoff: posixPath(path.relative(root, handoffDir)),
+    handoffFromClient: posixPath(path.relative(clientDir, handoffDir)),
+    mcp: posixPath(path.relative(root, mcpDir)),
+    clientFromMcp: dotted(posixPath(path.relative(mcpDir, clientDir))),
   }
 }
 

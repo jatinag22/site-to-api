@@ -505,6 +505,26 @@ describe('generateClient into gen.clientDir (decision 0057)', () => {
   }, 60_000)
 })
 
+describe('generateClient with gen.mcpDir (decision 0057)', () => {
+  it('refuses an MCP folder inside the client folder', async () => {
+    const dir = await workspace()
+    try {
+      const handoff = path.join(dir, 'handoff')
+      await expect(generateClient({
+        handoffDir: handoff,
+        flows,
+        mcp: 'read',
+        mcpDir: path.join(handoff, 'client', 'mcp'),
+      }))
+        .rejects
+        .toThrow(/is inside the client folder .*Set gen\.mcpDir to a folder outside it/)
+    }
+    finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('generateClient and bot-protection steps', () => {
   it('generates no client method or folder for bot-protection steps', async () => {
     const dir = await workspace()
@@ -574,6 +594,7 @@ paths:
         warnings: [],
         empty: true,
         manifest: {},
+        mcpManifest: {},
       })
       await expect(readFile(path.join(handoff, 'client', 'index.ts'), 'utf8')).rejects.toThrow()
     }

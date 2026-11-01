@@ -38,6 +38,18 @@ kept there disappeared and hand edits to generated files were lost without a wor
   with the TypeScript parser; anything computed is not read, and the message says to pass the
   folder.
 
+### The MCP server is not part of the client
+- `gen --mcp` writes `server.ts` and its README to `mcp/` next to the client folder, or to
+  `gen.mcpDir`; a folder inside the client folder is refused. The client never depended on the
+  server, but a server inside it put `@modelcontextprotocol/server` imports into the app's source
+  tree, so the app's type check failed when it had a different MCP package installed.
+- Its files are recorded like the client's (`generatedMcp`, `mcpDir` in `build.json`) and covered
+  by the same trust entry; `mcp --generated` refuses a server the entry does not list.
+- The README says which package a type check needs (`@modelcontextprotocol/server`, not
+  `@modelcontextprotocol/sdk`; no Node type definitions) and how to leave the folder out of
+  `tsconfig.json`; `gen` warns when no `node_modules` above the folder has that package. The
+  server type-checks with and without `@types/node`.
+
 ## Consequences
 People can keep their own files next to the client. A stale file from an old version that `gen`
 no longer writes stays until it is deleted by hand.

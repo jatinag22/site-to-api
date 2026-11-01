@@ -441,7 +441,7 @@ This check is the protection; the per-host variable names are not, since code in
 read any of them.
 
 **A server for one site.** `site-to-api gen --mcp` (or `build --mcp`, or `gen: { mcp: 'read' }` in
-the config) writes `api-handoff/client/mcp/server.ts`: one tool per operation, input schemas from
+the config) writes `api-handoff/mcp/server.ts`: one tool per operation, input schemas from
 the generated Zod schemas, calls through the typed client. `read` (the default) exposes only
 operations that read; `--mcp write` adds the ones that change data. Bot-protection steps never get
 a tool. Run it through the CLI, which checks the client first and brings the SDK, zod and the
@@ -451,9 +451,13 @@ runtime itself:
 claude mcp add pinewood -e SITE_API_COOKIE='…' -- site-to-api mcp ./api-handoff --generated
 ```
 
-Running `npx tsx ./api-handoff/client/mcp/server.ts` directly works too, but skips that check.
+Running `npx tsx ./api-handoff/mcp/server.ts` directly works too, but skips that check.
 
-`api-handoff/client/mcp/README.md` lists its settings and a JSON configuration for other clients.
+The server sits next to the client, not inside it, and the app never imports it. A type check that
+includes its folder needs `@modelcontextprotocol/server` installed; otherwise exclude the folder
+from `tsconfig.json`.
+
+`api-handoff/mcp/README.md` lists its settings and a JSON configuration for other clients.
 
 ### Claude Code plugin and agent skill
 

@@ -8,7 +8,7 @@ import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join, relative, resolve } from 'pathe'
+import { dirname, join, relative, resolve } from 'pathe'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 
@@ -35,7 +35,7 @@ const BuildRecordSchema = z.strictObject({
     exclude: z.array(z.string()),
   }),
   client: z.boolean(),
-  /** `gen.mcp`; absent in records written before `client/mcp/` existed, which means `off`. */
+  /** `gen.mcp`; absent in records written before `mcp/` existed, which means `off`. */
   mcp: z.enum(['off', 'read', 'write']).optional(),
   /**
    * The files `gen` generated into the client folder, by path relative to it, and their SHA-256
@@ -49,6 +49,10 @@ const BuildRecordSchema = z.strictObject({
    * Absent in older records, which means `client`.
    */
   clientDir: z.string().optional(),
+  /** The MCP server folder relative to the handoff folder; absent: `mcp` next to the client folder. */
+  mcpDir: z.string().optional(),
+  /** The files `gen --mcp` generated into the MCP folder and their SHA-256, like `generated`. */
+  generatedMcp: z.record(z.string(), z.string()).optional(),
   /**
    * The options above that came from CLI flags or `SITE_TO_API_*` variables. `probe` and `gen`
    * reuse exactly these; the others come from the config file, which they read again anyway.
@@ -57,13 +61,30 @@ const BuildRecordSchema = z.strictObject({
 })
 export type BuildRecord = z.infer<typeof BuildRecordSchema>
 
+/** Where the client and MCP server are and which files were generated there (decision 0057). */
+export interface RecordedClient {
+  generated?: Record<string, string>
+  generatedMcp?: Record<string, string>
+  /** Relative to the handoff folder. */
+  clientDir?: string
+  /** Relative to the handoff folder. */
+  mcpDir?: string
+}
+
 /** The record for a build with this config; `sources` says which values were given on the command line. */
-export function buildRecordFor(config: ResolvedConfig, sources: Record<string, ConfigSource>, toolVersion: string, generated?: Record<string, string>, clientDir: string = DEFAULT_CLIENT_DIR): BuildRecord {
+export function buildRecordFor(config: ResolvedConfig, sources: Record<string, ConfigSource>, toolVersion: string, client: RecordedClient = {}): BuildRecord {
+  const { generated, generatedMcp, clientDir = DEFAULT_CLIENT_DIR, mcpDir } = client
   return {
     ...(generated === undefined
       ? {}
       : { generated }),
+    ...(generatedMcp === undefined
+      ? {}
+      : { generatedMcp }),
     clientDir,
+    ...(mcpDir === undefined
+      ? {}
+      : { mcpDir }),
     formatVersion: 1,
     generatedBy: `site-to-api ${toolVersion}`,
     examples: config.redact.examples,
@@ -150,22 +171,18 @@ export function stickyOptions(record: BuildRecord | null, current: Record<string
 }
 
 /** What `gen` changed, for {@link recordClientGenerated}. */
-export interface ClientUpdate {
+export interface ClientUpdate extends RecordedClient {
   /** The MCP mode gen wrote, and whether a flag or variable chose it. */
   mcp?: { mode: NonNullable<BuildRecord['mcp']>, sticky: boolean }
-  /** The manifest of generated files (decision 0057). */
-  generated?: Record<string, string>
-  /** The client folder relative to the handoff folder. */
-  clientDir?: string
 }
 
 /**
  * After `gen`: the folder now has a current client, so a sticky `--no-client` no longer
  * describes it, and a later `probe` should keep the client up to date. `mcp` is what gen wrote
- * into `client/mcp/`; it is sticky when a flag or variable chose it, so probe's rebuild keeps it.
+ * into `mcp/`; it is sticky when a flag or variable chose it, so probe's rebuild keeps it.
  */
 export async function recordClientGenerated(outDir: string, update: ClientUpdate = {}): Promise<void> {
-  const { mcp, generated, clientDir } = update
+  const { mcp, generated, generatedMcp, clientDir, mcpDir } = update
   const record = await readBuildRecord(outDir)
   if (!record)
     return
@@ -178,6 +195,12 @@ export async function recordClientGenerated(outDir: string, update: ClientUpdate
     ...(clientDir === undefined
       ? {}
       : { clientDir }),
+    ...(generatedMcp === undefined
+      ? {}
+      : { generatedMcp }),
+    ...(mcpDir === undefined
+      ? {}
+      : { mcpDir }),
     client: true,
     ...(mcp === undefined
       ? {}
@@ -194,6 +217,20 @@ export async function recordClientGenerated(outDir: string, update: ClientUpdate
  */
 export function recordedClientDir(outDir: string, record: BuildRecord | null): string {
   return resolve(outDir, record?.clientDir ?? DEFAULT_CLIENT_DIR)
+}
+
+/** The MCP server folder of the handoff folder `outDir`, as `build.json` records it. */
+export function recordedMcpDir(outDir: string, record: BuildRecord | null): string {
+  return record?.mcpDir === undefined
+    ? join(dirname(recordedClientDir(outDir, record)), 'mcp')
+    : resolve(outDir, record.mcpDir)
+}
+
+/** The MCP server folder for `config`, absolute: `gen.mcpDir`, or `mcp/` next to the client folder. */
+export function configuredMcpDir(config: ResolvedConfig, cwd: string): string {
+  return config.gen.mcpDir === null
+    ? join(dirname(configuredClientDir(config, cwd)), 'mcp')
+    : resolve(cwd, config.gen.mcpDir)
 }
 
 /**
@@ -235,4 +272,14 @@ export function previousClient(outDir: string, record: BuildRecord | null, clien
       ? `The client moved from ${recorded} to ${clientDir} (gen.clientDir); the old folder was left as it is. Delete it once nothing imports it.`
       : null,
   }
+}
+
+/**
+ * What the last run generated into the MCP folder `mcpDir`: nothing when no record lists it or
+ * the folder moved, so files found there are not overwritten.
+ */
+export function previousMcp(outDir: string, record: BuildRecord | null, mcpDir: string): Record<string, string> {
+  if (record === null || recordedMcpDir(outDir, record) !== mcpDir)
+    return {}
+  return record.generatedMcp ?? {}
 }

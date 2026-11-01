@@ -119,14 +119,21 @@ export async function trustClient(clientDir: string, store: string = trustStoreP
   await rename(temporary, path)
 }
 
-/** Null when `clientDir` is a client this machine generated and nobody changed since; otherwise why not. */
-export async function untrustedReason(clientDir: string, store: string = trustStorePath()): Promise<string | null> {
+/**
+ * Null when `clientDir` is a client this machine generated and nobody changed since; otherwise why
+ * not. `required` are files about to run (the MCP server, relative to `clientDir`): the trusted
+ * set must cover them, so a folder named in `build.json` cannot swap in a server never generated.
+ */
+export async function untrustedReason(clientDir: string, store: string = trustStorePath(), required: readonly string[] = []): Promise<string | null> {
   if (!existsSync(clientDir))
     return null
   const key = await realpath(clientDir)
   const recorded = await readEntry(entryPath(store, key), key)
   // Packages installed inside the client folder would be resolved before the project's own.
-  if (recorded === null || existsSync(join(clientDir, 'node_modules')) || recorded.sha256 !== await clientHash(clientDir, recorded.files))
+  const covered = (file: string): boolean => recorded?.files === undefined
+    ? !file.startsWith('../')
+    : recorded.files.includes(file)
+  if (recorded === null || !required.every(covered) || existsSync(join(clientDir, 'node_modules')) || recorded.sha256 !== await clientHash(clientDir, recorded.files))
     return `${clientDir}: ${UNTRUSTED_CLIENT}`
   return null
 }

@@ -20,8 +20,8 @@ import { dispatchFunctions, renderDispatchModule } from './dispatch'
 import { graphqlFunctions, renderGraphqlModule } from './graphql'
 import { nameHtmlValues } from './html-values'
 import { syncGenerated } from './manifest'
-import { mcpTools, renderMcpReadme, renderMcpServer, zodExports } from './mcp'
-import { generatedPaths } from './paths'
+import { MCP_SERVER_VERSION, mcpTools, renderMcpReadme, renderMcpServer, zodExports } from './mcp'
+import { generatedPaths, posixPath } from './paths'
 import { nameExtracts, renderExtractModule, renderIndexModule, renderReadme } from './render'
 import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentSchema, withoutBrowserOnlySteps } from './spec'
 
@@ -31,11 +31,18 @@ export interface GenerateClientInput {
   handoffDir: string
   /** Where the client goes (`gen.clientDir`); `<handoffDir>/client` when absent (decision 0057). */
   clientDir?: string
+  /**
+   * Where the MCP server goes (`gen.mcpDir`); `mcp/` next to the client folder when absent. Never
+   * inside the client folder: the app imports the client, and the server is a program of its own.
+   */
+  mcpDir?: string
+  /** What the last run generated into `mcpDir`, like `previous`; nothing when absent. */
+  previousMcp?: ClientManifest
   /** The project root the READMEs give paths from; the handoff folder's parent when absent. */
   root?: string
   flows: FlowsDocument
   /**
-   * `read` or `write` also writes `client/mcp/`, an MCP server with a tool per operation that
+   * `read` or `write` also writes `mcp/`, an MCP server with a tool per operation that
    * reads data (`read`) or per operation (`write`); `off` (the default) does not (decision 0043).
    */
   mcp?: McpMode
@@ -60,6 +67,8 @@ export interface GenerateClientResult {
   empty: boolean
   /** The generated files now in the client folder and their hashes, for `build.json`. */
   manifest: ClientManifest
+  /** The generated files now in the MCP folder and their hashes, for `build.json`. */
+  mcpManifest: ClientManifest
 }
 
 /**
@@ -76,7 +85,11 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
   const warnings: string[] = []
   const specsDir = path.join(input.handoffDir, 'specs')
   const clientDir = input.clientDir ?? path.join(input.handoffDir, 'client')
-  const paths = generatedPaths(input.root ?? path.dirname(input.handoffDir), input.handoffDir, clientDir)
+  const mcpDir = input.mcpDir ?? path.join(path.dirname(clientDir), 'mcp')
+  const inside = path.relative(clientDir, mcpDir)
+  if (!inside.startsWith('..') && !path.isAbsolute(inside))
+    throw new SiteToApiError(`gen.mcpDir ${mcpDir} is inside the client folder ${clientDir}; the MCP server is a program of its own that the app never imports. Set gen.mcpDir to a folder outside it, such as ${path.join(path.dirname(clientDir), 'mcp')}.`)
+  const paths = generatedPaths(input.root ?? path.dirname(input.handoffDir), input.handoffDir, clientDir, mcpDir)
   const { loaded, channels } = await loadSpecs(specsDir, warnings)
 
   const seen = new Map<string, string>()
@@ -88,30 +101,44 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
   }
 
   const staging = await mkdtemp(path.join(os.tmpdir(), 'site-to-api-client-'))
+  const stagedClient = path.join(staging, 'client')
+  const stagedMcp = path.join(staging, 'mcp')
   try {
     // A client of no hosts does not type-check (its host union is `never`); there is nothing to
     // call, so the generated files of an earlier run are removed and nothing is written.
     if (loaded.length > 0)
-      await writeClientFiles(staging, loaded, channels, input, paths, warnings)
-    const synced = await syncGenerated(staging, clientDir, input.previous ?? null, input.force === true)
-    warnings.push(...synced.warnings)
+      await writeClientFiles(stagedClient, stagedMcp, loaded, channels, input, paths, warnings)
+    const synced = await syncGenerated(stagedClient, clientDir, input.previous ?? null, input.force === true)
+    const syncedMcp = await syncGenerated(stagedMcp, mcpDir, input.previousMcp ?? {}, input.force === true)
+    warnings.push(...synced.warnings, ...syncedMcp.warnings)
     if (loaded.length === 0) {
       return {
         files: [],
         warnings,
         empty: true,
         manifest: synced.manifest,
+        mcpManifest: syncedMcp.manifest,
       }
     }
+    const fromClient = (file: string): string => posixPath(path.relative(clientDir, path.join(mcpDir, file)))
     // Generated here, so this machine may run it (call_operation, the generated MCP server).
-    await trustClient(clientDir, input.trustStore, Object.keys(synced.manifest))
-    const fromHandoff = path.relative(input.handoffDir, clientDir).split(path.sep).join('/')
-    const files = Object.keys(synced.manifest).sort().map(file => path.posix.join(fromHandoff, file))
+    await trustClient(clientDir, input.trustStore, [
+      ...Object.keys(synced.manifest),
+      ...Object.keys(syncedMcp.manifest).map(fromClient),
+    ])
+    const fromHandoff = (dir: string, file: string): string => posixPath(path.relative(input.handoffDir, path.join(dir, file)))
+    const files = [
+      ...Object.keys(synced.manifest).map(file => fromHandoff(clientDir, file)),
+      ...Object.keys(syncedMcp.manifest).map(file => fromHandoff(mcpDir, file)),
+    ].sort()
+    if (Object.keys(syncedMcp.manifest).length > 0 && !resolvable('@modelcontextprotocol/server', mcpDir))
+      warnings.push(`${paths.mcp}/server.ts imports @modelcontextprotocol/server, which this project does not have: \`site-to-api mcp --generated\` runs it anyway, but a type check that includes ${paths.mcp}/ fails. Install it (\`npm install -D @modelcontextprotocol/server@${MCP_SERVER_VERSION}\`) or exclude ${paths.mcp}/ from your tsconfig.json.`)
     return {
       files,
       warnings,
       empty: false,
       manifest: synced.manifest,
+      mcpManifest: syncedMcp.manifest,
     }
   }
   finally {
@@ -120,7 +147,7 @@ export async function generateClient(input: GenerateClientInput): Promise<Genera
 }
 
 /** Writes the whole client into `clientDir` (a staging folder) and checks the code. */
-async function writeClientFiles(clientDir: string, loaded: readonly LoadedSpec[], channels: ChannelSummary[], input: GenerateClientInput, paths: GeneratedPaths, warnings: string[]): Promise<void> {
+async function writeClientFiles(clientDir: string, mcpDir: string, loaded: readonly LoadedSpec[], channels: ChannelSummary[], input: GenerateClientInput, paths: GeneratedPaths, warnings: string[]): Promise<void> {
   assertTypeScript6()
   await mkdir(clientDir, { recursive: true })
   const hosts: HostSpec[] = []
@@ -145,11 +172,13 @@ async function writeClientFiles(clientDir: string, loaded: readonly LoadedSpec[]
   await writeFile(path.join(clientDir, 'index.ts'), renderIndexModule(hosts, extracts, htmlValues))
   await writeFile(path.join(clientDir, 'README.md'), renderReadme(hosts, extracts, input.flows.session, htmlValues, channels, paths))
   if (input.mcp !== undefined && input.mcp !== 'off')
-    await writeMcpServer(clientDir, loaded, input.flows, input.mcp, paths, warnings)
+    await writeMcpServer(clientDir, mcpDir, loaded, input.flows, input.mcp, paths, warnings)
 
   // Every file, hey-api's and our own, must parse and carry no regex literal a spec could have
   // put there; only then is the client copied into place and trusted on this machine.
   await checkGeneratedCode(clientDir, paths.client)
+  if (existsSync(mcpDir))
+    await checkGeneratedCode(mcpDir, paths.mcp)
 }
 
 interface LoadedSpec {
@@ -157,8 +186,8 @@ interface LoadedSpec {
   document: OpenApiDocument
 }
 
-/** `client/mcp/` (decision 0043), from the specs and the Zod schemas hey-api just wrote. */
-async function writeMcpServer(clientDir: string, loaded: readonly LoadedSpec[], flows: FlowsDocument, mode: Exclude<McpMode, 'off'>, paths: GeneratedPaths, warnings: string[]): Promise<void> {
+/** `mcp/` (decision 0043), from the specs and the Zod schemas hey-api just wrote. */
+async function writeMcpServer(clientDir: string, mcpDir: string, loaded: readonly LoadedSpec[], flows: FlowsDocument, mode: Exclude<McpMode, 'off'>, paths: GeneratedPaths, warnings: string[]): Promise<void> {
   const operations: OperationEntry[] = []
   const exportsByHost = new Map<string, Map<string, ZodExport>>()
   for (const { host, document } of loaded) {
@@ -172,9 +201,9 @@ async function writeMcpServer(clientDir: string, loaded: readonly LoadedSpec[], 
   }
   const hosts = loaded.map(({ host }) => host)
   const tools = mcpTools(operations, exportsByHost, mode, warnings)
-  await mkdir(path.join(clientDir, 'mcp'), { recursive: true })
-  await writeFile(path.join(clientDir, 'mcp', 'server.ts'), renderMcpServer(hosts, tools, mode))
-  await writeFile(path.join(clientDir, 'mcp', 'README.md'), renderMcpReadme(hosts, tools, mode, paths))
+  await mkdir(mcpDir, { recursive: true })
+  await writeFile(path.join(mcpDir, 'server.ts'), renderMcpServer(hosts, tools, mode, paths.clientFromMcp))
+  await writeFile(path.join(mcpDir, 'README.md'), renderMcpReadme(hosts, tools, mode, paths))
 }
 
 function isAsyncApi(raw: unknown): boolean {
@@ -298,4 +327,14 @@ function assertTypeScript6(): void {
   const version = typeScriptVersionForHeyApi()
   if (!version.startsWith('6.'))
     throw new SiteToApiError(`hey-api found TypeScript ${version}, but code generation needs TypeScript 6. Install typescript@6 next to site-to-api (for example \`npm install -D typescript@6\`) and run \`site-to-api gen\` again`)
+}
+
+/** Whether a `node_modules/<specifier>` is in `dir` or a folder above it, where a type check finds it. */
+function resolvable(specifier: string, dir: string): boolean {
+  for (let current = dir; ; current = path.dirname(current)) {
+    if (existsSync(path.join(current, 'node_modules', specifier, 'package.json')))
+      return true
+    if (path.dirname(current) === current)
+      return false
+  }
 }

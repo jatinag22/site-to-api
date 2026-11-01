@@ -16,6 +16,8 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const runtimeSource = path.resolve(here, '../../../runtime/src/index.ts')
 const zodDir = path.dirname(createRequire(import.meta.url).resolve('zod/package.json'))
 // The SDK's exports do not list package.json: go up from its entry (`dist/index.mjs`).
+// The folder holding `@types/node`, so a check can opt into Node's globals as an app would.
+const nodeTypes = path.resolve(path.dirname(createRequire(import.meta.url).resolve('@types/node/package.json')), '..')
 const sdkDir = path.resolve(path.dirname(fileURLToPath(import.meta.resolve('@modelcontextprotocol/server'))), '..')
 
 /** Tool names of a rendered server, in order. */
@@ -25,7 +27,7 @@ function toolNames(source: string): string[] {
   ].map(match => match[1] ?? '')
 }
 
-function typeCheck(files: string[]): string {
+function typeCheck(files: string[], types: string[] = []): string {
   const program = ts.createProgram(files, {
     strict: true,
     noUncheckedIndexedAccess: true,
@@ -37,7 +39,8 @@ function typeCheck(files: string[]): string {
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     lib: ['lib.es2023.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
-    types: [],
+    types,
+    typeRoots: [nodeTypes],
     paths: {
       '@site-to-api/runtime': [runtimeSource],
     },
@@ -83,14 +86,16 @@ describe('generateClient with mcp', () => {
   let dir = ''
   let read = ''
   let readme = ''
+  let generated: Awaited<ReturnType<typeof generateClient>> | null = null
 
   beforeAll(async () => {
     dir = await shopWorkspace()
     const result = await generateClient({ handoffDir: dir, flows: shopFlows, mcp: 'read' })
-    expect(result.files).toEqual(expect.arrayContaining(['client/mcp/README.md', 'client/mcp/server.ts']))
+    generated = result
+    expect(result.files).toEqual(expect.arrayContaining(['mcp/README.md', 'mcp/server.ts']))
     expect(result.warnings).toEqual([])
-    read = await readFile(path.join(dir, 'client', 'mcp', 'server.ts'), 'utf8')
-    readme = await readFile(path.join(dir, 'client', 'mcp', 'README.md'), 'utf8')
+    read = await readFile(path.join(dir, 'mcp', 'server.ts'), 'utf8')
+    readme = await readFile(path.join(dir, 'mcp', 'README.md'), 'utf8')
   }, 60_000)
 
   afterAll(async () => {
@@ -123,8 +128,21 @@ describe('generateClient with mcp', () => {
   })
 
   it('type-checks in strict mode', () => {
-    const files = ['client/mcp/server.ts', 'client/index.ts'].map(file => path.join(dir, file))
+    const files = ['mcp/server.ts', 'client/index.ts'].map(file => path.join(dir, file))
     expect(typeCheck(files)).toBe('')
+  }, 60_000)
+
+  it('lives outside the client folder and imports the client from there (decision 0057)', () => {
+    expect(read).toContain(`import { CookieJar, createSiteClient } from '../client/index.js'`)
+    expect(read).toContain(`from '../client/shop_example_com/zod.gen.js'`)
+    expect(readme).toContain('This folder is a program of its own: the app never imports it')
+    expect(readme).toContain('npm install -D @modelcontextprotocol/server@2.4.0')
+    expect(readme).toContain(`"exclude": ["${path.basename(dir)}/mcp"]`)
+  })
+
+  it('type-checks with Node type definitions present', () => {
+    const files = ['mcp/server.ts', 'client/index.ts'].map(file => path.join(dir, file))
+    expect(typeCheck(files, ['node'])).toBe('')
   }, 60_000)
 
   it('documents how to run and register it, with credentials from the environment', () => {
@@ -133,7 +151,7 @@ describe('generateClient with mcp', () => {
     const handoff = `./${path.basename(dir)}`
     expect(readme).toContain(`-- site-to-api mcp ${handoff} --generated`)
     expect(readme).toContain(`"args": [\n        "mcp",\n        "${handoff}",\n        "--generated"\n      ]`)
-    expect(readme).toContain(`\`npx tsx ${handoff}/client/mcp/server.ts\``)
+    expect(readme).toContain(`\`npx tsx ${handoff}/mcp/server.ts\``)
     // Running the file directly is possible, and documented as skipping the trust check.
     expect(readme).toContain('skips that check')
     expect(readme).toContain('"mcpServers"')
@@ -141,8 +159,17 @@ describe('generateClient with mcp', () => {
   })
 
   it('adds writes in write mode, never bot protection or code-only endpoints, and writes nothing when off', async () => {
-    const first = await generateClient({ handoffDir: dir, flows: shopFlows, mcp: 'write' })
-    const write = await readFile(path.join(dir, 'client', 'mcp', 'server.ts'), 'utf8')
+    // A server gen did not record is not overwritten; the read-mode one from beforeAll is recorded.
+    const unrecorded = await generateClient({ handoffDir: dir, flows: shopFlows, mcp: 'write' })
+    expect(unrecorded.warnings.join('\n')).toContain('Did not overwrite 2 file(s) site-to-api did not write: README.md, server.ts.')
+    const first = await generateClient({
+      handoffDir: dir,
+      flows: shopFlows,
+      mcp: 'write',
+      previous: generated?.manifest ?? null,
+      previousMcp: generated?.mcpManifest ?? {},
+    })
+    const write = await readFile(path.join(dir, 'mcp', 'server.ts'), 'utf8')
     expect(toolNames(write)).toEqual([
       'addToWishlist',
       'getApiLogout',
@@ -154,13 +181,18 @@ describe('generateClient with mcp', () => {
     ])
     expect(write).toContain('readOnlyHint: false, destructiveHint: true')
     expect(write).toContain('body: shop_example_comZod.zPostApiSessionBody,')
-    await generateClient({ handoffDir: dir, flows: shopFlows, previous: first.manifest })
-    expect(await readFile(path.join(dir, 'client', 'mcp', 'server.ts'), 'utf8').catch(() => null)).toBeNull()
+    await generateClient({
+      handoffDir: dir,
+      flows: shopFlows,
+      previous: first.manifest,
+      previousMcp: first.mcpManifest,
+    })
+    expect(await readFile(path.join(dir, 'mcp', 'server.ts'), 'utf8').catch(() => null)).toBeNull()
   }, 60_000)
 
   it('is byte-identical for the same specs', async () => {
     await generateClient({ handoffDir: dir, flows: shopFlows, mcp: 'read' })
-    expect(await readFile(path.join(dir, 'client', 'mcp', 'server.ts'), 'utf8')).toBe(read)
+    expect(await readFile(path.join(dir, 'mcp', 'server.ts'), 'utf8')).toBe(read)
   }, 60_000)
 })
 
@@ -197,7 +229,7 @@ describe('generateClient with mcp and hostile specs', () => {
         mcp: 'write',
       })
       expect(result.warnings.some(warning => warning.includes('has no plain SDK function name, so it gets no tool'))).toBe(true)
-      const source = await readFile(path.join(dir, 'client', 'mcp', 'server.ts'), 'utf8')
+      const source = await readFile(path.join(dir, 'mcp', 'server.ts'), 'utf8')
       const file = ts.createSourceFile('server.ts', source, ts.ScriptTarget.ES2023, true, ts.ScriptKind.TS)
       const program = ts.createProgram({
         rootNames: ['server.ts'],

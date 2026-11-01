@@ -83,6 +83,9 @@ describe('trust store', () => {
     expect(await untrustedReason(dir, store)).toContain(UNTRUSTED_CLIENT)
     await writeFile(path.join(dir, 'mcp', 'server.ts'), 'export {}\n')
     expect(await untrustedReason(dir, store)).toBeNull()
+    // A file about to run must be among the trusted ones.
+    expect(await untrustedReason(dir, store, ['mcp/server.ts'])).toBeNull()
+    expect(await untrustedReason(dir, store, ['../mcp/server.ts'])).toContain(UNTRUSTED_CLIENT)
     // Packages inside the folder would shadow the project's own.
     await mkdir(path.join(dir, 'node_modules', 'zod'), { recursive: true })
     expect(await untrustedReason(dir, store)).toContain(UNTRUSTED_CLIENT)

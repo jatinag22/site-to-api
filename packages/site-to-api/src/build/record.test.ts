@@ -108,7 +108,9 @@ describe('build.json', () => {
   })
 
   it('records the generated client files and their hashes (decision 0057)', async () => {
-    await writeBuildRecord(dir, buildRecordFor(config, {}, 'test', { 'index.ts': 'a1' }))
+    await writeBuildRecord(dir, buildRecordFor(config, {}, 'test', {
+      generated: { 'index.ts': 'a1' },
+    }))
     expect((await readBuildRecord(dir))?.generated).toEqual({ 'index.ts': 'a1' })
     await recordClientGenerated(dir, {
       generated: { 'index.ts': 'b2', 'README.md': 'c3' },

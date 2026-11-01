@@ -11,7 +11,7 @@ import process from 'node:process'
 import { InvalidArgumentError, Option } from 'commander'
 import { consola } from 'consola'
 import { dirname, join, resolve } from 'pathe'
-import { analyzeForProbe, buildHandoff, configuredClientDir, previousClient, readBuildRecord, recordClientGenerated, recordedClientDir, relativePath, stickyOptions } from '../build'
+import { analyzeForProbe, buildHandoff, configuredClientDir, configuredMcpDir, previousClient, previousMcp, readBuildRecord, recordClientGenerated, recordedClientDir, recordedMcpDir, relativePath, stickyOptions } from '../build'
 import { runCapture } from '../capture'
 import { updateClientState } from '../emit/handoff'
 import { SiteToApiError } from '../errors'
@@ -115,7 +115,7 @@ interface OutputFlags {
   mcp?: string
 }
 
-const MCP_HELP = 'also write client/mcp/, an MCP server with a tool per operation: read (the default: operations that only read) | write (all) | off'
+const MCP_HELP = 'also write mcp/ next to the client (gen.mcpDir), an MCP server with a tool per operation: read (the default: operations that only read) | write (all) | off'
 
 /** `--mcp [mode]`; `--mcp` alone means `read`. */
 function mcpOption(note: string): Option {
@@ -268,14 +268,19 @@ const genCommand: CommandRegistrar = (program) => {
       const clientDir = sources['gen.clientDir'] === 'default'
         ? recordedClientDir(handoffDir, record)
         : configuredClientDir(config, cwd)
+      const mcpDir = sources['gen.mcpDir'] === 'default' && sources['gen.clientDir'] === 'default'
+        ? recordedMcpDir(handoffDir, record)
+        : configuredMcpDir(config, cwd)
       const { previous, warning } = previousClient(handoffDir, record, clientDir)
       const result = await generateClient({
         handoffDir,
         clientDir,
+        mcpDir,
         root: cwd,
         flows: await readFlowsDocument(handoffDir),
         mcp: config.gen.mcp,
         previous,
+        previousMcp: previousMcp(handoffDir, record, mcpDir),
         force: flags.force === true,
       })
       const clientPath = relativePath(handoffDir, clientDir)
@@ -292,7 +297,9 @@ const genCommand: CommandRegistrar = (program) => {
       await recordClientGenerated(handoffDir, {
         mcp: { mode: config.gen.mcp, sticky: sources['gen.mcp'] === 'flag' || sources['gen.mcp'] === 'env' },
         generated: result.manifest,
+        generatedMcp: result.mcpManifest,
         clientDir: clientPath,
+        mcpDir: relativePath(handoffDir, mcpDir),
       })
       consola.success(`Generated ${result.files.length} client files in ${relativePath(cwd, clientDir)}`)
     })

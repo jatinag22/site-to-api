@@ -357,10 +357,13 @@ HTTP only). Relative imports end in `.js`, so
 the client works under `moduleResolution` `bundler` and `nodenext`. The generated code needs
 `zod` 4 and `@site-to-api/runtime` in the consuming project.
 
-### `client/mcp/`
+### `mcp/`
 
 Written only when `gen.mcp` is `read` or `write` (`--mcp [mode]` on `build`, `gen` and `probe`;
-decision 0043):
+decision 0043), next to the client folder (`<outDir>/mcp/`) or in `gen.mcpDir`, never inside the
+client folder: the app imports the client, and the server is a program of its own with its own
+dependency (`@modelcontextprotocol/server`). `gen` warns when the project does not have that
+package, since a type check that includes the folder then fails (decision 0057).
 
 - `server.ts`: an MCP server over stdio with one tool per operation, built with
   `@modelcontextprotocol/server`. `read` gives a tool to every operation that does not change data
@@ -406,7 +409,7 @@ safe methods and GraphQL queries only unless `--unsafe-methods`, never bot-prote
 code-only endpoints, subscriptions or state-changing paths, `--max-rps` (default `probe.maxRps`),
 no retries, no redirect to another origin. It loads `client/` only when its hash matches the one
 `gen` recorded on this machine (`--trust-client` overrides). Credentials: the same `SITE_API_*`
-variables as `client/mcp/`. It returns the status,
+variables as `mcp/`. It returns the status,
 content type and the validated body (cut at 50,000 characters).
 
 ## `probe.json`

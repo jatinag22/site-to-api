@@ -105,10 +105,16 @@ export const ConfigSchema = z.strictObject({
      */
     clientDir: z.string().min(1).nullable().default(null),
     /**
-     * Also write `client/mcp/`, an MCP server with one tool per operation: `read` exposes the
+     * Also write an MCP server with one tool per operation (into `mcpDir`): `read` exposes the
      * operations that only read data, `write` all of them, `off` writes none (decision 0043).
      */
     mcp: z.enum(['off', 'read', 'write']).default('off'),
+    /**
+     * Where the MCP server goes, relative to the working directory; `null` means `mcp/` next to
+     * the client folder. Never inside the client folder: it is a separate program with its own
+     * dependencies, and the app's code never imports it (decision 0057).
+     */
+    mcpDir: z.string().min(1).nullable().default(null),
   }).prefault({}),
 })
 

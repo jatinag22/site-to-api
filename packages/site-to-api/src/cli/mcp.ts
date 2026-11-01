@@ -41,7 +41,7 @@ export const mcpCommand: CommandRegistrar = (program) => {
     .option('--unsafe-methods', 'with --allow-calls: also send POST, PUT, PATCH, DELETE and GraphQL mutations (they can change data on the site)')
     .option('--max-rps <n>', 'requests per second for call_operation (default: probe.maxRps, 1)', parseRate)
     .option('--trust-client', 'run the folder\'s client/ code even though this machine did not generate it (only after reviewing it)')
-    .option('--generated', 'serve client/mcp/server.ts (written by `gen --mcp`) instead of the exploration tools, after the same trust check')
+    .option('--generated', 'serve mcp/server.ts (written by `gen --mcp`) instead of the exploration tools, after the same trust check')
     .action(async (dir: string | undefined, flags: McpFlags, command: Command) => {
       const log = (message: string): void => {
         process.stderr.write(`${message}\n`)

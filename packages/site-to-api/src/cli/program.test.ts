@@ -135,7 +135,7 @@ describe('mcp', () => {
       '--generated',
     ], [mcpCommand])
     expect(existsSync(marker)).toBe(false)
-    expect(output.join('')).toContain(`No generated MCP server at ${join(dir, 'src', 'api', 'shop', 'client', 'mcp', 'server.ts')}`)
+    expect(output.join('')).toContain(`No generated MCP server at ${join(dir, 'src', 'api', 'shop', 'mcp', 'server.ts')}`)
     expect(output.join('')).not.toContain('Not running')
   })
 })
