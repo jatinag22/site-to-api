@@ -47,5 +47,8 @@
     "domutils": "catalog:prod",
     "htmlparser2": "catalog:prod",
     "zod": "catalog:prod"
+  },
+  "devDependencies": {
+    "happy-dom": "catalog:dev"
   }
 }

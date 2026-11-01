@@ -114,7 +114,12 @@ alone (`extractDealsFromGetDeals`): 202 KB (70 KB gzip) before, 39 KB (10 KB gzi
 - The runtime parses HTML with `DOMParser` where there is one, and its `browser` build (the
   `browser` export condition) has no htmlparser2 at all. `DOMParser` has no `:contains()`, which
   `build` uses for label rows: each such clause becomes an attribute set on the elements holding
-  the text, and the rest of the selector stays native. A test runs the fixture's parsers in
+  the text, and the rest of the selector stays native. A `:scope` selector runs from the document
+  with the record element marked, since a native call from an element cannot reach its siblings
+  (`:scope + tr`), and the `<tbody>` the HTML parser adds to a table without one is unwrapped, as
+  htmlparser2 never adds it. Every HTML case of the runtime's tests runs on both engines
+  (happy-dom, pinned, stands in for the browser). Misnested markup stays a known difference: the
+  browser repairs it, htmlparser2 keeps it. A test runs the fixture's parsers in
   Chromium and in Node and compares the records; another bundles one operation and checks a
   gzip budget, that no other operation and no HTML parser is in it, and that classic Zod is not.
 

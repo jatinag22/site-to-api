@@ -19,7 +19,11 @@ npm install @site-to-api/runtime zod
   htmlparser2 otherwise.
 - The `browser` build, which bundlers pick through the `browser` export condition, parses HTML with
   `DOMParser` only, so no HTML parser is bundled. `:contains("text")` selectors, which `build`
-  writes for label rows, work in both.
+  writes for label rows, `:scope + tr` sibling selectors and `table > tr` rows (the parser adds a
+  `<tbody>` the page did not write; it is unwrapped) read the same on both, and the tests run
+  every HTML case on both. One difference remains: misnested markup (a `<div>` inside a `<p>`)
+  is repaired by the browser's HTML5 parser and kept as written by htmlparser2, so a selector
+  through such nesting can match on one and not the other.
 
 ## Cookies
 

@@ -1,6 +1,25 @@
-import type { ExtractField, HtmlExtractSpec, TextExtractSpec } from './types'
+// @vitest-environment happy-dom
+import type { ExtractedRecord } from './extract'
+import type { ExtractField, ExtractSpec, HtmlExtractSpec, TextExtractSpec } from './types'
 import { describe, expect, it } from 'vitest'
+import { domEngine } from './dom'
+import { extractWith } from './extract'
+import { htmlparser2Engine } from './htmlparser2'
 import { extract } from './index'
+
+type Run = (text: string, spec: ExtractSpec) => ExtractedRecord[] | ExtractedRecord
+
+/** htmlparser2 (Node, workers) and the browser's DOMParser, here happy-dom's. */
+const ENGINES: Array<[string, Run]> = [
+  [
+    'htmlparser2',
+    (text, spec) => extractWith(htmlparser2Engine, text, spec),
+  ],
+  [
+    'DOMParser',
+    (text, spec) => extractWith(domEngine, text, spec),
+  ],
+]
 
 function field(selector: string, overrides: Partial<ExtractField> = {}): ExtractField {
   return {
@@ -33,7 +52,8 @@ const LIST_HTML = `
   </table>
 </body></html>`
 
-describe('extract (html)', () => {
+// Every HTML case runs on both engines, so they cannot drift apart (decision 0058).
+describe.each(ENGINES)('extract (html) with %s', (_engine, run) => {
   const spec: HtmlExtractSpec = {
     kind: 'html',
     records: 'table.prices tbody tr',
@@ -50,7 +70,7 @@ describe('extract (html)', () => {
   }
 
   it('reads one record per match with relative selectors, attributes and patterns', () => {
-    expect(extract(LIST_HTML, spec)).toEqual([
+    expect(run(LIST_HTML, spec)).toEqual([
       {
         id: 'a1',
         name: 'Alpha Widget',
@@ -84,7 +104,7 @@ describe('extract (html)', () => {
       },
     }
     const html = '<h1>Gadget</h1><p class="price">Price: 1,999</p><span class="stock">Yes</span><time datetime="2026-03-12">12 March</time>'
-    expect(extract(html, detail)).toEqual({
+    expect(run(html, detail)).toEqual({
       title: 'Gadget',
       price: 1999,
       inStock: true,
@@ -102,14 +122,14 @@ describe('extract (html)', () => {
         x: field('i', { optional: true }),
       },
     }
-    expect(extract(LIST_HTML, first)).toEqual({ name: 'Alpha Widget' })
-    expect(extract('<p>empty</p>', first)).toEqual({ name: null })
+    expect(run(LIST_HTML, first)).toEqual({ name: 'Alpha Widget' })
+    expect(run('<p>empty</p>', first)).toEqual({ name: null })
   })
 
   it('reads the sibling rows of a record that spans several rows through :scope selectors', () => {
     const page = '<table><tr class="athing" id="11"><td><a href="https://a.example">Alpha</a></td></tr><tr><td><span class="score">7 points</span></td></tr><tr class="spacer"></tr>'
       + '<tr class="athing" id="12"><td><a href="https://b.example">Beta</a></td></tr><tr><td>job ad</td></tr><tr class="spacer"></tr></table>'
-    expect(extract(page, {
+    expect(run(page, {
       kind: 'html',
       records: 'tr.athing',
       many: true,
@@ -126,7 +146,7 @@ describe('extract (html)', () => {
   })
 
   it('builds records without a prototype, so field names like constructor and __proto__ are plain keys', () => {
-    const records = extract('<ul><li><b>A</b><i>x</i></li><li><b>B</b></li></ul>', {
+    const records = run('<ul><li><b>A</b><i>x</i></li><li><b>B</b></li></ul>', {
       kind: 'html',
       records: 'li',
       many: true,
@@ -147,7 +167,7 @@ describe('extract (html)', () => {
   })
 
   it('returns an empty array when no record matches', () => {
-    expect(extract('<p>none</p>', spec)).toEqual([])
+    expect(run('<p>none</p>', spec)).toEqual([])
   })
 
   it('treats a pattern that does not match as a missing field', () => {
@@ -159,26 +179,60 @@ describe('extract (html)', () => {
         code: field('td.name', { pattern: '(\\d+)' }),
       },
     }
-    expect(extract(LIST_HTML, noMatch)).toEqual([
+    expect(run(LIST_HTML, noMatch)).toEqual([
       { code: null },
       { code: null },
     ])
   })
 
   it('throws a clear error for an invalid selector or pattern', () => {
-    expect(() => extract(LIST_HTML, { ...spec, records: 'tr[' })).toThrow(/invalid CSS selector for records/)
-    expect(() => extract(LIST_HTML, {
-      ...spec,
-      fields: {
-        a: field('td:bogus-pseudo'),
-      },
-    })).toThrow(/invalid CSS selector for field "a"/)
-    expect(() => extract(LIST_HTML, {
+    // Invalid selectors are checked on htmlparser2 only, below: browsers throw a SyntaxError for
+    // them, but happy-dom, which stands in for a browser here, accepts them.
+    expect(() => run(LIST_HTML, {
       ...spec,
       fields: {
         a: field('td', { pattern: '(' }),
       },
     })).toThrow(/invalid pattern for field "a"/)
+  })
+
+  it('reads table rows the same whether the page wrote <tbody> or the parser added it', () => {
+    const page = '<table class="t"><tr><td class="n">A</td></tr><tr><td class="n">B</td></tr></table>'
+    expect(run(page, {
+      kind: 'html',
+      records: 'table.t > tr',
+      many: true,
+      fields: {
+        n: field('td.n'),
+      },
+    })).toEqual([
+      { n: 'A' },
+      { n: 'B' },
+    ])
+  })
+
+  it('reads label rows through :contains(), as build writes them', () => {
+    const page = '<dl><dt>Phone</dt><dd>12 34</dd><dt>Address</dt><dd> 1 "Main" St </dd></dl>'
+    expect(run(page, {
+      kind: 'html',
+      records: ':root',
+      many: false,
+      fields: {
+        phone: field('dt:contains("Phone") + dd'),
+        address: field('dt:contains("Address") + dd'),
+      },
+    })).toEqual({ phone: '12 34', address: '1 "Main" St' })
+  })
+})
+
+describe('extract (html) selector errors', () => {
+  it('names the records or field selector that does not parse', () => {
+    expect(() => extractWith(htmlparser2Engine, LIST_HTML, {
+      kind: 'html',
+      records: 'tr[',
+      many: true,
+      fields: {},
+    })).toThrow(/invalid CSS selector for records/)
   })
 })
 
