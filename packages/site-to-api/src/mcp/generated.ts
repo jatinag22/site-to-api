@@ -38,13 +38,16 @@ function aliases(): Record<string, string> {
 export async function serveGenerated(options: ServeGeneratedOptions): Promise<void> {
   const record = await readBuildRecord(options.handoffDir)
   const clientDir = recordedClientDir(options.handoffDir, record)
-  const server = join(recordedMcpDir(options.handoffDir, record), 'server.ts')
+  const mcpDir = recordedMcpDir(options.handoffDir, record)
+  const server = join(mcpDir, 'server.ts')
   if (!existsSync(server))
     throw new SiteToApiError(`No generated MCP server at ${server}: run \`site-to-api gen --mcp\` first.`)
   if (!options.trustClient) {
     const reason = await untrustedReason(clientDir, options.trustStore, [
       relative(clientDir, server),
-    ])
+    ], {
+      folders: [mcpDir],
+    })
     if (reason !== null)
       throw new SiteToApiError(reason)
   }

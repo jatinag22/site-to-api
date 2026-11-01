@@ -70,11 +70,11 @@ describe('trust store', () => {
     expect(await untrustedReason(dir, store)).toContain(UNTRUSTED_CLIENT)
   })
 
-  it('covers only the generated files it was given, so the person\'s own files keep it trusted (decision 0058)', async () => {
+  it('covers only the generated files it was given; other files may stay unless they could run (decision 0058)', async () => {
     const { dir, store } = await client()
     const files = ['index.ts', 'mcp/server.ts']
     await trustClient(dir, store, files)
-    await writeFile(path.join(dir, 'my-helper.ts'), 'export const mine = 1\n')
+    await writeFile(path.join(dir, 'notes.md'), 'mine\n')
     expect(await untrustedReason(dir, store)).toBeNull()
     await writeFile(path.join(dir, 'index.ts'), 'export const a = 2\n')
     expect(await untrustedReason(dir, store)).toContain(UNTRUSTED_CLIENT)
@@ -86,9 +86,47 @@ describe('trust store', () => {
     // A file about to run must be among the trusted ones.
     expect(await untrustedReason(dir, store, ['mcp/server.ts'])).toBeNull()
     expect(await untrustedReason(dir, store, ['../mcp/server.ts'])).toContain(UNTRUSTED_CLIENT)
-    // Packages inside the folder would shadow the project's own.
-    await mkdir(path.join(dir, 'node_modules', 'zod'), { recursive: true })
-    expect(await untrustedReason(dir, store)).toContain(UNTRUSTED_CLIENT)
+  })
+
+  it('refuses unlisted code, package.json, tsconfig and node_modules that could be loaded instead (decision 0058)', async () => {
+    const planted: Array<[string, string]> = [
+      ['index.js', 'could be loaded instead of the generated code'],
+      ['shop/client/index.mjs', 'could be loaded instead of the generated code'],
+      ['options.json', 'could be loaded instead of the generated code'],
+      ['package.json', 'can redirect the client\'s imports'],
+      ['tsconfig.build.json', 'can redirect the client\'s imports'],
+      ['node_modules/zod/index.js', 'would shadow the project\'s packages'],
+    ]
+    for (const [file, reason] of planted) {
+      const { dir, store } = await client()
+      await trustClient(dir, store, ['index.ts', 'mcp/server.ts'])
+      await mkdir(path.dirname(path.join(dir, file)), { recursive: true })
+      await writeFile(path.join(dir, file), '{}\n')
+      expect(await untrustedReason(dir, store), file).toContain(reason)
+    }
+    // The MCP folder next to the client is checked too, and node_modules up to the package root.
+    const { root, dir, store } = await client()
+    const mcp = path.join(root, 'api-handoff', 'mcp')
+    await mkdir(mcp, { recursive: true })
+    await writeFile(path.join(mcp, 'server.ts'), 'export {}\n')
+    await trustClient(dir, store, ['index.ts', 'mcp/server.ts', '../mcp/server.ts'])
+    expect(await untrustedReason(dir, store, [], {
+      folders: [mcp],
+    })).toBeNull()
+    await writeFile(path.join(mcp, 'server.js'), '\n')
+    expect(await untrustedReason(dir, store, [], {
+      folders: [mcp],
+    })).toContain('server.js was not generated here')
+    await rm(path.join(mcp, 'server.js'))
+    await writeFile(path.join(root, 'package.json'), '{}\n')
+    await mkdir(path.join(root, 'node_modules'), { recursive: true })
+    expect(await untrustedReason(dir, store, [], {
+      folders: [mcp],
+    })).toBeNull()
+    await mkdir(path.join(root, 'api-handoff', 'node_modules'), { recursive: true })
+    expect(await untrustedReason(dir, store, [], {
+      folders: [mcp],
+    })).toContain(`${path.join(root, 'api-handoff', 'node_modules')} would shadow`)
   })
 
   it('keeps every entry when many gen runs record clients at once', async () => {

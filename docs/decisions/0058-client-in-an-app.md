@@ -39,8 +39,12 @@ kept there disappeared and hand edits to generated files were lost without a wor
   so the person's own files there are never read or deleted.
 - The trust entry (0043) lists the generated files its hash covers, kept in the person's config
   directory and never taken from `build.json`; the person's own files no longer make the client
-  untrusted. A `node_modules` folder inside the client folder does, since it would shadow the
-  project's packages.
+  untrusted, as long as they cannot run in place of generated code. The client and MCP folders
+  may hold no unlisted `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`, `.tsx` or `.json` file (an
+  `index.js` next to `index.ts` is loaded first), no `package.json` or `tsconfig*.json` (they can
+  redirect imports) and no `node_modules`, and no `node_modules` may sit between them and the
+  package that holds them (the nearest folder above with a `package.json`). Otherwise
+  `mcp --generated` and `call_operation` refuse to run the client and say which file to move.
 - `mcp` still never runs a `.ts`/`.js` config file, but reads a plain string `outDir: '…'` from it
   with the TypeScript parser; anything computed is not read, and the message says to pass the
   folder.

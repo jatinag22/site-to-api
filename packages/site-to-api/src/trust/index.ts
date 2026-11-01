@@ -10,7 +10,7 @@ import { existsSync } from 'node:fs'
 import { chmod, mkdir, readdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import process from 'node:process'
-import { join, relative } from 'pathe'
+import { dirname, isAbsolute, join, relative } from 'pathe'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 
@@ -119,21 +119,101 @@ export async function trustClient(clientDir: string, store: string = trustStoreP
   await rename(temporary, path)
 }
 
+/** Where else a client's code could be resolved from, for {@link untrustedReason}. */
+export interface TrustScope {
+  /** Folders that hold code about to run besides `clientDir` (the MCP folder). */
+  folders?: readonly string[]
+  /**
+   * The project root: `node_modules` folders between the client and it would shadow packages.
+   * Defaults to the nearest folder above the client with a `package.json`, the package the client
+   * belongs to, whose own `node_modules` is expected.
+   */
+  root?: string
+}
+
+/** Files Node, tsx or a bundler may load or obey instead of the hashed `.ts` files. */
+const CODE_FILE = /\.(?:[cm]?[jt]s|tsx|json)$/i
+
+/** The nearest folder above `dir` with a `package.json`, or undefined. */
+function packageRoot(dir: string): string | undefined {
+  for (let current = dirname(dir); ; current = dirname(current)) {
+    if (existsSync(join(current, 'package.json')))
+      return current
+    if (dirname(current) === current)
+      return undefined
+  }
+}
+
+function insideFolder(root: string, dir: string): boolean {
+  const rel = relative(root, dir)
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+}
+
+/**
+ * Why code in `folder` could run that the trust entry never hashed, or null: an unlisted
+ * `index.js` next to `index.ts` is loaded first, and a `package.json`, `tsconfig*.json` or
+ * `node_modules` can redirect imports (decision 0058). The person's own files elsewhere in the
+ * project are fine; in these folders they are not.
+ */
+async function unlistedCode(clientDir: string, folder: string, listed: ReadonlySet<string> | null, root: string | undefined): Promise<string | null> {
+  if (!existsSync(folder))
+    return null
+  for (const entry of await readdir(folder, { recursive: true, withFileTypes: true })) {
+    const file = join(entry.parentPath, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules')
+        return `${file} would shadow the project's packages`
+      continue
+    }
+    if (entry.name === 'package.json' || /^tsconfig.*\.json$/i.test(entry.name))
+      return `${file} can redirect the client's imports`
+    if (listed !== null && CODE_FILE.test(entry.name) && !listed.has(relative(clientDir, file)))
+      return `${file} was not generated here and could be loaded instead of the generated code`
+  }
+  return shadowingAbove(folder, root)
+}
+
+/** A `node_modules` between `folder` and the package `root` that holds it, or null. */
+function shadowingAbove(folder: string, root: string | undefined): string | null {
+  if (root === undefined)
+    return null
+  const between: string[] = []
+  for (let dir = dirname(folder); insideFolder(root, dir); dir = dirname(dir))
+    between.push(join(dir, 'node_modules'))
+  const found = between.find(dir => existsSync(dir))
+  return found === undefined
+    ? null
+    : `${found} would shadow the project's packages`
+}
+
 /**
  * Null when `clientDir` is a client this machine generated and nobody changed since; otherwise why
  * not. `required` are files about to run (the MCP server, relative to `clientDir`): the trusted
  * set must cover them, so a folder named in `build.json` cannot swap in a server never generated.
+ * The client folder and `scope.folders` must hold no code, `package.json`, `tsconfig*.json` or
+ * `node_modules` the entry does not list, and no `node_modules` may sit between them and
+ * `scope.root`.
  */
-export async function untrustedReason(clientDir: string, store: string = trustStorePath(), required: readonly string[] = []): Promise<string | null> {
+export async function untrustedReason(clientDir: string, store: string = trustStorePath(), required: readonly string[] = [], scope: TrustScope = {}): Promise<string | null> {
   if (!existsSync(clientDir))
     return null
   const key = await realpath(clientDir)
   const recorded = await readEntry(entryPath(store, key), key)
-  // Packages installed inside the client folder would be resolved before the project's own.
   const covered = (file: string): boolean => recorded?.files === undefined
     ? !file.startsWith('../')
     : recorded.files.includes(file)
-  if (recorded === null || !required.every(covered) || existsSync(join(clientDir, 'node_modules')) || recorded.sha256 !== await clientHash(clientDir, recorded.files))
+  if (recorded === null || !required.every(covered) || recorded.sha256 !== await clientHash(clientDir, recorded.files))
     return `${clientDir}: ${UNTRUSTED_CLIENT}`
+  const listed = recorded.files === undefined
+    ? null
+    : new Set(recorded.files)
+  for (const folder of [
+    clientDir,
+    ...scope.folders ?? [],
+  ]) {
+    const found = await unlistedCode(clientDir, folder, listed, scope.root ?? packageRoot(folder))
+    if (found !== null)
+      return `${clientDir}: not run, because ${found}. Move it out of the client and MCP folders (your own code belongs elsewhere in the project), or pass \`--trust-client\` if you reviewed it.`
+  }
   return null
 }

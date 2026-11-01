@@ -456,7 +456,10 @@ environment. So `gen` (and `build`) records a hash of `client/` in
 project, and both refuse a client whose files do not match: "this client wasn't generated on this
 machine. If you don't trust this project, review or delete its `site-to-api.config.ts`/`.js`
 first: `gen` runs it. Then run `site-to-api gen --config site-to-api.config.json` (or with no
-config), or pass `--trust-client` if you reviewed `client/`".
+config), or pass `--trust-client` if you reviewed `client/`". The hash covers the files `gen`
+wrote; your own notes may sit next to them, but no other code, `package.json`, `tsconfig*.json`
+or `node_modules` may be in the client or MCP folder (they could be loaded instead), so keep
+your own code elsewhere in the project.
 This check is the protection; the per-host variable names are not, since code in the process can
 read any of them.
 
