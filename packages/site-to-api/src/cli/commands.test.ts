@@ -119,4 +119,28 @@ describe('capture arguments', () => {
     expect(await capture('localhost:4173/shop', '--minimized', '--script', 'drive.mjs')).toEqual([])
     expect(vi.mocked(runCapture).mock.calls[0]?.[1].url).toBe('http://localhost:4173/shop')
   })
+
+  it('refuses an unknown --channel and lists the channels capture can use', async () => {
+    const stderr: string[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk))
+      return true
+    })
+    vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('exited')
+    })
+    await expect(capture('https://shop.test', '--channel', 'firefox')).rejects.toThrow('exited')
+    expect(stderr.join('')).toContain('"firefox" is not a browser capture can use. Capture records with Chromium-based browsers: chrome, chrome-beta')
+    expect(stderr.join('')).not.toContain('install firefox')
+    expect(runCapture).not.toHaveBeenCalled()
+  })
+
+  it('falls back from Chrome only when the channel was not chosen', async () => {
+    await sessions(1)
+    vi.spyOn(consola, 'info').mockImplementation(() => {})
+    vi.spyOn(consola, 'success').mockImplementation(() => {})
+    await capture('https://shop.test', '--minimized', '--script', 'drive.mjs')
+    await capture('https://shop.test', '--minimized', '--script', 'drive.mjs', '--channel', 'chrome')
+    expect(vi.mocked(runCapture).mock.calls.map(call => call[1].channelFallback)).toEqual([true, false])
+  })
 })

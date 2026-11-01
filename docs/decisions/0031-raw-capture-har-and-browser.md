@@ -25,6 +25,12 @@ the HAR only by URL, not by type.
 - `meta.json` records `browser.channel: "bundled"` when the capture used Playwright's own
   Chromium (`--channel bundled`, `capture.browser.channel: null`); it was `null`, which read as
   "not recorded". The field stays `string | null`, so older captures with `null` still load.
+- `capture.browser.channel` takes only Chromium-based Playwright channels (`chrome`, `msedge` and
+  their beta, dev and canary builds, `chromium`) or `null`; anything else is refused with the
+  list. Left at the default `chrome` on a machine without Chrome, capture falls back to the
+  bundled Chromium with a one-line note, and `meta.json` records `bundled`; a channel set by
+  flag, variable or config file stays strict. A browser that does not start leaves no session
+  folder.
 - The raw format version is unchanged: the HAR is still a HAR 1.2 file, older captures with full
   bodies load as before, and nothing reads the browser channel (both changes are additive, as in
   0023).

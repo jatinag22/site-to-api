@@ -12,7 +12,7 @@ import { InvalidArgumentError, Option } from 'commander'
 import { consola } from 'consola'
 import { dirname, join, resolve } from 'pathe'
 import { analyzeForProbe, buildHandoff, readBuildRecord, recordClientGenerated, stickyOptions } from '../build'
-import { normalizeCaptureUrl, runCapture } from '../capture'
+import { CHANNEL_NAMES, channelList, normalizeCaptureUrl, runCapture } from '../capture'
 import { updateClientState } from '../emit/handoff'
 import { SiteToApiError } from '../errors'
 import { generateClient } from '../gen'
@@ -38,6 +38,12 @@ function collect(value: string, previous: string[] = []): string[] {
 function printWarnings(warnings: string[]): void {
   for (const warning of warnings)
     warn(warning)
+}
+
+function parseChannel(value: string): string {
+  if (!CHANNEL_NAMES.includes(value))
+    throw new InvalidArgumentError(`"${value}" is not a browser capture can use. Capture records with Chromium-based browsers: ${channelList()}.`)
+  return value
 }
 
 /** Without a script nobody can use a headless browser, and the capture would never end. */
@@ -67,7 +73,7 @@ const captureCommand: CommandRegistrar = (program) => {
     .option('--session <id>', 'session id (default: <host>-<timestamp>)')
     .option('--headless', 'run without a window (for scripted captures; sites with bot protection often block it)')
     .option('--minimized', 'a normal browser with its windows minimized, for scripted captures that should not take over the screen')
-    .option('--channel <name>', 'browser channel, e.g. chrome, msedge, or "bundled" for Playwright\'s Chromium')
+    .option('--channel <name>', `browser: ${channelList()} (default: chrome, or bundled where Chrome is not installed)`, parseChannel)
     .option('--script <file>', 'drive the browser with a script instead of by hand: export default async ({ page, baseUrl }) => {}')
     .option('--user-data-dir <dir>', 'reuse a browser profile so logins persist')
     .action(async (url: string | undefined, flags: CaptureFlags, command: Command) => {
@@ -97,6 +103,7 @@ const captureCommand: CommandRegistrar = (program) => {
         sessionId: flags.session,
         cwd,
         signal: controller.signal,
+        channelFallback: sources['capture.browser.channel'] === 'default',
         log: message => consola.info(message),
       })
       printWarnings(result.warnings)

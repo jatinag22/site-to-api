@@ -493,6 +493,15 @@ describe('runCapture errors and interactive mode', () => {
     await expect(runCapture(headlessConfig('missing.ts'), { url: null, sessionId: 'missing', cwd: work })).rejects.toThrow(/does not exist/)
   })
 
+  it('leaves no session folder when the browser does not start', async () => {
+    // A file where the profile folder should be: Chromium cannot start on it.
+    await writeFile(path.join(work, 'not-a-profile'), 'x')
+    const config = headlessConfig(null)
+    config.capture.browser.userDataDir = 'not-a-profile'
+    await expect(runCapture(config, { url: null, sessionId: 'no-start', cwd: work })).rejects.toThrow(/^Could not start the browser: /)
+    expect(existsSync(path.join(work, config.rawDir, 'no-start'))).toBe(false)
+  }, 60_000)
+
   it('saves the session of a failing capture script, marked incomplete with the error', async () => {
     await writeFile(path.join(work, 'failing.mjs'), 'export default async ({ page, baseUrl }) => { await page.goto(baseUrl + "/second"); throw new Error("boom") }\n')
     const logs: string[] = []

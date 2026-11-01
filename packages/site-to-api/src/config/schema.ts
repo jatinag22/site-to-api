@@ -7,6 +7,22 @@ import { z } from 'zod'
 
 const HostPattern = z.string().min(1)
 
+/**
+ * Playwright channels of Chromium-based browsers, the only kind capture drives. `chromium` is
+ * Playwright's Chromium in its new headless mode; `null` (`--channel bundled`) is its Chromium.
+ */
+export const BROWSER_CHANNELS = [
+  'chrome',
+  'chrome-beta',
+  'chrome-dev',
+  'chrome-canary',
+  'msedge',
+  'msedge-beta',
+  'msedge-dev',
+  'msedge-canary',
+  'chromium',
+] as const
+
 export const ConfigSchema = z.strictObject({
   /** Raw captures: HAR files, sourcemaps, real cookies. Always gitignored. */
   rawDir: z.string().default('.site-to-api/raw'),
@@ -22,8 +38,12 @@ export const ConfigSchema = z.strictObject({
   }).prefault({}),
   capture: z.strictObject({
     browser: z.strictObject({
-      /** Playwright channel, e.g. `chrome`. `null` uses Playwright's bundled Chromium. */
-      channel: z.string().nullable().default('chrome'),
+      /**
+       * Playwright channel of a Chromium-based browser (`chrome`, `msedge`, ...). `null` uses
+       * Playwright's bundled Chromium. Left at the default, a machine without Chrome falls back
+       * to the bundled Chromium; set explicitly, the channel is required.
+       */
+      channel: z.enum(BROWSER_CHANNELS).nullable().default('chrome'),
       headless: z.boolean().default(false),
       /**
        * Keep the headful browser but minimize its windows, so a scripted capture does not take

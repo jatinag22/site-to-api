@@ -10,7 +10,7 @@ import type { CaptureEvent, SessionMeta } from '../model'
 import type { EventLimits } from './events'
 import type { CaptureTimeouts, Incomplete } from './save'
 import { existsSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createJiti } from 'jiti'
 import { chromium } from 'playwright'
@@ -19,6 +19,7 @@ import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { RequestBodyRecorder } from './bodies'
+import { launchChannel } from './channel'
 import { EventWriter } from './events'
 import { failureMessage } from './failure'
 import { harOmissionNote } from './har'
@@ -46,6 +47,11 @@ export interface RunCaptureOptions {
   eventLimits?: Partial<EventLimits>
   /** Overrides how long saving waits on the page and the browser; tests use short ones. */
   timeouts?: Partial<CaptureTimeouts>
+  /**
+   * The channel is the default `chrome`, not one the person chose: if Chrome is not installed,
+   * capture with Playwright's bundled Chromium instead of failing. The CLI sets it.
+   */
+  channelFallback?: boolean
 }
 
 /** What {@link runCapture} produced. */
@@ -97,9 +103,12 @@ async function loadCaptureScript(file: string): Promise<CaptureScript> {
 
 type BrowserConfig = ResolvedConfig['capture']['browser']
 
-/** Starts the browser; with `sandbox`, a failed start is retried once without it (decision 0047). */
-async function launchContext(browser: BrowserConfig, cwd: string, harPath: string, warn: (message: string) => void): Promise<BrowserContext> {
-  return await launchWithSandbox(sandbox => launchOnce(browser, cwd, harPath, sandbox), browser.sandbox, warn)
+/**
+ * Starts the browser; with `sandbox`, a failed start is retried once without it (decision 0047).
+ * Returns the context and the channel it runs (`null`: the bundled Chromium after a fallback).
+ */
+async function launchContext(browser: BrowserConfig, cwd: string, harPath: string, fallback: boolean, log: (message: string) => void, warn: (message: string) => void): Promise<{ launched: BrowserContext, channel: BrowserConfig['channel'] }> {
+  return await launchChannel(async channel => await launchWithSandbox(sandbox => launchOnce({ ...browser, channel }, cwd, harPath, sandbox), browser.sandbox, warn), browser.channel, fallback, log)
 }
 
 async function launchOnce(browser: BrowserConfig, cwd: string, harPath: string, sandbox: boolean): Promise<BrowserContext> {
@@ -117,30 +126,42 @@ async function launchOnce(browser: BrowserConfig, cwd: string, harPath: string, 
       ? {}
       : { userAgent: browser.userAgent }),
   }
-  try {
-    // An empty profile path makes Playwright use a fresh temporary profile.
-    return await chromium.launchPersistentContext(browser.userDataDir === null
-      ? ''
-      : path.resolve(cwd, browser.userDataDir), {
-      ...optional,
-      headless: browser.headless,
-      // Playwright passes --no-sandbox unless this is set; Chrome then shows a warning bar too.
-      chromiumSandbox: sandbox,
-      args: launchArgs(browser),
-      // SIGINT and SIGTERM end the session through createStopper, which closes the context and so
-      // flushes the HAR; Playwright closing the browser itself would lose it.
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      handleSIGHUP: false,
-      recordHar: { path: harPath, content: 'embed', mode: 'full' },
-    })
-  }
-  catch (error) {
-    const hint = browser.channel === null
-      ? 'Run `npx playwright install chromium` to download the bundled browser.'
-      : `Install ${browser.channel} or set capture.browser.channel to null to use Playwright's bundled Chromium.`
-    throw new SiteToApiError(`Could not start the browser: ${failureMessage(error)}\n${hint}`, { cause: error })
-  }
+  // An empty profile path makes Playwright use a fresh temporary profile.
+  return await chromium.launchPersistentContext(browser.userDataDir === null
+    ? ''
+    : path.resolve(cwd, browser.userDataDir), {
+    ...optional,
+    headless: browser.headless,
+    // Playwright passes --no-sandbox unless this is set; Chrome then shows a warning bar too.
+    chromiumSandbox: sandbox,
+    args: launchArgs(browser),
+    // SIGINT and SIGTERM end the session through createStopper, which closes the context and so
+    // flushes the HAR; Playwright closing the browser itself would lose it.
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+    recordHar: { path: harPath, content: 'embed', mode: 'full' },
+  })
+}
+
+/**
+ * Refuses an existing session, loads the capture script and creates the session folder. Every
+ * check that can fail comes before the folder exists, so a failed start leaves no empty session;
+ * `createdDir` says whether this run created it (and so may remove it).
+ */
+async function startSession(capture: ResolvedConfig['capture'], options: RunCaptureOptions, rawDir: string, sessionId: string): Promise<{ script: CaptureScript | null, createdDir: boolean }> {
+  const sessionDir = path.join(rawDir, sessionId)
+  await prepareRawDir(rawDir)
+  if (existsSync(path.join(sessionDir, META_FILE)))
+    throw new SiteToApiError(`Session ${sessionId} already exists in ${rawDir}. Pass a different session id or delete that folder.`)
+  const script = capture.script === null
+    ? null
+    : await loadCaptureScript(path.resolve(options.cwd, capture.script))
+  if (options.signal?.aborted)
+    throw new SiteToApiError('Capture was cancelled before the browser started.')
+  const createdDir = !existsSync(sessionDir)
+  await mkdir(sessionDir, { recursive: true })
+  return { script, createdDir }
 }
 
 /**
@@ -163,16 +184,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     : sanitizeSessionId(options.sessionId)
   const sessionDir = path.join(rawDir, sessionId)
 
-  await prepareRawDir(rawDir)
-  if (existsSync(path.join(sessionDir, META_FILE)))
-    throw new SiteToApiError(`Session ${sessionId} already exists in ${rawDir}. Pass a different session id or delete that folder.`)
-  await mkdir(sessionDir, { recursive: true })
-
-  const script = capture.script === null
-    ? null
-    : await loadCaptureScript(path.resolve(options.cwd, capture.script))
-  if (options.signal?.aborted)
-    throw new SiteToApiError('Capture was cancelled before the browser started.')
+  const { script, createdDir } = await startSession(capture, options, rawDir, sessionId)
 
   const warnings: string[] = []
   const startedAt = new Date().toISOString()
@@ -186,15 +198,18 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
   const stopper = createStopper(options.signal)
 
   let context: BrowserContext
+  let channel: BrowserConfig['channel']
   try {
-    context = await launchContext(browser, options.cwd, harPath, (message) => {
+    ;({ launched: context, channel } = await launchContext(browser, options.cwd, harPath, options.channelFallback === true, log, (message) => {
       warnings.push(message)
       log(message)
-    })
+    }))
   }
   catch (error) {
     stopper.dispose()
     await events.close()
+    if (createdDir)
+      await rm(sessionDir, { recursive: true, force: true })
     throw error
   }
 
@@ -288,7 +303,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       startedAt,
       completedAt: new Date().toISOString(),
       // `null` in the config means Playwright's bundled Chromium; say so instead of leaving it blank.
-      browser: { channel: browser.channel ?? 'bundled', headless: browser.headless, userAgent },
+      browser: { channel: channel ?? 'bundled', headless: browser.headless, userAgent },
       har: HAR_FILE,
       events: EVENTS_FILE,
       scripts: collector.scripts.toSorted((a, b) => a.url.localeCompare(b.url)),
