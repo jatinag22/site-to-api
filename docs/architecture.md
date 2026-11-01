@@ -14,6 +14,7 @@
 | Command | Reads | Writes | Network |
 |---|---|---|---|
 | `capture [url]` | config | `<rawDir>/<session>/` | the target site, through a real browser |
+| `import <file.har>` | config, a HAR file | `<rawDir>/<session>/` (decision 0057) | none |
 | `build` | all raw sessions, `probe.json` | `<outDir>/` including `client/` and `build.json` | none |
 | `probe` | raw sessions, `build.json` | `probe.json`, then rebuilds `<outDir>/` with the last build's options | the target site, rate limited |
 | `check` | raw sessions, `build.json` | `check.json` in `<outDir>/` | the target site, rate limited (probe's runner, safe requests only) |
