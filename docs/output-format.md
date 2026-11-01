@@ -363,7 +363,8 @@ Written only when `gen.mcp` is `read` or `write` (`--mcp [mode]` on `build`, `ge
 decision 0043), next to the client folder (`<outDir>/mcp/`) or in `gen.mcpDir`, never inside the
 client folder: the app imports the client, and the server is a program of its own with its own
 dependency (`@modelcontextprotocol/server`). `gen` warns when the project does not have that
-package, since a type check that includes the folder then fails (decision 0057).
+package, since a type check that includes the folder then fails (decision 0057). A `build` that does
+not set `gen.mcp` keeps the mode of the last run, so the server is not deleted.
 
 - `server.ts`: an MCP server over stdio with one tool per operation, built with
   `@modelcontextprotocol/server`. `read` gives a tool to every operation that does not change data

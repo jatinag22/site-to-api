@@ -50,6 +50,13 @@ kept there disappeared and hand edits to generated files were lost without a wor
   `tsconfig.json`; `gen` warns when no `node_modules` above the folder has that package. The
   server type-checks with and without `@types/node`.
 
+### A plain build keeps the MCP server
+- `gen --mcp` followed by `build` used to delete the server: `build` took `gen.mcp` from the
+  config, whose default is `off`. Now, when no config file, variable or flag sets `gen.mcp`,
+  `build` (and `probe`'s rebuild) keeps the last run's mode, as recorded in `build.json` with the
+  server's files, and logs that it did. Setting it (`--mcp off`, or `gen.mcp: 'off'` in the config)
+  still removes the server, with a warning that names the folder and what set `off`.
+
 ## Consequences
 People can keep their own files next to the client. A stale file from an old version that `gen`
 no longer writes stays until it is deleted by hand.

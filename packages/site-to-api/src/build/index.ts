@@ -36,7 +36,7 @@ import { referencedSources } from './excerpts'
 import { alignWithRuntime } from './extract-check'
 import { inHostFilter, unmatchedHostPatterns } from './hosts'
 import { assertOwnOutDir, discardLeakingOutput, findHandoffLeaks, leakError } from './leaks'
-import { buildRecordFor, configuredClientDir, configuredMcpDir, previousClient, previousMcp, readBuildRecord, relativePath, writeBuildRecord } from './record'
+import { buildRecordFor, configuredClientDir, configuredMcpDir, mcpChoice, previousClient, previousMcp, readBuildRecord, relativePath, writeBuildRecord } from './record'
 
 export { configuredClientDir, configuredMcpDir, previousClient, previousMcp, readBuildRecord, recordClientGenerated, recordedClientDir, recordedMcpDir, relativePath, stickyOptions } from './record'
 
@@ -568,7 +568,19 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     mcpDir: configuredMcpDir(options.config, options.cwd),
     root: resolve(options.cwd),
   }
-  const { state: client, recorded } = await writeClient(outDir, layout, analysis, options.config, files, warnings, options.force === true)
+  const lastRecord = await readBuildRecord(outDir)
+  const mcp = mcpChoice(options.config, options.sources, lastRecord)
+  const config: ResolvedConfig = {
+    ...options.config,
+    gen: { ...options.config.gen, mcp: mcp.mode },
+  }
+  const mcpFolder = relativePath(resolve(options.cwd), layout.mcpDir)
+  if (mcp.kept)
+    log(`Kept the MCP server in ${mcpFolder}/ (gen.mcp ${mcp.mode}, from the last run); pass --mcp off or set gen.mcp to change it.`)
+  const hadMcp = Object.keys(lastRecord?.generatedMcp ?? {}).length > 0
+  const { state: client, recorded } = await writeClient(outDir, layout, analysis, config, files, warnings, options.force === true)
+  if (hadMcp && mcp.mode === 'off' && Object.keys(recorded.generatedMcp ?? {}).length === 0)
+    warnings.push(`Removed the MCP server from ${mcpFolder}/ because gen.mcp is off (set by ${options.sources?.['gen.mcp'] ?? 'the config'}); pass --mcp read or --mcp write to generate it again.`)
   files.push(
     ...await writeHandoffDocs(outDir, analysis, {
       toolVersion: VERSION,
@@ -590,7 +602,7 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
         : null,
       pageHosts,
     }),
-    await writeBuildRecord(outDir, buildRecordFor(options.config, options.sources ?? {}, VERSION, recorded)),
+    await writeBuildRecord(outDir, buildRecordFor(config, options.sources ?? {}, VERSION, recorded)),
   )
   log(`Wrote ${files.length} files to ${outDir}`)
   // The folder must hold no secret the capture had (decision 0047). With `examples: raw` it

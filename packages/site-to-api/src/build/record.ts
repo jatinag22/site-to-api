@@ -283,3 +283,23 @@ export function previousMcp(outDir: string, record: BuildRecord | null, mcpDir: 
     return {}
   return record.generatedMcp ?? {}
 }
+
+/** The `gen.mcp` a build uses, and why. */
+export interface McpChoice {
+  mode: NonNullable<BuildRecord['mcp']>
+  /** True when the mode is the last run's, kept because nothing set `gen.mcp` this time. */
+  kept: boolean
+}
+
+/**
+ * `gen.mcp` for this build. A server `gen --mcp` wrote stays across plain builds: when no config
+ * file, variable or flag sets `gen.mcp`, the last run's mode is kept instead of the default `off`,
+ * which would delete it (decision 0057). Setting `gen.mcp` (`--mcp off`) still removes it.
+ */
+export function mcpChoice(config: ResolvedConfig, sources: Record<string, ConfigSource> | undefined, record: BuildRecord | null): McpChoice {
+  const unset = (sources?.['gen.mcp'] ?? 'default') === 'default'
+  const last = record?.mcp ?? 'off'
+  if (unset && last !== 'off' && Object.keys(record?.generatedMcp ?? {}).length > 0)
+    return { mode: last, kept: true }
+  return { mode: config.gen.mcp, kept: false }
+}

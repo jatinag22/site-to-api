@@ -377,6 +377,36 @@ describe('handoff folder', () => {
     await buildHandoff({ config, cwd: work })
   }, 180_000)
 
+  it('keeps the MCP server across plain builds and says when --mcp off removes it (decision 0057)', async () => {
+    const server = join(outDir, 'mcp', 'server.ts')
+    await buildHandoff({
+      config: {
+        ...config,
+        gen: { ...config.gen, mcp: 'read' },
+      },
+      sources: { 'gen.mcp': 'flag' },
+      cwd: work,
+    })
+    expect(existsSync(server)).toBe(true)
+    expect(existsSync(join(outDir, 'client', 'mcp'))).toBe(false)
+    const logged: string[] = []
+    await buildHandoff({
+      config,
+      sources: { 'gen.mcp': 'default' },
+      cwd: work,
+      log: message => logged.push(message),
+    })
+    expect(existsSync(server)).toBe(true)
+    expect(logged.join('\n')).toContain('Kept the MCP server in handoff/mcp/ (gen.mcp read, from the last run)')
+    const off = await buildHandoff({
+      config,
+      sources: { 'gen.mcp': 'flag' },
+      cwd: work,
+    })
+    expect(existsSync(server)).toBe(false)
+    expect(off.warnings.join('\n')).toContain('Removed the MCP server from handoff/mcp/ because gen.mcp is off (set by flag)')
+  }, 180_000)
+
   it('writes the client into gen.clientDir and names that folder in the docs and build.json (decision 0057)', async () => {
     const appClient = join(work, 'app', 'api')
     try {

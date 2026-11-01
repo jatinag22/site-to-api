@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ConfigSchema } from '../config/schema'
-import { buildRecordFor, readBuildRecord, recordClientGenerated, stickyOptions, writeBuildRecord } from './record'
+import { buildRecordFor, mcpChoice, readBuildRecord, recordClientGenerated, stickyOptions, writeBuildRecord } from './record'
 
 let dir: string
 beforeEach(async () => {
@@ -127,5 +127,26 @@ describe('build.json', () => {
     await expect(readBuildRecord(dir)).rejects.toThrow(/not valid JSON.*site-to-api build/)
     await writeFile(join(dir, 'build.json'), '{"formatVersion": 2}')
     await expect(readBuildRecord(dir)).rejects.toThrow(/not a build record/)
+  })
+})
+
+describe('mcpChoice (decision 0057)', () => {
+  const withServer = {
+    ...buildRecordFor(config, {}, 'test', {
+      generatedMcp: { 'server.ts': 'a1' },
+    }),
+    mcp: 'write' as const,
+  }
+
+  it('keeps the MCP server gen wrote when nothing sets gen.mcp', () => {
+    expect(mcpChoice(config, { 'gen.mcp': 'default' }, withServer)).toEqual({ mode: 'write', kept: true })
+    expect(mcpChoice(config, undefined, withServer)).toEqual({ mode: 'write', kept: true })
+  })
+
+  it('follows gen.mcp once something sets it, and keeps off when no server was written', () => {
+    expect(mcpChoice(config, { 'gen.mcp': 'flag' }, withServer)).toEqual({ mode: 'off', kept: false })
+    expect(mcpChoice(config, { 'gen.mcp': 'file' }, withServer)).toEqual({ mode: 'off', kept: false })
+    expect(mcpChoice(config, { 'gen.mcp': 'default' }, { ...withServer, generatedMcp: {} })).toEqual({ mode: 'off', kept: false })
+    expect(mcpChoice(config, { 'gen.mcp': 'default' }, null)).toEqual({ mode: 'off', kept: false })
   })
 })
