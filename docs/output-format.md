@@ -14,7 +14,10 @@ The entry point for a coding agent: a short index, at most about 25 KB on any si
 
 1. **What this folder is**: one paragraph, the first five hosts covered (then "and N more
    hosts"), the sessions used, the tool version. Hosts that answered only with bot challenges
-   get a bold banner above it (at most three).
+   get a bold banner above it (at most three). When any session was imported from a HAR file
+   (`site-to-api import`, decision 0057), an **Imported sessions** section follows and says
+   what such a session cannot show: computed values, typed inputs, call sites without the
+   HAR's request stacks, source analysis without its scripts, and sourcemaps.
 2. **Reading order**: `hosts/<host>.md` → `API_MAP.md` → `flows.md` → the spec for the host →
    `source/` excerpts (only when an excerpt was written) → `client/` usage.
 3. **Hosts**: one line per host, most important first, under three headings: the site's own hosts
@@ -328,7 +331,7 @@ place, so both say the client is current (decision 0025). `build --no-client` ke
 
 `gen` and `build` replace only the files they generated, recorded with their SHA-256 under
 `generated` in `build.json`: other files in `client/` are left alone, and a generated file edited
-by hand is kept and reported until `--force` overwrites it (decision 0057). With `gen.clientDir`
+by hand is kept and reported until `--force` overwrites it (decision 0058). With `gen.clientDir`
 the folder is elsewhere (recorded as `clientDir` in `build.json`, relative to the handoff folder),
 and every sentence below that says `client/` names that folder instead.
 
@@ -338,7 +341,7 @@ Zod schemas, request and response validation; hey-api works from a copy of the s
 patterns and has no doc comments from the site, decision 0043), `index.ts` exporting each host's SDK as a namespace
 and `createSiteClient({ host, session?, auth?, jar?, fetch?, baseUrl?, retry?, headers? })` wired
 to `@site-to-api/runtime` (each call creates its own hey-api client and returns `sdk` with the
-host's functions bound to it, so instances never share credentials, decision 0057; it passes the spec's apiKey header
+host's functions bound to it, so instances never share credentials, decision 0058; it passes the spec's apiKey header
 names as `credentialHeaders`, so the runtime drops them, `authorization`, `cookie` and the
 session's headers when a redirect leaves the site's origin), `extract.ts` with
 a record schema and a parser per HTML/text operation, `extract<Records>From<Operation>(text)`
@@ -357,7 +360,7 @@ files, each WebSocket channel's URL and the message to send after connecting (th
 HTTP only). Relative imports end in `.js`, so
 the client works under `moduleResolution` `bundler` and `nodenext`, and it type-checks under
 `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and `noImplicitOverride`
-(hey-api's bundled `client/` and `core/` files carry `// @ts-nocheck`, decision 0057). The generated code needs
+(hey-api's bundled `client/` and `core/` files carry `// @ts-nocheck`, decision 0058). The generated code needs
 `zod` 4 and `@site-to-api/runtime` in the consuming project.
 
 ### `mcp/`
@@ -366,7 +369,7 @@ Written only when `gen.mcp` is `read` or `write` (`--mcp [mode]` on `build`, `ge
 decision 0043), next to the client folder (`<outDir>/mcp/`) or in `gen.mcpDir`, never inside the
 client folder: the app imports the client, and the server is a program of its own with its own
 dependency (`@modelcontextprotocol/server`). `gen` warns when the project does not have that
-package, since a type check that includes the folder then fails (decision 0057). A `build` that does
+package, since a type check that includes the folder then fails (decision 0058). A `build` that does
 not set `gen.mcp` keeps the mode of the last run, so the server is not deleted.
 
 - `server.ts`: an MCP server over stdio with one tool per operation, built with

@@ -389,6 +389,17 @@ describe('loadSessions', () => {
     expect(warnings).toContain('s1: incomplete capture (the capture stopped on an error: closing the browser failed: boom). It is used as recorded; what came after the error is missing, so capture again for full coverage.')
   })
 
+  it('repeats the warnings a capture recorded in meta.json', async () => {
+    await writeSession('fell-back', {
+      ...meta('fell-back', '2026-01-01T09:00:00.000Z'),
+      warnings: ['Captured with Playwright\'s bundled Chromium.'],
+    }, [
+      entry({ url: 'https://shop.test/1' }),
+    ], [])
+    const { warnings } = await loadSessions(root)
+    expect(warnings).toContain('fell-back: Captured with Playwright\'s bundled Chromium.')
+  })
+
   it('explains a session folder that has a HAR but no meta.json', async () => {
     await mkdir(join(root, 'lost'), { recursive: true })
     await writeFile(join(root, 'lost', 'traffic.har'), '{"log":{"entries":[]}}')

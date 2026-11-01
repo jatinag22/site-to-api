@@ -199,7 +199,7 @@ function renderHtmlValue(value: NamedHtmlValue): string {
 /**
  * `expression` evaluated in a call marked `@__PURE__`, so a bundler drops a module-level schema
  * nobody imports: a plain `z.object(…)` call counts as a side effect and would always stay
- * (decision 0057).
+ * (decision 0058).
  */
 export function pure(expression: string): string {
   return `/* @__PURE__ */ (() => ${expression})()`
@@ -406,7 +406,7 @@ export function renderOptionsModule(): string {
 /**
  * `<host>/site.ts`: the host's own factory and its functions, without the other hosts or a bound
  * `sdk`, so an app that imports one operation from here bundles only that operation (decision
- * 0057).
+ * 0058).
  */
 export function renderHostSiteModule(host: HostSpec, functions: readonly HostFunction[]): string {
   const name = hostFactoryName(host.identifier)

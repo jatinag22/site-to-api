@@ -28,6 +28,47 @@ describe('failedNavigationsWarning', () => {
     expect(mixed).toContain('the host could not be resolved')
   })
 
+  it('says nothing is listening for a refused connection, without the automated-browser hint', () => {
+    const warning = failedNavigationsWarning([
+      { status: -1, failure: 'net::ERR_CONNECTION_REFUSED', host: 'localhost:4999' },
+    ])
+    expect(warning).toBe('Every page load failed (net::ERR_CONNECTION_REFUSED; 1 of 1): nothing is listening at localhost:4999. Start the site or check the URL, then capture again.')
+  })
+
+  it('names an unsafe port as the browser refusing it', () => {
+    const warning = failedNavigationsWarning([
+      { status: -1, failure: 'net::ERR_UNSAFE_PORT', host: 'localhost:1' },
+    ])
+    expect(warning).toContain('the browser refuses to connect to localhost:1: that port is on its list of unsafe ports')
+    expect(warning).not.toContain('automated browsers')
+  })
+
+  it('says to check the URL when the first page answered 404', () => {
+    expect(failedNavigationsWarning([
+      { status: 404, failure: null, host: 'shop.test' },
+      { status: 200, failure: null, host: 'shop.test' },
+    ])).toBe('The first page answered 404 Not Found (shop.test): check the URL.')
+    expect(failedNavigationsWarning([
+      { status: 200, failure: null, host: 'shop.test' },
+      { status: 404, failure: null, host: 'shop.test' },
+    ])).toBeNull()
+  })
+
+  it('keeps the automated-browser hint for timeouts and 403 refusals only', () => {
+    expect(failedNavigationsWarning([
+      { status: 403, failure: null, host: 'shop.test' },
+      { status: 403, failure: null, host: 'shop.test' },
+    ])).toContain('Every page load failed (status 403; 2 of 2): the site probably blocks automated browsers')
+    expect(failedNavigationsWarning([
+      { status: -1, failure: 'net::ERR_TIMED_OUT', host: 'shop.test' },
+    ])).toContain('probably blocks automated browsers')
+    const other = failedNavigationsWarning([
+      { status: -1, failure: 'net::ERR_CERT_AUTHORITY_INVALID', host: 'shop.test' },
+    ])
+    expect(other).toContain('the browser could not load shop.test. Check the URL and the network')
+    expect(other).not.toContain('automated browsers')
+  })
+
   it('reads the page host from the HAR entry', () => {
     expect(harNavigations([
       {

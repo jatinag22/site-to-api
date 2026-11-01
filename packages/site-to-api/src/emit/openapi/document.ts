@@ -30,7 +30,7 @@ const NOT_PARAMETERS = new Set(['accept', 'content-type', 'authorization'])
 /**
  * Headers every browser request carries that say where the browser was, not what the API takes.
  * As parameters every SDK function took them (with `z.url()` on the referer), so they are left
- * out unless probe proved the site needs one (decision 0057). The analysis keeps them.
+ * out unless probe proved the site needs one (decision 0058). The analysis keeps them.
  */
 const BROWSER_CONTEXT_HEADERS = new Set(['referer', 'user-agent'])
 

@@ -107,7 +107,7 @@ describe('build.json', () => {
     expect(await readFile(join(dir, 'build.json'), 'utf8')).toMatch(/\n$/)
   })
 
-  it('records the generated client files and their hashes (decision 0057)', async () => {
+  it('records the generated client files and their hashes (decision 0058)', async () => {
     await writeBuildRecord(dir, buildRecordFor(config, {}, 'test', {
       generated: { 'index.ts': 'a1' },
     }))
@@ -130,7 +130,7 @@ describe('build.json', () => {
   })
 })
 
-describe('mcpChoice (decision 0057)', () => {
+describe('mcpChoice (decision 0058)', () => {
   const withServer = {
     ...buildRecordFor(config, {}, 'test', {
       generatedMcp: { 'server.ts': 'a1' },

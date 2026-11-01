@@ -54,7 +54,7 @@ const ENUM_MAX_LENGTH = 32
 /** Each distinct value must be seen this many times on average: a few values, many samples. */
 const ENUM_MIN_SAMPLES_PER_VALUE = 2
 /**
- * An enum needs values seen in this many browsing sessions (decision 0057). One session shows the
+ * An enum needs values seen in this many browsing sessions (decision 0058). One session shows the
  * few values that visit happened to meet (`category: ["dairy", "snacks"]`), and the generated
  * client then rejected every other category the site has.
  */

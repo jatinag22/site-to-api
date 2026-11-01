@@ -56,7 +56,7 @@ async function readAll(dir: string): Promise<Map<string, string>> {
 
 /** Strict type check of `files`, as a project with the given module resolution would run it. */
 function typeCheck(files: string[], resolution: 'bundler' | 'nodenext'): string[] {
-  // The strictest flags an app may turn on (decision 0057).
+  // The strictest flags an app may turn on (decision 0058).
   const program = ts.createProgram(files, {
     strict: true,
     noUncheckedIndexedAccess: true,
@@ -325,7 +325,7 @@ describe('handoff folder', () => {
       ?.value ?? ''
     expect(session.length).toBeGreaterThan(11)
     // With --no-client build keeps the generated client files and checks them: a value pasted
-    // into one stands in for a leak an emitter let through (decision 0057).
+    // into one stands in for a leak an emitter let through (decision 0058).
     const planted = join(outDir, 'client', 'README.md')
     // The user's own files, in the folder or next to the client, are neither scanned nor touched.
     const own = join(outDir, 'notes', 'own.md')
@@ -362,7 +362,7 @@ describe('handoff folder', () => {
     await buildHandoff({ config, cwd: work })
   }, 120_000)
 
-  it('keeps the user\'s files in client/ and hand edits to generated files unless forced (decision 0057)', async () => {
+  it('keeps the user\'s files in client/ and hand edits to generated files unless forced (decision 0058)', async () => {
     const own = join(outDir, 'client', 'my-helper.ts')
     const readme = join(outDir, 'client', 'README.md')
     const generated = await readFile(readme, 'utf8')
@@ -384,7 +384,7 @@ describe('handoff folder', () => {
     await buildHandoff({ config, cwd: work })
   }, 180_000)
 
-  it('keeps the MCP server across plain builds and says when --mcp off removes it (decision 0057)', async () => {
+  it('keeps the MCP server across plain builds and says when --mcp off removes it (decision 0058)', async () => {
     const server = join(outDir, 'mcp', 'server.ts')
     await buildHandoff({
       config: {
@@ -414,7 +414,7 @@ describe('handoff folder', () => {
     expect(off.warnings.join('\n')).toContain('Removed the MCP server from handoff/mcp/ because gen.mcp is off (set by flag)')
   }, 180_000)
 
-  it('writes the client into gen.clientDir and names that folder in the docs and build.json (decision 0057)', async () => {
+  it('writes the client into gen.clientDir and names that folder in the docs and build.json (decision 0058)', async () => {
     const appClient = join(work, 'app', 'api')
     try {
       const moved = {
@@ -540,7 +540,7 @@ describe('fitted to the site, not to the captured samples', () => {
     expect(operation('GET', '/api/products').query.find(param => param.name === 'category')?.schema.enum).toEqual(['beverages', 'snacks'])
   })
 
-  it('never types referer or user-agent as parameters (decision 0057)', () => {
+  it('never types referer or user-agent as parameters (decision 0058)', () => {
     const specs = [...files].filter(([name]) => name.startsWith('specs/') && name.endsWith('.yaml'))
     expect(specs.length).toBeGreaterThan(0)
     for (const [name, content] of specs) {
@@ -809,7 +809,7 @@ describe('generated client', () => {
     expect(JSON.parse(stdout)).toEqual({ status: 200, csrf: true })
   }, 60_000)
 
-  it('bundles one operation from a host\'s own entry within budget, without the other operations or an HTML parser (decision 0057)', async () => {
+  it('bundles one operation from a host\'s own entry within budget, without the other operations or an HTML parser (decision 0058)', async () => {
     const hostDir = join(outDir, 'client', toIdentifier(host))
     const site = await readFile(join(hostDir, 'site.ts'), 'utf8')
     const factory = /^export function (create\w+Client)\(/m.exec(site)?.[1] ?? ''
@@ -838,7 +838,7 @@ describe('generated client', () => {
     expect(inputs.filter(input => input.includes('zod/v4/classic'))).toEqual([])
   }, 60_000)
 
-  it('extracts the same records with the browser\'s DOMParser as with htmlparser2, :contains() included (decision 0057)', async () => {
+  it('extracts the same records with the browser\'s DOMParser as with htmlparser2, :contains() included (decision 0058)', async () => {
     const extractModule = join(outDir, 'client', 'extract.ts')
     const bundled = await esbuild({
       entryPoints: [extractModule],

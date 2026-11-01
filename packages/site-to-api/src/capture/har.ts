@@ -157,13 +157,21 @@ export async function finishHar(file: string, files: HarFiles = NODE_FILES, rest
  * frames and scripts are only when the capture kept them.
  */
 export function harOmissionNote(compaction: HarCompaction, kept: { websockets: boolean, saveScripts: boolean, eventsFile: string }): string | null {
-  if (compaction.bodiesOmitted === 0 && compaction.framesOmitted === 0)
-    return null
-  const frames = kept.websockets
-    ? `the frames are in ${kept.eventsFile}`
-    : 'frames are not kept: capture.websockets is off'
-  const scripts = kept.saveScripts
-    ? 'the scripts under scripts/'
-    : 'scripts are not kept: capture.saveScripts is off'
-  return `Left ${compaction.bodiesOmitted} asset bodies and ${compaction.framesOmitted} WebSocket frames out of the HAR (${frames}; ${scripts}).`
+  const counted = (count: number, one: string, many: string): string => `${count} ${count === 1
+    ? one
+    : many}`
+  const parts: string[] = []
+  if (compaction.bodiesOmitted > 0) {
+    parts.push(`${counted(compaction.bodiesOmitted, 'asset body', 'asset bodies')} (images, fonts, styles, scripts; ${kept.saveScripts
+      ? 'scripts are saved under scripts/'
+      : 'scripts are not kept: capture.saveScripts is off'})`)
+  }
+  if (compaction.framesOmitted > 0) {
+    parts.push(`${counted(compaction.framesOmitted, 'WebSocket frame', 'WebSocket frames')} (${kept.websockets
+      ? `saved in ${kept.eventsFile}`
+      : 'not kept: capture.websockets is off'})`)
+  }
+  return parts.length === 0
+    ? null
+    : `Left out of traffic.har to keep it small: ${parts.join(' and ')}.`
 }

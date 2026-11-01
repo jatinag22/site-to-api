@@ -168,3 +168,17 @@ export function summarizeProbe(report: ProbeReport): string[] {
     lines.push(`- Skipped, ${reason}: ${skipped.length} (${list(skipped)}).`)
   return lines
 }
+
+/**
+ * A warning when every probed operation was unreachable, naming the hosts; null otherwise. Then
+ * probe learnt nothing, most often because the site is not running or this machine is offline,
+ * and a summary of zero findings would read as a result.
+ */
+export function unreachableWarning(report: ProbeReport): string | null {
+  if (report.operations.length === 0 || !report.operations.every(probe => probeResultKind(probe) === 'unreachable'))
+    return null
+  const hosts = [
+    ...new Set(report.operations.map(probe => probe.host)),
+  ].sort().join(', ')
+  return `Every probed operation was unreachable (${hosts}): is the site up? Start it or check the network from this machine, then run probe again. Nothing about the session was learnt.`
+}

@@ -39,7 +39,7 @@ const BuildRecordSchema = z.strictObject({
   mcp: z.enum(['off', 'read', 'write']).optional(),
   /**
    * The files `gen` generated into the client folder, by path relative to it, and their SHA-256
-   * (decision 0057): only these are replaced or removed later, and a changed hash means a hand
+   * (decision 0058): only these are replaced or removed later, and a changed hash means a hand
    * edit. Absent in older records.
    */
   generated: z.record(z.string(), z.string()).optional(),
@@ -61,7 +61,7 @@ const BuildRecordSchema = z.strictObject({
 })
 export type BuildRecord = z.infer<typeof BuildRecordSchema>
 
-/** Where the client and MCP server are and which files were generated there (decision 0057). */
+/** Where the client and MCP server are and which files were generated there (decision 0058). */
 export interface RecordedClient {
   generated?: Record<string, string>
   generatedMcp?: Record<string, string>
@@ -212,7 +212,7 @@ export async function recordClientGenerated(outDir: string, update: ClientUpdate
 }
 
 /**
- * The client folder of the handoff folder `outDir`, as `build.json` records it (decision 0057);
+ * The client folder of the handoff folder `outDir`, as `build.json` records it (decision 0058);
  * `<outDir>/client` when no record or an older one says nothing.
  */
 export function recordedClientDir(outDir: string, record: BuildRecord | null): string {
@@ -250,7 +250,7 @@ export function relativePath(from: string, to: string): string {
 
 /** The manifest of the last run for a client now in `clientDir`, and a warning when it moved. */
 export interface PreviousClient {
-  /** `null` for a folder from an older version without a manifest (decision 0057). */
+  /** `null` for a folder from an older version without a manifest (decision 0058). */
   previous: Record<string, string> | null
   warning: string | null
 }
@@ -294,7 +294,7 @@ export interface McpChoice {
 /**
  * `gen.mcp` for this build. A server `gen --mcp` wrote stays across plain builds: when no config
  * file, variable or flag sets `gen.mcp`, the last run's mode is kept instead of the default `off`,
- * which would delete it (decision 0057). Setting `gen.mcp` (`--mcp off`) still removes it.
+ * which would delete it (decision 0058). Setting `gen.mcp` (`--mcp off`) still removes it.
  */
 export function mcpChoice(config: ResolvedConfig, sources: Record<string, ConfigSource> | undefined, record: BuildRecord | null): McpChoice {
   const unset = (sources?.['gen.mcp'] ?? 'default') === 'default'

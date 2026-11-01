@@ -6,7 +6,7 @@ import type { ConfigSource } from '../config/load'
 import type { ResolvedConfig } from '../config/schema'
 import type { ClientState } from '../emit/handoff'
 import type { ClientManifest } from '../gen'
-import type { Analysis, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver, ValueTrace } from '../model'
+import type { Analysis, ImportedSession, LoadedSession, Operation, Redactor, ResponseInfo, SourceRef, SourceResolver, ValueTrace } from '../model'
 import type { ProbeReport } from '../model/probe'
 import type { RecordedClient } from './record'
 import { existsSync } from 'node:fs'
@@ -49,7 +49,7 @@ export interface BuildOptions {
    */
   sources?: Record<string, ConfigSource>
   log?: (message: string) => void
-  /** Overwrite generated client files edited by hand (decision 0057). */
+  /** Overwrite generated client files edited by hand (decision 0058). */
   force?: boolean
   /**
    * The analysis of the raw captures from {@link analyzeForProbe}, for the same config: `probe`
@@ -167,6 +167,18 @@ function addCallSites(operations: Operation[], resolver: SourceResolver): Operat
 
 /** Every source reference that the output mentions, so each gets an excerpt. */
 /** The first session whose saved code can produce an excerpt for this location. */
+/** What each HAR-imported session could give, for the AGENT.md note (decision 0057). */
+function importedSessions(sessions: readonly LoadedSession[]): ImportedSession[] {
+  return sessions
+    .filter(session => session.meta.source === 'har-import')
+    .map(session => ({
+      sessionId: session.meta.sessionId,
+      creator: [session.meta.importedFrom?.creator, session.meta.importedFrom?.browser].filter(Boolean).join(', ') || null,
+      stacks: session.events.some(event => event.t === 'request' && event.stack.length > 0),
+      scripts: session.meta.scripts.length > 0,
+    }))
+}
+
 async function excerptFor(ref: SourceRef, sessions: LoadedSession[]): Promise<{ path: string, content: string } | null> {
   for (const session of sessions) {
     const excerpt = await buildExcerpt(ref, sessions, session.meta.sessionId)
@@ -247,7 +259,11 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 /** Everything `build` learns from the raw captures; `probe.json` is applied by {@link withStoredProbe}. */
 async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (message: string) => void): Promise<CapturedAnalysis> {
   const loaded = await loadSessions(rawDir)
-  log(`Loaded ${loaded.sessions.length} session(s), ${loaded.exchanges.length} requests`)
+  log(`Loaded ${loaded.sessions.length} ${loaded.sessions.length === 1
+    ? 'session'
+    : 'sessions'}, ${loaded.exchanges.length} ${loaded.exchanges.length === 1
+    ? 'request'
+    : 'requests'}`)
   const classified = classifyExchanges(loaded.exchanges, config.hosts)
   // GraphQL requests are marked and batches split before anything groups or traces them (0027).
   // Engine.IO long-polling requests are one channel's transport, documented with the channel
@@ -368,6 +384,7 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
 
   const analysis: Analysis = {
     sessions: loaded.sessions.map(session => session.meta.sessionId),
+    imported: importedSessions(loaded.sessions),
     startUrls: [
       ...new Set(loaded.sessions.flatMap(session => session.meta.startUrl === null
         ? []
@@ -480,7 +497,7 @@ async function writeClient(outDir: string, layout: ClientLayout, analysis: Analy
   }
   if (analysis.operations.length === 0) {
     // Nothing left to describe: a client from an earlier build would point at operations that
-    // are gone. Only its generated files go (decision 0057); a folder from an older version
+    // are gone. Only its generated files go (decision 0058); a folder from an older version
     // without a record is left as it is.
     const removedMcp = await removeGenerated(mcpDir, previousMcpFiles, force)
     warnings.push(...removedMcp.warnings)
@@ -604,13 +621,14 @@ export async function buildHandoff(options: BuildOptions): Promise<BuildResult> 
     }),
     await writeBuildRecord(outDir, buildRecordFor(config, options.sources ?? {}, VERSION, recorded)),
   )
-  log(`Wrote ${files.length} files to ${outDir}`)
+  // The folder itself is in the line the caller prints at the end.
+  log(`Wrote ${files.length} files`)
   // The folder must hold no secret the capture had (decision 0047). With `examples: raw` it
   // copies captured values on purpose, so the check would only restate that choice.
   if (options.config.redact.examples !== 'raw') {
     // What build wrote this run, plus what it manages across runs: the generated client files
     // (also those a `--no-client` build kept) and `probe.json`. Never anything else in the
-    // folder, nor the person's own files next to the client (decision 0057).
+    // folder, nor the person's own files next to the client (decision 0058).
     const managed = [
       ...files,
       ...Object.keys(recorded.generated ?? {}).map(file => join(clientDir, file)),

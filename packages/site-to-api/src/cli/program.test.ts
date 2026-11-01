@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import process from 'node:process'
+import { consola } from 'consola'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mcpCommand } from './mcp'
@@ -54,6 +55,24 @@ describe('cli', () => {
     expect(gitignore.match(/\.site-to-api\//g)).toHaveLength(1)
   })
 
+  it('refuses a --cwd that does not exist instead of running with defaults', async () => {
+    const errors: string[] = []
+    vi.spyOn(consola, 'error').mockImplementation((message: unknown) => {
+      errors.push(String(message))
+    })
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      join(dir, 'missing'),
+      'config',
+    ])
+    expect(errors).toEqual([
+      expect.stringMatching(/^--cwd .*missing: no such directory/),
+    ])
+    expect(process.exitCode).toBe(1)
+  })
+
   it('config --json shows values and their sources, with flags winning', async () => {
     const stdout = captureStdout()
     await run([
@@ -94,7 +113,8 @@ describe('cli', () => {
 describe('mcp', () => {
   it('never runs a .ts config file, which a project can fill with any code', async () => {
     const marker = join(dir, 'ran.txt')
-    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\nexport default {}\n`)
+    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\nexport default { outDir: process.env.HANDOFF ?? 'handoff' }\n`)
+    // A plain literal outDir is read as text (decision 0058); a computed one cannot be, so it is reported.
     const stderr: string[] = []
     vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
       stderr.push(String(chunk))
@@ -110,13 +130,31 @@ describe('mcp', () => {
       '--generated',
     ], [mcpCommand])
     expect(existsSync(marker)).toBe(false)
-    expect(stderr.join('')).toContain(`Not running ${join(dir, 'site-to-api.config.ts')}`)
+    expect(stderr.join('')).toContain(`Not running ${join(dir, 'site-to-api.config.ts')}: \`mcp\` reads only flags, SITE_TO_API_* variables and site-to-api.config.json, so its outDir is not used`)
     expect(process.exitCode).toBe(1)
   })
 
-  it('reads a plain outDir from a .ts config file without running it (decision 0057)', async () => {
+  it('says nothing about a code config that changes nothing mcp uses', async () => {
+    await writeFile(join(dir, 'site-to-api.config.ts'), `export default { outDir: 'api-handoff', probe: { maxRps: 1 } }\n`)
+    const stderr: string[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk))
+      return true
+    })
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      dir,
+      'mcp',
+      '--generated',
+    ], [mcpCommand])
+    expect(stderr.join('')).not.toContain('Not running')
+  })
+
+  it('reads a plain outDir from a .ts config file without running it (decision 0058)', async () => {
     const marker = join(dir, 'ran.txt')
-    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\nexport default { outDir: 'src/api/shop' }\n`)
+    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\n// outDir: 'commented'\nexport default { outDir: 'src/api/shop' }\n`)
     const output: string[] = []
     vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
       output.push(String(chunk))

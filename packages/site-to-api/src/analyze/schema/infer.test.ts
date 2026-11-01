@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { coerceStrings, inferSchema, inferStringSchema, MAX_SCHEMA_DEPTH } from './infer'
 
 const s1 = (...values: unknown[]): Sample[] => values.map(value => ({ value, sessionId: 's1' }))
-/** Samples from two sessions, alternating: enums need values from more than one (decision 0057). */
+/** Samples from two sessions, alternating: enums need values from more than one (decision 0058). */
 const across = (...values: unknown[]): Sample[] => values.map((value, index) => ({ value, sessionId: `s${index % 2}` }))
 
 describe('inferSchema', () => {
@@ -110,7 +110,7 @@ describe('inferSchema', () => {
     expect(inferSchema(s1('2026-02-30'))).toEqual({ type: 'string' })
   })
 
-  it('infers no enum from a single browsing session (decision 0057)', () => {
+  it('infers no enum from a single browsing session (decision 0058)', () => {
     expect(inferSchema(s1('NSE', 'BSE', 'NSE', 'BSE'))).toEqual({ type: 'string' })
     expect(inferSchema(across('NSE', 'BSE', 'NSE', 'BSE'))).toEqual({
       type: 'string',

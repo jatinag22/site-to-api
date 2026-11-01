@@ -1,6 +1,6 @@
 /**
  * Marks the module-level schema definitions of hey-api's `zod.gen.ts` as free of side effects
- * (decision 0057). Each is a `z.object(…)` call, which a bundler must assume has side effects, so
+ * (decision 0058). Each is a `z.object(…)` call, which a bundler must assume has side effects, so
  * importing one operation kept every schema of the host. Wrapped in a `@__PURE__` call, a schema
  * nobody uses is dropped.
  */

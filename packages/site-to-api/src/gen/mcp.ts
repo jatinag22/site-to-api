@@ -291,7 +291,7 @@ function literal(value: unknown): string {
 
 function renderTool(tool: McpTool): string {
   // `exactOptional`: a missing field stays missing instead of becoming `undefined`, which the SDK
-  // options reject under `exactOptionalPropertyTypes` (decision 0057).
+  // options reject under `exactOptionalPropertyTypes` (decision 0058).
   const fields = tool.fields.map(field => `      ${field.key}: ${field.required
     ? field.expression
     : `z.exactOptional(${field.expression})`},`)

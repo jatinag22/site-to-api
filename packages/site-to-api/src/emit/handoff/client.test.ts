@@ -74,7 +74,7 @@ describe('client state in AGENT.md and API_MAP.md', () => {
     }
   })
 
-  it('names the client folder gen.clientDir chose, and swaps the state whatever folder the line names (decision 0057)', () => {
+  it('names the client folder gen.clientDir chose, and swaps the state whatever folder the line names (decision 0058)', () => {
     expect(guide('current', [], new Map(), '../app/api')).toContain('5. `../app/api/`: typed client with Zod validation; see `../app/api/README.md`.')
     expect(guide('stale', [], new Map(), '../app/api')).toContain('- `../app/api/` is from an earlier build')
     expect(renderApiMap(twoHostAnalysis(), 'current', undefined, '../app/api')).toContain('exported by the generated `../app/api/`.')

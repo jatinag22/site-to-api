@@ -44,7 +44,7 @@ export interface Handoff {
   build: BuildRecord | null
   /** Excerpt files relative to the folder (`source/src/auth/crypto.L18-28.ts.md`), sorted. */
   excerpts: string[]
-  /** The client folder, absolute: `client/` or where `build.json` says (decision 0057). */
+  /** The client folder, absolute: `client/` or where `build.json` says (decision 0058). */
   clientDir: string
   /** `index.ts` exists in the client folder, so calls can go through the generated client. */
   clientGenerated: boolean

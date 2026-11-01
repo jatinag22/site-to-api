@@ -533,7 +533,7 @@ describe('required headers', () => {
       ['x-api-key', true],
       ['sentry-trace', false],
     ])
-    // `referer` and `user-agent` are parameters only once probe proved one needed (decision 0057).
+    // `referer` and `user-agent` are parameters only once probe proved one needed (decision 0058).
     expect(headersOf(['header:referer'])).toEqual([
       ['x-fetch-nonce', false],
       ['x-api-key', false],

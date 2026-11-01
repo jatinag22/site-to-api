@@ -51,6 +51,12 @@ export const SessionMetaSchema = z.object({
     }).nullable(),
   })),
   /**
+   * Capture conditions that affect what the session shows and that `build` repeats, such as a
+   * fallback to Playwright's bundled Chromium. Optional and additive, so the format version is
+   * unchanged and older readers still accept the file.
+   */
+  warnings: z.array(z.string()).optional(),
+  /**
    * Set when the session did not end normally (decision 0037): the capture script threw, the run
    * was interrupted (Ctrl+C, SIGTERM, abort), a page or the browser did not finish in time, or setting
    * up the first page failed (`error`). What was
@@ -65,6 +71,17 @@ export const SessionMetaSchema = z.object({
       'error',
     ]),
     error: z.string().nullable(),
+  }).optional(),
+  /**
+   * How the session was made (decision 0057): `capture` when absent, or `har-import` for a HAR
+   * exported from browser DevTools or a proxy and imported with `site-to-api import`. Optional and
+   * additive, so the format version is unchanged.
+   */
+  source: z.enum(['capture', 'har-import']).optional(),
+  /** For `har-import`: the tool the HAR's `log.creator` and `log.browser` name, when given. */
+  importedFrom: z.object({
+    creator: z.string().nullable(),
+    browser: z.string().nullable(),
   }).optional(),
 })
 export type SessionMeta = z.infer<typeof SessionMetaSchema>

@@ -31,7 +31,7 @@ import { AsyncApiSummarySchema, describeChannels, describeHost, OpenApiDocumentS
 export interface GenerateClientInput {
   /** The handoff folder `build` wrote; specs are read from `specs/`. */
   handoffDir: string
-  /** Where the client goes (`gen.clientDir`); `<handoffDir>/client` when absent (decision 0057). */
+  /** Where the client goes (`gen.clientDir`); `<handoffDir>/client` when absent (decision 0058). */
   clientDir?: string
   /**
    * Where the MCP server goes (`gen.mcpDir`); `mcp/` next to the client folder when absent. Never
@@ -52,7 +52,7 @@ export interface GenerateClientInput {
   trustStore?: string
   /**
    * The files the last run generated and their hashes (`build.json`), so only those are replaced
-   * or removed (decision 0057); `null` or absent for a folder from an older version.
+   * or removed (decision 0058); `null` or absent for a folder from an older version.
    */
   previous?: ClientManifest | null
   /** Overwrite generated files edited by hand, and files at generated paths `gen` did not write. */
@@ -81,7 +81,7 @@ export interface GenerateClientResult {
  * relative import ends in `.js`, so the client works under `bundler` and `nodenext` resolution.
  * Everything is written into a staging folder and then copied into `client/`: only the files
  * generated (recorded with their hashes) are replaced or removed, hand-edited ones are kept and
- * reported unless `force`, and files the person put there are never touched (decision 0057).
+ * reported unless `force`, and files the person put there are never touched (decision 0058).
  */
 export async function generateClient(input: GenerateClientInput): Promise<GenerateClientResult> {
   const warnings: string[] = []
@@ -292,7 +292,7 @@ async function runHeyApi(document: OpenApiDocument, output: string, file: string
         {
           name: 'zod',
           // Zod Mini, the flavour the runtime uses: one copy of Zod in an app's bundle, and its
-          // functions tree-shake where the classic API's methods cannot (decision 0057). Pinned,
+          // functions tree-shake where the classic API's methods cannot (decision 0058). Pinned,
           // so the output does not depend on the zod version found in the user's project.
           compatibilityVersion: 'mini',
           // Sites send date-times with offsets (`-05:00`) and without a zone; Zod's default
@@ -366,9 +366,9 @@ function resolvable(specifier: string, dir: string): boolean {
  * own template, copied into every client, and is not written for `exactOptionalPropertyTypes`, so
  * an app that turns it on failed to compile the client. Only those files skip the check; the
  * generated SDK, types, schemas and our own modules are checked under the strictest flags
- * (decision 0057).
+ * (decision 0058).
  */
-const VENDORED_NOCHECK = '// @ts-nocheck: hey-api\'s bundled fetch client, not written for exactOptionalPropertyTypes (site-to-api decision 0057).\n'
+const VENDORED_NOCHECK = '// @ts-nocheck: hey-api\'s bundled fetch client, not written for exactOptionalPropertyTypes (site-to-api decision 0058).\n'
 
 async function markVendoredCore(hostDir: string): Promise<void> {
   for (const folder of ['client', 'core']) {

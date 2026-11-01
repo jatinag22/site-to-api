@@ -1,7 +1,7 @@
 import type { Analysis } from '../model'
 import { describe, expect, it } from 'vitest'
 import { API, twoHostAnalysis, WWW } from '../../test/two-hosts'
-import { selectOperations } from './hosts'
+import { selectOperations, unmatchedWarnings } from './hosts'
 
 /** The two-host fixture (a page host and its API) plus a Google sign-in host that served an API call. */
 function analysis(): Analysis {
@@ -55,5 +55,23 @@ describe('selectOperations', () => {
       entry.kind = 'api'
     })
     expect(selectOperations(only, {}).skippedHosts).toEqual([])
+  })
+
+  it('lists the captured hosts for an --include or --exclude pattern that matches none', () => {
+    const selected = selectOperations(analysis(), {
+      include: ['api.shop.tset', '*.google.com'],
+      exclude: ['nothing.test'],
+    })
+    expect(selected.unmatched).toEqual([
+      { flag: '--include', pattern: 'api.shop.tset' },
+      { flag: '--exclude', pattern: 'nothing.test' },
+    ])
+    expect(unmatchedWarnings(selected)).toEqual([
+      `--include "api.shop.tset" matches no captured host. Hosts with operations: ${[API, WWW, 'accounts.google.com'].sort().join(', ')}.`,
+      `--exclude "nothing.test" matches no captured host. Hosts with operations: ${[API, WWW, 'accounts.google.com'].sort().join(', ')}.`,
+    ])
+    expect(selectOperations(analysis(), {
+      include: [API],
+    }).unmatched).toEqual([])
   })
 })

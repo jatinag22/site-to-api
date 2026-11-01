@@ -297,7 +297,7 @@ describe('inferOperationSchemas', () => {
       'beverages',
       'snacks',
     ].map(category => `https://shop.test/api/x?category=${category}&q=${category}`)
-    // Two browsing sessions: one alone is not evidence of a closed set (decision 0057).
+    // Two browsing sessions: one alone is not evidence of a closed set (decision 0058).
     const result = infer(urls.map((url, index) => exchange({ url, sessionId: `s${index % 2}` })))
     expect(result.query.find(param => param.name === 'category')?.schema.enum).toEqual(['beverages', 'snacks'])
     expect(result.query.find(param => param.name === 'q')?.schema.enum).toBeUndefined()

@@ -20,7 +20,7 @@ const EntrySchema = z.object({
   path: z.string(),
   sha256: z.string(),
   /**
-   * The generated files the hash covers, relative to the folder (decision 0057), so the person's
+   * The generated files the hash covers, relative to the folder (decision 0058), so the person's
    * own files next to the client do not make it untrusted. Kept here, outside the project, never
    * read from `build.json`, which a repository controls. Absent: every file of the folder.
    */

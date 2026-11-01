@@ -26,7 +26,7 @@ export interface AgentGuideContext {
   examples: 'masked' | 'raw' | 'none'
   /** Whether the client matches this build (see {@link ClientState}). */
   client: ClientState
-  /** The client folder relative to the handoff folder (`client`, or `../client`; decision 0057). */
+  /** The client folder relative to the handoff folder (`client`, or `../client`; decision 0058). */
   clientPath?: string
   /**
    * Whether probe confirmed any host's needs. The gaps go by `probe` (did it run at all) instead,

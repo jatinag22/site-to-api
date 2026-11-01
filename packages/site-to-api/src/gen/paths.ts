@@ -1,5 +1,5 @@
 /**
- * The folders generated text names (decision 0057). The client can live apart from the handoff
+ * The folders generated text names (decision 0058). The client can live apart from the handoff
  * folder (`gen.clientDir`), so READMEs and messages print the real paths instead of a fixed
  * `client/`. All are relative with `/` separators, never absolute: the READMEs are committed.
  */

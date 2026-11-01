@@ -37,9 +37,11 @@ one) wants to call the site's operations as tools, which needs a server that kno
   regular file inside the real `source/`, checked again when it is read; at most 5,000 are
   listed.
 - **No code from the project at start.** `mcp` reads only flags, `SITE_TO_API_*` variables and
-  `site-to-api.config.json`. A `.ts`/`.js` config is never run (a one-line note says so), because
+  `site-to-api.config.json`. A `.ts`/`.js` config is never run, because
   a plugin starts `mcp` in every project the person opens; the plugin passes `./api-handoff`
-  explicitly.
+  explicitly. A one-line note says so only when the file, read as text, sets `outDir`,
+  `probe.maxRps` or `probe.timeoutMs` to something other than the value in effect (or to an
+  expression); a config that repeats the defaults gets no note on every start.
 - **Trust is local and lives outside the folder.** `call_operation` and the generated server run
   the code in `client/`, and a cloned repository can commit any code there, so a tampered
   `client/index.ts` would run with the person's whole environment: code in the process cannot be

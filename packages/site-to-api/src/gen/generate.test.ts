@@ -121,7 +121,7 @@ export async function run(baseUrl: string) {
   const page = await site.sdk.getPrices()
   const records: GetPricesRecord[] = typeof page.data === 'string' ? extractGetPrices(page.data) : []
   // Every call has a client of its own: another user's instance sends its own credentials and
-  // cookies, one without auth sends none, and the first instance keeps its own (decision 0057).
+  // cookies, one without auth sends none, and the first instance keeps its own (decision 0058).
   const otherJar = new CookieJar()
   const other = createSiteClient({ host: 'shop.example.com', jar: otherJar, baseUrl, retry: false, auth: () => 'Bearer t-2' })
   const otherMe = await other.sdk.getApiMe()
@@ -438,7 +438,7 @@ describe('generateClient', () => {
       // An offset, not `Z`: response validation must accept it.
       updatedAt: '2026-10-23T16:21:08.000-05:00',
     })
-    // Zod Mini's error class (decision 0057).
+    // Zod Mini's error class (decision 0058).
     expect(output.invalid).toBe('$ZodError')
     expect(output.cookies).toEqual(['session'])
     expect(output.records).toEqual([
@@ -473,7 +473,7 @@ describe('generateClient', () => {
   }, 60_000)
 })
 
-describe('generateClient into gen.clientDir (decision 0057)', () => {
+describe('generateClient into gen.clientDir (decision 0058)', () => {
   it('writes the client outside the handoff folder, keeps the person\'s files and names real paths', async () => {
     const dir = await workspace()
     try {
@@ -522,7 +522,7 @@ describe('generateClient into gen.clientDir (decision 0057)', () => {
   }, 60_000)
 })
 
-describe('generateClient with gen.mcpDir (decision 0057)', () => {
+describe('generateClient with gen.mcpDir (decision 0058)', () => {
   it('refuses an MCP folder inside the client folder', async () => {
     const dir = await workspace()
     try {

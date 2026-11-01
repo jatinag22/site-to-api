@@ -10,7 +10,7 @@ import type { CaptureEvent, SessionMeta } from '../model'
 import type { EventLimits } from './events'
 import type { CaptureTimeouts, Incomplete } from './save'
 import { existsSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createJiti } from 'jiti'
 import { chromium } from 'playwright'
@@ -19,7 +19,9 @@ import { SiteToApiError } from '../errors'
 import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { RequestBodyRecorder } from './bodies'
+import { fallbackWarning, launchChannel } from './channel'
 import { EventWriter } from './events'
+import { failureMessage } from './failure'
 import { harOmissionNote } from './har'
 import { instrumentSource, pageMessageToEvent } from './instrument'
 import { defaultSessionId, sanitizeSessionId } from './paths'
@@ -45,6 +47,16 @@ export interface RunCaptureOptions {
   eventLimits?: Partial<EventLimits>
   /** Overrides how long saving waits on the page and the browser; tests use short ones. */
   timeouts?: Partial<CaptureTimeouts>
+  /**
+   * A person is at the terminal: say how to use the browser and end the session. Off for runs
+   * from scripts or agents, which cannot press Ctrl+C. Default true.
+   */
+  instructions?: boolean
+  /**
+   * The channel is the default `chrome`, not one the person chose: if Chrome is not installed,
+   * capture with Playwright's bundled Chromium instead of failing. The CLI sets it.
+   */
+  channelFallback?: boolean
 }
 
 /** What {@link runCapture} produced. */
@@ -54,6 +66,10 @@ export interface CaptureResult {
   meta: SessionMeta
   /** Non-fatal problems: missing sourcemaps, dropped events, scripts that could not be saved. */
   warnings: string[]
+  /** Requests in the saved HAR; null when the HAR was not readable. */
+  requests: number | null
+  /** Events written to `events.jsonl`. */
+  events: number
 }
 
 /** Arguments a capture script's default export receives. */
@@ -67,12 +83,6 @@ type CaptureScript = (context: CaptureScriptContext) => Promise<void> | void
 const HAR_FILE = 'traffic.har'
 const EVENTS_FILE = 'events.jsonl'
 const META_FILE = 'meta.json'
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error
-    ? error.message
-    : String(error)
-}
 
 /** Creates the raw directory with a `.gitignore` of `*`, so real cookies can never be committed. */
 async function prepareRawDir(rawDir: string): Promise<void> {
@@ -91,7 +101,7 @@ async function loadCaptureScript(file: string): Promise<CaptureScript> {
     loaded = await jiti.import(file, { default: true })
   }
   catch (error) {
-    throw new SiteToApiError(`Could not load capture script ${file}: ${errorMessage(error)}`, { cause: error })
+    throw new SiteToApiError(`Could not load capture script ${file}: ${failureMessage(error)}`, { cause: error })
   }
   if (typeof loaded !== 'function')
     throw new SiteToApiError(`Capture script ${file} must export a default function: export default async ({ page, context, baseUrl }) => { ... }`)
@@ -102,9 +112,12 @@ async function loadCaptureScript(file: string): Promise<CaptureScript> {
 
 type BrowserConfig = ResolvedConfig['capture']['browser']
 
-/** Starts the browser; with `sandbox`, a failed start is retried once without it (decision 0047). */
-async function launchContext(browser: BrowserConfig, cwd: string, harPath: string, warn: (message: string) => void): Promise<BrowserContext> {
-  return await launchWithSandbox(sandbox => launchOnce(browser, cwd, harPath, sandbox), browser.sandbox, warn)
+/**
+ * Starts the browser; with `sandbox`, a failed start is retried once without it (decision 0047).
+ * Returns the context and the channel it runs (`null`: the bundled Chromium after a fallback).
+ */
+async function launchContext(browser: BrowserConfig, cwd: string, harPath: string, fallback: boolean, log: (message: string) => void, warn: (message: string) => void): Promise<{ launched: BrowserContext, channel: BrowserConfig['channel'] }> {
+  return await launchChannel(async channel => await launchWithSandbox(sandbox => launchOnce({ ...browser, channel }, cwd, harPath, sandbox), browser.sandbox, warn), browser.channel, fallback, log)
 }
 
 async function launchOnce(browser: BrowserConfig, cwd: string, harPath: string, sandbox: boolean): Promise<BrowserContext> {
@@ -122,30 +135,42 @@ async function launchOnce(browser: BrowserConfig, cwd: string, harPath: string, 
       ? {}
       : { userAgent: browser.userAgent }),
   }
-  try {
-    // An empty profile path makes Playwright use a fresh temporary profile.
-    return await chromium.launchPersistentContext(browser.userDataDir === null
-      ? ''
-      : path.resolve(cwd, browser.userDataDir), {
-      ...optional,
-      headless: browser.headless,
-      // Playwright passes --no-sandbox unless this is set; Chrome then shows a warning bar too.
-      chromiumSandbox: sandbox,
-      args: launchArgs(browser),
-      // SIGINT and SIGTERM end the session through createStopper, which closes the context and so
-      // flushes the HAR; Playwright closing the browser itself would lose it.
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      handleSIGHUP: false,
-      recordHar: { path: harPath, content: 'embed', mode: 'full' },
-    })
-  }
-  catch (error) {
-    const hint = browser.channel === null
-      ? 'Run `npx playwright install chromium` to download the bundled browser.'
-      : `Install ${browser.channel} or set capture.browser.channel to null to use Playwright's bundled Chromium.`
-    throw new SiteToApiError(`Could not start the browser: ${errorMessage(error)}\n${hint}`, { cause: error })
-  }
+  // An empty profile path makes Playwright use a fresh temporary profile.
+  return await chromium.launchPersistentContext(browser.userDataDir === null
+    ? ''
+    : path.resolve(cwd, browser.userDataDir), {
+    ...optional,
+    headless: browser.headless,
+    // Playwright passes --no-sandbox unless this is set; Chrome then shows a warning bar too.
+    chromiumSandbox: sandbox,
+    args: launchArgs(browser),
+    // SIGINT and SIGTERM end the session through createStopper, which closes the context and so
+    // flushes the HAR; Playwright closing the browser itself would lose it.
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+    recordHar: { path: harPath, content: 'embed', mode: 'full' },
+  })
+}
+
+/**
+ * Refuses an existing session, loads the capture script and creates the session folder. Every
+ * check that can fail comes before the folder exists, so a failed start leaves no empty session;
+ * `createdDir` says whether this run created it (and so may remove it).
+ */
+async function startSession(capture: ResolvedConfig['capture'], options: RunCaptureOptions, rawDir: string, sessionId: string): Promise<{ script: CaptureScript | null, createdDir: boolean }> {
+  const sessionDir = path.join(rawDir, sessionId)
+  await prepareRawDir(rawDir)
+  if (existsSync(path.join(sessionDir, META_FILE)))
+    throw new SiteToApiError(`Session ${sessionId} already exists in ${rawDir}. Pass a different session id or delete that folder.`)
+  const script = capture.script === null
+    ? null
+    : await loadCaptureScript(path.resolve(options.cwd, capture.script))
+  if (options.signal?.aborted)
+    throw new SiteToApiError('Capture was cancelled before the browser started.')
+  const createdDir = !existsSync(sessionDir)
+  await mkdir(sessionDir, { recursive: true })
+  return { script, createdDir }
 }
 
 /**
@@ -168,16 +193,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     : sanitizeSessionId(options.sessionId)
   const sessionDir = path.join(rawDir, sessionId)
 
-  await prepareRawDir(rawDir)
-  if (existsSync(path.join(sessionDir, META_FILE)))
-    throw new SiteToApiError(`Session ${sessionId} already exists in ${rawDir}. Pass a different session id or delete that folder.`)
-  await mkdir(sessionDir, { recursive: true })
-
-  const script = capture.script === null
-    ? null
-    : await loadCaptureScript(path.resolve(options.cwd, capture.script))
-  if (options.signal?.aborted)
-    throw new SiteToApiError('Capture was cancelled before the browser started.')
+  const { script, createdDir } = await startSession(capture, options, rawDir, sessionId)
 
   const warnings: string[] = []
   const startedAt = new Date().toISOString()
@@ -191,15 +207,18 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
   const stopper = createStopper(options.signal)
 
   let context: BrowserContext
+  let channel: BrowserConfig['channel']
   try {
-    context = await launchContext(browser, options.cwd, harPath, (message) => {
+    ;({ launched: context, channel } = await launchContext(browser, options.cwd, harPath, options.channelFallback === true, log, (message) => {
       warnings.push(message)
       log(message)
-    })
+    }))
   }
   catch (error) {
     stopper.dispose()
     await events.close()
+    if (createdDir)
+      await rm(sessionDir, { recursive: true, force: true })
     throw error
   }
 
@@ -256,7 +275,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       // Instrumentation or the first page failed before the run: save what exists anyway.
       incomplete = {
         reason: 'error',
-        error: errorMessage(error),
+        error: failureMessage(error),
       }
     }
     await runEnded(sessionEnd, script !== null)
@@ -293,19 +312,24 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       startedAt,
       completedAt: new Date().toISOString(),
       // `null` in the config means Playwright's bundled Chromium; say so instead of leaving it blank.
-      browser: { channel: browser.channel ?? 'bundled', headless: browser.headless, userAgent },
+      browser: { channel: channel ?? 'bundled', headless: browser.headless, userAgent },
       har: HAR_FILE,
       events: EVENTS_FILE,
       scripts: collector.scripts.toSorted((a, b) => a.url.localeCompare(b.url)),
+      ...warningsField(fallbackWarning(browser.channel, channel)),
       ...incompleteField(finalIncomplete),
     } satisfies SessionMeta)
     await writeJsonAtomic(path.join(sessionDir, META_FILE), meta)
     warnings.push(...incompleteWarning(sessionId, finalIncomplete))
-    const requests = saved.har === null
-      ? 'no readable HAR'
-      : `${saved.entries} requests`
-    log(`Saved session ${sessionId} to ${sessionDir} (${requests}, ${events.count} events, ${meta.scripts.length} scripts).`)
-    return { sessionDir, meta, warnings }
+    return {
+      sessionDir,
+      meta,
+      warnings,
+      requests: saved.har === null
+        ? null
+        : saved.entries,
+      events: events.count,
+    }
   }
   finally {
     stopper.dispose()
@@ -414,10 +438,18 @@ function sessionIncomplete(run: Incomplete | null, saved: Incomplete | null, exi
 function logFailure(incomplete: Incomplete | null, log: (message: string) => void): void {
   if (incomplete === null || incomplete.reason === 'interrupted')
     return
-  const what = incomplete.reason === 'script-failed'
+  // The error itself is in the incomplete-session warning at the end; it is said once.
+  log(`${incomplete.reason === 'script-failed'
     ? 'Capture script'
-    : 'Capture'
-  log(`${what} failed: ${incomplete.error ?? 'unknown error'}. Saving what was recorded.`)
+    : 'Capture'} failed; saving what was recorded.`)
+}
+
+function warningsField(warning: string | null): Pick<SessionMeta, 'warnings'> {
+  return warning === null
+    ? {}
+    : {
+        warnings: [warning],
+      }
 }
 
 function incompleteField(incomplete: Incomplete | null): Pick<SessionMeta, 'incomplete'> {
@@ -432,7 +464,7 @@ function incompleteWarning(sessionId: string, incomplete: Incomplete | null): st
   const detail = incomplete.error
     ? `: ${incomplete.error}`
     : ''
-  return [`Session ${sessionId} is incomplete (${incomplete.reason}${detail}). What was recorded is saved and \`build\` will use it with a warning; capture again for full coverage.`]
+  return [`Session ${sessionId} is incomplete (${incomplete.reason}${detail}). What was recorded is saved; \`build\` uses it with a warning. Capture again for full coverage.`]
 }
 
 function ignoredFramesWarning(ignored: Map<string, number>): string[] {
@@ -530,11 +562,13 @@ async function runInteractive(context: BrowserContext, page: Page, options: RunC
     if (options.url !== null) {
       // A failed first load (typo, offline) should not end the session: the person can retry.
       await page.goto(options.url, { waitUntil: 'commit' }).catch((error: unknown) => {
-        log(`Could not open ${options.url}: ${errorMessage(error)}`)
+        log(`Could not open ${options.url}: ${failureMessage(error)}`)
       })
     }
-    log('Browser open. Use the site the way a person would: log in, search, open the pages you want covered.')
-    log('When you are done, close the last tab or window, quit the browser, or press Ctrl+C here. The capture is saved on exit.')
+    if (options.instructions !== false) {
+      log('Browser open. Use the site the way a person would: log in, search, open the pages you want covered.')
+      log('When you are done, close the last tab or window, quit the browser, or press Ctrl+C here. The capture is saved on exit.')
+    }
     await done
     // Ending an interactive session is the normal way to finish it, not an interruption.
     return null
@@ -607,7 +641,7 @@ async function runScripted(script: CaptureScript, context: BrowserContext, page:
   catch (error) {
     return {
       reason: 'script-failed',
-      error: errorMessage(error),
+      error: failureMessage(error),
     }
   }
   finally {

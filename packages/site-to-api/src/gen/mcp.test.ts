@@ -134,7 +134,7 @@ describe('generateClient with mcp', () => {
     expect(typeCheck(files)).toBe('')
   }, 60_000)
 
-  it('lives outside the client folder and imports the client from there (decision 0057)', () => {
+  it('lives outside the client folder and imports the client from there (decision 0058)', () => {
     expect(read).toContain(`import { CookieJar, createSiteClient } from '../client/index.js'`)
     expect(read).toContain(`from '../client/shop_example_com/zod.gen.js'`)
     expect(readme).toContain('This folder is a program of its own: the app never imports it')
@@ -149,7 +149,7 @@ describe('generateClient with mcp', () => {
 
   it('documents how to run and register it, with credentials from the environment', () => {
     expect(readme).toContain('claude mcp add site-api -e SITE_API_COOKIE=')
-    // Real paths from the project root, the handoff folder's parent by default (decision 0057).
+    // Real paths from the project root, the handoff folder's parent by default (decision 0058).
     const handoff = `./${path.basename(dir)}`
     expect(readme).toContain(`-- site-to-api mcp ${handoff} --generated`)
     expect(readme).toContain(`"args": [\n        "mcp",\n        "${handoff}",\n        "--generated"\n      ]`)

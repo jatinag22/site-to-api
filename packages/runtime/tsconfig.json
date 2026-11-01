@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    // Apps may compile the runtime's source with the strictest flags (site-to-api decision 0057).
+    // Apps may compile the runtime's source with the strictest flags (site-to-api decision 0058).
     "exactOptionalPropertyTypes": true
   },
   "include": ["src", "test"]

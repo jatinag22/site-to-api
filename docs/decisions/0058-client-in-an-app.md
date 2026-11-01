@@ -1,4 +1,4 @@
-# 0057 The generated client lives inside the user's app
+# 0058 The generated client lives inside the user's app
 
 Status: Accepted (2026-11-01). Refines 0025 and 0043.
 

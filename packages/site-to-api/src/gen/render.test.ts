@@ -467,7 +467,7 @@ describe('renderReadme auth and usage', () => {
     expect(readme).toContain(`from './client/index.js'`)
   })
 
-  it('calls a read operation in the examples and says what to install, commit and deploy where (decision 0057)', () => {
+  it('calls a read operation in the examples and says what to install, commit and deploy where (decision 0058)', () => {
     const readme = renderReadme([
       host({
         operationIds: ['addItem', 'getList'],

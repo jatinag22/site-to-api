@@ -223,6 +223,26 @@ describe('checkOperations', () => {
     ])
   })
 
+  it('prints a progress line only for the requests it sent', async () => {
+    const lines: string[] = []
+    const site = fakeFetch({
+      '/api/items': json(200, { id: 1, name: 'a' }),
+    })
+    await checkOperations({
+      operations: [
+        op('create', 'POST', '/api/create'),
+        op('items'),
+      ],
+      config,
+      toolVersion: 'test',
+      fetch: site.fetch,
+      sleep: async () => {},
+      operationIds: ['create', 'items'],
+      log: line => lines.push(line),
+    })
+    expect(lines).toEqual(['check GET /api/items: 200'])
+  })
+
   it('skips bot-protection steps and operations seen in code only', async () => {
     const { report, calls } = await run([
       op('shield', 'GET', '/shield', { kind: 'bot-protection' }),

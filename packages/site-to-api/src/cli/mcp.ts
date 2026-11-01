@@ -5,11 +5,12 @@
  */
 import type { Command } from 'commander'
 import type { CommandRegistrar } from './program'
+import { readFile } from 'node:fs/promises'
 import process from 'node:process'
 import { InvalidArgumentError } from 'commander'
 import { resolve } from 'pathe'
-import { staticConfigValue } from '../config/static'
 import { serveGenerated, serveHandoff } from '../mcp'
+import { configLiteral, ignoredConfigChanges } from './ignored-config'
 import { resolveConfig } from './program'
 
 interface McpFlags {
@@ -51,16 +52,30 @@ export const mcpCommand: CommandRegistrar = (program) => {
       const { config, cwd, ignored, sources } = await resolveConfig(command, {
         probe: { maxRps: flags.maxRps },
       }, { code: false })
-      let outDir = config.outDir
-      if (ignored !== undefined && dir === undefined && sources.outDir === 'default') {
-        // The file is not run, but a plain `outDir: '…'` in it can be read (decision 0057).
-        const read = await staticConfigValue(ignored, 'outDir')
-        if (read !== null)
-          outDir = read
-        else
-          log(`Not running ${ignored} and found no plain \`outDir: '…'\` in it, so the handoff folder is ${outDir}. Pass the folder instead: \`site-to-api mcp <outDir>\`.`)
+      const text = ignored === undefined
+        ? ''
+        : await readFile(ignored, 'utf8').catch(() => '')
+      // The file is not run, but a plain `outDir: '…'` in it is read as text, with the same
+      // comment- and nesting-aware scan that finds ignored settings (decision 0058).
+      const written = ignored !== undefined && dir === undefined && sources.outDir === 'default'
+        ? configLiteral(text, 'outDir')
+        : null
+      const effective = written === null
+        ? config
+        : { ...config, outDir: written }
+      // Said only when the file sets something mcp uses differently: printed on every start of
+      // every project otherwise, it is noise people learn to skip.
+      const changes = ignored === undefined
+        ? []
+        : ignoredConfigChanges(text, effective)
+      if (ignored !== undefined && changes.length > 0) {
+        log(`Not running ${ignored}: \`mcp\` reads only flags, SITE_TO_API_* variables and site-to-api.config.json, so its ${changes.join(', ')} ${changes.length === 1
+          ? 'is'
+          : 'are'} not used (handoff folder: ${dir ?? effective.outDir}). Move ${changes.length === 1
+          ? 'it'
+          : 'them'} to site-to-api.config.json, or pass the folder as an argument.`)
       }
-      const handoffDir = resolve(cwd, dir ?? outDir)
+      const handoffDir = resolve(cwd, dir ?? effective.outDir)
       if (flags.generated) {
         await serveGenerated({ handoffDir, trustClient: flags.trustClient === true })
         return

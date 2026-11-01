@@ -10,7 +10,7 @@ import { ProbeReportSchema } from '../model/probe'
 export { alignProbeReport, applyProbeReport, browserOnlyCalls, pageHostRequirements, requirementsByOperation, testedByOperation } from './apply'
 export { createReplayer, probeOperations } from './probe'
 export type { LiveReplay, ProbeOptions } from './probe'
-export { minimizeLimit, notMinimized, probeFailures, summarizeProbe } from './summary'
+export { minimizeLimit, notMinimized, probeFailures, summarizeProbe, unreachableWarning } from './summary'
 
 const PROBE_FILE = 'probe.json'
 

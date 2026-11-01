@@ -1,5 +1,5 @@
 /**
- * Which files of the client folder `gen` wrote (decision 0057). The client used to be deleted and
+ * Which files of the client folder `gen` wrote (decision 0058). The client used to be deleted and
  * rewritten on every run, which removed files a person kept there and threw away hand edits. Now
  * `gen` writes into a staging folder and copies into the client folder only the files it
  * generates, recording each one's SHA-256 in `build.json`. On the next run a recorded file whose

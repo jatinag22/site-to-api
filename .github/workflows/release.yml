@@ -1,36 +1,226 @@
 name: Release
 
-# Publishing is disabled while the repository is private. To enable it, follow RELEASING.md:
-# create the npm packages once, link this workflow as a trusted publisher, then set
-# `PUBLISH_ENABLED` to `true` in the repository variables.
+# A release starts with `pnpm run release` (bumpp --pr, see RELEASING.md), which opens a pull
+# request from `release/v<version>` into `main`. Merging it runs this workflow on the merge commit.
+# A `v*` tag pushed by a maintainer runs it for that tag. Jobs, each with only the rights it needs:
+#   prepare  read-only: versions agree and match the branch or tag; the commit is on main
+#   pack     read-only: build and pack once; the tarballs are the artifact, their checksums
+#            the job's outputs
+#   ci       read-only: the whole CI workflow on the commit, smoke-testing that artifact
+#   release  contents: write, GitHub CLI only: tag the commit, create the GitHub release with
+#            GitHub's generated notes, attach the artifact
+#   publish  id-token: write, `npm` environment: publish the artifact when PUBLISH_ENABLED
+# Every job can be re-run: an existing tag on the same commit, an existing release and an
+# already-published version are left alone.
 
 on:
+  pull_request:
+    types: [closed]
   push:
     tags: ['v*']
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
+    name: Check the version and the commit
+    # Only merged release pull requests into main from this repository: a fork can name a branch
+    # `release/…` too, so the head repository is checked as well as the name.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Commit to release
+        id: commit
+        env:
+          SHA: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.merge_commit_sha }}
+        run: echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.commit.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The commit is on main
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$SHA is not on main; releases are cut from main only"
+            exit 1
+          fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Package versions agree (and match the tag)
+        id: version
+        env:
+          TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+        run: node scripts/check-release-version.mjs "$TAG"
+      - name: The release branch names the same version
+        if: github.event_name == 'pull_request'
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          EXPECTED: release/${{ steps.version.outputs.tag }}
+        run: |
+          if [ "$BRANCH" != "$EXPECTED" ]; then
+            echo "::error::branch $BRANCH does not match the package version (expected $EXPECTED)"
+            exit 1
+          fi
+
+  pack:
+    name: Build and pack
+    needs: prepare
+    runs-on: ubuntu-latest
+    outputs:
+      # The checksums travel as job outputs, not inside the artifact they protect.
+      sha256: ${{ steps.pack.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
-          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
-      - name: Create GitHub release with notes from commits
-        run: npx changelogithub@15.0.5
+      - name: Pack (prepack builds each package)
+        id: pack
+        run: |
+          mkdir tarballs
+          pnpm --filter site-to-api --filter @site-to-api/runtime pack --pack-destination tarballs
+          cd tarballs
+          sums=$(sha256sum -- *.tgz | paste -sd ';' -)
+          echo "$sums" | tr ';' '\n'
+          echo "sha256=$sums" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tarballs
+          path: tarballs/
+          if-no-files-found: error
+
+  ci:
+    name: CI on the release commit
+    needs: [prepare, pack]
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      tarballs-artifact: tarballs
+      tarballs-sha256: ${{ needs.pack.outputs.sha256 }}
+
+  release:
+    name: Tag and GitHub release
+    needs: [prepare, pack, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      SHA: ${{ needs.prepare.outputs.sha }}
+    # No checkout, no install, no third-party code: only the GitHub CLI runs with the write token.
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tarballs
+          path: tarballs
+      - name: Check the tarballs against the pack job's checksums
+        working-directory: tarballs
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish to npm (trusted publishing)
-        if: vars.PUBLISH_ENABLED == 'true'
-        run: pnpm -r publish --access public --no-git-checks --provenance
+          SUMS: ${{ needs.pack.outputs.sha256 }}
+        run: |
+          tr ';' '\n' <<< "$SUMS" > SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+          [ "$(find . -name '*.tgz' | wc -l)" -eq "$(wc -l < SHA256SUMS)" ] || { echo "::error::the artifact holds other files"; exit 1; }
+      - name: Tag the release commit
+        # Re-runs keep a tag that already names this commit and stop at one that names another.
+        # A tag pushed with GITHUB_TOKEN starts no workflow, so this cannot loop.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # `gh api` prints the error body on stdout for a 404, so test the exit status, not the output.
+          if ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" 2>/dev/null); then
+            existing=$(jq -r .object.sha <<< "$ref")
+            # An annotated tag (pushed by hand) names a tag object; follow it to the commit.
+            if [ "$(jq -r .object.type <<< "$ref")" = tag ]; then
+              existing=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$existing" --jq .object.sha)
+            fi
+            if [ "$existing" = "$SHA" ]; then
+              echo "$TAG already names $SHA"
+            else
+              echo "::error::$TAG already exists and names $existing, not $SHA"
+              exit 1
+            fi
+          else
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$SHA"
+          fi
+      - name: Create the GitHub release (notes generated by GitHub) and attach the tarballs
+        # Installable from the release while the repository is private (RELEASING.md).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "The release $TAG exists already; uploading the tarballs again"
+          else
+            flags=(--verify-tag --generate-notes --title "$TAG")
+            [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" tarballs/*.tgz tarballs/SHA256SUMS --clobber
+
+  publish:
+    name: Publish to npm
+    needs: [prepare, pack, release]
+    if: vars.PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    # Reviewers on this environment approve each publish (RELEASING.md, one-time setup).
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tarballs
+          path: tarballs
+      - name: Check the tarballs against the pack job's checksums
+        working-directory: tarballs
+        env:
+          SUMS: ${{ needs.pack.outputs.sha256 }}
+        run: |
+          tr ';' '\n' <<< "$SUMS" > SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+      - name: Publish (trusted publishing; no install, no build)
+        working-directory: tarballs
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DIST_TAG: ${{ needs.prepare.outputs.prerelease == 'true' && 'next' || 'latest' }}
+        run: |
+          # The runtime first: the CLI depends on it.
+          for name in site-to-api-runtime site-to-api; do
+            package=$([ "$name" = site-to-api-runtime ] && echo @site-to-api/runtime || echo site-to-api)
+            if npm view "$package@$VERSION" version > /dev/null 2>&1; then
+              echo "$package@$VERSION is published already"
+              continue
+            fi
+            npm publish "./$name-$VERSION.tgz" --access public --provenance --tag "$DIST_TAG"
+          done

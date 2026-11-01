@@ -70,7 +70,7 @@ describe('trust store', () => {
     expect(await untrustedReason(dir, store)).toContain(UNTRUSTED_CLIENT)
   })
 
-  it('covers only the generated files it was given, so the person\'s own files keep it trusted (decision 0057)', async () => {
+  it('covers only the generated files it was given, so the person\'s own files keep it trusted (decision 0058)', async () => {
     const { dir, store } = await client()
     const files = ['index.ts', 'mcp/server.ts']
     await trustClient(dir, store, files)
