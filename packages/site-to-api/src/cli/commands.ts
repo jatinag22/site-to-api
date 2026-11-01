@@ -18,7 +18,7 @@ import { SiteToApiError } from '../errors'
 import { generateClient } from '../gen'
 import { countSessions } from '../load'
 import { FlowsDocumentSchema } from '../model'
-import { probeOperations, summarizeProbe, writeProbeReport } from '../probe'
+import { probeOperations, summarizeProbe, unreachableWarning, writeProbeReport } from '../probe'
 import { VERSION } from '../version'
 import { checkCommands } from './check'
 import { warn } from './output'
@@ -250,6 +250,13 @@ const probeCommand: CommandRegistrar = (program) => {
       printWarnings(result.warnings)
       for (const line of summarizeProbe(report))
         consola.info(line)
+      const unreachable = unreachableWarning(report)
+      if (unreachable !== null) {
+        // Nothing was learnt: scripts and CI should not take this run as a probe.
+        warn(unreachable)
+        process.exitCode = 1
+        return
+      }
       consola.success(`Handoff folder updated with the probe results: ${outDir}`)
     })
 }

@@ -1,6 +1,6 @@
 import type { OperationProbe, ProbeReport } from '../model/probe'
 import { describe, expect, it } from 'vitest'
-import { minimizeLimit, notMinimized, probeFailures, probeResultKind, summarizeProbe } from './summary'
+import { minimizeLimit, notMinimized, probeFailures, probeResultKind, summarizeProbe, unreachableWarning } from './summary'
 
 function probe(operationId: string, init: Partial<OperationProbe>): OperationProbe {
   return {
@@ -153,5 +153,23 @@ describe('probe summary', () => {
       '- Skipped, bot-protection step: needs a real browser by design: 1 (postShield).',
       '- Skipped, seen in code only: it was never called during capture, so there is no request to replay: 1 (getRelated).',
     ])
+  })
+})
+
+describe('unreachableWarning', () => {
+  it('asks whether the site is up when every operation was unreachable', () => {
+    const down: ProbeReport = {
+      ...report,
+      operations: [
+        probe('getA', { replay: 'failed', host: 'localhost:4173' }),
+        probe('getB', { replay: 'failed', host: 'api.localhost:4173' }),
+      ],
+    }
+    expect(unreachableWarning(down)).toBe('Every probed operation was unreachable (api.localhost:4173, localhost:4173): is the site up? Start it or check the network from this machine, then run probe again. Nothing about the session was learnt.')
+  })
+
+  it('stays quiet when anything answered or nothing was probed', () => {
+    expect(unreachableWarning(report)).toBeNull()
+    expect(unreachableWarning({ ...report, operations: [] })).toBeNull()
   })
 })
