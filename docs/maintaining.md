@@ -5,9 +5,16 @@ How changes reach `main`. [CONTRIBUTING.md](../CONTRIBUTING.md) covers writing a
 
 ## What GitHub enforces
 
-- `main` is protected: a pull request can merge only when all three CI checks pass
-  (lint/typecheck/unit tests on Node 22 and 24, end-to-end) on a branch that is up to date with
-  `main`. This applies to administrators too.
+- `main` is protected: a pull request can merge only when all four required CI checks pass, on a
+  branch that is up to date with `main`. This applies to administrators too. The checks:
+  - Lint, typecheck, unit tests (Node 22);
+  - Lint, typecheck, unit tests (Node 24);
+  - End-to-end (capture → build → probe → gen);
+  - Pack and check the packages (manifests, publint, neutral runtime).
+
+  The package smoke test (install the packed tarballs and run the CLI) runs only when a file that
+  ends up in a package changed, so it is not a required check; read its result when it runs
+  ([RELEASING.md](../RELEASING.md#the-package-smoke-test)).
 - Squash merging is the only merge method. The squash commit defaults to the PR title and
   description, and the branch is deleted after the merge.
 

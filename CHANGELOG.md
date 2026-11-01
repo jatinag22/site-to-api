@@ -1,0 +1,111 @@
+# Changelog
+
+All user-visible changes to `site-to-api` and `@site-to-api/runtime`, which share one version.
+Versioning follows [docs/release-policy.md](docs/release-policy.md).
+
+## Unreleased
+
+The first release. Everything below is new.
+
+### Added
+
+#### Capture and import
+
+- **Record a browsing session in a real browser.** `capture` opens Google Chrome (Playwright's
+  bundled Chromium where Chrome is missing, with a note) and records requests, responses, call
+  stacks, crypto and encoding calls, typed input, WebSocket frames, server-sent events, scripts and
+  sourcemaps until you close the browser or press Ctrl+C. Every way of finishing saves the session.
+- **Scripted, minimized and logged-in captures.** `--script` drives the browser from a file;
+  `--minimized` keeps a normal browser out of the way; `--headless` runs without a window;
+  `--user-data-dir` reuses a browser profile, so a person logs in once and later captures run
+  logged in. A failing script still saves the session, marked incomplete.
+- **Import a HAR instead of capturing.** `import <file.har>` turns a HAR from browser DevTools or a
+  proxy into a raw session; `--delete-source` deletes the HAR afterwards, since it holds your
+  cookies. A HAR without cookies or `Authorization` headers gets a warning that names Chrome's
+  "Export HAR (with sensitive data)".
+
+#### Analysis and output
+
+- **A handoff folder for coding agents.** `build` writes OpenAPI 3.1 specs, AsyncAPI 3.0 specs for
+  channels, `flows.json` and `flows.md`, `API_MAP.md`, a short `AGENT.md` index with one file per
+  host, `GAPS.md`, and Markdown excerpts of the site's own code. The output is deterministic: the
+  same captures give byte-identical files, and no LLM runs inside the tool.
+- **Value origins.** Every request input is traced to where its value comes from: an earlier JSON
+  response, header, cookie or HTML selector, a value computed by the page's code (with the source
+  location and excerpt), typed input, a constant, or a cookie set by a page script.
+- **Protocols beyond plain JSON.** GraphQL operations (one per query or mutation, persisted queries
+  included), tRPC, Connect, and dispatcher endpoints (`action=`, `functionName=`, JSON-RPC
+  `method`) each become one operation per function. WebSocket and event-stream channels are
+  decoded for Socket.IO, SockJS, SignalR, STOMP, graphql-ws, Phoenix, Centrifugo, Firebase Realtime
+  Database, Primus, SmartFoxServer 2X, MessagePack and protobuf.
+- **Records from pages.** HTML tables, repeated elements and CSV or text responses get extraction
+  specs verified against the captured samples, and values such as CSRF tokens are read from HTML.
+- **Bot protection is recorded, never bypassed.** Akamai, AWS WAF, Cloudflare, DataDome, Imperva,
+  Kasada, PerimeterX and captchas are detected and documented as steps that need a real browser.
+- **Redaction and a leak check.** The handoff folder masks cookie values, tokens, tracking IDs and
+  personal data by default (`--examples masked`). When a secret the redactor learnt still appears
+  in the files a build wrote, the build fails and deletes those files. Raw captures stay in a
+  gitignored folder.
+
+#### Generated client and runtime
+
+- **A typed TypeScript client.** `build` (and `gen`, from the handoff folder alone) writes a hey-api
+  SDK with Zod Mini schemas, wired to `@site-to-api/runtime`. `createSiteClient` returns a client of
+  its own per call, so one per user never shares cookies or credentials; per-host factories in
+  `<host>/site.ts` keep bundles small. HTML and text responses get typed parsers.
+- **The client can live in your app.** `gen.clientDir` puts it in your source tree; `gen` replaces
+  only the files it generated, keeps your own files, and reports hand edits until `--force`.
+- **`@site-to-api/runtime`.** A cookie jar (RFC 6265, saved with `toJSON()`), `fetch` with retries
+  and `Retry-After`, cookie, token and browser-backed sessions, and HTML or text extraction. It
+  uses only web-standard APIs and runs on Node, Bun and edge workers; its `browser` build
+  bundles no HTML parser.
+
+#### Live checks
+
+- **`probe`** replays captured requests (1 per second, safe methods and GraphQL queries unless
+  `--unsafe-methods`) to find the cookies and headers plain HTTP needs, and folds the results into
+  the docs and the client.
+- **`check`** replays safe requests and reports API drift against the response schemas, with exit
+  codes for CI (0 no drift, 1 drift, 2 could not check) and `check.json` with field paths only.
+
+#### Agents
+
+- **MCP servers.** `site-to-api mcp` serves the handoff folder to an agent with read-only tools,
+  plus `call_operation` under probe's rules with `--allow-calls`. `--mcp` writes a per-site MCP
+  server with one tool per operation. Both run only a client this machine generated.
+- **Claude Code plugin and agent skill.** The repository is a plugin marketplace with capture,
+  build, probe and check commands and a skill for any agent that reads Agent Skills. The plugin
+  runs the globally installed CLI (`npm install -g site-to-api`), never a copy from the opened
+  project.
+
+#### Configuration
+
+- **Layered configuration.** `init` writes `site-to-api.config.ts`; values come from CLI flags,
+  `SITE_TO_API_*` variables, the config file and defaults, and `config` shows where each came from.
+  The options of the last `build` are recorded in `build.json` and reused by `probe` and `gen`.
+
+### Changed
+
+For clients generated by builds from source before this release; `gen` warns once when it
+rewrites one:
+
+- **Operations are called through the `sdk` that `createSiteClient` returns.** Each call creates
+  its own client; the host namespaces exported from `index.ts` throw when called without
+  `{ client }` instead of sending a request without your session.
+- **Schemas are Zod Mini.** Use `z.optional(schema)` instead of `schema.optional()`; `.parse` still
+  works.
+- **The MCP server moved from `client/mcp/` to `mcp/` next to the client.** Delete the old folder.
+- **Your own files in the client folder are kept,** and hand edits to generated files are reported
+  instead of overwritten.
+
+### Known issues
+
+- **Not decoded:** fetch streams that never end, zstd request bodies, binary Connect bodies,
+  gRPC-web, tRPC over WebSocket and encrypted SmartFoxServer packets.
+  [docs/limitations.md](docs/limitations.md) lists the other known limits.
+
+### Deliberate omissions
+
+- **No bot-protection bypass of any kind:** no stealth plugins, fingerprint patching, challenge
+  solving or sensor payload generation. Such features will not be added
+  ([docs/responsible-use.md](docs/responsible-use.md)).

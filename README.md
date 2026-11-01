@@ -4,158 +4,85 @@
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 ![Node 22.12+](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen.svg)
 
-**Browse a website once. Get everything a coding agent needs to build a wrapper for its internal
-API.**
+**Record one browsing session of a website. Get the OpenAPI specs, request flows and typed client
+a coding agent needs to build a wrapper for its internal API.**
 
-![A scripted login capture on the fixture shop, then build, then the session needs and the computed password from AGENT.md](docs/assets/demo.gif)
+![Demo: a scripted capture, the build, and the AGENT.md it writes](docs/assets/demo.gif)
 
-`site-to-api` records what a site's own pages do while you use it, then works out, without any
-LLM, the endpoints, their parameters and schemas, the order requests happen in, which value feeds
-which request, the browser code that computes values like encrypted passwords, and what a session
-needs. It writes all of that into one folder: OpenAPI 3.1 specs, a flows document, readable maps
-for an agent, excerpts of the site's own source code, and a typed TypeScript client with Zod
-validation.
+`site-to-api` is for developers who need to integrate with a website that has no public API,
+usually with a coding agent writing the code. Use it only on sites you are allowed to use; it never
+bypasses bot protection, captchas or access controls.
 
-> Status: pre-release (version `0.0.0` until the first release), not yet published to npm. See [Install](#install).
+It records what a site's own pages do while you use it (or reads a HAR you already have), then
+works out the endpoints, their schemas, the order requests happen in, which value feeds which
+request, and what a session needs. It writes one folder: OpenAPI 3.1 and AsyncAPI 3.0 specs,
+request flows, a short `AGENT.md` for your coding agent, excerpts of the site's own code, and a
+typed TypeScript client with Zod validation.
 
-```
-capture ──► build ──► probe (optional) ──► your coding agent builds the wrapper
- (browser)  (offline, deterministic)       reading api-handoff/AGENT.md
-```
-
-## Why
-
-Building an integration for a site without a public API usually means hours in DevTools: finding
-the endpoints, working out where the CSRF token comes from, discovering that the password is
-RSA-encrypted in the browser, noticing a bot-protection cookie. `site-to-api` does that legwork
-and hands the result to you or your coding agent in a form that is easy to act on:
-
-- **Deterministic.** No LLM inside the tool. The same capture gives byte-identical output, so
-  diffs are reviewable and nothing is guessed.
-- **Flows, not just endpoints.** Every input of every request is traced to its origin: an earlier
-  response (JSON field, header, cookie, or a selector in an HTML page), the browser's crypto, what
-  you typed, a constant, or a cookie set by a page script.
-- **Points at the code.** Sourcemaps are recovered and stack traces captured, so you get
-  "`body.password` is computed by `encryptPassword()` in `src/auth/crypto.ts:26` using
-  `crypto.subtle.encrypt` (RSA-OAEP), with the key from `GET /api/auth/key`", plus the excerpt.
-- **Secrets stay local.** Raw captures live in a gitignored folder. The handoff folder is redacted
-  by default: cookie values, tokens and personal data are replaced by a description of their
-  shape and origin.
-- **Honest about sessions.** Bot protection (Akamai, AWS WAF, Cloudflare, PerimeterX, DataDome,
-  Imperva, Kasada, captchas) is detected and recorded as "needs a real browser", never bypassed. `probe`
-  measures what actually works with plain HTTP.
-
-## Install
-
-Requires Node 22.12+ and pnpm (`corepack enable` turns it on if you have Node).
-
-```sh
-# from source until the first npm release
-git clone https://github.com/jatinag22/site-to-api
-cd site-to-api && pnpm install && pnpm run build
-pnpm --filter site-to-api exec playwright install chromium   # bundled browser: the fixture walkthrough uses it
-# put the CLI on your PATH (works in scripts too, unlike a shell alias)
-mkdir -p ~/.local/bin && ln -sf "$PWD/packages/site-to-api/bin/site-to-api.mjs" ~/.local/bin/site-to-api
-site-to-api --version
-```
-
-If `site-to-api` is not found, add `~/.local/bin` to your `PATH`.
+No LLM runs inside the tool: the same capture gives byte-identical output, and your coding agent
+does the reasoning on top of it. Each request input is traced to its origin, such as a CSRF token
+in a meta tag, an ID from an earlier response, or a password encrypted in the browser by
+`encryptPassword()` in the site's own `src/auth/crypto.ts`, recovered from its sourcemaps. Raw
+captures stay in a gitignored folder; the handoff folder is redacted, and a leak check fails the
+build if a secret learnt from the capture slipped through. Bot protection is recorded as "needs a
+real browser"; `probe` measures what plain HTTP needs, and `check` reports when the API drifts.
 
 ## Quick start
 
-```sh
-mkdir my-wrapper && cd my-wrapper
-site-to-api init                       # config file + gitignore for raw captures
-site-to-api capture https://example.com
-#   a Chrome window opens: use the site the way your wrapper will (log in, search, open pages),
-#   then finish by closing the last tab or window, quitting the browser, or pressing Ctrl+C here
-site-to-api capture https://example.com --session second-pass
-#   optional but recommended: a second pass over the same pages gives the tool two samples
-site-to-api build                      # writes api-handoff/
-site-to-api probe                      # optional: checks what works with plain HTTP (1 req/s, GET only)
-```
-
-Then point your coding agent at `api-handoff/AGENT.md`.
-
-### Already have a HAR file?
-
-Export one from your browser's DevTools (Network tab; in Chrome use "Export HAR (with sensitive
-data)", since the default export leaves out cookies and Authorization headers) or a proxy
-(Charles, mitmproxy) and import it instead of capturing:
+Requires Node 22.12 or later.
 
 ```sh
-site-to-api import session.har --delete-source   # a raw session, like a capture
-site-to-api build
+npm init -y                              # if this folder has no package.json yet
+npm install -D site-to-api               # the CLI, a development dependency
+npx site-to-api init                     # config file, and a gitignore for raw captures
+npx site-to-api capture https://example.com
+#   a browser window opens: use the site the way your wrapper will (log in, search, open pages),
+#   then close the window (or press Ctrl+C here) to finish
+npx site-to-api build                    # writes api-handoff/
+npx site-to-api probe                    # optional: what plain HTTP needs (read-only requests, 1 per second)
 ```
 
-A HAR holds the traffic only, so an imported session has no values computed in the browser, no
-typed inputs and, unless the HAR has them, no request stacks or scripts; `AGENT.md` says which.
-The HAR holds your cookies: `--delete-source` deletes it once it is imported.
+Then give your coding agent a task such as:
 
-### Try it on the fixture shop first
+> Read `api-handoff/AGENT.md` and write `src/shop.ts`: a function that logs in and returns my
+> orders, using the generated client in `api-handoff/client/`.
 
-The repository includes Pinewood Market, a fictional shop the end-to-end tests run against. It
-has a login with a browser-encrypted password, a CSRF token, toy bot protection, HTML tables and a
-CSV export. From the repository root, in two terminals:
+Commit `api-handoff/`. Never commit `.site-to-api/`: it holds the raw captures, with your real
+cookies and tokens.
+
+`capture` opens Google Chrome. Where Chrome is not installed it uses Playwright's bundled
+Chromium instead and says so; download that once with `npx playwright install chromium`. Pass
+`--channel chrome` (or `msedge`, or `bundled`) to require one browser. A second capture of the same
+pages (`--session second-pass`) gives the build two samples to compare.
+
+The generated client runs in your app with two runtime dependencies:
 
 ```sh
-# terminal 1: the shop on http://localhost:4173
-pnpm --filter @site-to-api/e2e run fixture
+npm install @site-to-api/runtime zod
 ```
-
-```sh
-# terminal 2: three scripted browsing sessions, then build
-REPO=~/site-to-api               # the folder you cloned into
-mkdir -p /tmp/pinewood && cd /tmp/pinewood
-site-to-api init
-for s in browse browse-again login; do
-  site-to-api capture http://localhost:4173 --headless --channel bundled --session $s \
-    --script "$REPO/e2e/scenarios/$s.ts"
-done
-site-to-api build      # 27 operations, 20 flows → ./api-handoff
-site-to-api probe      # optional: checks the session needs against the live shop
-```
-
-`--script` drives the browser from a file so the run is repeatable; drop it (and `--headless`) to
-browse by hand. Sites with bot protection usually block headless browsers: for those, use
-`--channel chrome --minimized` instead, a normal browser whose windows stay minimized. The shop's test account is `demo` / `demo-password` (fictional, local only).
 
 ## What you get
 
 ```
 api-handoff/
-  AGENT.md            start here: a short index of the hosts, key flows, computed values, top gaps
-  hosts/<host>.md     everything about one host: session needs, cookies, operations, channels, gaps
-  GAPS.md             gaps of the whole build: probe state, build warnings (in full)
-  API_MAP.md          one row per operation: inputs and their origins, response, client symbols
-  flows.json          source of truth for flows (schema: flows.schema.json)
-  flows.md            the same, readable
-  specs/<host>.yaml   OpenAPI 3.1 with x-site-to-api-* extensions
-  source/             excerpts of the site's own code referenced above (Markdown)
-  client/             typed client: hey-api SDK + Zod schemas, wired to @site-to-api/runtime
-  probe.json          after `probe`: what each request needs (names only)
-  check.json          after `check`: how the live API differs from the specs (field paths only)
-  build.json          the options of the last build, which `probe` reuses
+  AGENT.md            start here: hosts, what each session needs, key flows, top gaps
+  hosts/<host>.md     everything about one host: cookies, bot protection, operations, channels
+  API_MAP.md          one row per operation: inputs and where each value comes from
+  flows.json          request flows and value origins (flows.md is the readable copy)
+  specs/<host>.yaml   OpenAPI 3.1; <host>.asyncapi.yaml for WebSocket and event-stream channels
+  source/             excerpts of the site's own code that the docs point to
+  client/             typed client (hey-api SDK + Zod), unless gen.clientDir puts it in your app
+  mcp/                only with --mcp: an MCP server with one tool per operation
+  GAPS.md, build.json, probe.json, check.json
 ```
 
-`AGENT.md` stays short on any site (under about 25 KB): one line per host, the login flow first,
-grouped gaps, and links to the details. An excerpt generated from the fixture shop walkthrough
-above:
+`AGENT.md` stays short on any site (under about 25 KB). An excerpt from the fixture shop below,
+whose toy bot protection imitates Akamai's cookie names, so the build reports it as Akamai:
 
 ```markdown
-## Hosts
-
-### The site's own hosts
-
 - `localhost:4173`: a real browser sets up the session (confirmed by probe); bot protection:
   Akamai (cookie \_abck; cookie bm\_sz; request body matches sensor\_data); 18 API operations
   (1 seen in code only), 8 pages, 1 bot-protection step, 3 channels, 19 gaps.
-  [`hosts/localhost_4173.md`](hosts/localhost_4173.md)
-
-## Key flows
-
-- [Sign in](flows.md#sign-in-2) (submit): `getApiAuthKey` → `postApiAuthLogin` → `getAccount` →
-  `postShieldCollect` → `getApiMe`
 
 ## Values computed in the browser
 
@@ -164,378 +91,16 @@ above:
   `password` field.
 ```
 
-And from `hosts/localhost_4173.md`, the session needs of that host:
+Every file is specified in [docs/output-format.md](docs/output-format.md).
 
-```markdown
-- Needs: a real browser is needed to establish the session; reuse its cookies for plain HTTP
-  calls (confirmed by probe).
-- Bot protection: Akamai (cookie \_abck; cookie bm\_sz; request body matches sensor\_data). Do
-  not try to reproduce it; let a real browser run it (`browserSession` in `@site-to-api/runtime`).
-- Cookie `_abck`: set by `postShieldCollect`. Needed by 5 requests (confirmed by probe).
-- Cookie `bm_sz`: set by `getRoot`. Seen in capture, but none of the 13 requests probe tested
-  needed it.
-- Cookie `pm_session`: set by `postApiAuthLogin`. Seen in capture, but none of the 13 requests
-  probe tested needed it.
-- Cookie `pm_store`: set by a script in the page; the wrapper can set its value itself. Seen in
-  capture, but none of the 13 requests probe tested needed it.
-```
+What `build` understands beyond plain JSON over HTTP:
 
-The full format is specified in [docs/output-format.md](docs/output-format.md).
-
-## Commands
-
-| Command | What it does |
+| Kind | Supported |
 |---|---|
-| `init` | Writes `site-to-api.config.ts` and gitignores `.site-to-api/` |
-| `capture [url]` | Opens a browser and records everything until you finish: close the last tab or window, quit the browser, or press Ctrl+C (all save a complete session). `--script <file>` drives it from code instead (a failing script or Ctrl+C still saves the session, marked incomplete, and exits 1); `--headless`; `--channel chrome\|msedge\|bundled` (default chrome, falling back to the bundled Chromium with a note when Chrome is not installed and no channel was chosen); `--user-data-dir` keeps logins |
-| `import <file.har>` | Turns a HAR exported from browser DevTools or a proxy into a raw session that `build`, `probe` and `gen` use like a captured one. `--session <id>`; `--delete-source` deletes the HAR afterwards (it holds your cookies) |
-| `build` | Analyses every capture and writes the handoff folder, including the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client`, `--mcp [read\|write]` |
-| `probe` | Replays captured requests against the live site, rate limited, safe methods (and GraphQL queries) only unless `--unsafe-methods`; works out the needed cookies and headers for up to `--minimize-per-host <n>` operations per host (default 5); rebuilds the handoff folder with the flags of the last `build` (from `build.json`) and prints a summary |
-| `check` | Replays safe requests (same runner and limits as `probe`, never unsafe methods) and compares each live answer with the operation's response schema: status changes, added fields, missing required fields, type changes. Writes `check.json`, prints a summary. Exit code 0 no drift, 1 drift, 2 error or nothing could be checked. `--include/--exclude <host>`, `--operations <ids>`, `--json` |
-| `gen` | Regenerates only `client/` from an existing handoff folder (no raw captures needed) and updates the client lines of `AGENT.md` and `API_MAP.md`. `--mcp [read\|write]` also writes `client/mcp/`, an MCP server for the site |
-| `mcp [dir]` | Serves the handoff folder to an AI agent as an MCP server over stdio (read-only tools; see [Use with AI agents](#use-with-ai-agents-mcp)). `--allow-calls` adds `call_operation`, `--unsafe-methods`, `--max-rps <n>`; `--generated` serves `client/mcp/` instead; `--trust-client` runs a `client/` this machine did not generate |
-| `config` | Prints the resolved config and where each value came from; `--json` for machine-readable output |
-
-Options every command accepts: `-c, --config <file>`, `--cwd <dir>`, `--raw-dir <dir>`,
-`--out-dir <dir>`. `probe` also takes `--max-rps <n>`, `--unsafe-methods`,
-`--minimize-per-host <n>` and the output flags of `build` (`--include`, `--exclude`,
-`--examples`, `--no-client`) to override the ones it reuses. `site-to-api <command> --help`
-lists them.
-
-## Configuration
-
-Every key, its default, its environment variable and what it does: [docs/configuration.md](docs/configuration.md)
-(generated from the config schema).
-
-```ts
-// site-to-api.config.ts
-import { defineConfig } from 'site-to-api'
-
-export default defineConfig({
-  rawDir: '.site-to-api/raw', // real cookies and tokens live here; gitignored
-  outDir: 'api-handoff',
-  hosts: {
-    include: ['*.example.com'],
-    exclude: []
-  },
-  capture: {
-    // Chrome by default (Playwright's Chromium where Chrome is missing); null: Playwright's Chromium
-    browser: { channel: 'chrome', headless: false }
-  },
-  redact: { examples: 'masked' }, // 'raw' copies real values into the handoff folder
-  probe: { maxRps: 1, unsafeMethods: false, minimizePerHost: 5 },
-  // The client goes to <outDir>/client unless clientDir puts it in your app's source tree.
-  gen: { client: true, clientDir: null, mcp: 'off' },
-})
-```
-
-`build` and `gen` replace only the client files they generated (recorded with their hashes in
-`build.json`): your own files in the client folder are left alone, and a generated file you edited
-is kept and reported until `--force` overwrites it.
-
-Precedence: CLI flags > `SITE_TO_API_*` environment variables > config file > defaults. Unknown
-keys are errors, and `site-to-api config` shows which source set each value.
-
-Environment variables name a config key in upper snake case, with `__` between nesting levels:
-`rawDir` → `SITE_TO_API_RAW_DIR`, `redact.examples` → `SITE_TO_API_REDACT__EXAMPLES`,
-`probe.maxRps` → `SITE_TO_API_PROBE__MAX_RPS`. Values are read as JSON when they parse
-(`true`, `0.5`, `["*.example.com"]`), otherwise as text.
-
-The flags and variables a `build` ran with (`--examples`, `--include`, `--exclude`,
-`--no-client`, `--mcp`) are recorded in `build.json` and reused by `probe`, so probing does not undo them; flags and variables given to `probe` win.
-
-## Detecting API drift with `check`
-
-Sites change undocumented APIs without notice. `site-to-api check` replays the safe operations of
-your capture and reports where the live answers no longer match the specs:
-
-```sh
-site-to-api check                       # every safe operation
-site-to-api check --include 'api.*'     # only some hosts
-site-to-api check --operations getApiProducts,getApiCategories
-site-to-api check --json                # check.json on stdout, for scripts
-```
-
-It checks the site's own hosts only; a third-party host (a sign-in or ad service) is checked only
-if you name it with `--include`, and the summary lists the ones it left out. It sends the same
-polite requests as `probe` (1 request per second, safe methods and GraphQL
-queries only, the tool's own user agent, bot-protection steps skipped) and has no
-`--unsafe-methods`. Per operation it reports `ok`, a status change, fields **added**, required
-fields **removed**, **type changes**, or that the site was **blocked** or **unreachable**. The
-exit code is 0 for no drift, 1 for drift and 2 for an error (including a usage error) or when something selected could not be checked, so
-it fits in CI or cron. `check.json` in the handoff folder lists field paths only, never values
-([format](docs/output-format.md#checkjson)).
-
-`check` needs the raw captures (it replays the captured requests and session), which are never
-committed. For a weekly run, keep them in a **private** repository (they hold cookies) and check
-them out next to your project:
-
-```yaml
-# .github/workflows/api-drift.yml
-name: API drift
-on:
-  schedule:
-    - cron: '0 6 * * 1' # Mondays 06:00 UTC
-  workflow_dispatch:
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: your-name/site-captures # private: contains cookies
-          token: ${{ secrets.CAPTURES_TOKEN }}
-          path: .site-to-api/raw
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with: {node-version: 22}
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec site-to-api build --no-client
-      - run: pnpm exec site-to-api check
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with: {name: check, path: api-handoff/check.json}
-```
-
-A failing run means exit code 1 (drift) or 2 (the check could not run, for example an expired
-session or a site that blocks plain HTTP). Pin the actions to commit SHAs as in this repository's
-own workflows.
-
-## Using the generated client
-
-### Project setup
-
-The generated client is TypeScript that imports `@site-to-api/runtime` and `zod` 4. Your project
-is the folder that holds `api-handoff/` (the one you ran `init` in; `/tmp/pinewood` in the
-walkthrough). Until the first npm release, install the runtime from your clone (`/path/to/site-to-api`
-below):
-
-```sh
-npm init -y && npm pkg set type=module          # ES modules
-npm install /path/to/site-to-api/packages/runtime zod@4
-npm install playwright tsx typescript            # playwright only for browser sessions
-npm install -D @types/node /path/to/site-to-api/packages/site-to-api   # Node types; config types
-```
-
-A `tsconfig.json` that type-checks the whole folder, `api-handoff/` included:
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2023",
-    "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "types": ["node"],
-    "strict": true,
-    "noEmit": true
-  }
-}
-```
-
-`"module": "esnext"` with `"moduleResolution": "bundler"` works too. Run files with `tsx`, or drop
-`noEmit`, compile with `tsc` and run with `node`. Code excerpts in `source/` are Markdown files
-(`crypto.L18-28.ts.md`) with the code in a fence: they are fragments of the site's code, for
-reading, so the compiler never sees them.
-
-### Example: log in and list orders on the fixture shop
-
-This is the complete wrapper an agent would write from the handoff folder of the walkthrough
-above. The shop needs a browser session (bot protection), a CSRF token from the login page, a
-password encrypted in the browser, and a bearer token. In a fresh project with the setup above it
-type-checks under `strict` and prints `200 3 orders`:
-
-```ts
-import { chromium } from 'playwright'
-import { browserSession, CookieJar, createSiteClient, extractCsrfTokenFromGetLogin } from './api-handoff/client/index.js'
-
-// Ported from the site's own code: api-handoff/source/src/auth/crypto.L18-28.ts.md
-async function encryptPassword(password: string, publicKeySpki: string): Promise<string> {
-  const spki = Uint8Array.from(atob(publicKeySpki), char => char.charCodeAt(0))
-  const key = await crypto.subtle.importKey('spki', spki, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt'])
-  const ciphertext = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, key, new TextEncoder().encode(password))
-  return btoa(String.fromCharCode(...new Uint8Array(ciphertext)))
-}
-
-const jar = new CookieJar()
-// The shop sits behind bot protection: a real browser loads it once, its cookies are reused.
-const session = browserSession({
-  jar,
-  bootstrap: async () => {
-    const browser = await chromium.launch()
-    try {
-      const page = await browser.newPage()
-      await page.goto('http://localhost:4173/', { waitUntil: 'networkidle' })
-      return await page.context().cookies()
-    }
-    finally {
-      await browser.close()
-    }
-  },
-})
-
-let token: string | undefined
-const { sdk } = createSiteClient({
-  host: 'localhost:4173',
-  session,
-  jar,
-  auth: () => token && `Bearer ${token}`, // sent to operations the spec marks as secured
-})
-
-const loginPage = await sdk.getLogin({})
-const csrf = extractCsrfTokenFromGetLogin(String(loginPage.data))
-const { data: key } = await sdk.getApiAuthKey({})
-if (!key?.publicKey)
-  throw new Error('the login key endpoint returned no public key')
-const login = await sdk.postApiAuthLogin({
-  headers: { 'x-csrf-token': csrf ?? '' },
-  body: { username: 'demo', password: await encryptPassword('demo-password', key.publicKey) },
-})
-token = login.data?.token
-
-const orders = await sdk.getApiOrders({})
-console.log(orders.response?.status, orders.data?.orders?.length, 'orders')
-```
-
-GraphQL operations get a function each, named after the operation, that sends the operation name,
-the persisted-query hash or the document itself; you pass only the variables, typed from the
-capture: `await sdk.queryArtistOverview({ variables: { uri } })`. GET operations encode
-`variables` as JSON in the query string, as the site does.
-
-Endpoints where one parameter picks the function (`?functionName=getSymbolData`,
-`admin-ajax.php` with `action=`, JSON-RPC `method`) get one function per captured value, which
-sends that parameter itself: `await sdk.getSymbolData({ query: { symbol } })`.
-
-Each `createSiteClient` call creates a client of its own, so one instance per user or account
-never shares cookies or credentials with another. Hosts that work with plain HTTP need no browser: leave out `session`, or
-use `tokenSession`. `api-handoff/client/README.md` says what each host needs, which operations are
-secured and how to send `auth`.
-
-### Upgrading a generated client
-
-Clients generated before this version change in ways existing code notices; `gen` warns once
-when it rewrites one:
-
-- Each `createSiteClient` call creates its own client. Call operations through the `sdk` it
-  returns: the host namespaces exported from `index.ts` no longer share that configuration and
-  throw when called without `{ client }`, instead of silently sending requests without your
-  session.
-- Schemas are Zod Mini (`z.optional(schema)` instead of `schema.optional()`; `.parse` still works).
-- The MCP server moved from `client/mcp/` to `mcp/` next to the client.
-- Files you add to the client folder are kept, and hand edits to generated files are reported
-  (`--force` overwrites them).
-
-## Use with AI agents (MCP)
-
-Two MCP servers, both over stdio (decision 0043).
-
-**Explore the handoff folder.** `site-to-api mcp` lets an agent look up one operation at a time
-instead of reading every spec. It reads only the redacted handoff files, never the raw captures.
-It also starts before the folder exists; its tools then say to run `capture` and `build`, and pick
-the folder up once it is written. It runs no code from the project: a `site-to-api.config.ts` is
-not run, only a plain `outDir: '…'` string in it is read (otherwise pass the folder, or use
-`site-to-api.config.json`). The client folder comes from `build.json`.
-
-```sh
-claude mcp add site-api -- npx --no-install site-to-api mcp ./api-handoff
-```
-
-Tools: `list_hosts` (hosts, session needs, flows), `search_operations` (by words, host, kind),
-`get_operation` (spec slice, each input and where its value comes from, session needs, the client
-call), `get_flow`, `get_examples` (masked examples only; refused for `--examples raw` folders) and
-`get_source` (excerpts in `source/`). Other clients take the same command in their MCP settings
-(`"command": "npx", "args": ["--no-install", "site-to-api", "mcp", "./api-handoff"]`, run in the
-project folder; `npx` finds the project's own `site-to-api`, which is usually a dev dependency and
-not on `PATH`).
-
-`--allow-calls` adds `call_operation`, which sends a request through the generated client with
-probe's rules: safe methods and GraphQL queries only, never bot-protection steps or state-changing
-paths, rate limited (`--max-rps`, default 1 per second), no retries; `--unsafe-methods` allows
-writes. Credentials come only from environment variables you set:
-
-```sh
-claude mcp add site-api -e SITE_API_COOKIE='session=…' -e SITE_API_AUTH='Bearer …' \
-  -- npx --no-install site-to-api mcp ./api-handoff --allow-calls
-```
-
-With several hosts, use `SITE_API_COOKIE_<HOST>` / `SITE_API_AUTH_<HOST>` (the host's folder
-under `client/` in upper case, e.g. `SITE_API_COOKIE_SHOP_EXAMPLE_COM`); the plain names are then
-ignored, so a cookie is never sent to the wrong site. A redirect to another origin is refused, so
-credentials stay on the site.
-
-**Only clients you generated run.** `call_operation` and the per-site server execute the code in
-`client/`, and a cloned repository can put any code there, which would run with your whole
-environment. So `gen` (and `build`) records a hash of `client/` in
-`~/.config/site-to-api/trusted-clients/` (or under `$XDG_CONFIG_HOME`), outside every
-project, and both refuse a client whose files do not match: "this client wasn't generated on this
-machine. If you don't trust this project, review or delete its `site-to-api.config.ts`/`.js`
-first: `gen` runs it. Then run `site-to-api gen --config site-to-api.config.json` (or with no
-config), or pass `--trust-client` if you reviewed `client/`". The hash covers the files `gen`
-wrote. If you use the MCP server or `call_operation`, keep your own code and JSON outside the
-client and MCP folders: an unlisted `.js`, `.ts` or `.json` file, a `package.json`, a
-`tsconfig*.json` or a `node_modules` there, or any `package.json` or `node_modules` between those
-folders and the project root (the config file's folder, or the working directory), could be
-loaded instead, so the client is not run. In a monorepo, the workspace package that holds the
-client keeps its own `package.json` and `node_modules`. Non-code files such as notes are fine.
-This check is the protection; the per-host variable names are not, since code in the process can
-read any of them.
-
-**A server for one site.** `site-to-api gen --mcp` (or `build --mcp`, or `gen: { mcp: 'read' }` in
-the config) writes `api-handoff/mcp/server.ts`: one tool per operation, input schemas from
-the generated Zod schemas, calls through the typed client. `read` (the default) exposes only
-operations that read; `--mcp write` adds the ones that change data. Bot-protection steps never get
-a tool. Run it through the CLI, which checks the client first and brings the SDK, zod and the
-runtime itself:
-
-```sh
-claude mcp add pinewood -e SITE_API_COOKIE='…' -- npx --no-install site-to-api mcp ./api-handoff --generated
-```
-
-Running `npx tsx ./api-handoff/mcp/server.ts` directly works too, but skips that check.
-
-The server sits next to the client, not inside it, and the app never imports it. A type check that
-includes its folder needs `@modelcontextprotocol/server` installed; otherwise exclude the folder
-from `tsconfig.json`.
-
-`api-handoff/mcp/README.md` lists its settings and a JSON configuration for other clients.
-
-### Claude Code plugin and agent skill
-
-The repository is also a Claude Code plugin marketplace. The plugin adds the `site-to-api` MCP
-server above (on the project's `api-handoff/`), the commands `/site-to-api:capture` (a normal
-Chrome window; minimized only with `--script`), `/site-to-api:build`, `/site-to-api:probe` and `/site-to-api:check` (drift against the specs), and a skill
-that walks an agent through capture, reading the handoff folder, writing the wrapper and the
-safety rules. The commands pre-approve nothing: they run the project's config file, which can be
-code, so Claude Code asks before each run. The plugin's MCP server runs `site-to-api` from your
-`PATH`, so it needs a global install (`npm install -g site-to-api`); it never runs a copy from the
-opened project, because Claude Code starts the server in every project, a cloned one included.
-Nothing is published yet, so install the plugin from a clone:
-
-```sh
-claude plugin marketplace add ./site-to-api      # the path of your clone
-claude plugin install site-to-api@site-to-api
-```
-
-Inside Claude Code, `/plugin marketplace add ./site-to-api` and `/plugin install
-site-to-api@site-to-api` do the same. For other agents (Cursor, Codex, anything that reads Agent
-Skills), the same skill is a plain `skills/site-to-api/SKILL.md`; copy that folder into the
-agent's skills directory, or `npx skills add <path-or-repo> -s site-to-api`.
-
-## How it compares
-
-Based on each project's README as of October 2026.
-
-| | site-to-api | reverse-api-engineer | Spectral | Integuru | mitmproxy2swagger |
-|---|---|---|---|---|---|
-| Analysis | deterministic | LLM | LLM | LLM | deterministic |
-| Request dependencies | yes | not documented | auth flow | yes | no |
-| Sourcemaps and code references | yes | not documented | not documented | not documented | no |
-| Output | specs, flows, docs, TS client | client code, many languages | MCP tools, OpenAPI | Python code | OpenAPI |
-| Secrets redacted by default | yes | not documented | not documented | not documented | not documented |
-| GraphQL, one operation per query or mutation | yes | not documented | not documented | not documented | no |
-| Dispatcher endpoints (`action=`, JSON-RPC), one operation per function | yes | not documented | not documented | not documented | no |
+| APIs | GraphQL (one operation per query or mutation, persisted queries included), tRPC, Connect, dispatcher endpoints where one parameter picks the function (`action=`, `functionName=`, JSON-RPC `method`) |
+| Real-time | WebSocket and server-sent event channels; Socket.IO, SockJS, SignalR, STOMP, graphql-ws, Phoenix, Centrifugo, Firebase Realtime Database, Primus and SmartFoxServer 2X framing; MessagePack and protobuf binary frames |
+| Pages | Records in HTML pages (table rows, repeated elements) and CSV or text responses, as typed parsers; values such as CSRF tokens read from HTML |
+| Bot protection | Akamai, AWS WAF, Cloudflare (Turnstile included), DataDome, Imperva, Kasada, PerimeterX and captchas, recorded as browser-only steps |
 
 ## Responsible use
 
@@ -544,38 +109,171 @@ and prefer an official API when one exists. The tool never defeats bot protectio
 access controls, and never hides that the browser is automated. See
 [docs/responsible-use.md](docs/responsible-use.md).
 
+## Try it on the fixture shop first
+
+The repository includes Pinewood Market, a fictional shop the end-to-end tests run against: a login
+with a browser-encrypted password, a CSRF token, toy bot protection, GraphQL, HTML tables, a CSV
+export and WebSockets. Running it needs a clone and pnpm (`corepack enable`):
+
+```sh
+# terminal 1: the shop on http://localhost:4173
+git clone https://github.com/jatinag22/site-to-api ~/site-to-api
+cd ~/site-to-api && pnpm install
+pnpm --filter @site-to-api/e2e run fixture
+```
+
+```sh
+# terminal 2: three scripted sessions, then build
+mkdir ~/pinewood && cd ~/pinewood
+npm init -y && npm install -D site-to-api
+npx playwright install chromium        # the scripted runs use Playwright's Chromium
+npx site-to-api init
+for s in browse browse-again login; do
+  npx site-to-api capture http://localhost:4173 --headless --channel bundled --session $s \
+    --script ~/site-to-api/e2e/scenarios/$s.ts
+done
+npx site-to-api build                  # 27 operations, 20 flows → ./api-handoff
+npx site-to-api probe                  # optional: checks the session needs against the shop
+```
+
+The 27 operations are the 18 API operations, 8 pages and 1 bot-protection step that `AGENT.md`
+lists for the shop. The shop's test account is `demo` / `demo-password` (fictional, local only).
+
+## Capture
+
+`capture` records everything the pages do until you close the last tab or window, quit the
+browser, or press Ctrl+C; each saves a complete session to `.site-to-api/raw/<session>/`.
+
+| Situation | Command |
+|---|---|
+| By hand, in a normal browser | `npx site-to-api capture https://example.com` |
+| Repeatable, driven by a script | `npx site-to-api capture https://example.com --script capture.ts` |
+| Scripted, without taking over the screen | add `--minimized`: a normal browser whose windows stay minimized |
+| Scripted, no window at all | add `--headless`; sites with bot protection usually block it, so prefer `--minimized` |
+| Logged in | add `--user-data-dir .site-to-api/profile`: a person logs in once, later captures reuse the login |
+
+Capture scripts, logged-in captures with a saved profile, and what happens when a script fails:
+[docs/capture.md](docs/capture.md).
+
+## Import a HAR instead of capturing
+
+Export one from your browser's DevTools (Network tab) or a proxy (Charles, mitmproxy). In Chrome,
+use "Export HAR (with sensitive data)": the default export leaves out cookies and `Authorization`
+headers, so the build cannot show how the site signs you in (turn the option on under DevTools
+settings, Network, "Allow to generate HAR with sensitive data").
+
+```sh
+npx site-to-api import session.har --delete-source   # a raw session, like a capture
+npx site-to-api build
+```
+
+A HAR holds the traffic only: an imported session has no values computed in the browser, no typed
+inputs and, unless the HAR has them, no call stacks or scripts. `AGENT.md` lists what is missing.
+The HAR holds your cookies, so `--delete-source` deletes it once it is imported.
+
+## Use the generated client in an app
+
+Set `gen: { clientDir: 'src/site-client' }` in `site-to-api.config.ts` to put the client in your
+app's source tree. Each `createSiteClient` call is a client of its own, so one per user never
+shares cookies or credentials, and each host's `site.ts` factory keeps bundles small. Commit the
+client and handoff folders; never commit `.site-to-api/`, a saved cookie jar or credentials.
+Project setup, a complete wrapper for the fixture shop, and where the client runs:
+[docs/using-the-client.md](docs/using-the-client.md).
+
+## Use with AI agents (MCP)
+
+`npx site-to-api mcp ./api-handoff` serves the handoff folder to an agent over MCP, so it can look
+up one operation at a time instead of reading every spec. `build --mcp` also writes a server for
+the site with a tool for each operation that only reads data; `--mcp write` adds tools for the
+operations that change data. To add the server to Claude Code for your project:
+`claude mcp add site-api -- npx --no-install site-to-api mcp ./api-handoff`.
+
+The repository is also a Claude Code plugin marketplace
+(`claude plugin marketplace add jatinag22/site-to-api`). The plugin runs the globally installed
+CLI, so it needs `npm install -g site-to-api`. Tools, live calls, the trust check and the plugin:
+[docs/mcp.md](docs/mcp.md).
+
+## Probe and check
+
+`probe` replays captured requests against the live site to learn which cookies and headers plain
+HTTP needs; `check` replays them to report drift from the response schemas, with exit codes for
+CI (0 no drift, 1 drift, 2 could not check). Both send read-only requests at 1 per second by
+default and never replay a bot-protection step. Details and a scheduled drift check:
+[docs/probe-and-check.md](docs/probe-and-check.md).
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `init` | Writes `site-to-api.config.ts` and gitignores `.site-to-api/` |
+| `capture [url]` | Records a browsing session. `--script <file>`, `--minimized`, `--headless`, `--channel <name>`, `--user-data-dir <dir>`, `--session <id>` |
+| `import <file.har>` | Turns a HAR into a raw session. `--session <id>`, `--delete-source` |
+| `build` | Analyses every session and writes the handoff folder and the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client`, `--mcp [read\|write\|off]`, `--force` |
+| `probe` | Replays requests to learn what plain HTTP needs, then rebuilds. `--max-rps <n>`, `--unsafe-methods`, `--minimize-per-host <n>`, and the output flags of `build` |
+| `check` | Detects API drift. `--include/--exclude <host>`, `--operations <ids>`, `--max-rps <n>`, `--json` |
+| `gen` | Regenerates only the client (and the MCP server) from the handoff folder, without raw captures. `--mcp [read\|write\|off]`, `--force` |
+| `mcp [dir]` | Serves the handoff folder over MCP. `--allow-calls`, `--unsafe-methods`, `--max-rps <n>`, `--generated`, `--trust-client` |
+| `config` | Prints the resolved config and where each value came from. `--json` |
+
+Every command takes `-c, --config <file>`, `--cwd <dir>`, `--raw-dir <dir>` and `--out-dir <dir>`;
+`npx site-to-api <command> --help` describes each flag.
+
+## Configuration
+
+Settings come from CLI flags, then `SITE_TO_API_*` environment variables, then
+`site-to-api.config.ts` (or `.json`), then defaults. Unknown keys are errors, and
+`npx site-to-api config` shows which source set each value. Every key, its default and its
+variable: [docs/configuration.md](docs/configuration.md).
+
+The options a `build` ran with are recorded in `build.json`, so `probe` and `gen` reuse them
+instead of undoing them.
+
+## How it compares
+
+From each project's README (for browser-to-api, its `SKILL.md`) as of November 2026. A dash means
+the README does not say.
+
+| | site-to-api | site2api | browser-to-api | reverse-api-engineer | mitmproxy2swagger | har-to-openapi |
+|---|---|---|---|---|---|---|
+| Input | browser capture or HAR | browser capture or HAR | `browser-trace` capture | browser capture | mitmproxy flow or HAR | HAR |
+| Who drives the browser | you or your script | you | - | you, or an AI agent | - | - |
+| LLM in the pipeline | no | optional (`infer`, for names) | no (offline Node scripts) | yes, it writes the client | - | - |
+| Specs | OpenAPI 3.1, AsyncAPI 3.0 | - | OpenAPI 3.1 | - | OpenAPI 3.0 | OpenAPI 3.0 or 3.1 |
+| Client | TypeScript with Zod | MCP server | JavaScript | Python, JavaScript, TypeScript, Go, Java, C#, PHP, Ruby, C, PowerShell | - | - |
+| Other output | flows, agent docs, code excerpts, MCP servers | report | HTML and Markdown reports | - | - | conversion report |
+| Where input values come from | traced, with code locations | inferred (such as item IDs) | - | - | - | - |
+| GraphQL and JSON-RPC split per operation | yes | - | yes | - | - | - |
+| Live checks against the site | `probe` (needs), `check` (drift) | `verify` (read tools) | - | - | - | - |
+| Secrets in output | redacted by default, leak check | checked against fingerprints of captured credentials | best-effort redaction | - | examples and headers only on request | configurable redaction |
+
+Projects: [site2api](https://github.com/flyingsquirrel0419/site2api),
+[browser-to-api](https://github.com/browserbase/skills/tree/main/skills/browser-to-api)
+(Browserbase), [reverse-api-engineer](https://github.com/kalil0321/reverse-api-engineer),
+[mitmproxy2swagger](https://github.com/alufers/mitmproxy2swagger),
+[har-to-openapi](https://github.com/jonluca/har-to-openapi).
+
 ## Limitations
 
-- Web Workers and Service Workers are not instrumented (their traffic is captured, without stacks).
-- Redaction is pattern-based. Review the handoff folder before publishing it.
-- HTML/text extraction from a single sample is low confidence; capture a second pass.
-- GraphQL operations are split by operation name, persisted hash or document, but values inside
-  GET `variables` are traced only as the whole query value, and an operation whose type neither
-  the capture nor the site's code shows stays `unknown` (probe skips it). GraphQL subscriptions
-  over WebSockets are documented as channels, not split by operation.
-- Dispatcher endpoints are split only on evidence (different parameters or response shapes per
-  value); functions the capture never called are not listed, and POST functions are not probed
-  unless `--unsafe-methods`.
-- Interactive capture (closing the window to finish) is covered by an abort test but not by an
-  automated headful test. In interactive mode a browser crash looks like quitting; both save a
-  complete session with a note.
+The ones a first run is most likely to meet; the full list is in
+[docs/limitations.md](docs/limitations.md).
+
 - Redaction and value tracing are heuristics. Personal data with no telling field name or shape
-  (a name in a free-text bio) can get through; the build's leak check only searches for values
-  the redactor learnt, and only those of 6 or more characters that mix letters and digits.
-- Path templating can merge two endpoints whose code-route parameter has a minified name and
-  whose words also appear in page text (YouTube's `/youtubei/v1/{qsa}`), and a site whose own
-  API host is named `analytics.*` or `telemetry.*` is ranked last.
-- A learnt value inside a host name (`<user>.github.io`) is not templated; the leak check stops
-  that build instead.
-- Not decoded: fetch streams that never end, zstd request bodies, binary Connect bodies,
-  gRPC-web, tRPC over WebSocket, encrypted SmartFoxServer packets.
-- Tested by hand on about 30 public sites logged out (see [docs/testing.md](docs/testing.md)) and
-  on two logged-in sessions; other kinds of site may still show new problems.
+  (a name in a free-text bio) can get through. Review the handoff folder before publishing it.
+- From one session, HTML and text extraction is low confidence and no field becomes an enum;
+  capture the same pages a second time.
+- An imported HAR cannot explain values the page computed; capture the same pages for that.
+- The generated code covers HTTP only; WebSocket channels are documented in AsyncAPI, to open with
+  any WebSocket client.
 
 ## Contributing and docs
 
-[CONTRIBUTING.md](CONTRIBUTING.md) · [Architecture](docs/architecture.md) ·
-[Decision records](docs/decisions/README.md) · [Testing](docs/testing.md) · [Maintaining](docs/maintaining.md) · [Security policy](SECURITY.md)
+[CONTRIBUTING.md](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) ·
+[Release policy](docs/release-policy.md) · [Architecture](docs/architecture.md) ·
+[Output format](docs/output-format.md) · [Configuration](docs/configuration.md) ·
+[Capture](docs/capture.md) · [Using the client](docs/using-the-client.md) · [MCP](docs/mcp.md) ·
+[Probe and check](docs/probe-and-check.md) · [Limitations](docs/limitations.md) ·
+[Decision records](docs/decisions/README.md) · [Testing](docs/testing.md) ·
+[Maintaining](docs/maintaining.md) · [Security policy](SECURITY.md)
 
 ## Licence
 
