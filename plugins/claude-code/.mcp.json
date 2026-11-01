@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "site-to-api": {
-      "command": "npx",
-      "args": ["--no-install", "--prefix", "${CLAUDE_PROJECT_DIR}", "site-to-api", "--cwd", "${CLAUDE_PROJECT_DIR}", "mcp", "./api-handoff"]
+      "command": "site-to-api",
+      "args": ["--cwd", "${CLAUDE_PROJECT_DIR}", "mcp", "./api-handoff"]
     }
   }
 }

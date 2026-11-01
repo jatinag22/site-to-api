@@ -508,8 +508,10 @@ server above (on the project's `api-handoff/`), the commands `/site-to-api:captu
 Chrome window; minimized only with `--script`), `/site-to-api:build`, `/site-to-api:probe` and `/site-to-api:check` (drift against the specs), and a skill
 that walks an agent through capture, reading the handoff folder, writing the wrapper and the
 safety rules. The commands pre-approve nothing: they run the project's config file, which can be
-code, so Claude Code asks before each run. Nothing is published yet, so install it from a clone (the `site-to-api` CLI must be
-on your `PATH`, see [Install](#install)):
+code, so Claude Code asks before each run. The plugin's MCP server runs `site-to-api` from your
+`PATH`, so it needs a global install (`npm install -g site-to-api`); it never runs a copy from the
+opened project, because Claude Code starts the server in every project, a cloned one included.
+Nothing is published yet, so install the plugin from a clone:
 
 ```sh
 claude plugin marketplace add ./site-to-api      # the path of your clone
