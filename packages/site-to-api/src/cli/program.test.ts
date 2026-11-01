@@ -113,7 +113,7 @@ describe('cli', () => {
 describe('mcp', () => {
   it('never runs a .ts config file, which a project can fill with any code', async () => {
     const marker = join(dir, 'ran.txt')
-    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\nexport default {}\n`)
+    await writeFile(join(dir, 'site-to-api.config.ts'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'ran')\nexport default { outDir: 'handoff' }\n`)
     const stderr: string[] = []
     vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
       stderr.push(String(chunk))
@@ -129,7 +129,25 @@ describe('mcp', () => {
       '--generated',
     ], [mcpCommand])
     expect(existsSync(marker)).toBe(false)
-    expect(stderr.join('')).toContain(`Not running ${join(dir, 'site-to-api.config.ts')}`)
+    expect(stderr.join('')).toContain(`Not running ${join(dir, 'site-to-api.config.ts')}: \`mcp\` reads only flags, SITE_TO_API_* variables and site-to-api.config.json, so its outDir is not used`)
     expect(process.exitCode).toBe(1)
+  })
+
+  it('says nothing about a code config that changes nothing mcp uses', async () => {
+    await writeFile(join(dir, 'site-to-api.config.ts'), `export default { outDir: 'api-handoff', probe: { maxRps: 1 } }\n`)
+    const stderr: string[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk))
+      return true
+    })
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      dir,
+      'mcp',
+      '--generated',
+    ], [mcpCommand])
+    expect(stderr.join('')).not.toContain('Not running')
   })
 })
