@@ -51,7 +51,11 @@ kept there disappeared and hand edits to generated files were lost without a wor
   between them and the project root (the config file's folder, or the working directory; the
   handoff folder's parent without one). A `package.json` planted in the handoff folder would
   otherwise pass for the package root and hide a `node_modules` beside it. A client outside the
-  project root is not run either. Otherwise
+  project root is not run either. In a monorepo, the package that owns the client folder (the nearest
+  folder above it with a `package.json`) keeps its own `package.json` and `node_modules` when it is
+  a workspace the project root declares (`pnpm-workspace.yaml`, or `workspaces` in `package.json`)
+  and lies outside the handoff folder; any other `package.json` or `node_modules` on the way is
+  still refused. Programmatic callers must pass the project root; there is no fallback. Otherwise
   `mcp --generated` and `call_operation` refuse to run the client and say which file to move.
 - `mcp` still never runs a `.ts`/`.js` config file, but reads a plain string `outDir: '…'` from it
   with the TypeScript parser; anything computed is not read, and the message says to pass the

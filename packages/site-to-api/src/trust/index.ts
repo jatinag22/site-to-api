@@ -11,6 +11,7 @@ import { chmod, mkdir, readdir, readFile, realpath, rename, writeFile } from 'no
 import os from 'node:os'
 import process from 'node:process'
 import { dirname, isAbsolute, join, relative } from 'pathe'
+import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import { SiteToApiError } from '../errors'
 
@@ -126,9 +127,86 @@ export interface TrustScope {
   /**
    * The project root (the config file's folder, or the working directory): any `package.json` or
    * `node_modules` between the client and it could redirect or shadow imports. Its own are
-   * expected. Defaults to the folder above `clientDir`'s parent (the handoff folder's parent).
+   * expected, and so are those of a declared workspace package that holds the client.
    */
-  root?: string
+  root: string
+  /** The handoff folder: a workspace package inside it never counts as the client's owner. */
+  handoff?: string
+}
+
+const WorkspaceListSchema = z.array(z.string())
+const PnpmWorkspaceSchema = z.object({
+  packages: WorkspaceListSchema.optional(),
+})
+const PackageWorkspacesSchema = z.object({
+  workspaces: z.union([
+    WorkspaceListSchema,
+    z.object({
+      packages: WorkspaceListSchema.optional(),
+    }),
+  ]).optional(),
+})
+
+/** The workspace patterns `root` declares in `pnpm-workspace.yaml` or `package.json` `workspaces`. */
+async function workspacePatterns(root: string): Promise<string[]> {
+  const patterns: string[] = []
+  const pnpm = join(root, 'pnpm-workspace.yaml')
+  if (existsSync(pnpm)) {
+    const parsed = PnpmWorkspaceSchema.safeParse(parseYaml(await readFile(pnpm, 'utf8')))
+    patterns.push(...parsed.success
+      ? parsed.data.packages ?? []
+      : [])
+  }
+  const manifest = join(root, 'package.json')
+  if (existsSync(manifest)) {
+    const parsed = PackageWorkspacesSchema.safeParse(JSON.parse(await readFile(manifest, 'utf8')))
+    const workspaces = parsed.success ? parsed.data.workspaces : undefined
+    patterns.push(...Array.isArray(workspaces)
+      ? workspaces
+      : workspaces?.packages ?? [])
+  }
+  return patterns
+}
+
+/** `apps/*` and `packages/**` as a regular expression over a `/`-separated relative path. */
+function globPattern(pattern: string): RegExp {
+  const body = pattern.replace(/^\.\//, '').replace(/\/+$/, '').split('/').map(part => part === '**'
+    ? '.*'
+    : part.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '[^/]*')).join('/')
+  return new RegExp(`^${body}$`)
+}
+
+/** Whether `dir` (inside `root`) is a workspace package `root` declares, `!` exclusions applied. */
+async function isDeclaredWorkspace(root: string, dir: string): Promise<boolean> {
+  const rel = relative(root, dir)
+  let included = false
+  for (const pattern of await workspacePatterns(root)) {
+    if (pattern.startsWith('!')) {
+      if (globPattern(pattern.slice(1)).test(rel))
+        included = false
+    }
+    else if (globPattern(pattern).test(rel)) {
+      included = true
+    }
+  }
+  return included
+}
+
+/**
+ * The package that owns `folder` in a monorepo: the nearest folder above it with a `package.json`,
+ * strictly inside `root`, declared as a workspace of `root` and not in the handoff folder. Its own
+ * `package.json` and `node_modules` are the app's, not planted (decision 0058).
+ */
+async function owningWorkspace(folder: string, root: string, handoff: string | null): Promise<string | null> {
+  for (let dir = dirname(folder); insideFolder(root, dir); dir = dirname(dir)) {
+    if (!existsSync(join(dir, 'package.json')))
+      continue
+    const inHandoff = handoff !== null && (dir === handoff || insideFolder(handoff, dir))
+    return !inHandoff && await isDeclaredWorkspace(root, dir)
+      ? dir
+      : null
+  }
+  return null
 }
 
 /** Files Node, tsx or a bundler may load or obey instead of the hashed `.ts` files. */
@@ -145,7 +223,7 @@ function insideFolder(root: string, dir: string): boolean {
  * `node_modules` can redirect imports (decision 0058). The person's own files elsewhere in the
  * project are fine; in these folders they are not.
  */
-async function unlistedCode(clientDir: string, folder: string, listed: ReadonlySet<string> | null, root: string): Promise<string | null> {
+async function unlistedCode(clientDir: string, folder: string, listed: ReadonlySet<string> | null, scope: TrustScope): Promise<string | null> {
   if (!existsSync(folder))
     return null
   for (const entry of await readdir(folder, { recursive: true, withFileTypes: true })) {
@@ -160,10 +238,16 @@ async function unlistedCode(clientDir: string, folder: string, listed: ReadonlyS
     if (listed !== null && CODE_FILE.test(entry.name) && !listed.has(relative(clientDir, file)))
       return `${file} was not generated here and could be loaded instead of the generated code`
   }
-  // Real paths on both sides: a working directory may be reported through a link (macOS /var).
-  return shadowingAbove(await realpath(folder), existsSync(root)
-    ? await realpath(root)
-    : root)
+  // Real paths on all sides: a working directory may be reported through a link (macOS /var).
+  const real = async (dir: string): Promise<string> => existsSync(dir)
+    ? realpath(dir)
+    : dir
+  const realFolder = await real(folder)
+  const root = await real(scope.root)
+  const owner = await owningWorkspace(realFolder, root, scope.handoff === undefined
+    ? null
+    : await real(scope.handoff))
+  return shadowingAbove(realFolder, root, owner)
 }
 
 /**
@@ -171,10 +255,12 @@ async function unlistedCode(clientDir: string, folder: string, listed: ReadonlyS
  * counts: a `package.json` planted in the handoff folder would otherwise pass for the package
  * root and hide a `node_modules` next to it (decision 0058).
  */
-function shadowingAbove(folder: string, root: string): string | null {
+function shadowingAbove(folder: string, root: string, owner: string | null): string | null {
   if (folder !== root && !insideFolder(root, folder))
     return `${folder} is outside the project ${root}`
   for (let dir = dirname(folder); insideFolder(root, dir); dir = dirname(dir)) {
+    if (dir === owner)
+      continue
     if (existsSync(join(dir, 'node_modules')))
       return `${join(dir, 'node_modules')} would shadow the project's packages`
     if (existsSync(join(dir, 'package.json')))
@@ -191,7 +277,7 @@ function shadowingAbove(folder: string, root: string): string | null {
  * `node_modules` the entry does not list, and no `node_modules` may sit between them and
  * `scope.root`.
  */
-export async function untrustedReason(clientDir: string, store: string = trustStorePath(), required: readonly string[] = [], scope: TrustScope = {}): Promise<string | null> {
+export async function untrustedReason(clientDir: string, store: string, required: readonly string[], scope: TrustScope): Promise<string | null> {
   if (!existsSync(clientDir))
     return null
   const key = await realpath(clientDir)
@@ -208,7 +294,7 @@ export async function untrustedReason(clientDir: string, store: string = trustSt
     clientDir,
     ...scope.folders ?? [],
   ]) {
-    const found = await unlistedCode(clientDir, folder, listed, scope.root ?? dirname(dirname(clientDir)))
+    const found = await unlistedCode(clientDir, folder, listed, scope)
     if (found !== null)
       return `${clientDir}: not run, because ${found}. Move it out of the client and MCP folders (your own code belongs elsewhere in the project), or pass \`--trust-client\` if you reviewed it.`
   }

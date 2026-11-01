@@ -12,15 +12,15 @@ import { createJiti } from 'jiti'
 import { dirname, join, relative } from 'pathe'
 import { readBuildRecord, recordedClientDir, recordedMcpDir } from '../build/record'
 import { SiteToApiError } from '../errors'
-import { untrustedReason } from '../trust'
+import { trustStorePath, untrustedReason } from '../trust'
 
 /** Options for {@link serveGenerated}. */
 export interface ServeGeneratedOptions {
   handoffDir: string
   trustClient: boolean
   trustStore?: string
-  /** The project root for the trust check (decision 0058); the handoff folder's parent when absent. */
-  projectRoot?: string
+  /** The project root for the trust check (decision 0058): the config file's folder or the working directory. */
+  projectRoot: string
 }
 
 /** Generated code imports these; they resolve to the copies this tool runs with. */
@@ -45,11 +45,12 @@ export async function serveGenerated(options: ServeGeneratedOptions): Promise<vo
   if (!existsSync(server))
     throw new SiteToApiError(`No generated MCP server at ${server}: run \`site-to-api gen --mcp\` first.`)
   if (!options.trustClient) {
-    const reason = await untrustedReason(clientDir, options.trustStore, [
+    const reason = await untrustedReason(clientDir, options.trustStore ?? trustStorePath(), [
       relative(clientDir, server),
     ], {
       folders: [mcpDir],
-      root: options.projectRoot ?? dirname(options.handoffDir),
+      root: options.projectRoot,
+      handoff: options.handoffDir,
     })
     if (reason !== null)
       throw new SiteToApiError(reason)

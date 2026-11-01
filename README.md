@@ -475,7 +475,8 @@ wrote. If you use the MCP server or `call_operation`, keep your own code and JSO
 client and MCP folders: an unlisted `.js`, `.ts` or `.json` file, a `package.json`, a
 `tsconfig*.json` or a `node_modules` there, or any `package.json` or `node_modules` between those
 folders and the project root (the config file's folder, or the working directory), could be
-loaded instead, so the client is not run. Non-code files such as notes are fine.
+loaded instead, so the client is not run. In a monorepo, the workspace package that holds the
+client keeps its own `package.json` and `node_modules`. Non-code files such as notes are fine.
 This check is the protection; the per-host variable names are not, since code in the process can
 read any of them.
 

@@ -15,7 +15,7 @@ import { z } from 'zod'
 import { sdkFunctionName } from '../emit/naming'
 import { SiteToApiError } from '../errors'
 import { RateLimiter } from '../probe/rate-limit'
-import { untrustedReason } from '../trust'
+import { trustStorePath, untrustedReason } from '../trust'
 
 /** Prefix of the environment variables `call_operation` reads credentials from. */
 const CREDENTIAL_ENV_PREFIX = 'SITE_API_'
@@ -34,8 +34,8 @@ export interface CallerOptions {
   trustClient?: boolean
   /** Trust store to check against; defaults to the person's config directory. */
   trustStore?: string
-  /** The project root for the trust check (decision 0058); the handoff folder's parent when absent. */
-  projectRoot?: string
+  /** The project root for the trust check (decision 0058): the config file's folder or the working directory. */
+  projectRoot: string
   fetch?: typeof fetch
   now?: () => number
   sleep?: (ms: number) => Promise<void>
@@ -172,7 +172,7 @@ export function createCaller(options: CallerOptions): (entry: OperationEntry, ar
     // The client is code, and the folder may come from anyone: run it only when this machine
     // generated it, or the person said they reviewed it.
     if (options.trustClient !== true) {
-      const reason = await untrustedReason(options.handoff.clientDir, options.trustStore, [], { root: options.projectRoot ?? dirname(options.handoff.dir) })
+      const reason = await untrustedReason(options.handoff.clientDir, options.trustStore ?? trustStorePath(), [], { root: options.projectRoot, handoff: options.handoff.dir })
       if (reason !== null)
         throw new SiteToApiError(reason)
     }
