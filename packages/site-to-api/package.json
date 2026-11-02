@@ -1,7 +1,7 @@
 {
   "name": "site-to-api",
   "type": "module",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0",
   "description": "Capture a website's traffic once and get OpenAPI specs, request flows and a typed client that a coding agent can build a wrapper from.",
   "author": "Jatin <agrawaljatin22@gmail.com>",
   "license": "MIT",
