@@ -3,7 +3,7 @@
  * lists, two-column tables, `Label:` elements, `Label: value` text) and, with several samples,
  * positions whose text differs between samples.
  */
-import type { ExtractField, FieldType } from '@site-to-api/runtime'
+import type { ExtractField, FieldType } from 'site-to-api-runtime'
 import type { Document, Element } from './dom'
 import type { Draft } from './records'
 import type { ExtractedValue } from './values'

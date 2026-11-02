@@ -1,4 +1,4 @@
-import type { ExtractField, ExtractSpec, FieldType } from '@site-to-api/runtime'
+import type { ExtractField, ExtractSpec, FieldType } from 'site-to-api-runtime'
 import type { SessionRequirement } from '../model'
 import type { NamedHtmlValue } from './html-values'
 /**
@@ -150,9 +150,9 @@ export function renderExtractModule(extracts: NamedExtract[], htmlValues: NamedH
   return [
     HEADER,
     ...(extracts.length > 0
-      ? [`import type { ExtractSpec } from '@site-to-api/runtime'`]
+      ? [`import type { ExtractSpec } from 'site-to-api-runtime'`]
       : []),
-    `import { ${runtimeImports.join(', ')} } from '@site-to-api/runtime'`,
+    `import { ${runtimeImports.join(', ')} } from 'site-to-api-runtime'`,
     ...(extracts.length > 0
       ? [`import * as z from 'zod/mini'`]
       : []),
@@ -332,8 +332,8 @@ function renderBinder(host: HostSpec, functions: readonly HostFunction[]): strin
 export function renderOptionsModule(): string {
   return [
     HEADER,
-    `import type { RetryOptions, Session } from '@site-to-api/runtime'`,
-    `import { CookieJar, createFetch } from '@site-to-api/runtime'`,
+    `import type { RetryOptions, Session } from 'site-to-api-runtime'`,
+    `import { CookieJar, createFetch } from 'site-to-api-runtime'`,
     '',
     `/** A security scheme of the spec, as the client passes it to {@link HostClientOptions.auth}. */`,
     `export interface SiteAuthScheme {`,
@@ -424,7 +424,7 @@ export function renderHostSiteModule(host: HostSpec, functions: readonly HostFun
   const contentTypes = Object.keys(host.sentContentTypes).length > 0
   return [
     HEADER,
-    `import type { CookieJar } from '@site-to-api/runtime'`,
+    `import type { CookieJar } from 'site-to-api-runtime'`,
     `import type { HostClientOptions, HostDefaults } from '../options.js'`,
     `import type { Client } from './client/index.js'`,
     `import { hostSetup } from '../options.js'`,
@@ -514,7 +514,7 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
 
   return [
     HEADER,
-    `import type { CookieJar } from '@site-to-api/runtime'`,
+    `import type { CookieJar } from 'site-to-api-runtime'`,
     `import type { HostClientOptions } from './options.js'`,
     ...imports,
     '',
@@ -522,8 +522,8 @@ export function renderIndexModule(hosts: HostSpec[], extracts: NamedExtract[], h
     ...hosts.map(host => `export { ${hostFactoryName(host.identifier)} } from './${host.identifier}/site.js'`),
     ...extractExports,
     `export type { HostClientOptions, SiteAuth, SiteAuthScheme } from './options.js'`,
-    `export { browserSession, combineSessions, CookieJar, cookieSession, extractValue, isSiteApiError, SiteApiError, tokenSession } from '@site-to-api/runtime'`,
-    `export type { BrowserCookie, Session } from '@site-to-api/runtime'`,
+    `export { browserSession, combineSessions, CookieJar, cookieSession, extractValue, isSiteApiError, SiteApiError, tokenSession } from 'site-to-api-runtime'`,
+    `export type { BrowserCookie, Session } from 'site-to-api-runtime'`,
     '',
     ...binders,
     `/** Per host: what a {@link createSiteClient} call returns besides the host. */`,
@@ -648,7 +648,7 @@ export function renderReadme(hosts: HostSpec[], extracts: NamedExtract[], sessio
     '',
     '## Setup',
     '',
-    '- Dependencies: `@site-to-api/runtime` and `zod` (4.1 or later; the client uses `zod/mini`).',
+    '- Dependencies: `site-to-api-runtime` and `zod` (4.1 or later; the client uses `zod/mini`).',
     '  `playwright` too, only if you use `browserSession`. Nothing else: hey-api\'s fetch client is',
     '  copied into each host folder.',
     '- The files are TypeScript ES modules with `.js` import specifiers, so they type-check under',

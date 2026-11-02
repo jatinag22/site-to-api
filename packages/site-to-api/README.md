@@ -25,7 +25,7 @@ Requires Node 22.12 or later.
 
 ```sh
 npm install -D site-to-api              # the CLI
-npm install @site-to-api/runtime zod    # what the generated client imports
+npm install site-to-api-runtime zod    # what the generated client imports
 ```
 
 `capture` opens Google Chrome, or Playwright's bundled Chromium where Chrome is not installed;

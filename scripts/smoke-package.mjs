@@ -107,7 +107,7 @@ if (given === null) {
     '--filter',
     'site-to-api',
     '--filter',
-    '@site-to-api/runtime',
+    'site-to-api-runtime',
     'pack',
     '--pack-destination',
     tarballs,
@@ -172,17 +172,17 @@ for (const manager of staticOnly
     private: true,
     type: 'module',
     dependencies: {
-      '@site-to-api/runtime': runtime,
+      'site-to-api-runtime': runtime,
       'site-to-api': cli,
       'typescript': catalogVersion('typescript'),
       'zod': catalogVersion('zod'),
     },
-    // site-to-api depends on `@site-to-api/runtime@<version>`, which is not on the registry
+    // site-to-api depends on `site-to-api-runtime@<version>`, which is not on the registry
     // for an alpha: pnpm needs an override to take the tarball; npm takes the top-level one.
     ...(manager === 'pnpm'
       ? {
           pnpm: {
-            overrides: { '@site-to-api/runtime': runtime },
+            overrides: { 'site-to-api-runtime': runtime },
           },
         }
       : {}),
@@ -192,9 +192,9 @@ for (const manager of staticOnly
     run('npm', ['install', '--no-audit', '--no-fund'], { cwd: dir })
   else
     run('pnpm', ['install', '--ignore-workspace', '--config.confirmModulesPurge=false'], { cwd: dir })
-  const installed = JSON.parse(readFileSync(join(dir, 'node_modules', '@site-to-api', 'runtime', 'package.json'), 'utf8')).version
+  const installed = JSON.parse(readFileSync(join(dir, 'node_modules', 'site-to-api-runtime', 'package.json'), 'utf8')).version
   if (installed !== version)
-    fail(`${manager}: installed @site-to-api/runtime ${installed}, expected ${version}`)
+    fail(`${manager}: installed site-to-api-runtime ${installed}, expected ${version}`)
   projects.push({ manager, dir })
 }
 
@@ -209,11 +209,11 @@ if (neutralDir === undefined) {
     name: 'smoke-runtime',
     private: true,
     type: 'module',
-    dependencies: { '@site-to-api/runtime': `file:${join(tarballs, runtimeTarball)}` },
+    dependencies: { 'site-to-api-runtime': `file:${join(tarballs, runtimeTarball)}` },
   }, null, 2)}\n`)
   run('npm', ['install', '--no-audit', '--no-fund'], { cwd: neutralDir })
 }
-const problems = await neutralProblems(join(neutralDir, 'node_modules', '@site-to-api', 'runtime', 'dist', 'index.mjs'))
+const problems = await neutralProblems(join(neutralDir, 'node_modules', 'site-to-api-runtime', 'dist', 'index.mjs'))
 if (problems.length > 0)
   fail(`the runtime is not neutral:\n  ${problems.join('\n  ')}`)
 console.log('runtime bundles for platform=neutral with no Node imports or globals')
@@ -366,7 +366,7 @@ if (npmProject !== undefined) {
     private: true,
     type: 'module',
     dependencies: {
-      '@site-to-api/runtime': `file:${join(tarballs, runtimeTarball)}`,
+      'site-to-api-runtime': `file:${join(tarballs, runtimeTarball)}`,
       'site-to-api': `file:${join(tarballs, cliTarball)}`,
       'typescript': '^7.0.2',
       'zod': catalogVersion('zod'),

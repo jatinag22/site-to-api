@@ -3,7 +3,7 @@
  * as a CSRF token in a meta tag) and names one `extract<Input>From<Operation>` reader for each.
  * Pure: flows in, named readers out.
  */
-import type { HtmlValueLocation } from '@site-to-api/runtime'
+import type { HtmlValueLocation } from 'site-to-api-runtime'
 import type { Flow, FlowsDocument, FlowStep } from '../model'
 import { toPascalCase } from './spec'
 

@@ -1,4 +1,4 @@
-import { extract } from '@site-to-api/runtime'
+import { extract } from 'site-to-api-runtime'
 import { describe, expect, it } from 'vitest'
 import { cssIdent, holdsText, parseHtml, select, tagSelector } from './dom'
 

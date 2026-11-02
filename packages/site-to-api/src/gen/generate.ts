@@ -81,7 +81,7 @@ export interface GenerateClientResult {
  * Generates the typed client in `<handoffDir>/client/` from `<handoffDir>/specs/*.yaml`:
  * hey-api output (types, SDK with request and response validation, Zod schemas) per host,
  * `extract.ts` with a parser per HTML/text operation and a reader per value flows.json traces to
- * an HTML page, `index.ts` wiring each host to `@site-to-api/runtime`, and a `README.md`. Every
+ * an HTML page, `index.ts` wiring each host to `site-to-api-runtime`, and a `README.md`. Every
  * relative import ends in `.js`, so the client works under `bundler` and `nodenext` resolution.
  * Everything is written into a staging folder and then copied into `client/`: only the files
  * generated (recorded with their hashes) are replaced or removed, hand-edited ones are kept and
@@ -316,7 +316,7 @@ async function runHeyApi(document: OpenApiDocument, output: string, file: string
               // instance that a Zod object cannot read: every required header failed. The
               // runtime turns it into a plain object first.
               request: ({ $, operation, plugin, symbols }) => {
-                const helper = plugin.symbolOnce('requestValidationInput', { external: '@site-to-api/runtime' })
+                const helper = plugin.symbolOnce('requestValidationInput', { external: 'site-to-api-runtime' })
                 const mixedCase = Object.values(operation.parameters?.header ?? {})
                   .map(parameter => parameter.name)
                   .filter(name => name !== name.toLowerCase())

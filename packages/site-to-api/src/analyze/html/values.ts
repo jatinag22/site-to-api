@@ -2,7 +2,7 @@
  * Type coercion for extracted values and type inference from samples. The coercion rules are
  * the contract the runtime's `extract()` must follow; they are documented on {@link coerce}.
  */
-import type { FieldType } from '@site-to-api/runtime'
+import type { FieldType } from 'site-to-api-runtime'
 
 /** A value after type coercion. */
 export type ExtractedValue = string | number | boolean

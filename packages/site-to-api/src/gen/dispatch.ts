@@ -76,7 +76,7 @@ export function renderDispatchModule(operations: readonly DispatchClientOperatio
     HEADER,
     `import type { Options } from './sdk.gen.js'`,
     `import type { ${operations.map(operation => dataTypeName(operation.operationId)).sort().join(', ')} } from './types.gen.js'`,
-    `import { fetchWithoutFragment } from '@site-to-api/runtime'`,
+    `import { fetchWithoutFragment } from 'site-to-api-runtime'`,
     `import { client } from './client.gen.js'`,
     `import * as sdk from './sdk.gen.js'`,
     '',

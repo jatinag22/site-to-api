@@ -1,4 +1,4 @@
-import type { ExtractSpec, HtmlExtractSpec } from '@site-to-api/runtime'
+import type { ExtractSpec, HtmlExtractSpec } from 'site-to-api-runtime'
 import { describe, expect, it } from 'vitest'
 import { cardGrid, nextDataPage, productDetail, productTable } from './fixtures'
 import { applyExtractSpec, inferExtraction } from './index'

@@ -933,7 +933,7 @@ describe('generated client', () => {
 
   it('calls the live site through a browser-backed session', async () => {
     const client = await import(join(outDir, 'client', 'index.ts')) as Record<string, unknown>
-    const runtime = await import('@site-to-api/runtime')
+    const runtime = await import('site-to-api-runtime')
     const jar = new runtime.CookieJar()
     const session = runtime.browserSession({
       jar,

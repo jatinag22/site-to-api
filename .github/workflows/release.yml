@@ -103,7 +103,7 @@ jobs:
         id: pack
         run: |
           mkdir tarballs
-          pnpm --filter site-to-api --filter @site-to-api/runtime pack --pack-destination tarballs
+          pnpm --filter site-to-api --filter site-to-api-runtime pack --pack-destination tarballs
           cd tarballs
           sums=$(sha256sum -- *.tgz | paste -sd ';' -)
           echo "$sums" | tr ';' '\n'
@@ -217,7 +217,7 @@ jobs:
         run: |
           # The runtime first: the CLI depends on it.
           for name in site-to-api-runtime site-to-api; do
-            package=$([ "$name" = site-to-api-runtime ] && echo @site-to-api/runtime || echo site-to-api)
+            package="$name"
             if npm view "$package@$VERSION" version > /dev/null 2>&1; then
               echo "$package@$VERSION is published already"
               continue

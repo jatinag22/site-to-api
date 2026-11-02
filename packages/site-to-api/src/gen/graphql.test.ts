@@ -33,7 +33,7 @@ describe('renderGraphqlModule', () => {
     const code = renderGraphqlModule([
       operation(),
     ])
-    expect(code).toContain(`import { fetchWithoutFragment } from '@site-to-api/runtime'`)
+    expect(code).toContain(`import { fetchWithoutFragment } from 'site-to-api-runtime'`)
     expect(code).toContain(`export type GetAlbumVariables = NonNullable<GetAlbumData['body']>['variables']`)
     expect(code).toContain(`  variables: GetAlbumVariables\n}`)
     expect(code).toContain(`    body: { operationName: "getAlbum", variables, extensions: { persistedQuery: { version: 1, sha256Hash: "${'a'.repeat(64)}" } } },`)

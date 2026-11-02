@@ -2,7 +2,7 @@
  * Result of analysing captured traffic. Every emitter (OpenAPI specs, flows, API_MAP.md,
  * AGENT.md) and the `gen` step reads from {@link Analysis}; none of them look at raw HAR data.
  */
-import type { ExtractSpec } from '@site-to-api/runtime'
+import type { ExtractSpec } from 'site-to-api-runtime'
 import type { Exchange, ExchangeKind, GraphqlOperationType, RpcRequest } from './exchange'
 import type { FlowsDocument, SourceRef } from './flows'
 

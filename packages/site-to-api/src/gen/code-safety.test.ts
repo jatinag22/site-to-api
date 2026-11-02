@@ -173,7 +173,7 @@ describe('generateClient with a hostile spec', () => {
     const zod = path.dirname(createRequire(import.meta.url).resolve('zod/package.json'))
     const jiti = createJiti(import.meta.url, {
       moduleCache: false,
-      alias: { '@site-to-api/runtime': runtime, zod },
+      alias: { 'site-to-api-runtime': runtime, zod },
     })
     const client: unknown = await jiti.import(path.join(dir, 'client', 'index.ts'))
     expect(typeof client).toBe('object')

@@ -18,7 +18,7 @@ export default defineConfig({
       {
         extends: true,
         resolve: {
-          alias: { '@site-to-api/runtime': runtimeSource },
+          alias: { 'site-to-api-runtime': runtimeSource },
         },
         test: {
           name: 'site-to-api',

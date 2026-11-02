@@ -30,7 +30,7 @@ function aliases(): Record<string, string> {
     // The subpath first: an alias for the package would otherwise swallow it.
     '@modelcontextprotocol/server/stdio': resolved('@modelcontextprotocol/server/stdio'),
     '@modelcontextprotocol/server': resolved('@modelcontextprotocol/server'),
-    '@site-to-api/runtime': resolved('@site-to-api/runtime'),
+    'site-to-api-runtime': resolved('site-to-api-runtime'),
     // The package folder, not its entry file, so subpaths such as `zod/mini` resolve too.
     'zod': dirname(createRequire(import.meta.url).resolve('zod/package.json')),
   }

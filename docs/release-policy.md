@@ -6,7 +6,7 @@ How a release is made is in [RELEASING.md](../RELEASING.md); what changed is in
 
 ## Versions
 
-`site-to-api` and `@site-to-api/runtime` share one version (decision 0007): install the same
+`site-to-api` and `site-to-api-runtime` share one version (decision 0007): install the same
 version of both. Versions follow [semantic versioning](https://semver.org/). While the major
 version is 0:
 
@@ -30,7 +30,7 @@ From 1.0.0, only a major release breaks. Prereleases (`0.4.0-alpha.0`) are publi
 - The handoff folder's layout: a file moved or removed.
 - The generated client's entry points: `createSiteClient`, the per-host factories, the names of
   the exported helpers, or the options they take.
-- Anything exported from `@site-to-api/runtime`, or from the `site-to-api` package's library
+- Anything exported from `site-to-api-runtime`, or from the `site-to-api` package's library
   entry (`defineConfig`, the config and model types, and the programmatic functions such as
   `buildHandoff` and `generateClient`).
 - The MCP servers' tool names and their inputs.
