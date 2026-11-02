@@ -98,13 +98,19 @@ While npm publishing is off, each release carries `site-to-api-<version>.tgz` an
 access. Installing from git does not work, because the manifests in the repository use
 `workspace:` and `catalog:` ranges.
 
-With npm:
+With npm, install the runtime first, as a normal dependency, then the CLI as a dev dependency. The
+CLI depends on the runtime, so installed alone it looks for the runtime on the npm registry and
+fails with a 404:
 
 ```sh
 gh release download v0.1.0-alpha.0 --repo jatinag22/site-to-api --pattern '*.tgz' --dir vendor
-npm install -D ./vendor/site-to-api-runtime-0.1.0-alpha.0.tgz ./vendor/site-to-api-0.1.0-alpha.0.tgz
-npx playwright install chromium   # only for headless or --channel bundled captures
+npm install ./vendor/site-to-api-runtime-0.1.0-alpha.0.tgz zod
+npm install -D ./vendor/site-to-api-0.1.0-alpha.0.tgz
+npx site-to-api --version          # 0.1.0-alpha.0
+npx playwright install chromium    # only for headless or --channel bundled captures
 ```
+
+Commit `vendor/` so the install works on other machines and in CI.
 
 With pnpm, the CLI's dependency on the runtime must point at the tarball too:
 
