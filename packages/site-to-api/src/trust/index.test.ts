@@ -163,7 +163,7 @@ describe('trust store', () => {
     // A package.json planted in the handoff folder must not pass for the package root.
     await writeFile(path.join(root, 'api-handoff', 'package.json'), '{}\n')
     expect(await untrustedReason(dir, store, [], { root })).toContain(`${path.join(root, 'api-handoff', 'package.json')} can redirect`)
-    await mkdir(path.join(root, 'api-handoff', 'node_modules', '@site-to-api', 'runtime'), { recursive: true })
+    await mkdir(path.join(root, 'api-handoff', 'node_modules', 'site-to-api-runtime'), { recursive: true })
     expect(await untrustedReason(dir, store, [], { root })).toContain(`${path.join(root, 'api-handoff', 'node_modules')} would shadow`)
     await rm(path.join(root, 'api-handoff', 'package.json'))
     await rm(path.join(root, 'api-handoff', 'node_modules'), { recursive: true })
@@ -216,7 +216,7 @@ describe('trust store', () => {
     await trustClient(dir, store, ['index.ts', 'mcp/server.ts'])
     await writeFile(path.join(root, 'package.json'), '{ "private": true, "workspaces": ["*"] }\n')
     await writeFile(path.join(root, 'api-handoff', 'package.json'), '{}\n')
-    await mkdir(path.join(root, 'api-handoff', 'node_modules', '@site-to-api', 'runtime'), { recursive: true })
+    await mkdir(path.join(root, 'api-handoff', 'node_modules', 'site-to-api-runtime'), { recursive: true })
     expect(await untrustedReason(dir, store, [], {
       root,
       handoff: path.join(root, 'api-handoff'),

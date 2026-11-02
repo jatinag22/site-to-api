@@ -9,11 +9,11 @@
   "devDependencies": {
     "@modelcontextprotocol/client": "catalog:dev",
     "@modelcontextprotocol/server": "catalog:prod",
-    "@site-to-api/runtime": "workspace:*",
     "@types/ws": "catalog:dev",
     "esbuild": "catalog:dev",
     "pathe": "catalog:prod",
     "playwright": "catalog:prod",
+    "site-to-api-runtime": "workspace:*",
     "tsx": "catalog:dev",
     "typescript": "catalog:dev",
     "ws": "catalog:dev",

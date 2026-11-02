@@ -174,7 +174,7 @@ function typeCheck(files: string[], resolution: 'bundler' | 'nodenext' = 'bundle
     lib: ['lib.es2023.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
     types: [],
     paths: {
-      '@site-to-api/runtime': [runtimeSource],
+      'site-to-api-runtime': [runtimeSource],
     },
   }
   const program = ts.createProgram(files, options)
@@ -384,7 +384,7 @@ describe('generateClient', () => {
 
   it('validates requests through the runtime, so headers are read from the Headers instance', async () => {
     const sdk = await readFile(path.join(dir, 'handoff', 'client', 'shop_example_com', 'sdk.gen.ts'), 'utf8')
-    expect(sdk).toContain(`import { requestValidationInput } from '@site-to-api/runtime'`)
+    expect(sdk).toContain(`import { requestValidationInput } from 'site-to-api-runtime'`)
     expect(sdk).toMatch(/\.parseAsync\(requestValidationInput\(data, \[\s*'X-Api-Version'\s*\]\)\)/)
     expect(sdk).toContain('.parseAsync(requestValidationInput(data))')
   })

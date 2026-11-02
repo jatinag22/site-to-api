@@ -7,12 +7,12 @@ runtime it imports is documented in [packages/runtime/README.md](../packages/run
 
 ## Project setup
 
-The client is TypeScript that imports `@site-to-api/runtime` and `zod` (4.1 or later). In the
+The client is TypeScript that imports `site-to-api-runtime` and `zod` (4.1 or later). In the
 folder you ran `init` in:
 
 ```sh
 npm init -y && npm pkg set type=module        # ES modules
-npm install @site-to-api/runtime zod
+npm install site-to-api-runtime zod
 npm install playwright tsx                     # playwright only for browserSession; tsx to run .ts
 npm install -D site-to-api typescript @types/node
 ```

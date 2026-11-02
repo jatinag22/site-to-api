@@ -114,5 +114,5 @@ See `docs/output-format.md` for the full specification.
 
 - `site-to-api`: the CLI and engine. Depends on Playwright (capture), oxc-parser (source),
   source-map tooling, hey-api (gen). Heavy, used at development time.
-- `@site-to-api/runtime`: what generated clients import at run time. No Node-only APIs, small
+- `site-to-api-runtime`: what generated clients import at run time. No Node-only APIs, small
   dependencies, runs on Node, Bun and edge workers.

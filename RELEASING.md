@@ -1,6 +1,6 @@
 # Releasing
 
-Both packages (`site-to-api`, `@site-to-api/runtime`) share one version (decision 0007). `main`
+Both packages (`site-to-api`, `site-to-api-runtime`) share one version (decision 0007). `main`
 is protected, so a release goes through a pull request like any other change.
 
 ## Every release
@@ -118,7 +118,7 @@ With pnpm, the CLI's dependency on the runtime must point at the tarball too:
 {
   "pnpm": {
     "overrides": {
-      "@site-to-api/runtime": "file:./vendor/site-to-api-runtime-0.1.0-alpha.0.tgz"
+      "site-to-api-runtime": "file:./vendor/site-to-api-runtime-0.1.0-alpha.0.tgz"
     }
   }
 }
@@ -145,7 +145,7 @@ server also needs `@types/node`.
    maintainers), disallow self-review, and limit deployment branches and tags to `main` and `v*`.
    The publish job waits there for an approval before it can request an npm token.
 4. Run the `oss-launch` readiness and name-clearance checks.
-5. Create the free npm organisation `site-to-api` (for `@site-to-api/runtime`).
+5. Create the free npm organisation `site-to-api` (for `site-to-api-runtime`).
 6. Publish each package once from a local machine (`pnpm -r publish --access public`) so it exists.
 7. On npmjs.com, for each package: Settings → Trusted publishing → add GitHub Actions with
    repository `jatinag22/site-to-api`, workflow `release.yml` and environment `npm`.

@@ -44,7 +44,7 @@ function typeCheck(files: string[], types: string[] = []): string {
     types,
     typeRoots: [nodeTypes],
     paths: {
-      '@site-to-api/runtime': [runtimeSource],
+      'site-to-api-runtime': [runtimeSource],
     },
   })
   return ts.formatDiagnostics(ts.getPreEmitDiagnostics(program), {

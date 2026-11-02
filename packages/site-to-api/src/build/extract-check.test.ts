@@ -1,5 +1,5 @@
-import type { ExtractField, ExtractSpec, HtmlExtractSpec } from '@site-to-api/runtime'
-import { extract } from '@site-to-api/runtime'
+import type { ExtractField, ExtractSpec, HtmlExtractSpec } from 'site-to-api-runtime'
+import { extract } from 'site-to-api-runtime'
 import { describe, expect, it } from 'vitest'
 import { applyExtractSpec } from '../analyze/html'
 import { alignWithRuntime } from './extract-check'

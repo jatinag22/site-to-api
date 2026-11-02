@@ -1,6 +1,6 @@
 /**
  * `call_operation` (decision 0043): sends one request through the generated client in
- * `<handoff>/client/` and `@site-to-api/runtime`, under the rules `probe` follows (decision
+ * `<handoff>/client/` and `site-to-api-runtime`, under the rules `probe` follows (decision
  * 0012): safe methods only unless `--unsafe-methods`, rate limited, never a bot-protection step.
  * Credentials come only from environment variables the person sets; nothing is read from the raw
  * captures.
@@ -138,7 +138,7 @@ function limitText(value: unknown): { value: unknown, truncated: boolean } {
 /** Generated code imports these; they resolve to the copies this tool runs with. */
 function runtimeAliases(): Record<string, string> {
   return {
-    '@site-to-api/runtime': fileURLToPath(import.meta.resolve('@site-to-api/runtime')),
+    'site-to-api-runtime': fileURLToPath(import.meta.resolve('site-to-api-runtime')),
     // The package folder, not its entry file, so subpaths such as `zod/mini` resolve too.
     'zod': dirname(createRequire(import.meta.url).resolve('zod/package.json')),
   }

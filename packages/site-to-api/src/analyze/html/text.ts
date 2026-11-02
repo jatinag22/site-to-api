@@ -2,7 +2,7 @@
  * Extraction specs for plain-text responses: delimited tables (CSV, TSV, pipe, semicolon) with
  * header detection, and `key: value` layouts (one record per line or per blank-line block).
  */
-import type { FieldType, TextExtractSpec } from '@site-to-api/runtime'
+import type { FieldType, TextExtractSpec } from 'site-to-api-runtime'
 import type { ExtractedValue } from './values'
 import { splitDelimited, textLines } from './apply'
 import { camelCase, NameAllocator } from './naming'

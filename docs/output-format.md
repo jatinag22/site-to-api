@@ -340,7 +340,7 @@ Zod schemas, request and response validation; hey-api works from a copy of the s
 `pattern`, descriptions, titles, summaries, examples and extensions, so the client checks no
 patterns and has no doc comments from the site, decision 0043), `index.ts` exporting each host's SDK as a namespace
 and `createSiteClient({ host, session?, auth?, jar?, fetch?, baseUrl?, retry?, headers? })` wired
-to `@site-to-api/runtime` (each call creates its own hey-api client and returns `sdk` with the
+to `site-to-api-runtime` (each call creates its own hey-api client and returns `sdk` with the
 host's functions bound to it, so instances never share credentials, decision 0058; it passes the spec's apiKey header
 names as `credentialHeaders`, so the runtime drops them, `authorization`, `cookie` and the
 session's headers when a redirect leaves the site's origin), `extract.ts` with
@@ -361,7 +361,7 @@ HTTP only). Relative imports end in `.js`, so
 the client works under `moduleResolution` `bundler` and `nodenext`, and it type-checks under
 `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and `noImplicitOverride`
 (hey-api's bundled `client/` and `core/` files carry `// @ts-nocheck`, decision 0058). The generated code needs
-`zod` 4 and `@site-to-api/runtime` in the consuming project.
+`zod` 4 and `site-to-api-runtime` in the consuming project.
 
 ### `mcp/`
 

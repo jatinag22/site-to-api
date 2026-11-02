@@ -196,7 +196,7 @@ describe('renderExtractModule with HTML values', () => {
 
   it('writes a reader that calls extractValue with the location from flows.json', () => {
     const code = renderExtractModule([], [csrf])
-    expect(code).toContain(`import { extractValue } from '@site-to-api/runtime'`)
+    expect(code).toContain(`import { extractValue } from 'site-to-api-runtime'`)
     expect(code).not.toContain('zod')
     expect(code).toContain('export function extractCsrfTokenFromGetLogin(html: string): string | null {')
     expect(code).toContain('return extractValue(html, {"selector":"meta[name=\\"csrf-token\\"]","attr":"content","pattern":null})')
@@ -215,7 +215,7 @@ describe('renderExtractModule with HTML values', () => {
         ],
       },
     ])
-    expect(code).toContain(`import { extract, extractValue } from '@site-to-api/runtime'`)
+    expect(code).toContain(`import { extract, extractValue } from 'site-to-api-runtime'`)
     expect(code).toContain('low confidence')
     expect(code).toContain('flows.json also saw `input[name=_csrf]`, attribute `value`.')
   })
@@ -475,7 +475,7 @@ describe('renderReadme auth and usage', () => {
       }),
     ], [], [])
     expect(readme).toContain('const { data, error } = await sdk.getList(')
-    expect(readme).toContain('- Dependencies: `@site-to-api/runtime` and `zod` (4.1 or later; the client uses `zod/mini`).')
+    expect(readme).toContain('- Dependencies: `site-to-api-runtime` and `zod` (4.1 or later; the client uses `zod/mini`).')
     expect(readme).toContain('`playwright` too, only if you use `browserSession`.')
     expect(readme).toContain('## What to commit')
     expect(readme).toContain('- Never commit the raw captures')

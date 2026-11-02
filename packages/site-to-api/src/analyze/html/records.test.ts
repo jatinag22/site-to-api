@@ -1,6 +1,6 @@
-import type { ExtractSpec, HtmlExtractSpec } from '@site-to-api/runtime'
+import type { ExtractSpec, HtmlExtractSpec } from 'site-to-api-runtime'
 import type { Product, Question, Story } from './fixtures'
-import { extract } from '@site-to-api/runtime'
+import { extract } from 'site-to-api-runtime'
 import { describe, expect, it } from 'vitest'
 import { parseHtml } from './dom'
 import { productTable, profileTable, questionList, searchResults, storyTable } from './fixtures'

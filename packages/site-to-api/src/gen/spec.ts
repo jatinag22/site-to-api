@@ -3,7 +3,7 @@
  * URL, constant headers and the extraction specs of HTML/text operations. Pure: the caller
  * reads the file.
  */
-import type { ExtractSpec } from '@site-to-api/runtime'
+import type { ExtractSpec } from 'site-to-api-runtime'
 import type { HandshakeRole } from '../model'
 import { z } from 'zod'
 

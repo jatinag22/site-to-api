@@ -484,7 +484,7 @@ export function renderMcpReadme(hosts: readonly McpHost[], tools: readonly McpTo
     '',
     '```sh',
     `npm install -D @modelcontextprotocol/server@${MCP_SERVER_VERSION}`,
-    'npm install zod @site-to-api/runtime   # already needed by the client',
+    'npm install zod site-to-api-runtime   # already needed by the client',
     '```',
     '',
     'Register it with Claude Code (from the folder that holds the handoff folder). `site-to-api mcp',

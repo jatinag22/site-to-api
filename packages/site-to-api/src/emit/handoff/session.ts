@@ -180,8 +180,8 @@ export function sessionLines(entry: SessionRequirement, analysis: Analysis, cont
   const answered = entry.probed && entry.requires !== 'browser'
   for (const finding of entry.botProtection) {
     lines.push(answered
-      ? `- Bot protection seen: ${text(finding.vendor)} (${text(finding.evidence)}). Probe's plain requests were answered without it; if they start being challenged, use a real browser session (\`browserSession\` in \`@site-to-api/runtime\`) rather than reproducing it.`
-      : `- Bot protection: ${text(finding.vendor)} (${text(finding.evidence)}). Do not try to reproduce it; let a real browser run it (\`browserSession\` in \`@site-to-api/runtime\`).`)
+      ? `- Bot protection seen: ${text(finding.vendor)} (${text(finding.evidence)}). Probe's plain requests were answered without it; if they start being challenged, use a real browser session (\`browserSession\` in \`site-to-api-runtime\`) rather than reproducing it.`
+      : `- Bot protection: ${text(finding.vendor)} (${text(finding.evidence)}). Do not try to reproduce it; let a real browser run it (\`browserSession\` in \`site-to-api-runtime\`).`)
   }
   if (servedOnlyChallenges(entry.host, analysis))
     lines.push('- No real content: every response this host gave the capture was a bot challenge or block page, so its specs describe the interstitial, not the site. Capture again with a browser session the site lets through; probe results cannot show that plain HTTP works here.')
@@ -194,7 +194,7 @@ export function sessionLines(entry: SessionRequirement, analysis: Analysis, cont
   // exception, named here rather than turning the whole host into "needs a browser" (0046).
   const browserOnly = browserOnlyCalls(entry, analysis.operations)
   if (browserOnly.length > 0)
-    lines.push(`- Only a real browser can make ${plural(browserOnly.length, 'this call', 'these calls')}, although the host's other calls work with plain HTTP: ${browserOnly.map(code).join(', ')}. ${plural(browserOnly.length, 'It sends', 'They send')} headers a bot-protection script computes in the page; make ${plural(browserOnly.length, 'it', 'them')} through a real browser session (\`browserSession\` in \`@site-to-api/runtime\`), never by reproducing the headers.`)
+    lines.push(`- Only a real browser can make ${plural(browserOnly.length, 'this call', 'these calls')}, although the host's other calls work with plain HTTP: ${browserOnly.map(code).join(', ')}. ${plural(browserOnly.length, 'It sends', 'They send')} headers a bot-protection script computes in the page; make ${plural(browserOnly.length, 'it', 'them')} through a real browser session (\`browserSession\` in \`site-to-api-runtime\`), never by reproducing the headers.`)
   lines.push(...cookieLines(entry, tested))
   lines.push(`- Spec: ${code(`specs/${specFileName(entry.host, stems)}`)}.`)
   return lines

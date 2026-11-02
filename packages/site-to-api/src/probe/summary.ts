@@ -30,7 +30,7 @@ const PROBE_FAILURES: ReadonlySet<ProbeResultKind> = new Set([
  * Note that #28's probe wrote for a replay answered with a bot challenge page. Reports from that
  * version have no `rejection` field; this note marks them as blocked.
  */
-const CHALLENGED_NOTE = 'The site answered with a bot challenge page instead of the captured response: it does not let plain HTTP from here through, so nothing about the session was concluded. Use a real browser session (`browserSession` in `@site-to-api/runtime`).'
+const CHALLENGED_NOTE = 'The site answered with a bot challenge page instead of the captured response: it does not let plain HTTP from here through, so nothing about the session was concluded. Use a real browser session (`browserSession` in `site-to-api-runtime`).'
 
 /** Classifies one entry of `probe.json`. */
 export function probeResultKind(probe: OperationProbe): ProbeResultKind {

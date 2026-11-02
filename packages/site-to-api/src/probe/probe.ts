@@ -536,7 +536,7 @@ function authEvidence(exchange: Exchange, status: number, headers: Headers, body
 function rejectionOf(replay: SendResult, plain: SendResult): { kind: NonNullable<OperationProbe['rejection']>, note: string } {
   const blocked = replay.blocked ?? plain.blocked
   if (blocked !== null)
-    return { kind: 'bot-protection', note: `Blocked by bot protection (${blocked}), with and without the captured session. This says nothing about the session: this request needs a real browser (\`browserSession\` in \`@site-to-api/runtime\`).` }
+    return { kind: 'bot-protection', note: `Blocked by bot protection (${blocked}), with and without the captured session. This says nothing about the session: this request needs a real browser (\`browserSession\` in \`site-to-api-runtime\`).` }
   const auth = replay.auth ?? plain.auth
   if (auth !== null)
     return { kind: 'session', note: `The captured session was not accepted any more: the site answered with ${auth}. Capture again shortly before probing, or log in in the wrapper first.` }

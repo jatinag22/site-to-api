@@ -27,7 +27,7 @@ you verified the result yourself. Reports without a reproducible proof of concep
 
 ## Scope
 
-In scope: the published packages `site-to-api` and `@site-to-api/runtime`, used as documented.
+In scope: the published packages `site-to-api` and `site-to-api-runtime`, used as documented.
 Of particular interest: secrets or personal data leaking into the handoff folder under default
 redaction settings, code execution from a malicious website during capture or build (for example
 through crafted sourcemaps, HAR content or bundle paths), path traversal when writing files, and

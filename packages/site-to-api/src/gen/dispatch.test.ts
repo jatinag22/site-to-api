@@ -103,7 +103,7 @@ describe('renderDispatchModule', () => {
     const code = renderDispatchModule([
       operation(),
     ])
-    expect(code).toContain(`import { fetchWithoutFragment } from '@site-to-api/runtime'`)
+    expect(code).toContain(`import { fetchWithoutFragment } from 'site-to-api-runtime'`)
     expect(code).toContain(`export type GetSymbolDataOptions<ThrowOnError extends boolean = false> = Omit<Options<GetSymbolDataData, ThrowOnError>, 'query'> & {\n  query: Omit<NonNullable<GetSymbolDataData['query']>, "functionName">\n}`)
     expect(code).toContain('export function getSymbolData<ThrowOnError extends boolean = false>(options: GetSymbolDataOptions<ThrowOnError>) {')
     expect(code).toContain('    query: { ...query, "functionName": "getSymbolData" },')

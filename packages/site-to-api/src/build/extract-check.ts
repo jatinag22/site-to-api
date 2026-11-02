@@ -4,8 +4,8 @@
  * the two read differently (they coerce dates and numbers with separate rules) is downgraded to a
  * string, and dropped if they still disagree.
  */
-import type { ExtractSpec } from '@site-to-api/runtime'
-import { extract } from '@site-to-api/runtime'
+import type { ExtractSpec } from 'site-to-api-runtime'
+import { extract } from 'site-to-api-runtime'
 import { applyExtractSpec } from '../analyze/html'
 
 type Records = Array<Record<string, unknown>>

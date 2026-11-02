@@ -15,7 +15,7 @@ site-to-api repository.
 
 ```sh
 npm install -D site-to-api              # the CLI; run it with npx
-npm install @site-to-api/runtime zod    # what the generated client imports
+npm install site-to-api-runtime zod    # what the generated client imports
 npx site-to-api init                    # config + gitignore for .site-to-api/
 ```
 

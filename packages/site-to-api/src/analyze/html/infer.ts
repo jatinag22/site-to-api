@@ -2,7 +2,7 @@
  * Stage 8 (`html`): infers how to turn an operation's HTML or text responses into records, and
  * verifies the result by running it over every sample.
  */
-import type { ExtractSpec } from '@site-to-api/runtime'
+import type { ExtractSpec } from 'site-to-api-runtime'
 import type { Draft } from './records'
 import type { TextDraft } from './text'
 import type { ExtractedValue } from './values'

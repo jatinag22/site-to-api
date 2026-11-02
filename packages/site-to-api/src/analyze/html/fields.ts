@@ -2,7 +2,7 @@
  * Types and patterns for a field from its sample values: strips currency symbols, units and
  * labels around numbers and dates with a one-group pattern, as `coerce` does not.
  */
-import type { FieldType } from '@site-to-api/runtime'
+import type { FieldType } from 'site-to-api-runtime'
 import { capture, escapeRegex, looseLiteral } from './pattern'
 import { coerce, inferType } from './values'
 

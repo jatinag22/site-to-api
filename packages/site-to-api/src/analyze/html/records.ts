@@ -5,7 +5,7 @@
  * across records and samples are fields; positions with one value everywhere are template
  * ("Add to cart").
  */
-import type { ExtractField, FieldType, HtmlExtractSpec } from '@site-to-api/runtime'
+import type { ExtractField, FieldType, HtmlExtractSpec } from 'site-to-api-runtime'
 import type { Document, Element } from './dom'
 import type { Group } from './groups'
 import type { Hints, RawField } from './keys'

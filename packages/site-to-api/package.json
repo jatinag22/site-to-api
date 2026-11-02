@@ -51,7 +51,6 @@
     "@hey-api/shared": "catalog:prod",
     "@jridgewell/trace-mapping": "catalog:prod",
     "@modelcontextprotocol/server": "catalog:prod",
-    "@site-to-api/runtime": "workspace:*",
     "commander": "catalog:prod",
     "consola": "catalog:prod",
     "css-select": "catalog:prod",
@@ -62,6 +61,7 @@
     "oxc-parser": "catalog:prod",
     "pathe": "catalog:prod",
     "playwright": "catalog:prod",
+    "site-to-api-runtime": "workspace:*",
     "typescript": "catalog:dev",
     "yaml": "catalog:prod",
     "zod": "catalog:prod"

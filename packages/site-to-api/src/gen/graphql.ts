@@ -196,7 +196,7 @@ export function renderGraphqlModule(operations: readonly GraphqlClientOperation[
     `import type { ${operations.map(operation => dataTypeName(operation.operationId)).sort().join(', ')} } from './types.gen.js'`,
     ...(runtime.length === 0
       ? []
-      : [`import { ${runtime.join(', ')} } from '@site-to-api/runtime'`]),
+      : [`import { ${runtime.join(', ')} } from 'site-to-api-runtime'`]),
     ...(usesClient
       ? [`import { client } from './client.gen.js'`]
       : []),

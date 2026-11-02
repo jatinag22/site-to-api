@@ -6,7 +6,7 @@ advisory database, deps.dev and OpenSSF Scorecard.
 
 ## Scope
 
-- `site-to-api`: 16 direct dependencies. `@site-to-api/runtime`: 5 direct dependencies.
+- `site-to-api`: 16 direct dependencies. `site-to-api-runtime`: 5 direct dependencies.
 - The collector does not read `pnpm-lock.yaml`, so ranged versions were checked at their latest
   release. TypeScript was checked at 7.0.2 although the declared range `^6.0.3` never resolves
   to 7. Pinned packages (`@hey-api/openapi-ts` 0.99.0, `@hey-api/shared` 0.5.0, `oxc-parser`
@@ -17,7 +17,7 @@ advisory database, deps.dev and OpenSSF Scorecard.
 
 - No known advisory affects any of the 21 direct dependencies.
 - No dependency is deprecated, yanked or archived, and none runs install-time scripts.
-- `@site-to-api/runtime`: no findings on any criterion.
+- `site-to-api-runtime`: no findings on any criterion.
 - `site-to-api`: four findings, none blocking.
 
 | Dependency | Finding | Weekly downloads | Action |

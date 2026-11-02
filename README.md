@@ -58,7 +58,7 @@ pages (`--session second-pass`) gives the build two samples to compare.
 The generated client runs in your app with two runtime dependencies:
 
 ```sh
-npm install @site-to-api/runtime zod
+npm install site-to-api-runtime zod
 ```
 
 ## What you get

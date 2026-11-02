@@ -1,6 +1,6 @@
 # Changelog
 
-All user-visible changes to `site-to-api` and `@site-to-api/runtime`, which share one version.
+All user-visible changes to `site-to-api` and `site-to-api-runtime`, which share one version.
 Versioning follows [docs/release-policy.md](docs/release-policy.md).
 
 ## Unreleased
@@ -50,12 +50,12 @@ The first release. Everything below is new.
 #### Generated client and runtime
 
 - **A typed TypeScript client.** `build` (and `gen`, from the handoff folder alone) writes a hey-api
-  SDK with Zod Mini schemas, wired to `@site-to-api/runtime`. `createSiteClient` returns a client of
+  SDK with Zod Mini schemas, wired to `site-to-api-runtime`. `createSiteClient` returns a client of
   its own per call, so one per user never shares cookies or credentials; per-host factories in
   `<host>/site.ts` keep bundles small. HTML and text responses get typed parsers.
 - **The client can live in your app.** `gen.clientDir` puts it in your source tree; `gen` replaces
   only the files it generated, keeps your own files, and reports hand edits until `--force`.
-- **`@site-to-api/runtime`.** A cookie jar (RFC 6265, saved with `toJSON()`), `fetch` with retries
+- **`site-to-api-runtime`.** A cookie jar (RFC 6265, saved with `toJSON()`), `fetch` with retries
   and `Retry-After`, cookie, token and browser-backed sessions, and HTML or text extraction. It
   uses only web-standard APIs and runs on Node, Bun and edge workers; its `browser` build
   bundles no HTML parser.

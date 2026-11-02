@@ -2,7 +2,7 @@
  * Runs an extraction spec over a document. `build` uses it to verify every inferred spec against
  * the samples it came from; the semantics below are what the runtime's `extract()` must match.
  */
-import type { ExtractField, ExtractSpec, HtmlExtractSpec, TextExtractSpec } from '@site-to-api/runtime'
+import type { ExtractField, ExtractSpec, HtmlExtractSpec, TextExtractSpec } from 'site-to-api-runtime'
 import type { Document, Element } from './dom'
 import type { ExtractedValue } from './values'
 import { isTag } from 'domhandler'
