@@ -1,5 +1,6 @@
 # site-to-api
 
+[![npm](https://img.shields.io/npm/v/site-to-api.svg)](https://www.npmjs.com/package/site-to-api)
 [![CI](https://github.com/jatinag22/site-to-api/actions/workflows/ci.yml/badge.svg)](https://github.com/jatinag22/site-to-api/actions/workflows/ci.yml)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 ![Node 22.12+](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen.svg)
