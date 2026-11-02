@@ -1,8 +1,10 @@
 name: Release
 
 # A release starts with `pnpm run release` (bumpp --pr, see RELEASING.md), which opens a pull
-# request from `release/v<version>` into `main`. Merging it runs this workflow on the merge commit.
-# A `v*` tag pushed by a maintainer runs it for that tag. Jobs, each with only the rights it needs:
+# request from `release/v<version>` into `main`. Squash-merging it lands a `chore: release v…`
+# commit on main, and that push runs this workflow (a push to main, not the pull request event,
+# so the run's ref is main, which the `npm` environment allows). A `v*` tag pushed by a
+# maintainer runs it for that tag. Jobs, each with only the rights it needs:
 #   prepare  read-only: versions agree and match the branch or tag; the commit is on main
 #   pack     read-only: build and pack once; the tarballs are the artifact, their checksums
 #            the job's outputs
@@ -14,9 +16,8 @@ name: Release
 # already-published version are left alone.
 
 on:
-  pull_request:
-    types: [closed]
   push:
+    branches: [main]
     tags: ['v*']
 
 permissions:
@@ -29,14 +30,12 @@ concurrency:
 jobs:
   prepare:
     name: Check the version and the commit
-    # Only merged release pull requests into main from this repository: a fork can name a branch
-    # `release/…` too, so the head repository is checked as well as the name.
+    # A pushed v* tag, or a release commit on main. Only maintainers can push to main (branch
+    # protection), so a fork cannot start a release.
     if: >-
-      github.event_name == 'push' ||
-      (github.event.pull_request.merged == true &&
-      github.event.pull_request.base.ref == 'main' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      startsWith(github.event.pull_request.head.ref, 'release/'))
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.ref == 'refs/heads/main' &&
+      startsWith(github.event.head_commit.message, 'chore: release v'))
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
@@ -47,7 +46,7 @@ jobs:
       - name: Commit to release
         id: commit
         env:
-          SHA: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.merge_commit_sha }}
+          SHA: ${{ github.sha }}
         run: echo "sha=$SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,18 +67,19 @@ jobs:
       - name: Package versions agree (and match the tag)
         id: version
         env:
-          TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
         run: node scripts/check-release-version.mjs "$TAG"
-      - name: The release branch names the same version
-        if: github.event_name == 'pull_request'
+      - name: The release commit names the same version
+        if: github.ref == 'refs/heads/main'
         env:
-          BRANCH: ${{ github.event.pull_request.head.ref }}
-          EXPECTED: release/${{ steps.version.outputs.tag }}
+          TITLE: ${{ github.event.head_commit.message }}
+          EXPECTED: ${{ steps.version.outputs.tag }}
         run: |
-          if [ "$BRANCH" != "$EXPECTED" ]; then
-            echo "::error::branch $BRANCH does not match the package version (expected $EXPECTED)"
-            exit 1
-          fi
+          title=$(printf '%s\n' "$TITLE" | head -n 1)
+          case "$title" in
+            "chore: release $EXPECTED"|"chore: release $EXPECTED "*) ;;
+            *) echo "::error::commit title '$title' does not name the package version $EXPECTED"; exit 1 ;;
+          esac
 
   pack:
     name: Build and pack
