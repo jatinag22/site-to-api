@@ -14,8 +14,9 @@ is protected, so a release goes through a pull request like any other change.
    - pushes the branch (the pre-push hook runs as usual) and opens a pull request with `gh`, or
      prints a link to open it;
    - returns you to `main`. It creates no tag.
-3. Review and merge the pull request into `main`.
-4. The merge runs `.github/workflows/release.yml` on the merge commit. Its jobs run one after
+3. Review and squash-merge the pull request into `main`, keeping the commit title
+   `chore: release v<version>`: the release starts from a commit on `main` with that title.
+4. The push to `main` runs `.github/workflows/release.yml` on that commit. Its jobs run one after
    another, each with only the rights it needs:
    1. **prepare** (read-only) checks:
       - every package has the same version, and the branch name (or a hand-pushed tag) matches it;

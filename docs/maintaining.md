@@ -49,6 +49,9 @@ Signed-off-by: <name> <email>
 - The body explains why. It does not repeat the diff and does not paste generated text.
 - Keep `Co-authored-by` trailers only for people (or tools) who wrote part of the change.
 
+Release pull requests (`release/v<version>`) keep the title `chore: release v<version> (#<pr>)`:
+the release workflow starts from a commit on `main` whose title begins `chore: release v`.
+
 ## Dependency updates (Dependabot)
 
 - Merge patch and minor updates when CI is green, one pull request at a time: after each merge
