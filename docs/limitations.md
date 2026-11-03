@@ -11,6 +11,9 @@ likely to meet; this page has all of them.
 - Interactive capture (closing the window to finish) is covered by an abort test but not by an
   automated headful test. In interactive mode a browser crash looks like quitting; both save a
   complete session with a note.
+- Dialogs (`confirm()`, `prompt()`, "Leave site?") are recorded in `events.jsonl`, but `flows.json`
+  does not yet mark a step that needed a confirmation. The person answering Chrome's own dialog in
+  a headed capture is checked by hand (docs/testing.md), not by an automated test.
 - A saved profile (`--user-data-dir`) keeps cookies that outlive the browser. A login the site
   keeps in session storage or in session cookies does not survive between captures.
 
