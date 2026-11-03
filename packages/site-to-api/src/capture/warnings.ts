@@ -39,3 +39,13 @@ export class WarningLog {
     ]
   }
 }
+
+/**
+ * The warning for a saved session whose HAR holds no request (the browser was closed before a
+ * page loaded). The session is still saved (decision 0037); `build` skips it with a warning.
+ */
+export function noTrafficWarning(sessionId: string, requests: number | null): string[] {
+  return requests === 0
+    ? [`Session ${sessionId} recorded no requests: the browser was closed before any page loaded. It is saved, but \`build\` skips it; delete its folder or capture again.`]
+    : []
+}
