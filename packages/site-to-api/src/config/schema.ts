@@ -87,6 +87,12 @@ export const ConfigSchema = z.strictObject({
     script: z.string().nullable().default(null),
   }).prefault({}),
   build: z.strictObject({
+    /**
+     * Sessions to analyse, by id (the session's folder name in `rawDir`), as globs
+     * (`github-*`). Empty means every session in `rawDir`. A pattern that matches no session is
+     * an error, so a typo never quietly builds from nothing.
+     */
+    sessions: z.array(z.string().min(1)).default([]),
     /** Samples needed before an HTML or text response gets a high-confidence extraction spec. */
     minExtractSamples: z.number().int().min(1).default(2),
     /** Ignore values shorter than this when tracing values between requests. */

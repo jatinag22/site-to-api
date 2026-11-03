@@ -18,3 +18,6 @@ temp
 site-to-api-raw/
 **/.site-to-api/raw/
 e2e/.output/
+
+# Worktrees that coding agents create inside the repository
+.claude/worktrees/

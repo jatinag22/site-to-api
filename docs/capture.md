@@ -20,6 +20,11 @@ Capture the same pages twice (`--session second-pass` for the second): two sessi
 tell constants from per-session values, raise the confidence of HTML and text extraction, and
 allow enums.
 
+`build` analyses every session in the raw folder. To build from some of them, for example when
+the folder holds captures of more than one site, name them: `build --session second-pass
+--session 'login*'` (`*` matches any characters; config key `build.sessions`). `probe` reuses
+that choice.
+
 ## Capture scripts
 
 `--script <file>` drives the browser from a module instead of by hand, so a capture is repeatable.

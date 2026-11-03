@@ -5,7 +5,17 @@ Versioning follows [docs/release-policy.md](docs/release-policy.md).
 
 ## Unreleased
 
-The first release. Everything below is new.
+### Added
+
+- **Build from some sessions only.** `build --session <id>` (repeatable, `*` globs, config
+  `build.sessions`) analyses only the named sessions in the raw folder, for example the captures of
+  one site when the folder holds several. A name that matches no session is an error that lists
+  the sessions there are. `probe` reuses the choice from `build.json`.
+
+## 0.1.2 (2026-11-03)
+
+The first release on npm (0.1.0 was published by hand; 0.1.1 was tagged on GitHub but never
+reached npm). Everything below is new.
 
 ### Added
 

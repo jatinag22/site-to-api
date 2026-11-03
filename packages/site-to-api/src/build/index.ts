@@ -258,7 +258,7 @@ async function analyze(config: ResolvedConfig, rawDir: string, outDir: string, l
 
 /** Everything `build` learns from the raw captures; `probe.json` is applied by {@link withStoredProbe}. */
 async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (message: string) => void): Promise<CapturedAnalysis> {
-  const loaded = await loadSessions(rawDir)
+  const loaded = await loadSessions(rawDir, config.build.sessions)
   log(`Loaded ${loaded.sessions.length} ${loaded.sessions.length === 1
     ? 'session'
     : 'sessions'}, ${loaded.exchanges.length} ${loaded.exchanges.length === 1
