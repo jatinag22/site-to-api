@@ -8,6 +8,7 @@ import type { Evidence, Marks } from './templates'
 import { isUsableFunctionName } from '../../emit/naming'
 import { isChallengeAnswer } from '../classify'
 import { graphqlGroupKey, graphqlOperationId, graphqlOperationOf, graphqlSpecPath, graphqlSummary, isGraphqlExchange } from '../graphql'
+import { redactPathTokens } from '../redact'
 import { isRpcExchange, rpcGroupKey, rpcOperationOf, rpcSummary } from '../rpc'
 import { inferStringSchema } from '../schema'
 import { detectDispatcher } from './dispatch'
@@ -36,6 +37,11 @@ interface BuildOperationsOptions {
    * segment equal to one becomes a parameter, so it never reaches paths, ids or client names.
    */
   isLearntValue?: (value: string) => boolean
+  /**
+   * Receives a warning for code routes left out because the capture does not show which of
+   * several sites' pages loaded their script (decision 0061). Dropped when omitted.
+   */
+  warnings?: string[]
 }
 
 /** Written in summaries instead of a response key that is a secret or personal value. */
@@ -589,34 +595,78 @@ function sourceOnlyOperation(route: SourceRoute, host: string, template: ReturnT
   })
 }
 
-/** Hosts of the pages that loaded scripts from each script host, from the captured script requests. */
-function pagesByScriptHost(exchanges: readonly Exchange[]): Map<string, Set<string>> {
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host
+  }
+  catch {
+    return null
+  }
+}
+
+/**
+ * The page a script request was made for: the open page the capture recorded (or the
+ * `Referer`); else, for a site that sends no referrer, the latest page the same session
+ * navigated to before it (decision 0061).
+ */
+function pageHostOf(script: Exchange, documents: ReadonlyMap<string, readonly Exchange[]>): string | null {
+  if (script.pageUrl !== null)
+    return hostOf(script.pageUrl)
+  let latest: Exchange | null = null
+  for (const document of documents.get(script.sessionId) ?? []) {
+    if (document.startedAt > script.startedAt)
+      break
+    latest = document
+  }
+  return latest?.request.host ?? null
+}
+
+/**
+ * Hosts of the pages that loaded scripts from each script host, from the captured script
+ * requests; `pageHosts` are the hosts that served pages, whose navigations place a script.
+ */
+function pagesByScriptHost(exchanges: readonly Exchange[], pageHosts: readonly string[]): Map<string, Set<string>> {
+  const documents = new Map<string, Exchange[]>()
+  for (const exchange of exchanges) {
+    if (exchange.resourceType === 'document' && pageHosts.includes(exchange.request.host)) {
+      documents.set(exchange.sessionId, [
+        ...documents.get(exchange.sessionId) ?? [],
+        exchange,
+      ])
+    }
+  }
+  for (const list of documents.values())
+    list.sort((a, b) => a.startedAt - b.startedAt || a.seq - b.seq)
   const result = new Map<string, Set<string>>()
   for (const exchange of exchanges) {
-    if (exchange.resourceType !== 'script' || exchange.pageUrl === null)
+    if (exchange.resourceType !== 'script')
       continue
-    let page: string
-    try {
-      page = new URL(exchange.pageUrl).host
-    }
-    catch {
-      continue
-    }
-    result.set(exchange.request.host, (result.get(exchange.request.host) ?? new Set()).add(page))
+    const page = pageHostOf(exchange, documents)
+    if (page !== null)
+      result.set(exchange.request.host, (result.get(exchange.request.host) ?? new Set()).add(page))
   }
   return result
 }
 
-/**
- * Source routes never observed, and passed to a request call in the code, become `sourceOnly`
- * operations; a URL-like string alone is not evidence of an endpoint. A relative route belongs to
- * the page hosts that loaded the script it was found in (the browser resolves it against the
- * page), when the capture shows those; otherwise to the hosts that served pages, or to every
- * observed host when no page was captured.
- */
-function sourceOnlyOperations(allRoutes: SourceRoute[], observed: Operation[], exchanges: readonly Exchange[]): Operation[] {
-  const routes = allRoutes.filter(route => route.evidence === 'call')
-  const scriptPages = pagesByScriptHost(exchanges)
+/** At most this many routes are named in the warning about routes without a host. */
+const MAX_UNPLACED_NAMED = 10
+
+/** One warning naming the routes no single host could be found for; none when every route was placed. */
+function unplacedWarning(unplaced: readonly SourceRoute[]): string[] {
+  if (unplaced.length === 0)
+    return []
+  const names = [
+    ...new Set(unplaced.map(route => `${(route.method ?? 'GET').toUpperCase()} ${redactPathTokens(route.pathTemplate)} (in a script from ${route.scriptHosts.join(', ') || 'an unknown host'})`)),
+  ].sort()
+  const listed = names.slice(0, MAX_UNPLACED_NAMED).join('; ')
+  const more = names.length > MAX_UNPLACED_NAMED
+    ? ` and ${names.length - MAX_UNPLACED_NAMED} more`
+    : ''
+  return [`${names.length} relative route(s) found in the site's code are not listed as operations, because the capture does not show which site's pages loaded their script: ${listed}${more}. Capture the page that uses the feature to place them.`]
+}
+
+/** Hosts a relative route can point at: those that served pages, or every observed host when none did. */
+function candidateHosts(observed: readonly Operation[]): string[] {
   // A page answered with a challenge (every page, on a site that blocked the capture) is still
   // where the site's relative routes point.
   const servesPages = (operation: Operation): boolean => operation.kind === 'page'
@@ -624,11 +674,53 @@ function sourceOnlyOperations(allRoutes: SourceRoute[], observed: Operation[], e
   const pageHosts = [
     ...new Set(observed.filter(servesPages).map(operation => operation.host)),
   ]
-  const fallbackHosts = pageHosts.length > 0
+  return pageHosts.length > 0
     ? pageHosts
     : [
         ...new Set(observed.map(operation => operation.host)),
       ]
+}
+
+/**
+ * The hosts a code route belongs to (decision 0061): its own, for an absolute URL; for a relative
+ * one, the pages that loaded its script, else the script's own host when it served pages, else
+ * the one candidate host. Null when several candidates remain and nothing says which.
+ */
+function hostsOf(route: SourceRoute, scriptPages: ReadonlyMap<string, ReadonlySet<string>>, candidates: readonly string[]): string[] | null {
+  if (route.host !== null)
+    return [route.host]
+  const loadedBy = [
+    ...new Set(route.scriptHosts.flatMap(host => [
+      ...(scriptPages.get(host) ?? []),
+    ])),
+  ]
+    .filter(host => candidates.includes(host))
+    .sort()
+  if (loadedBy.length > 0)
+    return loadedBy
+  const own = route.scriptHosts.filter(host => candidates.includes(host))
+  if (own.length > 0)
+    return own
+  // Listing the route under each of several sites would invent endpoints on all but one.
+  return candidates.length > 1
+    ? null
+    : [...candidates]
+}
+
+/**
+ * Source routes never observed, and passed to a request call in the code, become `sourceOnly`
+ * operations; a URL-like string alone is not evidence of an endpoint. A relative route belongs to
+ * the page hosts that loaded the script it was found in (the browser resolves it against the
+ * page), when the capture shows those; else to the script's own host when that host served pages
+ * (a site's own or inline script); else to the one host that served pages (or the one observed
+ * host, when no page was captured). A route that could belong to several hosts is never listed
+ * under each of them: it is left out and named in a warning (decision 0061).
+ */
+function sourceOnlyOperations(allRoutes: SourceRoute[], observed: Operation[], exchanges: readonly Exchange[], warnings: string[]): Operation[] {
+  const routes = allRoutes.filter(route => route.evidence === 'call')
+  const fallbackHosts = candidateHosts(observed)
+  const scriptPages = pagesByScriptHost(exchanges, fallbackHosts)
+  const unplaced: SourceRoute[] = []
   const seen = new Set<string>()
   const result: Operation[] = []
   // Routes with a known method first, so a `fetch(url)` without a method never claims the slot
@@ -640,19 +732,16 @@ function sourceOnlyOperations(allRoutes: SourceRoute[], observed: Operation[], e
   for (const route of ordered) {
     const template = parseTemplate(route)
     const method = (route.method ?? 'GET').toUpperCase()
-    const loadedBy = [
-      ...new Set(route.scriptHosts.flatMap(host => [
-        ...(scriptPages.get(host) ?? []),
-      ])),
-    ]
-      .filter(host => fallbackHosts.includes(host))
-      .sort()
-    const relativeHosts = loadedBy.length > 0
-      ? loadedBy
-      : fallbackHosts
-    for (const host of route.host === null
-      ? relativeHosts
-      : [route.host]) {
+    const calledOn = (host: string): boolean => observed.some(operation => operation.host === host
+      && (route.method === null || operation.method === method)
+      && templateMatches(template, segmentsOf(operation.graphql?.endpoint ?? operation.dispatch?.endpoint ?? operation.path)))
+    const hosts = hostsOf(route, scriptPages, fallbackHosts)
+    if (hosts === null) {
+      if (!fallbackHosts.some(calledOn))
+        unplaced.push(route)
+      continue
+    }
+    for (const host of hosts) {
       const key = `${host} ${method} ${route.pathTemplate}`
       // A method-less route to a path the code also calls with a known method is that call.
       const anyMethod = `${host} * ${route.pathTemplate}`
@@ -660,14 +749,12 @@ function sourceOnlyOperations(allRoutes: SourceRoute[], observed: Operation[], e
         continue
       seen.add(key)
       seen.add(anyMethod)
-      const matched = observed.some(operation => operation.host === host
-        && (route.method === null || operation.method === method)
-        && templateMatches(template, segmentsOf(operation.graphql?.endpoint ?? operation.dispatch?.endpoint ?? operation.path)))
-      if (matched)
+      if (calledOn(host))
         continue
       result.push(sourceOnlyOperation(route, host, template))
     }
   }
+  warnings.push(...unplacedWarning(unplaced))
   return result
 }
 
@@ -778,6 +865,6 @@ export function buildOperations(exchanges: Exchange[], options: BuildOperationsO
   ].map(operation => withChallengeNote(operation, challenged))
   return assignOperationIds([
     ...observed,
-    ...sourceOnlyOperations(options.sourceRoutes, observed, exchanges),
+    ...sourceOnlyOperations(options.sourceRoutes, observed, exchanges, options.warnings ?? []),
   ])
 }
