@@ -323,11 +323,13 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
     ...sockets.exchanges,
   ])
   // A path segment the redactor would change is a learnt secret or personal value (0056).
+  const operationWarnings: string[] = []
   let operations = buildOperations(exchanges, {
     sourceRoutes,
     isSecretKey: redactor.isSecretKey,
     codeLiteral,
     isLearntValue: redactor.isLearnt,
+    warnings: operationWarnings,
   })
     .filter(operation => !operation.sourceOnly || (wanted(operation.host) && !pollingPaths.has(`${operation.host} ${operation.path}`)))
   operations = applyGraphqlTypes(operations, await findGraphqlTypes(loaded.sessions, graphqlTypeTargets(operations)))
@@ -341,6 +343,7 @@ async function analyzeRawCaptures(config: ResolvedConfig, rawDir: string, log: (
       ? []
       : [blocked]),
     ...loaded.warnings,
+    ...operationWarnings,
     ...(screened.warning === null
       ? []
       : [screened.warning]),

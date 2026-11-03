@@ -335,10 +335,83 @@ describe('buildOperations: grouping, ids and summaries', () => {
       }),
     ])
     expect(operations.filter(item => item.sourceOnly).map(item => `${item.method} ${item.host}${item.path}`)).toEqual([
-      'GET sgtm.shop.test/api/elsewhere',
       'PUT www.shop.test/api/cart',
-      'GET www.shop.test/api/elsewhere',
     ])
+  })
+
+  describe('a relative code route belongs to one site, never to every page host (decision 0061)', () => {
+    const pageOn = (host: string, startedAt: number): Exchange => exchange({
+      url: `https://${host}/`,
+      kind: 'page',
+      resourceType: 'document',
+      startedAt,
+      responseBody: textBody('<html>'),
+    })
+    const scriptFrom = (url: string, startedAt: number): Exchange => ({
+      ...exchange({
+        url,
+        kind: 'asset',
+        resourceType: 'script',
+        startedAt,
+      }),
+      // A site with `Referrer-Policy: no-referrer`, whose script requests name no page.
+      pageUrl: null,
+    })
+    const sourceOnly = (operations: Operation[]): string[] => operations
+      .filter(item => item.sourceOnly)
+      .map(item => `${item.method} ${item.host}${item.path}`)
+
+    it('places a script without a page on the page the session had open when it loaded', () => {
+      const operations = build([
+        pageOn('ledger.shop.test', 1000),
+        pageOn('members.shop.test', 2000),
+        scriptFrom('https://static.shop.test/security/change.js', 2100),
+      ], [
+        route('/account/sendCode', {
+          method: 'POST',
+          scriptHosts: ['static.shop.test'],
+        }),
+      ])
+      expect(sourceOnly(operations)).toEqual(['POST members.shop.test/account/sendCode'])
+    })
+
+    it('places an inline or own script on its own host when that host served pages', () => {
+      const operations = build([
+        pageOn('ledger.shop.test', 1000),
+        pageOn('members.shop.test', 2000),
+      ], [
+        route('/account/sendCode', {
+          method: 'POST',
+          scriptHosts: ['members.shop.test'],
+        }),
+      ])
+      expect(sourceOnly(operations)).toEqual(['POST members.shop.test/account/sendCode'])
+    })
+
+    it('leaves a route out with a warning when several sites could have run the script', () => {
+      const warnings: string[] = []
+      const exchanges = [
+        pageOn('ledger.shop.test', 1000),
+        pageOn('members.shop.test', 2000),
+      ]
+      const operations = buildOperations(exchanges, {
+        sourceRoutes: [
+          route('/account/sendCode', {
+            method: 'POST',
+            scriptHosts: ['cdn.vendor.test'],
+          }),
+          route('/', {
+            scriptHosts: ['cdn.vendor.test'],
+          }),
+        ],
+        isSecretKey: () => false,
+        warnings,
+      })
+      expect(sourceOnly(operations)).toEqual([])
+      expect(warnings).toEqual([
+        '1 relative route(s) found in the site\'s code are not listed as operations, because the capture does not show which site\'s pages loaded their script: POST /account/sendCode (in a script from cdn.vendor.test). Capture the page that uses the feature to place them.',
+      ])
+    })
   })
 
   it('puts relative code routes on a site whose pages were all challenge pages', () => {
