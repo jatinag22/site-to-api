@@ -73,6 +73,23 @@ export interface SiblingFacts {
   method: string
   /** Per path, the decoded segments that a response of the same session showed before it was requested. */
   seenBefore: Map<string, Set<string>>
+  /** How each path was requested: `page` (a navigation) or `call` (XHR, fetch); see {@link requestedAs}. */
+  requestedAs: Map<string, Set<Requested>>
+}
+
+/** How the browser requested a path: navigated to it as a page, or called it from a script. */
+type Requested = 'page' | 'call'
+
+/**
+ * `page` for a navigation, `call` for XHR and fetch, null when the capture does not say (a HAR
+ * import without resource types, a beacon). Unknown never separates two paths.
+ */
+function requestedAs(exchange: Exchange): Requested | null {
+  if (exchange.resourceType === 'document')
+    return 'page'
+  if (exchange.resourceType === 'xhr' || exchange.resourceType === 'fetch')
+    return 'call'
+  return null
 }
 
 /** A response's comparable structure; see {@link structureOf}. */
@@ -208,19 +225,23 @@ function similarity(a: Set<string>, b: Set<string>): number {
   return shared / (a.size + b.size - shared)
 }
 
-function pathFacts(members: Exchange[]): Pick<SiblingFacts, 'sessions' | 'structures'> {
+function pathFacts(members: Exchange[]): Pick<SiblingFacts, 'sessions' | 'structures' | 'requestedAs'> {
   const sessions = new Map<string, Set<string>>()
   const structures = new Map<string, Structure>()
+  const requested = new Map<string, Set<Requested>>()
   for (const exchange of members) {
     const path = exchange.request.path
     sessions.set(path, (sessions.get(path) ?? new Set()).add(exchange.sessionId))
+    const as = requestedAs(exchange)
+    if (as !== null)
+      requested.set(path, (requested.get(path) ?? new Set()).add(as))
     if (structures.has(path))
       continue
     const shape = structureOf(exchange)
     if (shape)
       structures.set(path, shape)
   }
-  return { sessions, structures }
+  return { sessions, structures, requestedAs: requested }
 }
 
 function linkedOn(host: string | undefined, all: Exchange[]): Map<number, string[][]> {
@@ -328,10 +349,26 @@ function titleNames(text: string, values: readonly string[]): boolean {
   return values.every(value => spelled.includes(words(decode(value))))
 }
 
-/** A value usable as data: not empty, not a version, not a reserved endpoint word. */
+/**
+ * A lowerCamelCase compound of two or more words (`memberPassbook`, `getRecentApplications`): a
+ * method or controller name from the site's code. Titles, tags, slugs and repository names are
+ * written with capitals, `-` or `_`, or in one case. Each word after the first starts with one
+ * capital followed by a lower-case letter, so brand spellings (`macOS`) and opaque tokens with
+ * runs of capitals do not count; a one-letter first word (`iPhone`, `eBay`) does not either.
+ */
+const CODE_NAME = /^[a-z]{2}[a-z\d]*(?:[A-Z][a-z][a-z\d]*)+$/
+
+/**
+ * A value usable as data: not empty, not a version, not a reserved endpoint word, not a code name
+ * (decision 0060). Splitting a camelCase username into its own operation costs a duplicate; merging
+ * two controller methods into one template costs a wrong client.
+ */
 function isDataValue(segment: string): boolean {
   const value = decode(segment)
-  return value !== '' && !/^v\d+(?:\.\d+)*$/i.test(value) && !RESERVED.has(value.toLowerCase())
+  return value !== ''
+    && !/^v\d+(?:\.\d+)*$/i.test(value)
+    && !RESERVED.has(value.toLowerCase())
+    && !CODE_NAME.test(value)
 }
 
 function tupleOf(item: Free, start: number, size: number): string {
@@ -374,9 +411,45 @@ function linkedValues(group: Group, facts: SiblingFacts): Set<string> {
   return values
 }
 
+/** True when the browser requested the two paths the same way, or the capture does not say. */
+function requestedAlike(facts: SiblingFacts, a: string, b: string): boolean {
+  const left = facts.requestedAs.get(a)
+  const right = facts.requestedAs.get(b)
+  return left === undefined || right === undefined || [...left].some(as => right.has(as))
+}
+
+/**
+ * The members requested the way most are (decision 0060): a page the browser navigated to and an
+ * XHR a script sent are two endpoints, even when the call failed and its response says nothing.
+ */
+function sameRequestKind(group: Group, facts: SiblingFacts, pivot: string | null): Group {
+  const paths = [
+    ...new Set(group.items.map(item => item.path)),
+  ].sort()
+  let reference = pivot
+  if (reference === null) {
+    let best = -1
+    for (const path of paths) {
+      const count = paths.filter(other => requestedAlike(facts, path, other)).length
+      if (count > best) {
+        best = count
+        reference = path
+      }
+    }
+  }
+  if (reference === null)
+    return group
+  const kept = reference
+  return {
+    ...group,
+    items: group.items.filter(item => requestedAlike(facts, kept, item.path)),
+  }
+}
+
 /**
  * The members rendered from one template: the response most others resemble, and those that
- * resemble it. Members without a readable response cannot contradict, so they stay in.
+ * resemble it, requested the same way. Members without a readable response cannot contradict
+ * the structure, so they stay in when they were requested like the others.
  */
 function sameTemplate(group: Group, facts: SiblingFacts): Group {
   const paths = [
@@ -384,7 +457,7 @@ function sameTemplate(group: Group, facts: SiblingFacts): Group {
   ].sort()
   const known = paths.filter(path => facts.structures.has(path))
   if (known.length === 0)
-    return group
+    return sameRequestKind(group, facts, null)
   let pivot = known[0]!
   let best = -1
   for (const path of known) {
@@ -396,13 +469,13 @@ function sameTemplate(group: Group, facts: SiblingFacts): Group {
     }
   }
   const reference = facts.structures.get(pivot)!
-  return {
+  return sameRequestKind({
     ...group,
     items: group.items.filter((item) => {
       const own = facts.structures.get(item.path)
       return own === undefined || alike(reference, own)
     }),
-  }
+  }, facts, pivot)
 }
 
 /** True when every session that requested the shape requested other values than the others. */

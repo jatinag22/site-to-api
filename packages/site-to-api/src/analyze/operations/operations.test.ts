@@ -1323,6 +1323,71 @@ describe('buildOperations: sibling paths (decision 0035)', () => {
       get('/help/shipping', article('b')),
     ]))).toEqual(['GET /help/contact', 'GET /help/shipping'])
   })
+
+  it('keeps camelCase controller and method names a menu links to literal (decision 0060)', () => {
+    const menu = '<nav class="menu"><a href="/portal/accountLedger/home">a</a><a href="/portal/serviceRecordNew/loadServiceRecord">b</a><a href="/portal/profileDetails/viewProfile">c</a></nav>'
+    const page = (body: string): Parameters<typeof get>[1] => ({
+      kind: 'page',
+      resourceType: 'document',
+      ...article(`${menu}${body}`),
+    })
+    const operations = build([
+      get('/portal/', page('home')),
+      get('/portal/accountLedger/home', page('ledger')),
+      get('/portal/serviceRecordNew/loadServiceRecord', page('record')),
+      get('/portal/serviceRecordNew/getRecentRequests', {
+        resourceType: 'xhr',
+        status: 500,
+        responseBody: textBody('<p>error</p>'),
+      }),
+    ])
+    expect(paths(operations)).toEqual([
+      'GET /portal/',
+      'GET /portal/accountLedger/home',
+      'GET /portal/serviceRecordNew/getRecentRequests',
+      'GET /portal/serviceRecordNew/loadServiceRecord',
+    ])
+    expect(operations.flatMap(operation => operation.pathParams)).toEqual([])
+  })
+
+  it('still templates camelCase values that are a minority among data values', () => {
+    const titles = [
+      'Cipher',
+      'Lord_Byron',
+      'Machine',
+      'Finite_set',
+      'Writer',
+      'openSource',
+    ]
+    const operations = build(titles.map(title => get(`/api/rest_v1/page/summary/${title}`, summary(title))))
+    expect(paths(operations)).toEqual([
+      'GET /api/rest_v1/page/summary/{title}',
+      'GET /api/rest_v1/page/summary/openSource',
+    ])
+  })
+
+  it('keeps an XHR apart from linked pages of one template, even when the XHR failed (decision 0060)', () => {
+    const store = (name: string): Parameters<typeof get>[1] => ({
+      kind: 'page',
+      resourceType: 'document',
+      ...article(name),
+    })
+    const listing = get('/stores', {
+      ...store('<a href="/stores/pine-hill">P</a><a href="/stores/cedar-park">C</a><a href="/stores/maple-cross">M</a>'),
+    })
+    const operations = build([
+      listing,
+      get('/stores/pine-hill', store('Pine Hill')),
+      get('/stores/cedar-park', store('Cedar Park')),
+      get('/stores/maple-cross', store('Maple Cross')),
+      get('/stores/opening-hours', {
+        resourceType: 'xhr',
+        status: 500,
+        responseBody: textBody('<p>error</p>'),
+      }),
+    ])
+    expect(paths(operations)).toEqual(['GET /stores', 'GET /stores/{slug}', 'GET /stores/opening-hours'])
+  })
 })
 
 describe('buildOperations: GraphQL (decision 0027)', () => {
