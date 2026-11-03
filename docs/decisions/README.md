@@ -66,3 +66,4 @@ or `Proposed`.
 | [0056](0056-learnt-values-in-paths.md) | A path segment equal to a learnt value is a parameter (refines 0004, 0047) | Accepted |
 | [0057](0057-har-import.md) | `site-to-api import` turns a DevTools or proxy HAR into a raw session; `meta.json` records `source: har-import`; AGENT.md says what an imported session cannot show (refines 0031, 0037) | Accepted |
 | [0058](0058-client-in-an-app.md) | The generated client lives inside the user's app: generated files tracked, client and MCP folders configurable, one client per call, strict-flag and small-bundle output, stricter enums (refines 0025, 0043) | Accepted |
+| [0059](0059-javascript-dialogs-in-capture.md) | JavaScript dialogs: the person answers them in a headed capture, scripts and headless runs keep Playwright's default; each dialog and its answer (never prompt text) is a `dialog` event (refines 0019, 0037) | Accepted |

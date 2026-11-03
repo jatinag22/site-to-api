@@ -51,6 +51,28 @@ npx site-to-api capture https://example.com --script capture.ts --minimized
   `--minimized`.
 - A failing script, or Ctrl+C during one, still saves the session, marked incomplete, and exits 1.
 
+## Dialogs
+
+Sites ask before destructive steps with `alert()`, `confirm()`, `prompt()` or a "Leave site?"
+prompt. How they are answered depends on who drives the browser (decision 0059):
+
+- **By hand (headed, no script):** Chrome shows its own dialog and you answer it. Click OK on
+  "Delete this list?" and the delete request is sent and captured.
+- **Capture script:** Playwright's default applies, as in any Playwright script: dialogs are
+  dismissed (`confirm()` returns false) and "Leave site?" is accepted, unless the script handles
+  them. Accept them to capture the step they guard:
+
+  ```ts
+  page.on('dialog', dialog => dialog.accept())
+  ```
+
+  When a script dismissed a confirmation, capture warns with the count by dialog type.
+- **`--headless` without a script:** nobody can answer, so Playwright's default applies.
+
+Every dialog is recorded in `events.jsonl` as a `dialog` event: its type, its text, whether it was
+`accepted`, `dismissed` or left `unanswered`, and when. The text typed into a `prompt()` is never
+recorded there, only whether it was accepted.
+
 ## Logged-in captures with a saved profile
 
 A browser profile keeps cookies between captures, so a person logs in once and later scripted

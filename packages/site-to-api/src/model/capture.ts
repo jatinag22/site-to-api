@@ -7,7 +7,9 @@
  *                      session: no asset bodies (images, fonts, CSS, media, scripts; the scripts
  *                      are under `scripts/`) and no WebSocket frames (they are `ws` events), decision 0031;
  *                      a request body that is not UTF-8 text is in `postData._base64` (decision 0050)
- * - `events.jsonl`     one {@link CaptureEvent} per line, from the injected instrumentation
+ * - `events.jsonl`     one {@link CaptureEvent} per line: the injected instrumentation's events,
+ *                      plus navigations, WebSocket frames, server-sent events and dialogs
+ *                      recorded outside the page
  * - `scripts/<host>/<path>`   every JavaScript file the pages loaded (saved even without a sourcemap)
  * - `sourcemaps/<host>/<path>.map`  sourcemaps that were found
  * - `sources/<host>/<original path>` original files unpacked from those sourcemaps
@@ -207,6 +209,35 @@ export const ServerSentEventSchema = z.object({
   data: z.string(),
 })
 
+/**
+ * A JavaScript dialog (`alert`, `confirm`, `prompt`, or the "Leave site?" of `beforeunload`) and
+ * how it was answered (decision 0059), as Chrome reports it. A step that needed a confirmation
+ * shows up here: the request after a `confirm()` is only sent when it was accepted. The text a
+ * person typed into a `prompt()` is never recorded, only whether it was accepted. Recorded outside
+ * the page, so it has no `frameOrigin`. Written when the dialog closes, so lines are not in `ts`
+ * order. Additive: older captures have none.
+ */
+export const DialogEventSchema = z.object({
+  ...base,
+  t: z.literal('dialog'),
+  type: z.enum([
+    'alert',
+    'confirm',
+    'prompt',
+    'beforeunload',
+  ]),
+  /** The dialog's text, cut to 2,000 characters. */
+  message: z.string(),
+  /**
+   * `accepted` (OK, Leave), `dismissed` (Cancel, Stay, Playwright's default for a script that does
+   * not handle dialogs, or a tab the person closed over it), or `unanswered` when the session
+   * ended while it was open.
+   */
+  answer: z.enum(['accepted', 'dismissed', 'unanswered']),
+  /** When it was answered (milliseconds since epoch); null when unanswered. `ts` is when it opened. */
+  answeredTs: z.number().nullable(),
+})
+
 export const CaptureEventSchema = z.discriminatedUnion('t', [
   RequestEventSchema,
   TransformEventSchema,
@@ -214,6 +245,7 @@ export const CaptureEventSchema = z.discriminatedUnion('t', [
   ResponseEventSchema,
   WebSocketEventSchema,
   ServerSentEventSchema,
+  DialogEventSchema,
 ])
 export type CaptureEvent = z.infer<typeof CaptureEventSchema>
 export type RequestEvent = z.infer<typeof RequestEventSchema>
@@ -222,3 +254,4 @@ export type ActionEvent = z.infer<typeof ActionEventSchema>
 export type ResponseEvent = z.infer<typeof ResponseEventSchema>
 export type WebSocketEvent = z.infer<typeof WebSocketEventSchema>
 export type ServerSentEvent = z.infer<typeof ServerSentEventSchema>
+export type DialogEvent = z.infer<typeof DialogEventSchema>

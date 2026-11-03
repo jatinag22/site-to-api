@@ -57,6 +57,12 @@ For each site, check and record:
    AGENT.md plus `hosts/<host>.md` alone.
 7. `build` twice gives byte-identical output.
 
+After a change to capture, also check dialogs by hand once, on a local page whose button asks
+`confirm()` before a request (like the lists page in `e2e/fixture-site/dialogs.ts`): capture it
+headed without a script, click the button, check that Chrome shows the dialog and waits,
+click OK, and check that `events.jsonl` has the `dialog` event as `accepted` and the HAR has the
+`DELETE`. Repeat with Cancel (`dismissed`, no `DELETE`).
+
 ## Reviews
 
 Every change that is more than a few lines gets one independent review before merge, by a reviewer

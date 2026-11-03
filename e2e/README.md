@@ -18,6 +18,7 @@ e2e/
     static.ts         CSS, image and font assets
     app/src/          the shop frontend (TypeScript)
     site.test.ts      checks the site behaves, over plain HTTP and in headless Chromium
+    dialogs.ts        startDialogSite(): saved lists, a confirm() before DELETE and a prompt() (dialogs.test.ts)
   scenarios/          capture "script mode" journeys (browse, browse-again, login)
 ```
 

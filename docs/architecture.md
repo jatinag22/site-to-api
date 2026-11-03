@@ -27,6 +27,11 @@ The capture browser starts muted (`--mute-audio`, `capture.browser.muteAudio`, d
 decision 0050): captured pages autoplay video and sound, and the person running the capture
 should not hear them.
 
+JavaScript dialogs (decision 0059): in a headed capture without a script, capture leaves each
+dialog to Chrome's own for the person to answer; scripts and headless runs keep Playwright's
+default. Every dialog and its answer is a `dialog` event in `events.jsonl`, recorded from the
+DevTools protocol, never with the text typed into a prompt.
+
 ## Stages of `build`
 
 All stages are pure functions over the data contracts in `packages/site-to-api/src/model/`.

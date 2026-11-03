@@ -108,6 +108,15 @@ rewrites one:
 - **Your own files in the client folder are kept,** and hand edits to generated files are reported
   instead of overwritten.
 
+### Fixed
+
+- **Dialogs during capture.** In a capture by hand, Chrome now shows `alert()`, `confirm()`,
+  `prompt()` and "Leave site?" dialogs for you to answer. Before, every one was dismissed, so a step
+  behind "Are you sure?" was silently cancelled and its request never captured. Capture scripts
+  keep Playwright's default (`page.on('dialog', dialog => dialog.accept())` accepts) and get a
+  warning when a confirmation was dismissed. Each dialog and its answer is recorded in
+  `events.jsonl`; the text typed into a prompt is not.
+
 ### Known issues
 
 - **Not decoded:** fetch streams that never end, zstd request bodies, binary Connect bodies,

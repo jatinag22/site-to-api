@@ -20,6 +20,7 @@ import { RAW_FORMAT_VERSION, SessionMetaSchema } from '../model'
 import { InstrumentBinding } from './binding'
 import { RequestBodyRecorder } from './bodies'
 import { fallbackWarning, launchChannel } from './channel'
+import { dialogAnswerer, DialogRecorder, leaveDialogsToPerson } from './dialogs'
 import { EventWriter } from './events'
 import { failureMessage } from './failure'
 import { harOmissionNote } from './har'
@@ -245,6 +246,10 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
   const streams = capture.websockets
     ? new EventStreamRecorder(context, event => events.write(event))
     : null
+  const dialogs = new DialogRecorder(context, event => events.write(event))
+  const answerer = dialogAnswerer(script !== null, browser.headless)
+  if (answerer === 'person')
+    leaveDialogsToPerson(context)
   // Opened now, while the browser answers: the way to end it when closing does not work.
   const browserSession = await context.browser()?.newBrowserCDPSession().catch(() => null) ?? null
   const kill = async (): Promise<void> => {
@@ -259,6 +264,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       const page = await prepare({
         context,
         streams,
+        dialogs,
         capture,
         options,
         events,
@@ -279,6 +285,8 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
       }
     }
     await runEnded(sessionEnd, script !== null)
+    // Before the pages close: Chrome reports a dialog closed with its page as dismissed.
+    dialogs.endSession()
     logFailure(incomplete, log)
     const saved = await saveSession({
       context,
@@ -301,6 +309,7 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     const limits = [
       streams?.warning() ?? null,
       bodies.warning(),
+      dialogs.warning(answerer),
     ].filter(warning => warning !== null)
     warnings.push(...collector.warnings, ...limits, ...await events.close(), ...ignoredFramesWarning(ignoredFrames))
 
@@ -345,6 +354,8 @@ interface PrepareInput {
   context: BrowserContext
   /** Records server-sent events per page; null when `capture.websockets` is off. */
   streams: EventStreamRecorder | null
+  /** Records every page's JavaScript dialogs and their answers. */
+  dialogs: DialogRecorder
   capture: ResolvedConfig['capture']
   options: RunCaptureOptions
   events: EventWriter
@@ -354,7 +365,7 @@ interface PrepareInput {
 }
 
 /** Wires instrumentation, script collection and page watchers; returns the first page. */
-async function prepare({ context, streams, capture, options, events, ignoredFrames, warnings, track }: PrepareInput): Promise<Page> {
+async function prepare({ context, streams, dialogs, capture, options, events, ignoredFrames, warnings, track }: PrepareInput): Promise<Page> {
   const { browser } = capture
   // Every document can call the binding; only the site's own are listened to (frames.ts).
   const binding = capture.instrument
@@ -400,6 +411,7 @@ async function prepare({ context, streams, capture, options, events, ignoredFram
       page.on('websocket', ws => recordWebSocket(ws, page, nextSocket++, event => events.write(event)))
     if (streams !== null)
       track(streams.attach(page))
+    track(dialogs.attach(page))
     // Popups open their own window, so every new page is minimized, not only the first.
     if (minimizes(browser)) {
       track(minimizeWindow(page).then((warning) => {
@@ -412,8 +424,9 @@ async function prepare({ context, streams, capture, options, events, ignoredFram
   context.on('page', watchPage)
 
   const page = context.pages()[0] ?? await context.newPage()
-  // Before the first navigation, so a stream the first page opens at once is recorded.
+  // Before the first navigation, so a stream or dialog the first page opens at once is recorded.
   await streams?.attach(page)
+  await dialogs.attach(page)
   if (binding !== null) {
     // Attached before the first navigation, so the first page never misses an event.
     await binding.attach(page, true)
