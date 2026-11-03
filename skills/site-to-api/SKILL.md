@@ -16,8 +16,13 @@ site-to-api repository.
 ```sh
 npm install -D site-to-api              # the CLI; run it with npx
 npm install site-to-api-runtime zod    # what the generated client imports
-npx site-to-api init                    # config + gitignore for .site-to-api/
+npx site-to-api init --agent            # config, gitignore for .site-to-api/, this skill
 ```
+
+`init --agent` copies this skill into `.claude/skills/` and `.agents/skills/` and adds a pointer
+line to an existing `AGENTS.md` or `CLAUDE.md`. It never overwrites; run it again after an upgrade
+only once the old copies are deleted. The installed package always has the current skill at
+`node_modules/site-to-api/skills/site-to-api/SKILL.md`.
 
 The Claude Code plugin needs the CLI installed globally (`npm install -g site-to-api`). With the
 plugin, run `site-to-api` (that global copy) wherever this skill says `npx site-to-api`: in a
@@ -46,6 +51,10 @@ project you did not create, `npx` could run a binary the project supplies.
   has no values computed in the browser; `AGENT.md` says what is missing.
 - Ask for a second pass over the same pages (`capture` again): two sessions separate constants
   from per-session values, and an enum needs its values seen in two.
+- Every session needs a new id. `--session <id>` with an id that is already a folder in the raw
+  capture folder (`.site-to-api/raw/` by default) fails with "already exists"; nothing is
+  overwritten. Pick a new id (`--session login-2`), or leave `--session` out for
+  `<host>-<timestamp>`. Delete a session's folder only when the person asks.
 - Only sites the person may use, under their terms. If the site shows a captcha or a challenge,
   the person solves it in the browser; you never do.
 
@@ -54,6 +63,11 @@ project you did not create, `npx` could run a binary the project supplies.
 ```sh
 npx site-to-api build
 ```
+
+`build` analyses every session in the raw capture folder. To build from some of them only:
+`npx site-to-api build --session login --session 'shop-*'` (globs, repeatable; a pattern that
+matches no session is an error). `--include <host>` and `--exclude <host>` (globs, repeatable)
+choose the hosts. `build.json` records these options, and `probe` and `check` reuse them.
 
 Read `api-handoff/AGENT.md`, then `api-handoff/hosts/<host>.md` for the host you are wrapping:
 
@@ -75,8 +89,9 @@ where each value comes from, session needs, the client call) → `get_flow`, `ge
 npx site-to-api probe
 ```
 
-It replays captured requests to learn which cookies and headers plain HTTP really needs, then
-rebuilds the folder. Defaults are the safe ones: GET/HEAD/OPTIONS and GraphQL queries, 1 request
+It replays captured requests against the live site, with the captured cookies, to learn which
+cookies and headers plain HTTP really needs, then rebuilds the folder. A login that has expired
+since the capture makes the replays fail: capture again first. Defaults are the safe ones: GET/HEAD/OPTIONS and GraphQL queries, 1 request
 per second, needs worked out for 5 operations per host (`--minimize-per-host <n>` for more). Add
 `--unsafe-methods` only when the person explicitly agrees that data on the site may change.
 
@@ -103,9 +118,12 @@ per second, needs worked out for 5 operations per host (`--minimize-per-host <n>
   jar (`jar.toJSON()`) or credentials.
 - To try calls from an agent: `npx site-to-api mcp ./api-handoff --allow-calls` (reads only;
   credentials from `SITE_API_COOKIE` / `SITE_API_AUTH`), or `npx site-to-api gen --mcp` and then
-  `npx site-to-api mcp ./api-handoff --generated` for a per-site MCP server.
-- `npx site-to-api check` replays safe requests and reports API drift against the specs (exit
-  code 1 on drift, 2 when it could not check); run it before trusting an old handoff folder.
+  `npx site-to-api mcp ./api-handoff --generated` for a per-site MCP server. That server is off by
+  default (`gen.mcp: 'off'`): `--mcp` writes it with the operations that only read, `--mcp write`
+  with all of them.
+- `npx site-to-api check` replays safe requests against the live site with the captured session
+  and reports API drift against the specs (exit code 1 on drift, 2 when it could not check, for
+  example because the login expired); run it before trusting an old handoff folder.
 
 ## Rules
 
