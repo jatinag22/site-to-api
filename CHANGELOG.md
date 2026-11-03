@@ -131,6 +131,10 @@ rewrites one:
   keep Playwright's default (`page.on('dialog', dialog => dialog.accept())` accepts) and get a
   warning when a confirmation was dismissed. Each dialog and its answer is recorded in
   `events.jsonl`; the text typed into a prompt is not.
+- **Endpoints a navigation menu links to stay separate operations.** Controller and method names
+  in lowerCamelCase (`/portal/accountLedger/home`, `/portal/serviceRecordNew/loadServiceRecord`)
+  are no longer merged into `/portal/{param1}/{param2}`, and an XHR is never merged into a
+  template of pages, even when it failed (decision 0060).
 
 ### Known issues
 
