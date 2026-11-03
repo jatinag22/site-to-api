@@ -58,8 +58,14 @@ The entry point for a coding agent: a short index, at most about 25 KB on any si
    replayed nothing; then the first five of the gaps whose operation is gone and the build
    warnings (host patterns that matched nothing and the like), each warning cut to 400
    characters, and "N more build warnings and gaps in `GAPS.md`"; and the state of `client/`
-   (always last). Each gap says what would resolve it (usually "capture again and do X").
+   (always the last gap). Each gap says what would resolve it (usually "capture again and do X").
    The opening paragraph names the first five sessions the same way.
+7. **Commands**: the CLI rules an agent working from the folder needs, the same in every build
+   (decision 0062): `capture` and `import` need a new session id (an existing one is an error,
+   never an overwrite); `build` analyses every session in `rawDir` unless `--session` (globs,
+   repeatable) narrows it, and `--include`/`--exclude` choose hosts; `probe` and `check` replay
+   against the live site with the captured cookies, so they need a login that is still valid;
+   the per-site MCP server is off unless `--mcp`; `site-to-api mcp` serves the folder.
 
 ## `GAPS.md`
 

@@ -4,7 +4,7 @@ import { channelMessage, socketIoChannel, tickerChannel } from '../../../test/ch
 import { dispatchExchanges } from '../../../test/dispatch'
 import { fakeHash, graphqlAnalysis, graphqlGet, graphqlPost } from '../../../test/graphql'
 import { exchange } from '../../../test/helpers'
-import { HOSTILE, injected, renderMarkdown } from '../../../test/markdown'
+import { gapsSection, HOSTILE, injected, renderMarkdown } from '../../../test/markdown'
 import { API, twoHostAnalysis, WWW } from '../../../test/two-hosts'
 import { renderAgentGuide } from './agent-guide'
 import { describeOrigin, renderApiMap } from './api-map'
@@ -815,6 +815,7 @@ describe('hostile labels and names', () => {
       '<h2>Key flows',
       '<h2>Values computed in the browser',
       '<h2>Gaps',
+      '<h2>Commands',
     ])
   })
 
@@ -1002,7 +1003,7 @@ describe('real-time channels', () => {
     const stale = renderAgentGuide(analysis, { ...context, client: 'stale' })
     // The client gap stays the last line of the folder's gaps, after the channels section.
     expect(stale.indexOf('## Real-time channels')).toBeLessThan(stale.indexOf('## Gaps'))
-    expect(stale.trimEnd().split('\n').at(-1)).toContain('`client/` is from an earlier build')
+    expect(gapsSection(stale).at(-1)).toContain('`client/` is from an earlier build')
   })
 
   it('adds one channels row to API_MAP.md', () => {
@@ -1066,6 +1067,7 @@ describe('real-time channels', () => {
       '<h2>Real-time channels',
       '<h2>Values computed in the browser',
       '<h2>Gaps',
+      '<h2>Commands',
     ])
     const doc = channelDoc(withChannels([hostile]))
     const docHtml = renderMarkdown(doc)

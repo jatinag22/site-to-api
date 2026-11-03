@@ -348,6 +348,26 @@ function importedSection(analysis: Analysis): string[] {
   ]
 }
 
+/**
+ * The CLI's rules an agent working from this folder needs (decision 0062). Fixed text, never
+ * from the capture. After Gaps: `gen` rewrites Gaps in place up to the next heading
+ * (withClientState), which leaves this section as it is.
+ */
+export function commandsSection(): string[] {
+  return [
+    '## Commands',
+    '',
+    'Rules of the site-to-api CLI; `site-to-api <command> --help` lists every flag.',
+    '',
+    '- `site-to-api capture [url] --session <id>` and `site-to-api import <file.har> --session <id>` need a new id: an id that is already a session in the raw capture folder (`rawDir`) is an error, never an overwrite. Without `--session` the id is `<host>-<timestamp>`.',
+    '- `site-to-api build` analyses every session in `rawDir`. `site-to-api build --session <id>` (a glob, repeatable) analyses only those, and `--include <host>` / `--exclude <host>` (globs, repeatable) choose the hosts. `build.json` records these options; `probe` and `check` reuse them.',
+    '- `site-to-api probe` and `site-to-api check` replay captured requests against the live site with the captured cookies, so they need the raw captures and a login that is still valid; capture again once it has expired. `check` sends only safe methods, and `probe` too unless `site-to-api probe --unsafe-methods`.',
+    '- `site-to-api gen` regenerates the client from this folder alone. The per-site MCP server (`gen.mcp`) is off by default: `site-to-api build --mcp` or `site-to-api gen --mcp` writes it with the read-only operations, `--mcp write` with all of them.',
+    '- `site-to-api mcp <this folder>` serves this folder to an agent over MCP: read-only tools, and it never reads the raw captures.',
+    '',
+  ]
+}
+
 /** Renders `AGENT.md`. Deterministic for the same analysis and context. */
 export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext, index: Index = indexAnalysis(analysis, context)): string {
   const channels = analysis.channels ?? []
@@ -403,6 +423,7 @@ export function renderAgentGuide(analysis: Analysis, context: AgentGuideContext,
     ...channelsSummary(channels, index.link),
     ...computedSection(analysis, index.resolver, hasSource, index.link),
     ...gapsSection(analysis, context, index),
+    ...commandsSection(),
   ]
   return `${lines.join('\n').trimEnd()}\n`
 }

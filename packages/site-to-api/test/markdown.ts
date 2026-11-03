@@ -36,3 +36,9 @@ export function injected(html: string): string[] {
     found.push('heading')
   return found
 }
+
+/** The non-empty lines of a document's `## Gaps` section, up to the next heading. */
+export function gapsSection(markdown: string): string[] {
+  const after = markdown.split('\n## Gaps\n')[1] ?? ''
+  return (after.split('\n## ')[0] ?? '').split('\n').filter(line => line !== '')
+}

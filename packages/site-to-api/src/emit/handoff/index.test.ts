@@ -1,6 +1,7 @@
 import type { Analysis, Flow, Operation } from '../../model'
 import type { AgentGuideContext } from './context'
 import { describe, expect, it } from 'vitest'
+import { gapsSection } from '../../../test/markdown'
 import { withClientState } from './client'
 import { hostDocPath } from './host-path'
 import { renderHandoffDocs } from './index'
@@ -263,7 +264,7 @@ describe('a capture with hundreds of hosts and warnings (decision 0041)', () => 
     for (const warning of manyHosts().warnings)
       expect(gaps).toContain(`- ${warning}`)
     // The client gap stays last, for gen.
-    expect(guide.trimEnd().split('\n').at(-1)).toBe('- No client generated: run `site-to-api gen`.')
+    expect(gapsSection(guide).at(-1)).toBe('- No client generated: run `site-to-api gen`.')
   })
 
   it('still has a file for every host', () => {
