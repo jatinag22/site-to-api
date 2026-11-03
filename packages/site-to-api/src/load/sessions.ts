@@ -188,14 +188,44 @@ export async function countSessions(rawDir: string): Promise<number> {
     .length
 }
 
+/** `*` matches any run of characters; everything else literally. */
+function sessionGlob(pattern: string): RegExp {
+  return new RegExp(`^${pattern.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`)
+}
+
+/**
+ * The folder names `patterns` select; all of them when there are none.
+ *
+ * @throws SiteToApiError naming the sessions there are when a pattern matches none of them
+ */
+function selectSessions(names: string[], patterns: readonly string[], root: string): string[] {
+  if (patterns.length === 0)
+    return names
+  const globs = patterns.map(pattern => ({
+    pattern,
+    regex: sessionGlob(pattern),
+  }))
+  const unmatched = globs.filter(({ regex }) => !names.some(name => regex.test(name))).map(({ pattern }) => pattern)
+  if (unmatched.length > 0) {
+    const there = names.length > 0
+      ? `Sessions in ${root}: ${names.join(', ')}.`
+      : `${root} holds no sessions.`
+    throw new SiteToApiError(`No session matches ${unmatched.map(pattern => `"${pattern}"`).join(', ')}. ${there} Pass a session id from that list (\`*\` matches any characters), or leave out --session to build from all of them.`)
+  }
+  return names.filter(name => globs.some(({ regex }) => regex.test(name)))
+}
+
 /**
  * Loads every session folder under `rawDir`: validates `meta.json` and `events.jsonl` with the
  * capture schemas, decodes the HAR into {@link Exchange}s and attaches the JavaScript stack that
  * sent each request. Bad event lines and HAR entries become warnings.
  *
- * @throws SiteToApiError when `rawDir` does not exist or holds no valid session
+ * `sessions` limits loading to the folders whose names match these globs (`build.sessions`).
+ *
+ * @throws SiteToApiError when `rawDir` does not exist, a pattern in `sessions` matches no folder,
+ * or no valid session is left
  */
-export async function loadSessions(rawDir: string): Promise<LoadResult> {
+export async function loadSessions(rawDir: string, sessions: readonly string[] = []): Promise<LoadResult> {
   const root = resolve(rawDir)
   let names: string[]
   try {
@@ -210,6 +240,7 @@ export async function loadSessions(rawDir: string): Promise<LoadResult> {
     throw new SiteToApiError(`Raw capture folder ${root} does not exist. Run \`site-to-api capture\` first or set rawDir.`, { cause: error })
   }
 
+  names = selectSessions(names, sessions, root)
   const warnings: string[] = []
   const loaded: Array<{ session: LoadedSession, exchanges: Exchange[], navigations: Navigation[] }> = []
   for (const name of names) {

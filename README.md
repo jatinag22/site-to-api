@@ -209,7 +209,7 @@ default and never replay a bot-protection step. Details and a scheduled drift ch
 | `init` | Writes `site-to-api.config.ts` and gitignores `.site-to-api/` |
 | `capture [url]` | Records a browsing session. `--script <file>`, `--minimized`, `--headless`, `--channel <name>`, `--user-data-dir <dir>`, `--session <id>` |
 | `import <file.har>` | Turns a HAR into a raw session. `--session <id>`, `--delete-source` |
-| `build` | Analyses every session and writes the handoff folder and the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client`, `--mcp [read\|write\|off]`, `--force` |
+| `build` | Analyses every session (or `--session <id>`, repeatable) and writes the handoff folder and the client. `--include/--exclude <host>`, `--examples masked\|raw\|none`, `--no-client`, `--mcp [read\|write\|off]`, `--force` |
 | `probe` | Replays requests to learn what plain HTTP needs, then rebuilds. `--max-rps <n>`, `--unsafe-methods`, `--minimize-per-host <n>`, and the output flags of `build` |
 | `check` | Detects API drift. `--include/--exclude <host>`, `--operations <ids>`, `--max-rps <n>`, `--json` |
 | `gen` | Regenerates only the client (and the MCP server) from the handoff folder, without raw captures. `--mcp [read\|write\|off]`, `--force` |

@@ -53,6 +53,7 @@ when they can be: `SITE_TO_API_PROBE__MAX_RPS=0.5`, `SITE_TO_API_HOSTS__INCLUDE=
 
 | Key | Type | Default | Environment variable | Meaning |
 | --- | --- | --- | --- | --- |
+| `build.sessions` | array of string | `[]` | `SITE_TO_API_BUILD__SESSIONS` | Sessions to analyse, by id (the session's folder name in `rawDir`), as globs (`github-*`). Empty means every session in `rawDir`. A pattern that matches no session is an error, so a typo never quietly builds from nothing. |
 | `build.minExtractSamples` | whole number | `2` | `SITE_TO_API_BUILD__MIN_EXTRACT_SAMPLES` | Samples needed before an HTML or text response gets a high-confidence extraction spec. |
 | `build.minTraceValueLength` | whole number | `4` | `SITE_TO_API_BUILD__MIN_TRACE_VALUE_LENGTH` | Ignore values shorter than this when tracing values between requests. |
 | `build.excerpts` | boolean | `true` | `SITE_TO_API_BUILD__EXCERPTS` | Write the source excerpts referenced by flows and specs into `source/`. |

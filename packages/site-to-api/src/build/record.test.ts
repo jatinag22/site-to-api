@@ -39,6 +39,7 @@ describe('build.json', () => {
         exclude: [],
       },
       client: false,
+      sessions: [],
       mcp: 'off',
       sticky: ['gen.client', 'redact.examples'],
     })
@@ -72,6 +73,7 @@ describe('build.json', () => {
   it('turns sticky options into config flags and a readable list', () => {
     const record = buildRecordFor(config, { 'redact.examples': 'flag', 'gen.client': 'flag', 'hosts.include': 'flag' }, 'test')
     expect(stickyOptions(record)).toEqual({
+      build: {},
       hosts: {
         include: ['*.shop.test'],
       },
@@ -81,6 +83,7 @@ describe('build.json', () => {
     })
     // A value set now by an environment variable or flag is not overridden by the last build.
     expect(stickyOptions(record, { 'redact.examples': 'env', 'gen.client': 'flag', 'hosts.include': 'file' })).toEqual({
+      build: {},
       hosts: {
         include: ['*.shop.test'],
       },
@@ -89,10 +92,38 @@ describe('build.json', () => {
       described: ['--include *.shop.test'],
     })
     expect(stickyOptions(null)).toEqual({
+      build: {},
       hosts: {},
       redact: {},
       gen: {},
       described: [],
+    })
+  })
+
+  it('keeps a --session choice for probe, and reads records written before build.sessions existed', async () => {
+    const record = buildRecordFor(ConfigSchema.parse({
+      build: {
+        sessions: ['github-*', 'reddit-1'],
+      },
+    }), { 'build.sessions': 'flag' }, 'test')
+    expect(record.sessions).toEqual(['github-*', 'reddit-1'])
+    expect(stickyOptions(record)).toMatchObject({
+      build: {
+        sessions: ['github-*', 'reddit-1'],
+      },
+      described: ['--session github-* --session reddit-1'],
+    })
+    // Set in the config file: probe reads the file again, so nothing to carry over.
+    expect(stickyOptions(buildRecordFor(ConfigSchema.parse({
+      build: {
+        sessions: ['a'],
+      },
+    }), { 'build.sessions': 'file' }, 'test')).build).toEqual({})
+    const { sessions: _sessions, ...older } = record
+    await writeFile(join(dir, 'build.json'), JSON.stringify(older))
+    expect(stickyOptions(await readBuildRecord(dir))).toMatchObject({
+      build: { sessions: [] },
+      described: ['every session'],
     })
   })
 

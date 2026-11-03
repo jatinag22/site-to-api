@@ -422,6 +422,46 @@ describe('loadSessions', () => {
       ['a-second:0', 0],
     ])
   })
+
+  it('loads only the sessions the globs name, and never a folder they skip', async () => {
+    await writeSession('github-1', meta('github-1', '2026-01-01T09:00:00.000Z'), [
+      entry({ url: 'https://shop.test/1' }),
+    ], [])
+    await writeSession('github-2', meta('github-2', '2026-01-02T09:00:00.000Z'), [
+      entry({ url: 'https://shop.test/2' }),
+    ], [])
+    await writeSession('reddit-1', meta('reddit-1', '2026-01-03T09:00:00.000Z'), [
+      entry({ url: 'https://shop.test/3' }),
+    ], [])
+    // A broken folder the filter leaves out must not even warn.
+    await mkdir(join(root, 'broken'))
+    const some = await loadSessions(root, ['github-*'])
+    expect(some.sessions.map(session => session.meta.sessionId)).toEqual(['github-1', 'github-2'])
+    expect(some.warnings).toEqual([])
+    const named = await loadSessions(root, ['reddit-1', 'github-2'])
+    expect(named.sessions.map(session => session.meta.sessionId)).toEqual(['github-2', 'reddit-1'])
+    expect((await loadSessions(root)).sessions).toHaveLength(3)
+  })
+
+  it('names the sessions there are when a session pattern matches none', async () => {
+    await writeSession('github-1', meta('github-1', '2026-01-01T09:00:00.000Z'), [
+      entry({ url: 'https://shop.test/1' }),
+    ], [])
+    const error = await loadSessions(root, ['github-1', 'gihtub-*']).catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(SiteToApiError)
+    expect(String(error)).toContain('No session matches "gihtub-*"')
+    expect(String(error)).toContain('github-1')
+  })
+
+  it('matches a session pattern literally apart from *', async () => {
+    await writeSession('a.b', meta('a.b', '2026-01-01T09:00:00.000Z'), [
+      entry({ url: 'https://shop.test/1' }),
+    ], [])
+    await writeSession('axb', meta('axb', '2026-01-02T09:00:00.000Z'), [
+      entry({ url: 'https://shop.test/2' }),
+    ], [])
+    expect((await loadSessions(root, ['a.b'])).sessions.map(session => session.meta.sessionId)).toEqual(['a.b'])
+  })
 })
 
 describe('countSessions', () => {

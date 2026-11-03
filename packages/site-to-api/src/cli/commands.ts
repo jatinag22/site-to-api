@@ -140,6 +140,7 @@ function parseCount(value: string): number {
 
 /** Flags that shape the handoff folder; `build` takes them, and `probe` (which rebuilds) too. */
 interface OutputFlags {
+  session?: string[]
   include?: string[]
   exclude?: string[]
   examples?: string
@@ -156,6 +157,7 @@ function mcpOption(note: string): Option {
 
 function addOutputOptions(command: Command, note: string): Command {
   return command
+    .option('--session <id>', `only analyse this capture session, by id (glob, repeatable; default: every session)${note}`, collect)
     .option('--include <host>', `only analyse this host (glob, repeatable)${note}`, collect)
     .option('--exclude <host>', `skip this host (glob, repeatable)${note}`, collect)
     .option('--examples <mode>', `example values in the handoff folder${note}:\nmasked: secrets and personal data replaced (default)\nraw: captured values as they are, personal data too\nnone: no example values`, examplesMode)
@@ -190,6 +192,7 @@ const buildCommand: CommandRegistrar = (program) => {
     .option('--force', 'overwrite generated client files you edited by hand (they are kept and reported otherwise)')
     .action(async (flags: OutputFlags & { force?: boolean }, command: Command) => {
       const { config, cwd, sources } = await resolveConfig(command, {
+        build: { sessions: flags.session },
         hosts: { include: flags.include, exclude: flags.exclude },
         redact: { examples: flags.examples },
         gen: {
@@ -235,6 +238,7 @@ const probeCommand: CommandRegistrar = (program) => {
       const located = await resolveConfig(command)
       const sticky = stickyOptions(await readBuildRecord(resolve(located.cwd, located.config.outDir)), located.sources)
       const { config, cwd, sources } = await resolveConfig(command, {
+        build: { sessions: flags.session ?? sticky.build.sessions },
         hosts: {
           include: flags.include ?? sticky.hosts.include,
           exclude: flags.exclude ?? sticky.hosts.exclude,

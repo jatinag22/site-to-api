@@ -20,6 +20,7 @@ const DEFAULT_CLIENT_DIR = 'client'
 
 /** Options `probe` reuses, as dotted config paths (`gen` only updates `gen.client`). */
 const STICKY_PATHS = [
+  'build.sessions',
   'gen.client',
   'gen.mcp',
   'hosts.exclude',
@@ -39,6 +40,8 @@ const BuildRecordSchema = z.strictObject({
     exclude: z.array(z.string()),
   }),
   client: z.boolean(),
+  /** `build.sessions`: the session globs the build analysed; absent in older records, which means all. */
+  sessions: z.array(z.string()).optional(),
   /** `gen.mcp`; absent in records written before `mcp/` existed, which means `off`. */
   mcp: z.enum(['off', 'read', 'write']).optional(),
   /**
@@ -97,6 +100,7 @@ export function buildRecordFor(config: ResolvedConfig, sources: Record<string, C
       exclude: [...config.hosts.exclude],
     },
     client: config.gen.client,
+    sessions: [...config.build.sessions],
     mcp: config.gen.mcp,
     sticky: STICKY_PATHS.filter(path => sources[path] === 'flag' || sources[path] === 'env'),
   }
@@ -129,6 +133,7 @@ export async function readBuildRecord(outDir: string): Promise<BuildRecord | nul
 
 /** Build options in the nested shape of config flags; absent keys were not sticky. */
 export interface StickyOptions {
+  build: { sessions?: string[] }
   hosts: { include?: string[], exclude?: string[] }
   redact: { examples?: BuildRecord['examples'] }
   gen: { client?: boolean, mcp?: NonNullable<BuildRecord['mcp']> }
@@ -144,6 +149,7 @@ export function stickyOptions(record: BuildRecord | null, current: Record<string
   // A value the user sets now (environment variable or flag) beats the one the last build used.
   const sticky = new Set((record?.sticky ?? []).filter(path => current[path] !== 'env' && current[path] !== 'flag'))
   const result: StickyOptions = {
+    build: {},
     hosts: {},
     redact: {},
     gen: {},
@@ -151,6 +157,10 @@ export function stickyOptions(record: BuildRecord | null, current: Record<string
   }
   if (!record)
     return result
+  if (sticky.has('build.sessions')) {
+    result.build.sessions = record.sessions ?? []
+    result.described.push(result.build.sessions.map(pattern => `--session ${pattern}`).join(' ') || 'every session')
+  }
   if (sticky.has('hosts.include')) {
     result.hosts.include = record.hosts.include
     result.described.push(record.hosts.include.map(pattern => `--include ${pattern}`).join(' ') || 'no --include')
