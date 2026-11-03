@@ -11,6 +11,21 @@ Versioning follows [docs/release-policy.md](docs/release-policy.md).
   `build.sessions`) analyses only the named sessions in the raw folder, for example the captures of
   one site when the folder holds several. A name that matches no session is an error that lists
   the sessions there are. `probe` reuses the choice from `build.json`.
+- **The agent skill ships in the package.** Projects that install from npm have it at
+  `node_modules/site-to-api/skills/site-to-api/SKILL.md`, and `site-to-api --help` ends with its
+  path. `init --agent` copies it into `.claude/skills/` and `.agents/skills/` and adds a pointer
+  line to an existing `AGENTS.md` or `CLAUDE.md`; it never overwrites a copy or file you edited.
+  Run without a terminal (by an agent or a script), `capture` and `build` also print the path.
+- **CLI rules in `AGENT.md`.** A Commands section at the end says what an agent running the CLI
+  must know: session ids must be new (reusing one is an error, never an overwrite), `build` reads
+  every session unless `--session` narrows it, `--include`/`--exclude` choose hosts, `probe` and
+  `check` replay against the live site and need a login that is still valid, the per-site MCP
+  server is off unless `--mcp`, and `site-to-api mcp` serves the folder.
+
+### Changed
+
+- **The skill states the CLI's rules.** New session ids, `build --session`, host filters, expired
+  logins for `probe` and `check`, and `gen.mcp` being off by default.
 
 ## 0.1.2 (2026-11-03)
 

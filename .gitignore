@@ -19,5 +19,8 @@ site-to-api-raw/
 **/.site-to-api/raw/
 e2e/.output/
 
+# The agent skill, copied into the package by its build from skills/ at the repository root
+packages/site-to-api/skills/
+
 # Worktrees that coding agents create inside the repository
 .claude/worktrees/

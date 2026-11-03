@@ -89,7 +89,8 @@ describe('client state in AGENT.md and API_MAP.md', () => {
   it('keeps sections after the gaps', () => {
     const extended = guide('none').concat('\n## Later section\n\n- kept\n')
     const updated = withClientState(extended, 'current') ?? ''
-    expect(updated).toContain('## Gaps\n\nNone found.\n\n## Later section\n\n- kept\n')
+    expect(updated).toContain('## Gaps\n\nNone found.\n\n## Commands\n')
+    expect(updated.endsWith('\n## Later section\n\n- kept\n')).toBe(true)
   })
 
   it('returns null for a file without the markers', () => {

@@ -1,5 +1,6 @@
 /**
- * The agent skill and the Claude Code plugin's commands tell an agent which CLI commands to run.
+ * The agent skill, the Claude Code plugin's commands and AGENT.md's Commands section tell an agent
+ * which CLI commands to run.
  * They are Markdown, so nothing else notices when a flag they name is renamed: this test does.
  */
 import type { Command } from 'commander'
@@ -8,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'pathe'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { commandsSection } from '../emit/handoff/agent-guide'
 import { pipelineCommands } from './commands'
 import { mcpCommand } from './mcp'
 import { createProgram } from './program'
@@ -20,6 +22,8 @@ async function agentFiles(): Promise<Map<string, string>> {
   files.set('skills/site-to-api/SKILL.md', await readFile(join(root, 'skills', 'site-to-api', 'SKILL.md'), 'utf8'))
   for (const name of await readdir(join(plugin, 'commands')))
     files.set(`plugins/claude-code/commands/${name}`, await readFile(join(plugin, 'commands', name), 'utf8'))
+  // The Commands section every build writes into AGENT.md (decision 0062).
+  files.set('AGENT.md (Commands)', commandsSection().join('\n'))
   return files
 }
 
@@ -115,6 +119,8 @@ describe('agent skill and plugin commands', () => {
       'mcp --allow-calls',
       'gen --mcp',
       'check --json',
+      'build --session',
+      'probe --unsafe-methods',
     ]))
   })
 })

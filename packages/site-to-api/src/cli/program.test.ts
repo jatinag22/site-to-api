@@ -8,6 +8,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mcpCommand } from './mcp'
 import { run } from './program'
 
+// The packaged skill exists only after a build; these tests use their own.
+const packaged = vi.hoisted(() => {
+  const state: { skill: string | null } = { skill: null }
+  return state
+})
+vi.mock('./skill', async importOriginal => ({
+  ...await importOriginal<typeof import('./skill')>(),
+  packagedSkill: () => packaged.skill,
+  skillPointer: () => packaged.skill === null
+    ? null
+    : `Agents: read ${packaged.skill}`,
+}))
+
 let dir: string
 
 beforeEach(async () => {
@@ -16,6 +29,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  packaged.skill = null
   process.exitCode = undefined
   await rm(dir, { recursive: true, force: true })
 })
@@ -53,6 +67,49 @@ describe('cli', () => {
     expect(written).toContain('minimizePerHost: 5')
     const gitignore = await readFile(join(dir, '.gitignore'), 'utf8')
     expect(gitignore.match(/\.site-to-api\//g)).toHaveLength(1)
+  })
+
+  it('init --agent copies the packaged skill into the project', async () => {
+    packaged.skill = join(dir, 'SKILL.md')
+    await writeFile(packaged.skill, '# site-to-api\n')
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      dir,
+      'init',
+      '--agent',
+    ])
+    expect(await readFile(join(dir, '.claude', 'skills', 'site-to-api', 'SKILL.md'), 'utf8')).toBe('# site-to-api\n')
+    expect(await readFile(join(dir, '.agents', 'skills', 'site-to-api', 'SKILL.md'), 'utf8')).toBe('# site-to-api\n')
+  })
+
+  it('init --agent fails, writing nothing, where the installation has no skill', async () => {
+    const errors: string[] = []
+    vi.spyOn(consola, 'error').mockImplementation((message: unknown) => {
+      errors.push(String(message))
+    })
+    await run([
+      'node',
+      'site-to-api',
+      '--cwd',
+      dir,
+      'init',
+      '--agent',
+    ])
+    expect(process.exitCode).toBe(1)
+    expect(errors[0]).toContain('has no agent skill')
+    expect(existsSync(join(dir, 'site-to-api.config.ts'))).toBe(false)
+  })
+
+  it('--help ends with where the agent skill is', async () => {
+    packaged.skill = join(dir, 'SKILL.md')
+    const stdout = captureStdout()
+    vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
+      throw new Error(`exit ${code}`)
+    })
+    await expect(run(['node', 'site-to-api', '--help'])).rejects.toThrow('exit 0')
+    expect(stdout().trimEnd().split('\n').at(-1)).toBe(`Agents: read ${packaged.skill}`)
   })
 
   it('refuses a --cwd that does not exist instead of running with defaults', async () => {

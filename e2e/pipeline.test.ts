@@ -245,6 +245,9 @@ describe('handoff folder', () => {
     expect(guide).toContain(`[\`hosts/${stem}.md\`](hosts/${stem}.md)`)
     expect(guide.indexOf('## Hosts')).toBeLessThan(guide.indexOf('## Key flows'))
     expect(guide.indexOf('## Key flows')).toBeLessThan(guide.indexOf('## Gaps'))
+    // The CLI rules come last (decision 0062), so an agent that runs the CLI does not guess them.
+    expect(guide.indexOf('## Gaps')).toBeLessThan(guide.indexOf('## Commands'))
+    expect(guide).toContain('is an error, never an overwrite')
     // The login comes first among the flows, whatever order they were captured in.
     const firstFlow = guide.split('## Key flows')[1]?.split('\n').find(line => line.startsWith('- [')) ?? ''
     expect(firstFlow).toContain('`postApiAuthLogin`')
