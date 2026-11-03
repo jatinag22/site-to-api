@@ -48,6 +48,11 @@ Then point your coding agent at `api-handoff/AGENT.md`, or serve the folder to i
 `npx site-to-api mcp ./api-handoff`. `gen.clientDir` in the config puts the client in your app's
 source tree.
 
+For an agent that runs the CLI itself, the package ships its skill (commands, rules, workflow) at
+`node_modules/site-to-api/skills/site-to-api/SKILL.md`; `npx site-to-api init --agent` copies it
+into `.claude/skills/` and `.agents/skills/` and points the project's `AGENTS.md` or `CLAUDE.md` at
+it.
+
 ## Documentation
 
 The repository holds the full documentation:

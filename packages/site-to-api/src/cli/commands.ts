@@ -24,6 +24,7 @@ import { VERSION } from '../version'
 import { checkCommands } from './check'
 import { counted, shown, warn } from './output'
 import { resolveConfig } from './program'
+import { skillPointer } from './skill'
 
 function parseNumber(value: string): number {
   const parsed = Number(value)
@@ -39,6 +40,19 @@ function collect(value: string, previous: string[] = []): string[] {
 function printWarnings(warnings: string[]): void {
   for (const warning of warnings)
     warn(warning)
+}
+
+/**
+ * After a capture or build, one line telling an agent where the skill is. Only when the output is
+ * not a terminal (an agent's or a script's): a person at a terminal gets clean output, and finds
+ * the line in `--help`.
+ */
+function pointAgentsToSkill(cwd: string): void {
+  if (process.stdout.isTTY === true)
+    return
+  const pointer = skillPointer(cwd)
+  if (pointer !== null)
+    consola.info(pointer)
 }
 
 function parseChannel(value: string): string {
@@ -128,6 +142,7 @@ const captureCommand: CommandRegistrar = (program) => {
       consola.info(await countSessions(dirname(result.sessionDir)) >= 2
         ? 'Next: `site-to-api build`'
         : 'Next: `site-to-api build` (capture again for a second sample of the same pages first, if you can)')
+      pointAgentsToSkill(cwd)
     })
 }
 
@@ -213,6 +228,7 @@ const buildCommand: CommandRegistrar = (program) => {
       printWarnings(result.warnings)
       consola.success(`${counted(result.analysis.operations.length, 'operation')}, ${counted(result.analysis.flows.flows.length, 'flow')} → ${shown(result.outDir)}`)
       consola.info(`Start with ${shown(resolve(result.outDir, 'AGENT.md'))}`)
+      pointAgentsToSkill(cwd)
     })
 }
 

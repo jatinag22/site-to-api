@@ -48,6 +48,10 @@ Then give your coding agent a task such as:
 > Read `api-handoff/AGENT.md` and write `src/shop.ts`: a function that logs in and returns my
 > orders, using the generated client in `api-handoff/client/`.
 
+For an agent that runs the CLI itself, `npx site-to-api init --agent` also copies the site-to-api
+skill (its commands, rules and workflow) into `.claude/skills/` and `.agents/skills/` and points the
+project's `AGENTS.md` or `CLAUDE.md` at it ([docs/mcp.md](docs/mcp.md#claude-code-plugin-and-agent-skill)).
+
 Commit `api-handoff/`. Never commit `.site-to-api/`: it holds the raw captures, with your real
 cookies and tokens.
 

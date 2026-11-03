@@ -8,6 +8,7 @@ import { loadConfig } from '../config/load'
 import { SiteToApiError } from '../errors'
 import { VERSION } from '../version'
 import { initProject } from './init'
+import { packagedSkill, skillPointer } from './skill'
 
 interface GlobalOptions {
   config?: string
@@ -70,17 +71,33 @@ export function createProgram(registrars: CommandRegistrar[] = []): Command {
     .showHelpAfterError()
     // Subcommands inherit this: `capture --help` lists -c, --cwd, --raw-dir and --out-dir too.
     .configureHelp({ showGlobalOptions: true })
+    // Agents in a project that installed the package learn where its skill is from --help.
+    .addHelpText('after', () => {
+      const pointer = skillPointer(process.cwd())
+      return pointer === null
+        ? ''
+        : `\n${pointer}`
+    })
 
   program
     .command('init')
     .description('create site-to-api.config.ts and gitignore the raw capture folder')
-    .action(async (_options: unknown, command: Command) => {
+    .option('--agent', 'also set the project up for coding agents: copy the site-to-api skill into .claude/skills/ and .agents/skills/, and add a line pointing at it to an existing AGENTS.md or CLAUDE.md')
+    .action(async (options: { agent?: boolean }, command: Command) => {
       const cwd = workingDir(command.optsWithGlobals<GlobalOptions>())
-      const result = await initProject(cwd)
+      let agentSkill: string | undefined
+      if (options.agent === true) {
+        agentSkill = packagedSkill() ?? undefined
+        if (agentSkill === undefined)
+          throw new SiteToApiError('This copy of site-to-api has no agent skill (skills/site-to-api/SKILL.md next to its package.json). Reinstall it from npm, or run `pnpm run build` in a source checkout.')
+      }
+      const result = await initProject(cwd, { agentSkill })
       for (const file of result.created)
         consola.success(`Wrote ${file}`)
       for (const file of result.skipped)
         consola.info(`Kept existing ${file}`)
+      for (const note of result.notes)
+        consola.info(note)
     })
 
   program

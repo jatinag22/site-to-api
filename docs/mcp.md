@@ -125,3 +125,20 @@ plugin adds:
 For other agents that read Agent Skills (Cursor, Codex and others), the same skill is
 [`skills/site-to-api/SKILL.md`](../skills/site-to-api/SKILL.md). Copy that folder into the agent's
 skills directory, or run `npx skills add jatinag22/site-to-api -s site-to-api`.
+
+The npm package ships the skill too, at `node_modules/site-to-api/skills/site-to-api/SKILL.md`,
+and `site-to-api --help` ends with its path. To set a project up for agents in one step:
+
+```sh
+npx site-to-api init --agent
+```
+
+It copies the skill to `.claude/skills/site-to-api/SKILL.md` (Claude Code) and
+`.agents/skills/site-to-api/SKILL.md` (Codex and other agents that read that folder), and adds one
+line pointing at it to the project's `AGENTS.md` and `CLAUDE.md`, the ones that exist (a
+`CLAUDE.md` that imports `@AGENTS.md` gets it through `AGENTS.md`). It creates neither file: when
+there is none it prints the line to add. It never overwrites: a skill copy that differs from the
+installed version's (edited, or from an older version) is kept and reported, and a file that
+already mentions `skills/site-to-api/SKILL.md` gets no second line; delete a copy and run it again
+to update it. Without a terminal (an agent's or a script's run), `capture` and `build` also end
+with the skill's path.

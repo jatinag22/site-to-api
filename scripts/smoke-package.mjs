@@ -2,8 +2,9 @@
 // Packs both packages and uses them the way a user would, outside the workspace (RELEASING.md):
 // the packed manifests hold no `workspace:`/`catalog:` ranges and pass publint, the runtime
 // bundles for a neutral (non-Node) platform, and the tarballs install with npm and with pnpm
-// into fresh projects where `--help`, `init`, `capture` (headless, Playwright's Chromium) against
-// the e2e fixture site, `build` and `gen` work and the generated client type-checks. A third
+// into fresh projects where `--help` (which points agents at the packaged skill), `init --agent`,
+// `capture` (headless, Playwright's Chromium) against the e2e fixture site, `build` and `gen`
+// work and the generated client type-checks. A third
 // project installs with npm next to TypeScript 7, whose peer range npm would hand hey-api: there
 // `--version`, `build` and `gen` must work too, on the npm project's capture.
 //
@@ -291,13 +292,20 @@ for (const { manager, dir } of projects) {
     ...cliArgs,
   ], { cwd: dir, ...options })
 
-  step(`${manager}: --help and init`)
+  step(`${manager}: --help and init --agent`)
   const help = cli(['--help'], { capture: true })
   if (!help.includes('capture') || !help.includes('build'))
     fail(`${manager}: --help does not list the commands`)
-  cli(['init'])
+  // The installed skill, by the path an agent in the project would open.
+  if (!help.includes('Agents: read node_modules/site-to-api/skills/site-to-api/SKILL.md'))
+    fail(`${manager}: --help does not point agents at node_modules/site-to-api/skills/site-to-api/SKILL.md`)
+  cli(['init', '--agent'])
   if (!readFileSync(join(dir, 'site-to-api.config.ts'), 'utf8').includes('defineConfig'))
     fail(`${manager}: init wrote no config`)
+  for (const copy of ['.claude', '.agents']) {
+    if (!existsSync(join(dir, copy, 'skills', 'site-to-api', 'SKILL.md')))
+      fail(`${manager}: init --agent wrote no ${copy}/skills/site-to-api/SKILL.md`)
+  }
 
   step(`${manager}: Playwright's Chromium`)
   // The Playwright that site-to-api depends on (pnpm does not expose it at the project's root).
