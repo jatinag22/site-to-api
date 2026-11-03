@@ -136,7 +136,7 @@ jobs:
           fi
           changed=$(git diff --name-only "$BASE...HEAD")
           echo "$changed"
-          pattern='^(packages/[^/]+/(package\.json|README|src/|bin/|tsdown\.config\.|tsconfig)|e2e/fixture-site/|scripts/(smoke-package|check-neutral)\.mjs|pnpm-workspace\.yaml|pnpm-lock\.yaml|package\.json|tsconfig[^/]*\.json|\.npmrc|\.github/workflows/ci\.yml)'
+          pattern='^(packages/[^/]+/(package\.json|README|src/|bin/|tsdown\.config\.|tsconfig)|skills/|e2e/fixture-site/|scripts/(smoke-package|check-neutral)\.mjs|pnpm-workspace\.yaml|pnpm-lock\.yaml|package\.json|tsconfig[^/]*\.json|\.npmrc|\.github/workflows/ci\.yml)'
           if echo "$changed" | grep -Eq "$pattern"; then run=true; else run=false; fi
           { echo "run=$run"; echo 'nodes=[24]'; echo 'managers=["npm"]'; } >> "$GITHUB_OUTPUT"
 

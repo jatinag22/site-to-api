@@ -19,7 +19,7 @@
 // `pnpm install`.
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -154,6 +154,16 @@ for (const tarball of [cliTarball, runtimeTarball]) {
     join(dir, 'package'),
     '--strict',
   ], { cwd: root })
+  // Projects that install from npm get the agent skill only from the package: it must be the
+  // repository's skill, byte for byte.
+  if (tarball === cliTarball) {
+    const shipped = join(dir, 'package', 'skills', 'site-to-api', 'SKILL.md')
+    if (!existsSync(shipped))
+      fail(`${tarball}: skills/site-to-api/SKILL.md is missing`)
+    if (readFileSync(shipped, 'utf8') !== readFileSync(join(root, 'skills', 'site-to-api', 'SKILL.md'), 'utf8'))
+      fail(`${tarball}: skills/site-to-api/SKILL.md differs from skills/site-to-api/SKILL.md in the repository`)
+    console.log(`${tarball}: ships the agent skill`)
+  }
 }
 
 // 3. Fresh projects, one per package manager.
