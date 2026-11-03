@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { WarningLog } from './warnings'
+import { noTrafficWarning, WarningLog } from './warnings'
 
 describe('warningLog', () => {
   it('says a repeated problem once with a count, and a single one in full', () => {
@@ -14,5 +14,16 @@ describe('warningLog', () => {
       '3 sourcemaps are not valid sourcemap JSON (first: https://shop.test/a.js.map).',
       'Sourcemap https://shop.test/x.map returned HTTP 404.',
     ])
+  })
+})
+
+describe('noTrafficWarning', () => {
+  it('warns about a saved session that recorded no request, and only then', () => {
+    expect(noTrafficWarning('empty', 0)).toEqual([
+      'Session empty recorded no requests: the browser was closed before any page loaded. It is saved, but `build` skips it; delete its folder or capture again.',
+    ])
+    expect(noTrafficWarning('shop', 12)).toEqual([])
+    // An unreadable HAR has its own warning.
+    expect(noTrafficWarning('broken', null)).toEqual([])
   })
 })

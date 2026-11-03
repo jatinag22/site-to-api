@@ -165,6 +165,12 @@ async function loadSession(dir: string, name: string, warnings: string[]): Promi
     else
       warnings.push(`${meta.data.sessionId}: HAR entry ${harIndex} skipped (invalid URL)`)
   })
+  // A browser closed before any page loaded still leaves a saved session (decision 0037); it has
+  // nothing to analyse and would only inflate the session count.
+  if (exchanges.length === 0 && !events.some(event => event.t === 'ws' || event.t === 'sse')) {
+    warnings.push(`${meta.data.sessionId}: recorded no requests (the browser was closed before any page loaded); skipped. Delete its folder or capture again.`)
+    return null
+  }
   fillMissingBodies(exchanges, events.filter((event): event is ResponseEvent => event.t === 'response'))
   exchanges.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id, 'en', { numeric: true }))
   exchanges.forEach((exchange, seq) => {

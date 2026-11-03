@@ -30,6 +30,7 @@ import { launchWithSandbox } from './sandbox'
 import { createStopper, DEFAULT_TIMEOUTS, saveSession, SessionEnd, waitBounded, writeJsonAtomic } from './save'
 import { ScriptCollector } from './scripts'
 import { EventStreamRecorder } from './streams'
+import { noTrafficWarning } from './warnings'
 import { launchArgs, minimizes, minimizeWindow } from './window'
 
 /** Options for {@link runCapture}. */
@@ -330,13 +331,15 @@ export async function runCapture(config: ResolvedConfig, options: RunCaptureOpti
     } satisfies SessionMeta)
     await writeJsonAtomic(path.join(sessionDir, META_FILE), meta)
     warnings.push(...incompleteWarning(sessionId, finalIncomplete))
+    const requests = saved.har === null
+      ? null
+      : saved.entries
+    warnings.push(...noTrafficWarning(sessionId, requests))
     return {
       sessionDir,
       meta,
       warnings,
-      requests: saved.har === null
-        ? null
-        : saved.entries,
+      requests,
       events: events.count,
     }
   }
