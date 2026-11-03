@@ -139,6 +139,14 @@ export const PERSONAL_DATA_PATTERNS: readonly PersonalDataPattern[] = [
     accept: isPublicIpv6,
   },
   {
+    // A number the site sent partly masked (decision 0063): `XXXX XXXX 1234`, `98765XXXXX`,
+    // `****1234`. Its visible digits are still the person's. Needs three mask characters in a
+    // row and two digits, in one token of digits, mask characters, single spaces and `-`.
+    name: 'partly-masked',
+    regex: /(?<![\w*•])[\dX*•](?:[ -]?[\dX*•]){5,}(?![\w*•])/gi,
+    accept: match => /[X*•]{3}/i.test(match) && /\d.*\d/.test(match),
+  },
+  {
     // International phone numbers written with a leading +.
     name: 'phone',
     regex: /(?<![\w+])\+\d[\d\s().-]{6,18}\d/g,
@@ -272,6 +280,32 @@ const PERSONAL_NAME_ENDINGS: readonly string[] = [
   'remoteaddr',
   'remoteaddress',
   'remoteip',
+  // National and account numbers, and family names of the person (decision 0063): `uan`,
+  // `aadhaar`, `maskedAadhaar`, `bankAccNo`, `accountNumber`, `fatherOrHusbandName`.
+  'uan',
+  'aadhaar',
+  'aadhar',
+  'aadhaarno',
+  'aadhaarnumber',
+  'ssn',
+  'pan',
+  'panno',
+  'pannumber',
+  'accno',
+  'acctno',
+  'accountno',
+  'accountnumber',
+  'bankaccount',
+  'iban',
+  'fathername',
+  'mothername',
+  'husbandname',
+  'spousename',
+  'guardianname',
+  // Personal attributes a site's own enums would otherwise spell out in the schema.
+  'gender',
+  'sex',
+  'maritalstatus',
 ]
 
 /**
@@ -286,6 +320,9 @@ export function isPersonalField(name: string | null | undefined): boolean {
   if (PERSONAL_NAMES.has(compactName(name)))
     return true
   const parts = words(name)
+  // `maskedPan`, `masked_mobile`: the site says it is a personal value it partly hid (0063).
+  if (parts.length > 1 && parts[0] === 'masked')
+    return true
   const tails = parts.map((_, index) => parts.slice(index).join(''))
   return tails.some(tail => PERSONAL_NAME_ENDINGS.includes(tail))
 }
@@ -414,6 +451,15 @@ const PERSON_OBJECT_WORDS: ReadonlySet<string> = new Set([
   'customer',
   'customers',
   'me',
+  'member',
+  'members',
+  'memberinfo',
+  'userinfo',
+  'person',
+  'persons',
+  'people',
+  'employee',
+  'employees',
 ])
 
 /** Fields that identify a person only inside a person's record: `user.name`, `customer.id`. */
@@ -435,6 +481,10 @@ const PERSON_IDENTITY_KEYS: ReadonlySet<string> = new Set([
   'fullname',
   'email',
   'emailaddress',
+  'emailid',
+  'dob',
+  'dateofbirth',
+  'birthdate',
 ])
 
 /**
@@ -453,8 +503,25 @@ export function isPersonRecordField(name: string | null | undefined): boolean {
   return name !== null && name !== undefined && PERSON_RECORD_FIELDS.has(compactName(name))
 }
 
+/** Six or more digits, optionally grouped by spaces or `-`: a member, account or national number. */
+const ID_LIKE_NUMBER = /^\d(?:[ -]?\d){5,}$/
+
+/**
+ * True for a value in a person's record that is an id-like number (decision 0063): whatever its
+ * field is called, a long number about the person identifies them or their account.
+ */
+export function isIdLikeNumber(value: string): boolean {
+  return ID_LIKE_NUMBER.test(value)
+}
+
 /** Built-in patterns that only match text with a digit. */
-const BUILT_IN_DIGIT_PATTERNS: ReadonlySet<string> = new Set(['pan', 'aadhaar', 'card', 'phone'])
+const BUILT_IN_DIGIT_PATTERNS: ReadonlySet<string> = new Set([
+  'pan',
+  'aadhaar',
+  'card',
+  'phone',
+  'partly-masked',
+])
 
 /** Masks every personal-data match in a text. */
 export function maskPersonalData(text: string, patterns: readonly PersonalDataPattern[]): string {

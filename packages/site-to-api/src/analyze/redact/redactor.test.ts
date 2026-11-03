@@ -1339,3 +1339,68 @@ describe('emails as Firebase keys', () => {
     expect(maskPersonalData('a,b,c and 1,2,3', PERSONAL_DATA_PATTERNS)).toBe('a,b,c and 1,2,3')
   })
 })
+
+describe('createRedactor: personal data in response records (decision 0063)', () => {
+  const r = redactor([])
+  // An invented member record shaped like a government portal's profile answer.
+  const record = {
+    memberinfo: {
+      name: 'Quill Ferro',
+      gender: 'FEMALE',
+      uan: 100200300400,
+      memberCode: '700800900100',
+      bankAccNo: '55443322110XXXX',
+      aadhaar: 'XXXX XXXX 4321',
+      maskedMobileNo: '987123XXXX',
+      pan: 'XXQRS456XX',
+      fatherOrHusbandName: 'Orin Ferro',
+      panVerifyUrl: '/portal/pan/verify?_STATE_=31-0-9F8E7D6C5B4A39281706F5E4D3C2B1A0',
+      accountStatus: 'A',
+      lastUpdate: '01-JAN-2026',
+    },
+  }
+
+  it('masks names, national and account numbers, partly masked values and URL tokens in place', () => {
+    expect(r.json(record, { in: 'response-body' })).toEqual({
+      memberinfo: {
+        name: 'Xxxxx Xxxxx',
+        gender: 'XXXXXX',
+        uan: '000000000000',
+        memberCode: '000000000000',
+        bankAccNo: '00000000000XXXX',
+        aadhaar: 'XXXX XXXX 0000',
+        maskedMobileNo: '000000XXXX',
+        pan: 'XXXXX000XX',
+        fatherOrHusbandName: 'Xxxx Xxxxx',
+        panVerifyUrl: expect.stringMatching(/^\/portal\/pan\/verify\?_STATE_=<redacted/) as unknown,
+        accountStatus: 'A',
+        lastUpdate: '01-JAN-2026',
+      },
+    })
+  })
+
+  it('masks partly masked numbers in free text, and leaves sizes, codes and words alone', () => {
+    expect(maskPersonalData('Account 55443322110XXXX (verified), card ****1234', PERSONAL_DATA_PATTERNS)).toBe('Account 00000000000XXXX (verified), card ****0000')
+    expect(maskPersonalData('1920x1080, RTX 4090, XXL, SKU-XXX', PERSONAL_DATA_PATTERNS)).toBe('1920x1080, RTX 4090, XXL, SKU-XXX')
+  })
+
+  it('keeps ids and names outside person records, and masks gender wherever it is', () => {
+    expect(r.json({
+      products: [
+        { id: 123456789, name: 'Trail Shoe' },
+      ],
+    }, { in: 'response-body' })).toEqual({
+      products: [
+        { id: 123456789, name: 'Trail Shoe' },
+      ],
+    })
+    // A filter's gender is masked too: one capture's enum would otherwise spell out the person's.
+    expect(r.value('women', { in: 'query', name: 'gender' })).toBe('xxxxx')
+  })
+
+  it('treats a typed captcha or security answer in a form as a secret', () => {
+    expect(r.value('7xk2p', { in: 'form', name: 'answer' })).toMatch(/^<redacted/)
+    // In a JSON body `answer` is ordinary content (a Q&A site's post).
+    expect(r.value('Use a map', { in: 'body', name: 'answer' })).toBe('Use a map')
+  })
+})
