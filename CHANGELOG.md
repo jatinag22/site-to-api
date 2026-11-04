@@ -3,7 +3,7 @@
 All user-visible changes to `site-to-api` and `site-to-api-runtime`, which share one version.
 Versioning follows [docs/release-policy.md](docs/release-policy.md).
 
-## Unreleased
+## 0.1.4 (2026-11-05)
 
 ### Fixed
 
