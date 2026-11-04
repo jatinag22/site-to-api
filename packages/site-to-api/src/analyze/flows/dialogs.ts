@@ -16,13 +16,6 @@ type GuardingDialog = NonNullable<FlowStep['dialogs']>[number]
  */
 const DIALOG_FOLLOWS_MS = 2000
 
-/**
- * How much earlier than `answeredTs` the guarded request may start. `answeredTs` is when capture
- * received Chrome's report, a little after the page resumed and could already send the request.
- * Never earlier than the dialog opened: a page waiting on a dialog sends nothing.
- */
-const DIALOG_REPORT_LAG_MS = 250
-
 function withoutHash(url: string): string {
   return url.split('#')[0] ?? url
 }
@@ -47,8 +40,10 @@ function samePage(exchange: Exchange, dialog: AcceptedDialog): boolean {
 /**
  * The accepted `confirm`, `prompt` and `beforeunload` dialogs of one session, by the id of the
  * request each guarded: the earliest step request (`isStep`) of the dialog's page that started
- * between {@link DIALOG_REPORT_LAG_MS} before the dialog closed (but not before it opened) and
- * {@link DIALOG_FOLLOWS_MS} after. One dialog guards at most one request; a request after two
+ * after the dialog opened and at most {@link DIALOG_FOLLOWS_MS} after it closed. The page sends
+ * nothing while its dialog is open, so the open time is a safe lower bound. The close time is
+ * not: `answeredTs` is when capture received Chrome's report, which on a busy machine arrives
+ * after the page resumed and already sent the request. One dialog guards at most one request; a request after two
  * dialogs (a prompt, then a confirm) lists both in the order they closed. Pure and deterministic.
  */
 export function guardedRequests(events: readonly CaptureEvent[], exchanges: readonly Exchange[], isStep: (exchange: Exchange) => boolean): Map<string, GuardingDialog[]> {
@@ -60,7 +55,7 @@ export function guardedRequests(events: readonly CaptureEvent[], exchanges: read
     .toSorted((a, b) => a.startedAt - b.startedAt || a.seq - b.seq || a.id.localeCompare(b.id))
   const guarded = new Map<string, GuardingDialog[]>()
   for (const dialog of dialogs) {
-    const from = Math.max(dialog.ts, dialog.answeredTs - DIALOG_REPORT_LAG_MS)
+    const from = dialog.ts
     const to = dialog.answeredTs + DIALOG_FOLLOWS_MS
     const request = candidates.find(exchange => exchange.startedAt >= from && exchange.startedAt <= to && samePage(exchange, dialog))
     if (!request)

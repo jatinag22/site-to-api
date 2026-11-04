@@ -44,8 +44,8 @@ describe('guardedRequests', () => {
     ])
   })
 
-  it('allows for the report reaching capture a little after the page resumed', () => {
-    const guarded = request(4_850, '/api/lists/42')
+  it('allows for the close report reaching capture long after the page resumed', () => {
+    const guarded = request(1_200, '/api/lists/42')
     const result = guardedRequests([
       dialog({ ts: 1_000, answeredTs: 5_000 }),
     ], [guarded], everyStep)
