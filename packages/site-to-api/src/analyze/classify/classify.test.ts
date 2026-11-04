@@ -536,6 +536,16 @@ describe('classifyExchanges: bot protection', () => {
       }),
     ],
     [
+      'Google WAA',
+      on({
+        method: 'POST',
+        url: 'https://jnn-pa.googleapis.com/$rpc/google.internal.waa.v1.Waa/GenerateIT',
+        requestHeaders: { 'x-goog-api-key': 'AIzaSyExampleExampleExampleExample0', 'x-browser-validation': 'p0ryEJ6LCa7iMn63FawDjO0pVio=' },
+        requestBody: jsonBody(['O43z0dpjhgX20SCx4KAo', '$kg05DWlRAAagS3bUgEve']),
+        responseBody: jsonBody(['token']),
+      }),
+    ],
+    [
       'hCaptcha',
       on({
         method: 'POST',
@@ -594,6 +604,12 @@ describe('classifyExchanges: bot protection', () => {
       'AWS WAF',
       {
         cookies: { 'aws-waf-token': 'w' },
+      },
+    ],
+    [
+      'Chrome browser validation',
+      {
+        requestHeaders: { 'x-browser-validation': 'p0ryEJ6LCa7iMn63FawDjO0pVio=' },
       },
     ],
   ])('records %s cookies and headers as evidence without relabelling the call', (vendor, init) => {

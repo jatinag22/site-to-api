@@ -45,7 +45,7 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
 2. **classify** (`src/analyze/classify`): labels each exchange `api`, `page`, `bot-protection`,
    `asset` or `noise` using resource type, media type, host lists and bot-protection signatures
    (Akamai, AWS WAF, Cloudflare, PerimeterX, DataDome, Imperva, Kasada, reCAPTCHA, hCaptcha,
-   Turnstile).
+   Turnstile, Google WAA; Chrome's `x-browser-validation` as evidence).
 3. **operations** (`src/analyze/operations`): groups exchanges into operations by host + method +
    path template. GraphQL requests, recognised by content and split out of batches by
    `src/analyze/graphql` first, become one operation per GraphQL operation instead (decision
