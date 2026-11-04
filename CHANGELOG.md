@@ -146,7 +146,9 @@ rewrites one:
   a profile answer kept the person's name, gender, national and account numbers, the visible
   digits of values the site had partly masked (`XXXX XXXX 1234`), and tokens in the query of a
   same-site URL (`/verify?state=…`); a typed captcha answer stayed in form examples. All are
-  now masked in place, keeping their format (decision 0063).
+  now masked in place, keeping their format, as are special-category fields (disability,
+  health, medical, blood group, religion, caste, nationality, and a category inside a person
+  record). Values in a person record never become a schema `enum` (decision 0063).
 
 ### Known issues
 

@@ -309,6 +309,29 @@ const PERSONAL_NAME_ENDINGS: readonly string[] = [
 ]
 
 /**
+ * Words of special-category data (health, disability, religion, caste, nationality) that make a
+ * field personal wherever they appear in its name (decision 0063): `physicallyHandicapType`,
+ * `disabilityStatus`, `medicalHistory`, `religion`, `bloodGroup`.
+ */
+const SPECIAL_CATEGORY_WORDS: ReadonlySet<string> = new Set([
+  'handicap',
+  'handicapped',
+  'disability',
+  'disabilities',
+  'disabled',
+  'health',
+  'medical',
+  'religion',
+  'religious',
+  'caste',
+  'nationality',
+])
+
+function isSpecialCategory(parts: readonly string[]): boolean {
+  return parts.some(part => SPECIAL_CATEGORY_WORDS.has(part)) || parts.join('').includes('bloodgroup')
+}
+
+/**
  * Field names whose values are a person's name, account or address, wherever they appear:
  * `username`, `user_name`, `login`, `displayName`, `firstName`, `lastName`, `fullName`,
  * `address`, `street`, `city`, `postcode`, `zip`, `dob`, `birthDate`, account and player ids
@@ -321,7 +344,7 @@ export function isPersonalField(name: string | null | undefined): boolean {
     return true
   const parts = words(name)
   // `maskedPan`, `masked_mobile`: the site says it is a personal value it partly hid (0063).
-  if (parts.length > 1 && parts[0] === 'masked')
+  if ((parts.length > 1 && parts[0] === 'masked') || isSpecialCategory(parts))
     return true
   const tails = parts.map((_, index) => parts.slice(index).join(''))
   return tails.some(tail => PERSONAL_NAME_ENDINGS.includes(tail))
@@ -498,9 +521,14 @@ export function isPersonObject(parentName: string | null | undefined, keys: read
   return keys.some(key => PERSON_IDENTITY_KEYS.has(compactName(key)))
 }
 
-/** `name` and `id` of a person's record. */
+/**
+ * `name`, `id` and a `category` (a social category, 0063) of a person's record. Elsewhere a
+ * category is a product's or an article's, and public.
+ */
 export function isPersonRecordField(name: string | null | undefined): boolean {
-  return name !== null && name !== undefined && PERSON_RECORD_FIELDS.has(compactName(name))
+  if (name === null || name === undefined)
+    return false
+  return PERSON_RECORD_FIELDS.has(compactName(name)) || words(name).some(word => word === 'category' || word === 'categories')
 }
 
 /** Six or more digits, optionally grouped by spaces or `-`: a member, account or national number. */

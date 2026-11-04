@@ -4,6 +4,7 @@
 import type { Body, Exchange, HeaderInfo, JsonSchema, NameValue, Operation, ParamInfo, RedactContext, Redactor, RequestBodyInfo, ResponseInfo, ValueRedactor } from '../../model'
 import type { InferOptions } from './infer'
 import { pinGraphqlSchemas } from '../graphql'
+import { isPersonObject } from '../redact'
 import { pinDispatchSchemas } from './dispatch'
 import { coerceStrings, inferSchema, inferStringSchema } from './infer'
 
@@ -76,6 +77,7 @@ function isBrowserIdentityHeader(name: string): boolean {
 function enumGuard(redactor: ValueRedactor, context: RedactContext): InferOptions {
   return {
     allowEnumValue: (value, name) => redactor.value(value, { ...context, name: name ?? context.name }) === value,
+    isPersonObject,
     isMapKey: key => redactor.isSecretKey(key),
     name: context.name ?? null,
   }

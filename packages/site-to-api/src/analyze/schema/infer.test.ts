@@ -149,6 +149,29 @@ describe('inferSchema', () => {
     })
   })
 
+  it('infers no enum inside a person record (decision 0063)', () => {
+    const records = across(
+      {
+        members: [
+          { category: 'GEN', status: 'ACTIVE' },
+          { category: 'OBC', status: 'CLOSED' },
+        ],
+      },
+      {
+        members: [
+          { category: 'GEN', status: 'ACTIVE' },
+          { category: 'OBC', status: 'CLOSED' },
+        ],
+      },
+    )
+    const isPersonObject = (name: string | null): boolean => name === 'members'
+    const item = inferSchema(records, { isPersonObject }).properties?.members?.items
+    expect(item?.properties?.category).toEqual({ type: 'string' })
+    expect(item?.properties?.status).toEqual({ type: 'string' })
+    // The same values outside a person record are codes.
+    expect(inferSchema(records).properties?.members?.items?.properties?.category?.enum).toEqual(['GEN', 'OBC'])
+  })
+
   it('infers enums for plain words under code-like names, in nested objects and arrays too', () => {
     const orders = across(
       {

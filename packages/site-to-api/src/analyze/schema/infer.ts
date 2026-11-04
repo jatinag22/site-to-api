@@ -23,6 +23,11 @@ export interface InferOptions {
    */
   allowEnumValue?: (value: string, name: string | null) => boolean
   /**
+   * True when an object, by its name and keys, describes a person (decision 0063). Values in
+   * such a record are that person's and never become an enum, whatever their field name.
+   */
+  isPersonObject?: (name: string | null, keys: readonly string[]) => boolean
+  /**
    * Name of the value being inferred (query parameter, header, form field). Object properties
    * use their own key; array items use the array's name. Enums need a code-like name or
    * code-like values, so the name matters.
@@ -313,8 +318,8 @@ function add(node: Node, value: unknown, sample: Visit, depth: number): void {
  * `currency`) or when every value is a program token (`IN_STOCK`, `out-of-stock`) under a name
  * that is not an identifier (`slug`, `id`). Names, titles and other free text never become enums.
  */
-function isEnumWorthy(node: Node, values: string[], name: string | null, options: InferOptions): boolean {
-  if (node.stringOverflow || values.length < 2 || node.sessions.size < ENUM_MIN_SESSIONS)
+function isEnumWorthy(node: Node, values: string[], name: string | null, options: InferOptions, record: boolean): boolean {
+  if (record || node.stringOverflow || values.length < 2 || node.sessions.size < ENUM_MIN_SESSIONS)
     return false
   // Values that differ across most samples are data, not a closed set: each distinct value must
   // have been seen at least twice on average.
@@ -331,7 +336,7 @@ function isEnumWorthy(node: Node, values: string[], name: string | null, options
   return values.every(value => options.allowEnumValue?.(value, name) ?? true)
 }
 
-function stringKeywords(node: Node, name: string | null, options: InferOptions): JsonSchema {
+function stringKeywords(node: Node, name: string | null, options: InferOptions, record: boolean): JsonSchema {
   const schema: JsonSchema = {}
   const format = node.formats && FORMATS.map(([name]) => name).find(name => node.formats?.has(name))
   if (format) {
@@ -341,12 +346,12 @@ function stringKeywords(node: Node, name: string | null, options: InferOptions):
   const values = [
     ...node.strings.keys(),
   ]
-  if (isEnumWorthy(node, values, name, options))
+  if (isEnumWorthy(node, values, name, options, record))
     schema.enum = values.sort()
   return schema
 }
 
-function finalize(node: Node, name: string | null, options: InferOptions, totalSessions: number): JsonSchema {
+function finalize(node: Node, name: string | null, options: InferOptions, totalSessions: number, record = false): JsonSchema {
   if (node.tooDeep)
     return { description: 'Not inferred: nested too deep' }
   const types = new Set(node.types)
@@ -370,7 +375,7 @@ function finalize(node: Node, name: string | null, options: InferOptions, totalS
   if (containers.length > 0 && nonNull.length > 1) {
     // Mixed containers and scalars do not fit one `type` keyword with sensible keywords.
     return {
-      anyOf: list.map(type => finalizeAs(node, type, name, options, totalSessions)),
+      anyOf: list.map(type => finalizeAs(node, type, name, options, totalSessions, record)),
     }
   }
   const schema: JsonSchema = {
@@ -378,7 +383,7 @@ function finalize(node: Node, name: string | null, options: InferOptions, totalS
       ? list[0]
       : list,
   }
-  Object.assign(schema, ...nonNull.map(type => keywordsFor(node, type, name, options, totalSessions)))
+  Object.assign(schema, ...nonNull.map(type => keywordsFor(node, type, name, options, totalSessions, record)))
   // `enum` constrains every value, whatever its type: strings seen next to numbers (a chart row
   // `[1793178059000, 22634.3, "PO", 0]`) would make every number "outside the enum".
   if (nonNull.some(type => type !== 'string'))
@@ -390,29 +395,32 @@ function finalize(node: Node, name: string | null, options: InferOptions, totalS
   return schema
 }
 
-function finalizeAs(node: Node, type: JsonSchemaType, name: string | null, options: InferOptions, totalSessions: number): JsonSchema {
+function finalizeAs(node: Node, type: JsonSchemaType, name: string | null, options: InferOptions, totalSessions: number, record: boolean): JsonSchema {
   return {
     type,
-    ...keywordsFor(node, type, name, options, totalSessions),
+    ...keywordsFor(node, type, name, options, totalSessions, record),
   }
 }
 
-function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, options: InferOptions, totalSessions: number): JsonSchema {
+function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, options: InferOptions, totalSessions: number, record: boolean): JsonSchema {
   if (type === 'string')
-    return stringKeywords(node, name, options)
+    return stringKeywords(node, name, options, record)
   if (type === 'array') {
     return {
       items: node.items
-        ? finalize(node.items, name, options, totalSessions)
+        ? finalize(node.items, name, options, totalSessions, record)
         : {},
     }
   }
   if (type === 'object') {
+    const person = options.isPersonObject?.(name, [
+      ...node.properties.keys(),
+    ]) ?? false
     // `Object.fromEntries` defines own properties, so a key named `__proto__` stays a key;
     // assigning it would set the prototype and drop it from `properties`.
     const properties: Record<string, JsonSchema> = Object.fromEntries([...node.properties].map(([key, child]) => [
       key,
-      finalize(child, key, options, totalSessions),
+      finalize(child, key, options, totalSessions, person),
     ]))
     const required = node.requests.size < 2 && options.required === 'distinct-requests'
       ? []
@@ -427,7 +435,7 @@ function keywordsFor(node: Node, type: JsonSchemaType, name: string | null, opti
     if (required.length > 0)
       schema.required = required
     if (node.mapValues !== null)
-      schema.additionalProperties = finalize(node.mapValues, name, options, totalSessions)
+      schema.additionalProperties = finalize(node.mapValues, name, options, totalSessions, person)
     return schema
   }
   return {}

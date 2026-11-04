@@ -1398,6 +1398,50 @@ describe('createRedactor: personal data in response records (decision 0063)', ()
     expect(r.value('women', { in: 'query', name: 'gender' })).toBe('xxxxx')
   })
 
+  it('masks special-category data wherever it is, and a category only in a person record', () => {
+    expect(r.json({
+      physicallyHandicapType: 'LOCOMOTOR',
+      disabilityPercent: 40,
+      medicalHistory: 'Asthma',
+      bloodGroup: 'B+',
+      religion: 'Zorvan',
+      casteName: 'Velar',
+      nationality: 'IN',
+      healthStatus: 'FIT',
+      qualification: 'GRADUATE',
+      kycStatus: 'VERIFIED',
+      joinedOn: '01-JAN-2020',
+    }, { in: 'response-body' })).toEqual({
+      physicallyHandicapType: 'XXXXXXXXX',
+      disabilityPercent: '00',
+      medicalHistory: 'Xxxxxx',
+      bloodGroup: 'X+',
+      religion: 'Xxxxxx',
+      casteName: 'Xxxxx',
+      nationality: 'XX',
+      healthStatus: 'XXX',
+      qualification: 'GRADUATE',
+      kycStatus: 'VERIFIED',
+      joinedOn: '01-JAN-2020',
+    })
+    expect(r.json({
+      member: { name: 'Quill Ferro', category: 'GEN' },
+    }, { in: 'response-body' })).toEqual({
+      member: { name: 'Xxxxx Xxxxx', category: 'XXX' },
+    })
+    expect(r.json({
+      products: [
+        { name: 'Trail Shoe', category: 'shoes' },
+      ],
+    }, { in: 'response-body' })).toEqual({
+      products: [
+        { name: 'Trail Shoe', category: 'shoes' },
+      ],
+    })
+    // A UI flag is a boolean and stays one.
+    expect(r.json({ disabled: true }, { in: 'response-body' })).toEqual({ disabled: true })
+  })
+
   it('treats a typed captcha or security answer in a form as a secret', () => {
     expect(r.value('7xk2p', { in: 'form', name: 'answer' })).toMatch(/^<redacted/)
     // In a JSON body `answer` is ordinary content (a Q&A site's post).

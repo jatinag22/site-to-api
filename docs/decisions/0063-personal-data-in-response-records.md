@@ -28,6 +28,15 @@ recognised. What stayed:
   family names: `uan`, `aadhaar`, `ssn`, `pan`, `accNo`, `accountNumber`, `iban`, `fatherName`,
   `husbandName`, `spouseName`, `guardianName`. So do `gender`, `sex` and `maritalStatus`, and any
   name that starts with the word `masked`.
+- Special-category data is masked everywhere: any field whose name has the word `handicap`,
+  `disability`, `disabled`, `health`, `medical`, `religion`, `caste` or `nationality`, or
+  contains `bloodGroup`. `category` (a social category) counts only inside a person record,
+  since a product's or an article's category is public. Booleans stay booleans, so a UI
+  `disabled: true` is unchanged. Qualifications, the record's other `*Status` fields and dates
+  are not special-category data and stay readable.
+- Values inside a person record never become a schema `enum`. The schema stage asks
+  `isPersonObject` about every object it describes; a person's codes are one person's values,
+  not the site's closed set.
 - A new personal-data pattern masks partly masked numbers wherever they appear: a token of
   digits, mask characters (`X`, `x`, `*`, `•`), single spaces and `-`, with three mask characters
   in a row and two or more digits (`XXXX XXXX 1234`, `****1234`). The format is kept.
@@ -36,8 +45,9 @@ recognised. What stayed:
 - `answer` is a secret word in forms and URLs (a captcha or security-question answer). In JSON
   bodies it stays ordinary data, since Q&A sites post answers as content.
 
-## Gender
-`gender` and `sex` are masked everywhere, not only in person records. The enum guard asks the
+## Gender and special categories
+`gender`, `sex` and the special categories above are masked everywhere, not only in person
+records. The enum guard asks the
 redactor whether a value would change, without knowing about records. If gender were masked only
 in examples, two sessions by the same person would still write it as `enum: [FEMALE]`. Masking it
 by name also drops a shop's `gender=women` filter from enums and examples. That filter keeps its
@@ -46,7 +56,9 @@ code or pages.
 
 ## Consequences
 A long number in a user record (a timestamp, a loyalty balance) is masked too; examples show its
-format, and schemas keep its type. Status and category labels in a person record (`panStatus`,
-`qualification`, `lastUpdate`) are not masked: they describe the record rather than identify the
-person. A partly masked code that is not personal (`REF XXX-1234`) keeps its letters but loses its
-digits.
+format, and schemas keep its type. Status labels in a person record (`panStatus`,
+`qualification`, `lastUpdate`) describe the record rather than identify the person and stay
+readable; a status about health (`healthStatus`) is masked by its word. A person record's codes
+lose their enum, so a generated client accepts any string there. A response field named for
+health in a non-personal sense (`healthCheck: "ok"`) is masked too. A partly masked code that is
+not personal (`REF XXX-1234`) keeps its letters but loses its digits.
