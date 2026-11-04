@@ -1,10 +1,11 @@
 import type { ResolvedConfig } from '../../config/schema'
 import type { Exchange, RedactContext, Redactor } from '../../model'
 import { describe, expect, it } from 'vitest'
-import { exchange, jsonBody, textBody } from '../../../test/helpers'
+import { exchange, formBody, jsonBody, textBody } from '../../../test/helpers'
 import { CONFIG, fixtureExchanges, SECRETS } from '../../../test/secret-fixture'
 import { findLeaks } from '../../build/leaks'
 import { SiteToApiError } from '../../errors'
+import { isOpaquePathSegment } from './path-tokens'
 import { isLuhnValid, isTrackingIdName, isVerhoeffValid, maskPersonalData, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { createRedactor } from './redactor'
 import { isPublishableKeyName, isSecretName } from './secret-names'
@@ -723,6 +724,33 @@ describe('createRedactor: opaque blobs', () => {
       responseBody: jsonBody({ publicKey: blob }),
     }))
     expect(redactor(items).value(blob, { in: 'response-body', name: 'publicKey' })).toBe(blob)
+  })
+})
+
+describe('createRedactor: token parameters (decision 0066)', () => {
+  const opaque = ['11-0-hX7kQ2mZpL9vRt4WcB8nYd3JfS6gAe1U', '12-0-Zk3x9QvL2mWp7RtY5nB8cD4fH6jK1sA0']
+  const plain = '14-2-0A1B2C3D4E5F60718293A4B5C6D7E8F9'
+
+  it('treats every value of a parameter as a token once most of its values are opaque', () => {
+    expect(isOpaquePathSegment(plain)).toBe(false)
+    expect(opaque.every(isOpaquePathSegment)).toBe(true)
+    const items = [...opaque, plain].map((state, index) => exchange({
+      url: `https://portal.test/login?_STATE_=${encodeURIComponent(state)}`,
+      method: 'POST',
+      sessionId: `s${index}`,
+      requestBody: formBody({ _STATE_: state, user: 'x' }),
+    }))
+    const r = redactor(items)
+    expect(r.value(plain, { in: 'form', name: '_STATE_' })).toBe(`<redacted: ${plain.length} base64 chars>`)
+    expect(r.value(`load('/recent?_STATE_=${plain}')`, { in: 'response-body' })).not.toContain(plain)
+  })
+
+  it('keeps a search parameter that held one random-looking value', () => {
+    const items = [opaque[0] ?? '', 'running shoes', 'red dress'].map((q, index) => exchange({
+      url: `https://shop.test/search?q=${encodeURIComponent(q)}`,
+      sessionId: `s${index}`,
+    }))
+    expect(redactor(items).value('running shoes', { in: 'query', name: 'q' })).toBe('running shoes')
   })
 })
 

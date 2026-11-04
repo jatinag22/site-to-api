@@ -173,6 +173,25 @@ describe('renderFlowsMarkdown', () => {
     expect(rendered).toContain('Trigger: load `` Buy `now` ``')
   })
 
+  it('keeps flow headings unique and descriptive (markdownlint MD024, MD059)', () => {
+    const [flow] = doc.flows
+    if (!flow)
+      throw new Error('fixture has no flow')
+    const first = flow.steps[0]?.operationId ?? ''
+    const rendered = renderFlowsMarkdown({
+      ...doc,
+      flows: [
+        { ...flow, id: 'a', name: 'Submit' },
+        { ...flow, id: 'b', name: 'Submit' },
+        { ...flow, id: 'c', name: 'Click here' },
+      ],
+    }, capture.operations)
+    expect(rendered).toContain('### Submit\n')
+    expect(rendered).toContain('### Submit (2)\n')
+    expect(rendered).toContain(`### Click here: ${first}\n`)
+    expect(rendered).toContain(`- [Click here: ${first}](#`)
+  })
+
   it('cannot inject links, HTML, comments, headings or table columns from site values', () => {
     const [flow] = doc.flows
     const [host] = doc.session

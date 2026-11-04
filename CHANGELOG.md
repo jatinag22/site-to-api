@@ -3,6 +3,20 @@
 All user-visible changes to `site-to-api` and `site-to-api-runtime`, which share one version.
 Versioning follows [docs/release-policy.md](docs/release-policy.md).
 
+## Unreleased
+
+### Fixed
+
+- **Session tokens in form examples.** A query or form parameter whose values are mostly random
+  tokens now has all its values redacted, including one whose shape alone looked like a public
+  hex id (decision 0066).
+- **Session tokens in extract patterns.** A value found in a script next to another token
+  (`?q=<token>&state=`) got a pattern with that token written into it, which leaked it and
+  matched only that session. Token runs in a pattern's anchor are now written as a character
+  class (decision 0066).
+- **`flows.md` headings** are unique (`Submit (2)`) and a flow named `Click here` says what it
+  calls, so Markdown linters (MD024, MD059) pass.
+
 ## 0.1.3 (2026-11-04)
 
 ### Added
