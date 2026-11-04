@@ -16,6 +16,10 @@ Versioning follows [docs/release-policy.md](docs/release-policy.md).
   path. `init --agent` copies it into `.claude/skills/` and `.agents/skills/` and adds a pointer
   line to an existing `AGENTS.md` or `CLAUDE.md`; it never overwrites a copy or file you edited.
   Run without a terminal (by an agent or a script), `capture` and `build` also print the path.
+- **Copied skills update after an upgrade.** `init --agent` stamps each copy with the version it
+  came from (`metadata` in the frontmatter, with a hash of the skill). Run again after an upgrade,
+  it replaces a copy nobody edited and keeps an edited one, saying how to update it. Without a
+  terminal, `capture` and `build` say when the project's copy is from an older version.
 - **CLI rules in `AGENT.md`.** A Commands section at the end says what an agent running the CLI
   must know: session ids must be new (reusing one is an error, never an overwrite), `build` reads
   every session unless `--session` narrows it, `--include`/`--exclude` choose hosts, `probe` and

@@ -137,8 +137,13 @@ It copies the skill to `.claude/skills/site-to-api/SKILL.md` (Claude Code) and
 `.agents/skills/site-to-api/SKILL.md` (Codex and other agents that read that folder), and adds one
 line pointing at it to the project's `AGENTS.md` and `CLAUDE.md`, the ones that exist (a
 `CLAUDE.md` that imports `@AGENTS.md` gets it through `AGENTS.md`). It creates neither file: when
-there is none it prints the line to add. It never overwrites: a skill copy that differs from the
-installed version's (edited, or from an older version) is kept and reported, and a file that
-already mentions `skills/site-to-api/SKILL.md` gets no second line; delete a copy and run it again
-to update it. Without a terminal (an agent's or a script's run), `capture` and `build` also end
-with the skill's path.
+there is none it prints the line to add, and a file that already mentions
+`skills/site-to-api/SKILL.md` gets no second line.
+
+Each copy records the site-to-api version it came from and a hash of the skill as that version
+shipped it, as `metadata` in its frontmatter. After an upgrade, run `init --agent` again: a copy
+nobody edited is replaced with the new version's skill, and an edited copy is kept, with the path
+of the new skill to bring your changes over to (or delete the copy and run it again). A copy
+without that metadata, made by hand or by `npx skills add`, is kept when it differs. Without a
+terminal (an agent's or a script's run), `capture` and `build` also end with the skill's path,
+and with a line saying to run `init --agent` when the project's copy is from an older version.

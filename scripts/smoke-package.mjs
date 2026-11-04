@@ -303,8 +303,12 @@ for (const { manager, dir } of projects) {
   if (!readFileSync(join(dir, 'site-to-api.config.ts'), 'utf8').includes('defineConfig'))
     fail(`${manager}: init wrote no config`)
   for (const copy of ['.claude', '.agents']) {
-    if (!existsSync(join(dir, copy, 'skills', 'site-to-api', 'SKILL.md')))
+    const copied = join(dir, copy, 'skills', 'site-to-api', 'SKILL.md')
+    if (!existsSync(copied))
       fail(`${manager}: init --agent wrote no ${copy}/skills/site-to-api/SKILL.md`)
+    // The stamp a later version's `init --agent` reads to update an unedited copy (decision 0062).
+    if (!readFileSync(copied, 'utf8').includes(`\n  site-to-api-version: "${version}"\n`))
+      fail(`${manager}: ${copy}/skills/site-to-api/SKILL.md does not record site-to-api ${version} in its frontmatter`)
   }
 
   step(`${manager}: Playwright's Chromium`)

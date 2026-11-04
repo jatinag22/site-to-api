@@ -5,8 +5,10 @@ import process from 'node:process'
 import { consola } from 'consola'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { VERSION } from '../version'
 import { mcpCommand } from './mcp'
 import { run } from './program'
+import { stampSkill } from './skill'
 
 // The packaged skill exists only after a build; these tests use their own.
 const packaged = vi.hoisted(() => {
@@ -71,7 +73,7 @@ describe('cli', () => {
 
   it('init --agent copies the packaged skill into the project', async () => {
     packaged.skill = join(dir, 'SKILL.md')
-    await writeFile(packaged.skill, '# site-to-api\n')
+    await writeFile(packaged.skill, '---\nname: site-to-api\n---\n\n# site-to-api\n')
     await run([
       'node',
       'site-to-api',
@@ -80,8 +82,10 @@ describe('cli', () => {
       'init',
       '--agent',
     ])
-    expect(await readFile(join(dir, '.claude', 'skills', 'site-to-api', 'SKILL.md'), 'utf8')).toBe('# site-to-api\n')
-    expect(await readFile(join(dir, '.agents', 'skills', 'site-to-api', 'SKILL.md'), 'utf8')).toBe('# site-to-api\n')
+    // Stamped with the version it came from, so a later `init --agent` can update it.
+    const copied = stampSkill('---\nname: site-to-api\n---\n\n# site-to-api\n', VERSION)
+    expect(await readFile(join(dir, '.claude', 'skills', 'site-to-api', 'SKILL.md'), 'utf8')).toBe(copied)
+    expect(await readFile(join(dir, '.agents', 'skills', 'site-to-api', 'SKILL.md'), 'utf8')).toBe(copied)
   })
 
   it('init --agent fails, writing nothing, where the installation has no skill', async () => {
