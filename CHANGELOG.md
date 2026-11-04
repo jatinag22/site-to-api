@@ -40,6 +40,19 @@ Versioning follows [docs/release-policy.md](docs/release-policy.md).
 
 ### Fixed
 
+- **`build` no longer fails on sites that keep the page address in a cookie.** NSE India sets
+  `browse-url` to the path of the page being viewed; that path was learnt as a secret and the
+  leak check then failed on the flow's own page URL, deleting `flows.json` and `flows.md`. A
+  cookie or token whose value is the plain address of a page the capture navigated to is no
+  longer learnt as a secret; it is still redacted where it sits (decision 0065).
+- **Google's anti-abuse attestation is bot protection.** `$rpc/google.internal.waa.*` requests on
+  `googleapis.com` (YouTube embeds, Google sign-in) are a browser-only `Google WAA` step with
+  every value masked, and Chrome's `x-browser-validation` header is redacted. Before, the
+  attestation payload was written verbatim as an example.
+- **Public URLs keep their ids.** An id after a title slug that merely contains a word like
+  `code` or `login` is no longer redacted as a one-time code, and `;`-separated query pairs
+  (`gitweb/?p=repo.git;a=commit;h=<sha>`) are judged one by one instead of as one opaque value.
+
 - **Dialogs during capture.** In a capture by hand, Chrome now shows `alert()`, `confirm()`,
   `prompt()` and "Leave site?" dialogs for you to answer. Before, every one was dismissed, so a step
   behind "Are you sure?" was silently cancelled and its request never captured. Capture scripts

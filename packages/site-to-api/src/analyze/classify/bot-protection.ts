@@ -166,6 +166,31 @@ const BOT_PROTECTION_SIGNATURES: readonly BotProtectionSignature[] = [
     responseHeaders: [],
   },
   {
+    // Google's web anti-abuse attestation (BotGuard), which YouTube embeds and Google sign-in run:
+    // `jnn-pa.googleapis.com/$rpc/google.internal.waa.v1.Waa/Create` fetches the challenge and
+    // `.../GenerateIT` posts the browser's answer for an integrity token (decision 0065).
+    vendor: 'Google WAA',
+    endpoints: [
+      { domain: 'googleapis.com', path: /^\/\$rpc\/google\.internal\.waa\./, label: '/$rpc/google.internal.waa.…' },
+    ],
+    bodies: [],
+    challengeHeaders: [],
+    cookies: [],
+    requestHeaders: [],
+    responseHeaders: [],
+  },
+  {
+    // Chrome's own attestation on requests to Google: `x-browser-validation` is computed by the
+    // browser from its build and the API key, so only a real Chrome sends it (decision 0065).
+    vendor: 'Chrome browser validation',
+    endpoints: [],
+    bodies: [],
+    challengeHeaders: [],
+    cookies: [],
+    requestHeaders: [/^x-browser-validation$/],
+    responseHeaders: [],
+  },
+  {
     vendor: 'hCaptcha',
     endpoints: [
       { domain: 'hcaptcha.com' },

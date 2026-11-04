@@ -73,6 +73,16 @@ describe('isSecretPathSegment', () => {
       expect(isSecretPathSegment(segment, previous), `/${previous}/${segment}`).toBe(false)
   })
 
+  it('reads a credential word only in a short route name, not inside a title slug (0065)', () => {
+    // An article slug that happens to contain `code` or `login` says nothing about the id after it.
+    expect(isSecretPathSegment('4413240', 'announcing-a-new-ide-for-postgresql-in-vs-code-from-microsoft')).toBe(false)
+    expect(isSecretPathSegment('8472631', 'why-our-login-page-was-slow-for-a-week')).toBe(false)
+    // Short credential routes still mark the code after them.
+    expect(isSecretPathSegment('847263', 'verify-code')).toBe(true)
+    expect(isSecretPathSegment('847263', 'email-verification-code')).toBe(true)
+    expect(isSecretPathSegment('847263', 'reset-password-code-step')).toBe(true)
+  })
+
   it('does not treat random ids with no credential word as secrets', () => {
     for (const segment of [
       'aB3dE5gH7jK9mN1pQ2xY',

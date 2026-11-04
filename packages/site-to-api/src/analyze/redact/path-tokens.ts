@@ -139,11 +139,21 @@ function decodeSegment(segment: string): string {
   }
 }
 
+/**
+ * A credential route names its purpose in a few words (`reset`, `verify-email`, `magic_link`,
+ * `reset-password-token`). A longer segment is a title slug (`ide-for-postgresql-in-vs-code`)
+ * whose words say nothing about the segment after it (decision 0065).
+ */
+const MAX_CREDENTIAL_ROUTE_WORDS = 4
+
 function followsCredentialWord(previous: string | null | undefined): boolean {
   if (previous === null || previous === undefined || previous === '')
     return false
   const decoded = decodeSegment(previous)
-  return isSecretName(decoded, true) || nameWords(decoded).some(word => CREDENTIAL_PATH_WORDS.has(word))
+  const words = nameWords(decoded)
+  if (words.length > MAX_CREDENTIAL_ROUTE_WORDS)
+    return false
+  return isSecretName(decoded, true) || words.some(word => CREDENTIAL_PATH_WORDS.has(word))
 }
 
 /** A lower-case run that reads as a word: vowels throughout, no long consonant clusters. */

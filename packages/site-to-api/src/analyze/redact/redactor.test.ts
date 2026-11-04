@@ -3,6 +3,7 @@ import type { Exchange, RedactContext, Redactor } from '../../model'
 import { describe, expect, it } from 'vitest'
 import { exchange, jsonBody, textBody } from '../../../test/helpers'
 import { CONFIG, fixtureExchanges, SECRETS } from '../../../test/secret-fixture'
+import { findLeaks } from '../../build/leaks'
 import { SiteToApiError } from '../../errors'
 import { isLuhnValid, isTrackingIdName, isVerhoeffValid, maskPersonalData, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { createRedactor } from './redactor'
@@ -86,6 +87,24 @@ describe('createRedactor: rules', () => {
     expect(r.value('dark', { in: 'cookie', name: 'theme' })).toBe('<redacted: 4 chars>')
     expect(r.value(`Bearer ${SECRETS.bearer}`, { in: 'header', name: 'Authorization' })).toMatch(/^<redacted: /)
     expect(r.value(SECRETS.jwt, { in: 'body', name: 'anything' })).toBe('<redacted: JWT (alg=HS256, claims=[exp, sub])>')
+  })
+
+  it('redacts Chrome\'s x-browser-validation attestation like a bot-protection header (0065)', () => {
+    const validation = 'p0ryEJ6LCa7iMn63FawDjO0pVio='
+    const r = redactor([
+      exchange({
+        url: 'https://www.video.test/embed/x',
+        sessionId: 's1',
+        requestHeaders: { 'x-browser-validation': validation },
+      }),
+      exchange({
+        url: 'https://www.video.test/embed/x',
+        sessionId: 's2',
+        requestHeaders: { 'x-browser-validation': validation },
+      }),
+    ])
+    expect(r.value(validation, { in: 'header', name: 'x-browser-validation' })).toMatch(/^<redacted: /)
+    expect(r.value(`header ${validation}`, { in: 'text' })).not.toContain(validation)
   })
 
   it('redacts configured fields case-insensitively', () => {
@@ -1031,6 +1050,61 @@ describe('createRedactor: URLs inside values (decision 0047)', () => {
   })
 })
 
+describe('createRedactor: public content records (decision 0065)', () => {
+  const hit = (storyId: number, url: string, author: string): Record<string, unknown> => ({
+    author,
+    objectID: String(storyId),
+    story_id: storyId,
+    title: 'A story',
+    url,
+  })
+
+  it('keeps ids and URLs of public stories, including a slug with a credential word and a gitweb query', () => {
+    const article = 'https://blog.example.org/announcing-a-new-ide-for-postgresql-in-vs-code-from-microsoft/4413240'
+    const gitweb = 'http://git.example.org/gitweb/?p=postgresql.git;a=commit;h=168d5805e4c08bed7b95d351bf097cff7c07dd65'
+    const body = {
+      hits: [
+        hit(44073588, article, 'philliphaydon'),
+        hit(9509870, gitweb, 'anarazel'),
+      ],
+    }
+    const r = redactor([
+      exchange({
+        url: 'https://search.example.org/api/v1/search?query=postgres',
+        responseBody: jsonBody(body),
+      }),
+    ])
+    expect(r.json(body, { in: 'response-body' })).toEqual(body)
+  })
+
+  it('still redacts a token after a short credential route and a secret in a ;-separated query', () => {
+    const r = redactor([
+      exchange({ url: 'https://shop.test/api/x' }),
+    ])
+    expect(r.value('https://shop.test/verify-code/847263', { in: 'response-body', name: 'url' })).toBe('https://shop.test/verify-code/<redacted: 6-digit number>')
+    expect(r.value('https://shop.test/dl?p=report.pdf;token=a8Fk29dLq0ZpX7c4', { in: 'response-body', name: 'url' })).toBe('https://shop.test/dl?p=report.pdf;token=<redacted: 16 base64 chars>')
+  })
+
+  it('still masks a person record\'s id and name next to public content', () => {
+    const body = {
+      user: { id: 4413240, name: 'Jane Roe', username: 'jroe' },
+      stories: [
+        hit(44073588, 'https://blog.example.org/a/4413240', 'jroe'),
+      ],
+    }
+    const r = redactor([
+      exchange({
+        url: 'https://news.example.org/api/me',
+        responseBody: jsonBody(body),
+      }),
+    ])
+    const out = JSON.stringify(r.json(body, { in: 'response-body' }))
+    expect(out).not.toContain('Jane Roe')
+    expect(out).toContain('"id":"0000000"')
+    expect(out).toContain('"story_id":44073588')
+  })
+})
+
 describe('createRedactor: learntSecrets (decision 0047)', () => {
   it('lists token-like secrets from cookies, headers, bodies and URLs, never words or short values', () => {
     const r = redactor([
@@ -1048,6 +1122,63 @@ describe('createRedactor: learntSecrets (decision 0047)', () => {
     expect(secrets).not.toContain('desktop-layout-wide')
     expect(secrets).not.toContain('a1b2')
     expect(secrets).toEqual([...secrets].sort())
+  })
+
+  it('does not learn a cookie that holds the address of a page the capture navigated to (0065)', () => {
+    const page = 'https://www.exchange.test/get-quote/equity/ACME42/Acme-Industries-Limited'
+    const path = '/get-quote/equity/ACME42/Acme-Industries-Limited'
+    const token = 'c0ffee00deadbeef0123'
+    const r = redactor([
+      exchange({
+        url: page,
+        resourceType: 'document',
+        setCookies: {
+          'browse-url': encodeURIComponent(path),
+        },
+      }),
+      exchange({
+        url: 'https://www.exchange.test/api/quote?symbol=ACME42',
+        cookies: { 'browse-url': path, 'nsit': token },
+      }),
+    ])
+    const secrets = r.learntSecrets()
+    expect(secrets).not.toContain(path)
+    expect(secrets).toContain(token)
+    // Still redacted where it sits: a cookie value is never an example.
+    expect(r.value(path, { in: 'cookie', name: 'browse-url' })).toMatch(/^<redacted: /)
+    // The page's own URL stays readable wherever flows and specs write it.
+    expect(r.value(page, { in: 'text' })).toBe(page)
+    // What the leak check would find in a flow trigger: nothing.
+    expect(findLeaks([
+      {
+        path: 'flows.json',
+        content: JSON.stringify({
+          trigger: { pageUrl: page },
+        }),
+      },
+    ], secrets)).toEqual([])
+    expect(findLeaks([
+      { path: 'flows.md', content: `cookie ${token}` },
+    ], secrets)).toHaveLength(1)
+  })
+
+  it('still learns a page-like cookie that was never navigated to, or that carries a query or a token segment', () => {
+    const r = redactor([
+      exchange({ url: 'https://shop.test/account/orders', resourceType: 'document' }),
+      exchange({ url: 'https://shop.test/reset/9f8e7d6c5b4a39281706f5e4d3c2b1a0', resourceType: 'document' }),
+      exchange({
+        url: 'https://shop.test/api/x',
+        cookies: {
+          next: '/checkout/step2x9',
+          back: '/account/orders?state=a8Fk29dLq0ZpX7',
+          reset: '/reset/9f8e7d6c5b4a39281706f5e4d3c2b1a0',
+        },
+      }),
+    ])
+    const secrets = r.learntSecrets()
+    expect(secrets).toContain('/checkout/step2x9')
+    expect(secrets).toContain('/account/orders?state=a8Fk29dLq0ZpX7')
+    expect(secrets.some(secret => secret.includes('9f8e7d6c5b4a39281706f5e4d3c2b1a0'))).toBe(true)
   })
 })
 

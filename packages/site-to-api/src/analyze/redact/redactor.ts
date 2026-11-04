@@ -483,13 +483,61 @@ function learnKey(key: string, learnt: Learnt): void {
     learnt.unlessConstant.add(key)
 }
 
+/** A same-site path or a web URL with no query or fragment: `/quote/equity/INFY`, `https://a.example/b`. */
+const PLAIN_PAGE_URL = /^(?:\/(?!\/)|https?:\/\/)[^\s?#]*$/i
+
+/** `url` without its query and fragment. */
+function withoutQuery(url: string): string {
+  return url.split(/[?#]/)[0] ?? url
+}
+
+/**
+ * The pages the capture navigated to, as absolute URLs and as paths, without query or fragment:
+ * every document request and every page a request was sent from.
+ */
+function navigatedPages(exchanges: readonly Exchange[]): Set<string> {
+  const pages = new Set<string>()
+  const add = (url: string): void => {
+    const base = withoutQuery(url)
+    pages.add(base)
+    const path = /^https?:\/\/[^/]+(\/.*)?$/i.exec(base)?.[1]
+    if (path !== undefined)
+      pages.add(path)
+  }
+  for (const exchange of exchanges) {
+    if (exchange.resourceType === 'document')
+      add(exchange.request.url)
+    if (exchange.pageUrl !== null)
+      add(exchange.pageUrl)
+  }
+  return pages
+}
+
+/**
+ * True when a value is the plain address of a page the capture navigated to (decision 0065): a
+ * cookie such as NSE's `browse-url=/get-quote/equity/INFY/Infosys-Limited` remembers the page,
+ * and the page's URL is public in every flow. A value with a query or fragment, or with a
+ * credential or opaque path segment, is never a plain page address: those can carry tokens.
+ */
+function isNavigatedPageUrl(value: string, pages: ReadonlySet<string>): boolean {
+  const decoded = percentDecoded(value)
+  if (!PLAIN_PAGE_URL.test(decoded) || !pages.has(decoded))
+    return false
+  const segments = decoded.replace(/^https?:\/\/[^/]+/i, '').split('/')
+  return segments.every((segment, index) => segment === '' || (!isSecretPathSegment(segment, segments[index - 1]) && !isOpaquePathSegment(segment)))
+}
+
 /** Records which secret set a non-empty value belongs to, if any. */
-function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean, host: string): void {
+function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean, host: string, pages: ReadonlySet<string>): void {
   if (item.value.length >= MIN_PERSONAL_NAME_LENGTH && maskByName(item.value, item.name, item.person === true, item.in) !== null) {
     learnt.personalNames.add(item.value)
     if (item.value.length >= MIN_SEARCHED_SECRET_LENGTH)
       learnt.personal.add(item.value)
   }
+  // Still redacted where it sits (a cookie is always redacted); only not hunted for elsewhere,
+  // where it is the page's own public URL.
+  if (item.in !== 'path' && isNavigatedPageUrl(item.value, pages))
+    return
   if (isAlwaysSecret(item.in, item.name) || inspectJwt(item.value) || item.pathToken === true) {
     forms.forEach(form => learnt.always.add(form))
   }
@@ -519,6 +567,7 @@ function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: Red
     personalNames: new Set(),
     publicLabels: new Set(),
   }
+  const pages = navigatedPages(exchanges)
   for (const exchange of exchanges) {
     for (const item of valuesOf(exchange)) {
       const forms = formsOf(item)
@@ -532,7 +581,7 @@ function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: Red
       if (item.key === true)
         learnKey(item.value, learnt)
       else
-        learnValue(item, forms, learnt, isAlwaysSecret, exchange.request.host)
+        learnValue(item, forms, learnt, isAlwaysSecret, exchange.request.host, pages)
     }
   }
   return learnt
@@ -632,22 +681,28 @@ export function createRedactor(input: RedactorInput): Redactor {
   }
 
   function redactQuery(query: string, depth: number): string {
-    return query.split('&').map((pair) => {
-      const equals = pair.indexOf('=')
-      if (equals === -1)
-        return pair
-      const rawName = pair.slice(0, equals)
-      const rawValue = pair.slice(equals + 1)
-      const value = safeDecode(rawValue) ?? rawValue
-      // A random value in a URL (a signed link's token under any name) is judged like an opaque
-      // path segment: secret unless the same in every session.
-      const redacted = isOpaquePathSegment(value) && !isConstant(value)
-        ? placeholder(value)
-        : redactString(value, { in: 'form', name: safeDecode(rawName) ?? rawName }, depth + 1)
-      return redacted === value
-        ? pair
-        : `${rawName}=${redacted}`
-    }).join('&')
+    // `;` separates pairs too where a name follows it (gitweb's `?p=repo.git;a=commit;h=<sha>`),
+    // so each value is judged alone rather than as one long opaque string (decision 0065).
+    return query.split(/(&|;(?=[\w.%[\]-]+=))/).map((pair, index) => index % 2 === 1
+      ? pair
+      : redactPair(pair, depth)).join('')
+  }
+
+  function redactPair(pair: string, depth: number): string {
+    const equals = pair.indexOf('=')
+    if (equals === -1)
+      return pair
+    const rawName = pair.slice(0, equals)
+    const rawValue = pair.slice(equals + 1)
+    const value = safeDecode(rawValue) ?? rawValue
+    // A random value in a URL (a signed link's token under any name) is judged like an opaque
+    // path segment: secret unless the same in every session.
+    const redacted = isOpaquePathSegment(value) && !isConstant(value)
+      ? placeholder(value)
+      : redactString(value, { in: 'form', name: safeDecode(rawName) ?? rawName }, depth + 1)
+    return redacted === value
+      ? pair
+      : `${rawName}=${redacted}`
   }
 
   /**
