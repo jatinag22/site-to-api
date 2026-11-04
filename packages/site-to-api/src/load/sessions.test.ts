@@ -384,7 +384,9 @@ describe('loadSessions', () => {
     await writeSession('s1', {
       ...meta('s1', '2026-01-01T10:00:00.000Z'),
       incomplete: { reason: 'error', error: 'closing the browser failed: boom' },
-    }, [], [])
+    }, [
+      entry({ url: 'https://shop.test/' }),
+    ], [])
     const { warnings } = await loadSessions(root)
     expect(warnings).toContain('s1: incomplete capture (the capture stopped on an error: closing the browser failed: boom). It is used as recorded; what came after the error is missing, so capture again for full coverage.')
   })
@@ -398,6 +400,21 @@ describe('loadSessions', () => {
     ], [])
     const { warnings } = await loadSessions(root)
     expect(warnings).toContain('fell-back: Captured with Playwright\'s bundled Chromium.')
+  })
+
+  it('skips a session that recorded no requests, with a warning that names it', async () => {
+    await writeSession('shop', meta('shop', '2026-01-01T09:00:00.000Z'), [
+      entry({ url: 'https://shop.test/1' }),
+    ], [])
+    await writeSession('closed-early', meta('closed-early', '2026-01-01T10:00:00.000Z'), [], [])
+    const { sessions, warnings } = await loadSessions(root)
+    expect(sessions.map(session => session.meta.sessionId)).toEqual(['shop'])
+    expect(warnings).toEqual(['closed-early: recorded no requests (the browser was closed before any page loaded); skipped. Delete its folder or capture again.'])
+  })
+
+  it('names an empty session when it was the only one', async () => {
+    await writeSession('closed-early', meta('closed-early', '2026-01-01T10:00:00.000Z'), [], [])
+    await expect(loadSessions(root)).rejects.toThrow(/No capture sessions found.*closed-early: recorded no requests/)
   })
 
   it('explains a session folder that has a HAR but no meta.json', async () => {

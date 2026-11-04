@@ -131,6 +131,17 @@ rewrites one:
   keep Playwright's default (`page.on('dialog', dialog => dialog.accept())` accepts) and get a
   warning when a confirmation was dismissed. Each dialog and its answer is recorded in
   `events.jsonl`; the text typed into a prompt is not.
+- **Endpoints a navigation menu links to stay separate operations.** Controller and method names
+  in lowerCamelCase (`/portal/accountLedger/home`, `/portal/serviceRecordNew/loadServiceRecord`)
+  are no longer merged into `/portal/{param1}/{param2}`, and an XHR is never merged into a
+  template of pages, even when it failed (decision 0060).
+- **An endpoint seen only in a site's code is listed under one host.** On a site that sends no
+  `Referer`, or for a route in an inline script, a relative route was listed under every host
+  that served pages. It now goes to the page that loaded the script, the script's own site or
+  the only site; when the capture cannot tell, a build warning names it instead (decision 0061).
+- **A session with no requests no longer counts.** A capture whose browser was closed before any
+  page loaded is still saved, now with a warning; `build` skips it with a warning that names it,
+  and "Loaded N sessions" counts only the sessions it used.
 
 ### Known issues
 

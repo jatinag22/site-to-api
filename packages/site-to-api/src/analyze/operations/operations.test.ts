@@ -335,10 +335,83 @@ describe('buildOperations: grouping, ids and summaries', () => {
       }),
     ])
     expect(operations.filter(item => item.sourceOnly).map(item => `${item.method} ${item.host}${item.path}`)).toEqual([
-      'GET sgtm.shop.test/api/elsewhere',
       'PUT www.shop.test/api/cart',
-      'GET www.shop.test/api/elsewhere',
     ])
+  })
+
+  describe('a relative code route belongs to one site, never to every page host (decision 0061)', () => {
+    const pageOn = (host: string, startedAt: number): Exchange => exchange({
+      url: `https://${host}/`,
+      kind: 'page',
+      resourceType: 'document',
+      startedAt,
+      responseBody: textBody('<html>'),
+    })
+    const scriptFrom = (url: string, startedAt: number): Exchange => ({
+      ...exchange({
+        url,
+        kind: 'asset',
+        resourceType: 'script',
+        startedAt,
+      }),
+      // A site with `Referrer-Policy: no-referrer`, whose script requests name no page.
+      pageUrl: null,
+    })
+    const sourceOnly = (operations: Operation[]): string[] => operations
+      .filter(item => item.sourceOnly)
+      .map(item => `${item.method} ${item.host}${item.path}`)
+
+    it('places a script without a page on the page the session had open when it loaded', () => {
+      const operations = build([
+        pageOn('ledger.shop.test', 1000),
+        pageOn('members.shop.test', 2000),
+        scriptFrom('https://static.shop.test/security/change.js', 2100),
+      ], [
+        route('/account/sendCode', {
+          method: 'POST',
+          scriptHosts: ['static.shop.test'],
+        }),
+      ])
+      expect(sourceOnly(operations)).toEqual(['POST members.shop.test/account/sendCode'])
+    })
+
+    it('places an inline or own script on its own host when that host served pages', () => {
+      const operations = build([
+        pageOn('ledger.shop.test', 1000),
+        pageOn('members.shop.test', 2000),
+      ], [
+        route('/account/sendCode', {
+          method: 'POST',
+          scriptHosts: ['members.shop.test'],
+        }),
+      ])
+      expect(sourceOnly(operations)).toEqual(['POST members.shop.test/account/sendCode'])
+    })
+
+    it('leaves a route out with a warning when several sites could have run the script', () => {
+      const warnings: string[] = []
+      const exchanges = [
+        pageOn('ledger.shop.test', 1000),
+        pageOn('members.shop.test', 2000),
+      ]
+      const operations = buildOperations(exchanges, {
+        sourceRoutes: [
+          route('/account/sendCode', {
+            method: 'POST',
+            scriptHosts: ['cdn.vendor.test'],
+          }),
+          route('/', {
+            scriptHosts: ['cdn.vendor.test'],
+          }),
+        ],
+        isSecretKey: () => false,
+        warnings,
+      })
+      expect(sourceOnly(operations)).toEqual([])
+      expect(warnings).toEqual([
+        '1 relative route(s) found in the site\'s code are not listed as operations, because the capture does not show which site\'s pages loaded their script: POST /account/sendCode (in a script from cdn.vendor.test). Capture the page that uses the feature to place them.',
+      ])
+    })
   })
 
   it('puts relative code routes on a site whose pages were all challenge pages', () => {
@@ -1322,6 +1395,71 @@ describe('buildOperations: sibling paths (decision 0035)', () => {
       get('/help/contact', article('a')),
       get('/help/shipping', article('b')),
     ]))).toEqual(['GET /help/contact', 'GET /help/shipping'])
+  })
+
+  it('keeps camelCase controller and method names a menu links to literal (decision 0060)', () => {
+    const menu = '<nav class="menu"><a href="/portal/accountLedger/home">a</a><a href="/portal/serviceRecordNew/loadServiceRecord">b</a><a href="/portal/profileDetails/viewProfile">c</a></nav>'
+    const page = (body: string): Parameters<typeof get>[1] => ({
+      kind: 'page',
+      resourceType: 'document',
+      ...article(`${menu}${body}`),
+    })
+    const operations = build([
+      get('/portal/', page('home')),
+      get('/portal/accountLedger/home', page('ledger')),
+      get('/portal/serviceRecordNew/loadServiceRecord', page('record')),
+      get('/portal/serviceRecordNew/getRecentRequests', {
+        resourceType: 'xhr',
+        status: 500,
+        responseBody: textBody('<p>error</p>'),
+      }),
+    ])
+    expect(paths(operations)).toEqual([
+      'GET /portal/',
+      'GET /portal/accountLedger/home',
+      'GET /portal/serviceRecordNew/getRecentRequests',
+      'GET /portal/serviceRecordNew/loadServiceRecord',
+    ])
+    expect(operations.flatMap(operation => operation.pathParams)).toEqual([])
+  })
+
+  it('still templates camelCase values that are a minority among data values', () => {
+    const titles = [
+      'Cipher',
+      'Lord_Byron',
+      'Machine',
+      'Finite_set',
+      'Writer',
+      'openSource',
+    ]
+    const operations = build(titles.map(title => get(`/api/rest_v1/page/summary/${title}`, summary(title))))
+    expect(paths(operations)).toEqual([
+      'GET /api/rest_v1/page/summary/{title}',
+      'GET /api/rest_v1/page/summary/openSource',
+    ])
+  })
+
+  it('keeps an XHR apart from linked pages of one template, even when the XHR failed (decision 0060)', () => {
+    const store = (name: string): Parameters<typeof get>[1] => ({
+      kind: 'page',
+      resourceType: 'document',
+      ...article(name),
+    })
+    const listing = get('/stores', {
+      ...store('<a href="/stores/pine-hill">P</a><a href="/stores/cedar-park">C</a><a href="/stores/maple-cross">M</a>'),
+    })
+    const operations = build([
+      listing,
+      get('/stores/pine-hill', store('Pine Hill')),
+      get('/stores/cedar-park', store('Cedar Park')),
+      get('/stores/maple-cross', store('Maple Cross')),
+      get('/stores/opening-hours', {
+        resourceType: 'xhr',
+        status: 500,
+        responseBody: textBody('<p>error</p>'),
+      }),
+    ])
+    expect(paths(operations)).toEqual(['GET /stores', 'GET /stores/{slug}', 'GET /stores/opening-hours'])
   })
 })
 
