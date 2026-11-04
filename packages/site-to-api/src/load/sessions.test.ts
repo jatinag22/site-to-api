@@ -492,11 +492,33 @@ describe('countSessions', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('counts folders with a meta.json and ignores other entries', async () => {
-    await mkdir(join(root, 'a'))
-    await writeFile(join(root, 'a', 'meta.json'), '{}')
-    await mkdir(join(root, 'b'))
-    await writeFile(join(root, 'b', 'meta.json'), '{}')
+  it('counts sessions that recorded traffic, as build loads them', async () => {
+    const write = async (name: string, sessionMeta: unknown, entries: unknown[], events: string[]): Promise<void> => {
+      await mkdir(join(root, name))
+      await writeFile(join(root, name, 'meta.json'), JSON.stringify(sessionMeta))
+      await writeFile(join(root, name, 'traffic.har'), JSON.stringify({
+        log: { version: '1.2', entries },
+      }))
+      await writeFile(join(root, name, 'events.jsonl'), events.join('\n'))
+    }
+    await write('pages', meta('pages', '2026-01-01T09:00:00.000Z'), [
+      entry({ url: 'https://shop.test/' }),
+    ], [])
+    await write('stream', meta('stream', '2026-01-01T10:00:00.000Z'), [], [
+      JSON.stringify({
+        t: 'sse',
+        ts: T0,
+        pageUrl: 'https://shop.test/',
+        url: 'https://shop.test/live',
+        stream: 0,
+        event: 'message',
+        id: '',
+        data: '1',
+      }),
+    ])
+    await write('closed-early', meta('closed-early', '2026-01-01T11:00:00.000Z'), [], [])
+    await mkdir(join(root, 'invalid-meta'))
+    await writeFile(join(root, 'invalid-meta', 'meta.json'), '{}')
     await mkdir(join(root, 'unfinished'))
     await writeFile(join(root, '.gitignore'), '*')
     expect(await countSessions(root)).toBe(2)

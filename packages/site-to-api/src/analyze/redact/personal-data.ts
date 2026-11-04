@@ -332,6 +332,44 @@ function isSpecialCategory(parts: readonly string[]): boolean {
 }
 
 /**
+ * What a service's health check reports (`healthCheck: "ok"`, `health: "UP"`, gRPC's
+ * `SERVING`): about the server, not a person.
+ */
+const SERVICE_HEALTH_VALUES: ReadonlySet<string> = new Set([
+  'ok',
+  'up',
+  'down',
+  'healthy',
+  'unhealthy',
+  'degraded',
+  'pass',
+  'fail',
+  'warn',
+  'green',
+  'yellow',
+  'red',
+  'serving',
+  'notserving',
+  'unknown',
+])
+
+/**
+ * Whether a field outside a person record is a service's health status rather than a person's
+ * health (decision 0063): its only special-category word is `health`/`healthy` and its value is
+ * one of a health check's words. A person's `healthStatus: "FIT"` stays masked.
+ */
+export function isServiceHealth(name: string | null | undefined, value: string): boolean {
+  if (name === null || name === undefined)
+    return false
+  const parts = words(name)
+  const special = parts.filter(part => SPECIAL_CATEGORY_WORDS.has(part) || part === 'healthy')
+  return special.length > 0
+    && special.every(part => part === 'health' || part === 'healthy')
+    && !parts.join('').includes('bloodgroup')
+    && SERVICE_HEALTH_VALUES.has(compactName(value))
+}
+
+/**
  * Field names whose values are a person's name, account or address, wherever they appear:
  * `username`, `user_name`, `login`, `displayName`, `firstName`, `lastName`, `fullName`,
  * `address`, `street`, `city`, `postcode`, `zip`, `dob`, `birthDate`, account and player ids

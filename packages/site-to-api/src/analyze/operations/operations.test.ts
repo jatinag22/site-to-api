@@ -1423,6 +1423,28 @@ describe('buildOperations: sibling paths (decision 0035)', () => {
     expect(operations.flatMap(operation => operation.pathParams)).toEqual([])
   })
 
+  it('keeps PascalCase and kebab-case method names a menu links to literal', () => {
+    for (const [first, second, third] of [
+      ['Orders/GetOrders', 'Orders/LoadDetails', 'Account/ViewProfile'],
+      ['orders/get-orders', 'orders/load-details', 'account/view_profile'],
+    ] as const) {
+      const menu = `<nav class="menu"><a href="/portal/${first}">a</a><a href="/portal/${second}">b</a><a href="/portal/${third}">c</a></nav>`
+      const page = (body: string): Parameters<typeof get>[1] => ({
+        ...article(menu + body),
+        kind: 'page',
+        resourceType: 'document',
+      })
+      const operations = build([
+        get('/portal/', page('home')),
+        get(`/portal/${first}`, page('orders')),
+        get(`/portal/${second}`, page('details')),
+        get(`/portal/${third}`, page('profile')),
+      ])
+      expect(operations.flatMap(operation => operation.pathParams)).toEqual([])
+      expect(paths(operations)).toHaveLength(4)
+    }
+  })
+
   it('still templates camelCase values that are a minority among data values', () => {
     const titles = [
       'Cipher',
