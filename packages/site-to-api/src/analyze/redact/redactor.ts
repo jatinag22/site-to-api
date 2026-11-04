@@ -576,7 +576,8 @@ function noteParameter(parameters: Map<string, ParameterValues>, item: Located, 
     forms: new Set(),
   }
   parameter.values.add(item.value)
-  if (isOpaquePathSegment(item.value))
+  // Either shape rule that redacts a value where it sits (an opaque segment or blob) counts.
+  if (isOpaquePathSegment(item.value) || isOpaqueBlob(item.value))
     parameter.opaque.add(item.value)
   forms.forEach(form => parameter.forms.add(form))
   parameters.set(item.name, parameter)

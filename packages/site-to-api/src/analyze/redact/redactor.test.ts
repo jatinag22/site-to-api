@@ -5,6 +5,7 @@ import { exchange, formBody, jsonBody, textBody } from '../../../test/helpers'
 import { CONFIG, fixtureExchanges, SECRETS } from '../../../test/secret-fixture'
 import { findLeaks } from '../../build/leaks'
 import { SiteToApiError } from '../../errors'
+import { isOpaqueBlob } from './blobs'
 import { isOpaquePathSegment } from './path-tokens'
 import { isLuhnValid, isTrackingIdName, isVerhoeffValid, maskPersonalData, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { createRedactor } from './redactor'
@@ -728,12 +729,15 @@ describe('createRedactor: opaque blobs', () => {
 })
 
 describe('createRedactor: token parameters (decision 0066)', () => {
-  const opaque = ['11-0-hX7kQ2mZpL9vRt4WcB8nYd3JfS6gAe1U', '12-0-Zk3x9QvL2mWp7RtY5nB8cD4fH6jK1sA0']
-  const plain = '14-2-0A1B2C3D4E5F60718293A4B5C6D7E8F9'
+  // One random segment and one blob (the shape HDIV's states mostly have), then a value neither
+  // shape rule catches alone: digits with one letter.
+  const opaque = ['11-0-hX7kQ2mZpL9vRt4WcB8nYd3JfS6gAe1U', '12-1-A1B2C3D4E5F6A7B8C9D0E1F2A3B4C5D6']
+  const plain = '14-2-0123456789A01234567890123456789'
 
   it('treats every value of a parameter as a token once most of its values are opaque', () => {
-    expect(isOpaquePathSegment(plain)).toBe(false)
-    expect(opaque.every(isOpaquePathSegment)).toBe(true)
+    expect(isOpaquePathSegment(plain) || isOpaqueBlob(plain)).toBe(false)
+    expect(isOpaquePathSegment(opaque[0] ?? '')).toBe(true)
+    expect(isOpaqueBlob(opaque[1] ?? '') && !isOpaquePathSegment(opaque[1] ?? '')).toBe(true)
     const items = [...opaque, plain].map((state, index) => exchange({
       url: `https://portal.test/login?_STATE_=${encodeURIComponent(state)}`,
       method: 'POST',
