@@ -87,6 +87,10 @@ Versioning follows [docs/release-policy.md](docs/release-policy.md).
 - **A service's health check stays readable.** `health: "UP"`, `healthCheck: "ok"` and other
   health-check values outside a person record are no longer masked; a person's health status
   still is (decision 0063).
+- **`probe`, `check` and the MCP servers reach distant hosts on IPv4-only networks.** Node gave
+  each connection attempt 250 ms, less than an IPv4 connect across continents, so on a network
+  without working IPv6 every live call failed with `ETIMEDOUT` while `curl` worked. The CLI now
+  allows a second per attempt, unless Node's own flag sets it.
 
 ## 0.1.2 (2026-11-03)
 
