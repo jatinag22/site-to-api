@@ -45,3 +45,11 @@ Update (0.1.3): rule 1 also covers method names in other spellings when they sta
 lower-case kebab-case or snake_case compounds (`get-orders`, `view_profile`). A slug that starts
 with one of those verbs (`list-of-rivers`) becomes its own operation, a duplicate rather than a
 merge. Single PascalCase words (`/Orders/Details`) are still left to rule 2.
+
+Update (0.1.3): a redirect can show that two siblings are different endpoints. GitHub redirects
+`/vuejs/core/discussions` to `/orgs/vuejs/discussions`; both pages share the site's chrome and
+listings link to the shape, so they became `/{param1}/{param2}/discussions` and the
+organisation's page lost its own operation. When a member's response redirects (3xx, `Location`
+on the same host) to another member and moves one of the window's values to a different position
+(`vuejs` from first to second), the target is left out of the template. A value renamed in place
+(`/facebook/react` → `/react/react`, a transferred repository) moves nothing and still merges.

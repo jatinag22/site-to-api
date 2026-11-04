@@ -1483,6 +1483,73 @@ describe('buildOperations: sibling paths (decision 0035)', () => {
     ])
     expect(paths(operations)).toEqual(['GET /stores', 'GET /stores/{slug}', 'GET /stores/opening-hours'])
   })
+
+  it('templates a symbol and name pair whose name spells an earlier string with hyphens for spaces', () => {
+    const companies = [
+      ['AXISBANK', 'Axis Bank Limited'],
+      ['SBIN', 'State Bank of India'],
+      ['M&M', 'Mahindra & Mahindra Limited'],
+      ['ETERNAL', 'ETERNAL LIMITED'],
+    ] as const
+    const quote = (symbol: string, name: string, at: number): Exchange => get(`/get-quote/equity/${encodeURIComponent(symbol)}/${name.replaceAll(' ', '-')}`, {
+      // Next.js prefetches each visible link's server-component payload.
+      startedAt: 1_700_000_100_000 + at,
+      requestHeaders: { rsc: '1' },
+      responseBody: at % 2 === 0
+        ? textBody(`<html><body class="quote"><h1 class="name">${name}</h1><div class="price">1</div></body></html>`)
+        : textBody('0:["$","div",null,{}]', 'text/x-component'),
+    })
+    const operations = build([
+      get('/api/marquee', {
+        startedAt: 1_700_000_000_000,
+        responseBody: jsonBody({
+          data: companies.map(([symbol, companyName]) => ({ symbol, companyName })),
+        }),
+      }),
+      ...companies.map(([symbol, name], index) => quote(symbol, name, index)),
+    ])
+    expect(paths(operations)).toEqual(['GET /api/marquee', 'GET /get-quote/equity/{equity}/{param2}'])
+  })
+
+  const repoPage = (title: string, links: string): Parameters<typeof get>[1] => ({
+    kind: 'page',
+    resourceType: 'document',
+    ...article(`<title>${title}</title>${links}`),
+  })
+
+  it('keeps a word apart from the value a redirect moved after it (`/vuejs/core/discussions` → `/orgs/vuejs/discussions`)', () => {
+    const tabs = '<a href="/vuejs/core/discussions">d</a><a href="/vitest-dev/vitest/discussions">d</a><a href="/nodejs/node/discussions">d</a>'
+    const operations = build([
+      get('/vuejs/core/discussions', {
+        kind: 'page',
+        resourceType: 'document',
+        status: 302,
+        responseHeaders: { location: 'https://shop.test/orgs/vuejs/discussions' },
+        responseBody: null,
+      }),
+      get('/orgs/vuejs/discussions', repoPage('vuejs Discussions', tabs)),
+      get('/vitest-dev/vitest/discussions', repoPage('vitest-dev/vitest Discussions', tabs)),
+      get('/nodejs/node/discussions', repoPage('nodejs/node Discussions', tabs)),
+    ])
+    expect(paths(operations)).toEqual(['GET /{param1}/{param2}/discussions', 'GET /orgs/vuejs/discussions'])
+  })
+
+  it('still templates a pair a redirect renamed in place (`/facebook/react` → `/react/react`)', () => {
+    const tabs = '<a href="/react/react/issues">i</a><a href="/vuejs/core/issues">i</a><a href="/nodejs/node/issues">i</a>'
+    const operations = build([
+      get('/facebook/react/issues', {
+        kind: 'page',
+        resourceType: 'document',
+        status: 301,
+        responseHeaders: { location: '/react/react/issues' },
+        responseBody: null,
+      }),
+      get('/react/react/issues', repoPage('react/react issues', tabs)),
+      get('/vuejs/core/issues', repoPage('vuejs/core issues', tabs)),
+      get('/nodejs/node/issues', repoPage('nodejs/node issues', tabs)),
+    ])
+    expect(paths(operations)).toEqual(['GET /{param1}/{param2}/issues'])
+  })
 })
 
 describe('buildOperations: GraphQL (decision 0027)', () => {

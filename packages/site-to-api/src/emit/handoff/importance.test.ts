@@ -147,6 +147,35 @@ describe('rankHosts', () => {
     ])
   })
 
+  it('never lists a host with code-only API operations among the hosts that served only pages (decision 0061)', () => {
+    const analysis: Analysis = twoHostAnalysis()
+    const www = analysis.operations.find(entry => entry.host === WWW)
+    const api = analysis.operations.find(entry => entry.host === API)
+    if (!www || !api)
+      throw new Error('fixture changed')
+    www.kind = 'page'
+    // A second-language page host whose scripts hold a relative route nobody called.
+    analysis.operations.push(
+      { ...www, host: 'de.site.test', operationId: 'getWikiByTitle' },
+      {
+        ...api,
+        host: 'de.site.test',
+        operationId: 'getMathPopup',
+        sourceOnly: true,
+      },
+    )
+    const pageHosts = [WWW, 'de.site.test'].map(host => ({
+      host,
+      requires: 'none' as const,
+      cookies: [],
+      botProtection: [],
+      probed: false,
+    }))
+    const roles = new Map(rankHosts(analysis, pageHosts).map(entry => [entry.host, entry.role]))
+    expect(roles.get('de.site.test')).toBe('first-party')
+    expect(roles.get(WWW)).toBe('pages')
+  })
+
   it('never makes a host the site\'s own because a page of its domain was loaded in a frame', () => {
     const analysis: Analysis = twoHostAnalysis()
     const www = analysis.operations.find(entry => entry.host === WWW)

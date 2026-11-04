@@ -67,6 +67,29 @@ describe('classifyExchanges: static files and pixel sandboxes (decision 0052)', 
     ])
   })
 
+  it('labels SVG icons assets although their media type ends in `+xml`', () => {
+    const svg = textBody('<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'image/svg+xml')
+    expect(kinds([
+      page(),
+      // A `<link rel=icon>` favicon: the browser's own request, resource type `other`.
+      on({ url: 'https://shop.test/y18.svg', resourceType: 'other', responseBody: svg }),
+      on({ url: 'https://shop.test/assets/logo/shop-favicon.svg', resourceType: 'fetch', responseBody: svg }),
+      // No extension: the media type alone says it is an image.
+      on({ url: 'https://shop.test/icons/logo', resourceType: 'xhr', responseBody: svg }),
+      on({
+        url: 'https://shop.test/api/feed.xml',
+        resourceType: 'fetch',
+        responseBody: textBody('<rss></rss>', 'application/rss+xml'),
+      }),
+    ])).toEqual([
+      'page',
+      'asset',
+      'asset',
+      'asset',
+      'api',
+    ])
+  })
+
   it('keeps uploads, data manifests and JSONP calls to file-like paths as API calls', () => {
     const png = {
       mimeType: 'image/png',

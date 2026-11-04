@@ -97,6 +97,9 @@ export function isBuildAsset(path: string): boolean {
   return BUILD_ASSET_DIR.test(path) || (HASHED_BUNDLE.test(path) && /\d/.test(path.slice(path.lastIndexOf('/'))))
 }
 
+/** Images, fonts, audio and video: `image/svg+xml` is XML, but an icon, never data. */
+const MEDIA_TYPE = /^(?:image|font|audio|video)\//
+
 /** JSON, XML, text, HTML or CSV: what an API call returns as data. */
 function isDataBody(body: Body | null): boolean {
   if (!body)
@@ -104,6 +107,8 @@ function isDataBody(body: Body | null): boolean {
   if (body.json !== undefined || body.form !== null)
     return true
   const mime = body.mimeType
+  if (MEDIA_TYPE.test(mime))
+    return false
   return mime.includes('json') || mime.includes('xml') || mime === 'text/plain' || mime === 'text/html'
     || mime === 'text/csv' || mime === 'text/event-stream' || mime === 'application/x-ndjson'
 }

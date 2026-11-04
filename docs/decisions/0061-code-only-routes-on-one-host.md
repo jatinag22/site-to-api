@@ -30,3 +30,8 @@ A shared CDN script whose pages the capture cannot place produces a warning inst
 operation per site. Rule 1's "last navigation" can pick the wrong page when two tabs of
 different sites load the same script at once; the result is one wrongly placed operation, not
 one per host.
+
+Update (0.1.3): a host that served pages and holds a code-only route by these rules has an API
+operation, so `AGENT.md` lists it with the site's own (or third-party) hosts, never under "Hosts
+that served only pages", and its host file does not say it serves pages only. A Wikipedia capture
+listed `de.wikipedia.org` as page-only beside two code-only routes from its own scripts.

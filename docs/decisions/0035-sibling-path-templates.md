@@ -60,3 +60,16 @@ across two sessions); one session never does. Bodiless API paths (map tiles, ico
 stay one operation per value unless something links to them. Grouping is indexed by position
 and prefix, so it stays near linear in the number of paths. Values are kept as captured: a path the browser requested
 double-encoded (`daft%2520punk`) is that value, decoded once in examples.
+
+Update (0.1.3): a capture of a stock exchange listed `/get-quote/equity/<SYMBOL>/<Name>` once per
+company. The pair is a two-position window, so it needs `links` or `earlier-value`, and neither
+held. Two changes:
+- `earlier-value` also matches a value with `-` or `_` between words when an earlier string spelled
+  the same words with spaces, ignoring case (`Axis-Bank-Limited` after "Axis Bank Limited"). A
+  single word still has to match exactly. A menu whose JSON spells its labels (`Contact us`) can
+  now count as evidence for `/help/contact-us`, as a JSON list of slugs already did; the response
+  likeness and section-name tests still apply.
+- "Groups that mix id-like values and words" is judged per position, and an id here has a digit.
+  Upper-case words (`AXISBANK`, `ETERNAL-LIMITED`) are words, and an id in one position of a pair
+  beside a word in the other (`user42/project`) is not a mix. `/users/123` next to `/users/me`
+  still is.

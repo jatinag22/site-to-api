@@ -75,6 +75,8 @@ export interface SiblingFacts {
   seenBefore: Map<string, Set<string>>
   /** How each path was requested: `page` (a navigation) or `call` (XHR, fetch); see {@link requestedAs}. */
   requestedAs: Map<string, Set<Requested>>
+  /** Per path that answered with a redirect, the same-host paths its `Location` named. */
+  redirects: Map<string, Set<string>>
 }
 
 /** How the browser requested a path: navigated to it as a page, or called it from a script. */
@@ -225,23 +227,51 @@ function similarity(a: Set<string>, b: Set<string>): number {
   return shared / (a.size + b.size - shared)
 }
 
-function pathFacts(members: Exchange[]): Pick<SiblingFacts, 'sessions' | 'structures' | 'requestedAs'> {
+/** The same-host path a redirect response points to, or null. */
+function redirectTarget(exchange: Exchange): string | null {
+  const { status, headers } = exchange.response
+  if (status < 300 || status >= 400)
+    return null
+  const location = headers.find(header => header.name.toLowerCase() === 'location')?.value
+  if (location === undefined)
+    return null
+  try {
+    const target = new URL(location, exchange.request.url)
+    return target.host === exchange.request.host
+      ? target.pathname
+      : null
+  }
+  catch {
+    return null
+  }
+}
+
+function pathFacts(members: Exchange[]): Pick<SiblingFacts, 'sessions' | 'structures' | 'requestedAs' | 'redirects'> {
   const sessions = new Map<string, Set<string>>()
   const structures = new Map<string, Structure>()
   const requested = new Map<string, Set<Requested>>()
+  const redirects = new Map<string, Set<string>>()
   for (const exchange of members) {
     const path = exchange.request.path
     sessions.set(path, (sessions.get(path) ?? new Set()).add(exchange.sessionId))
     const as = requestedAs(exchange)
     if (as !== null)
       requested.set(path, (requested.get(path) ?? new Set()).add(as))
+    const target = redirectTarget(exchange)
+    if (target !== null && target !== path)
+      redirects.set(path, (redirects.get(path) ?? new Set()).add(target))
     if (structures.has(path))
       continue
     const shape = structureOf(exchange)
     if (shape)
       structures.set(path, shape)
   }
-  return { sessions, structures, requestedAs: requested }
+  return {
+    sessions,
+    structures,
+    requestedAs: requested,
+    redirects,
+  }
 }
 
 function linkedOn(host: string | undefined, all: Exchange[]): Map<number, string[][]> {
@@ -264,6 +294,14 @@ function linkedOn(host: string | undefined, all: Exchange[]): Map<number, string
   return byLength
 }
 
+/**
+ * Key under which a string is also indexed by its words: `Axis Bank Limited` and the path value
+ * `Axis-Bank-Limited` share `\u0000axis bank limited`. The prefix keeps it apart from real strings.
+ */
+function spelledKey(value: string): string {
+  return `\u0000${value.toLowerCase().split(/[\s_-]+/).filter(word => word !== '').join(' ')}`
+}
+
 /** First time each JSON string value was seen, per session. */
 function firstSeenStrings(all: Exchange[]): Map<string, Map<string, number>> {
   const firstSeen = new Map<string, Map<string, number>>()
@@ -276,9 +314,17 @@ function firstSeenStrings(all: Exchange[]): Map<string, Map<string, number>> {
     const seen = firstSeen.get(exchange.sessionId) ?? new Map<string, number>()
     firstSeen.set(exchange.sessionId, seen)
     for (const value of strings) {
-      const at = seen.get(value)
-      if (at === undefined || exchange.startedAt < at)
-        seen.set(value, exchange.startedAt)
+      // A string of several words is also indexed by its words, for the slugs sites make of it.
+      for (const key of /\s/.test(value.trim())
+        ? [
+            value,
+            spelledKey(value),
+          ]
+        : [value]) {
+        const at = seen.get(key)
+        if (at === undefined || exchange.startedAt < at)
+          seen.set(key, exchange.startedAt)
+      }
     }
   }
   return firstSeen
@@ -293,7 +339,11 @@ function seenBeforeOf(members: Exchange[], firstSeen: Map<string, Map<string, nu
     const values = seenBefore.get(exchange.request.path) ?? new Set<string>()
     for (const segment of exchange.request.path.split('/').slice(1)) {
       const value = decode(segment)
-      const at = seen.get(value)
+      // A value with `-` or `_` between words also counts when an earlier string spelled the same
+      // words with spaces (`Axis-Bank-Limited` after "Axis Bank Limited"); a single word must match.
+      const at = seen.get(value) ?? (/\w[-_]+\S/.test(value)
+        ? seen.get(spelledKey(value))
+        : undefined)
       if (at !== undefined && at < exchange.startedAt)
         values.add(value)
     }
@@ -568,14 +618,21 @@ function tracedEvidence(group: Group, facts: SiblingFacts, tuples: ReadonlySet<s
   return evidence
 }
 
+/** An id rather than a word: identifier-like and with a digit (`123`, `a1b2c3d4`, `iphone-15`). */
+function isIdLikeValue(value: string): boolean {
+  return isIdentifierLike(value) && /\d/.test(value)
+}
+
 function evidenceFor(group: Group, facts: SiblingFacts, repeated: boolean): SiblingEvidence[] {
   const tuples = new Set(group.items.map(item => tupleOf(item, group.start, group.size)))
   if (tuples.size < 2)
     return []
-  // A value that looks like an id among plain words (`/users/123` next to `/users/me`) needs
-  // the strongest evidence: a listing or many values, never a coincidence of sessions.
+  // An id among plain words in one position (`/users/123` next to `/users/me`) needs a listing or
+  // many values, never a coincidence of sessions. An id beside a word in the other position of a
+  // pair is no mix, and upper-case words (`AXISBANK`) are words.
   const values = group.items.flatMap(item => item.segments.slice(group.start, group.start + group.size))
-  const mixed = values.some(isIdentifierLike) && !values.every(isIdentifierLike)
+  const mixed = Array.from({ length: group.size }, (_, offset) => group.items.map(item => decode(item.segments[group.start + offset] ?? '')))
+    .some(column => column.some(isIdLikeValue) && !column.every(isIdLikeValue))
   const evidence = tracedEvidence(group, facts, tuples, mixed)
   if (slugPages(group, facts, values))
     evidence.push('slug-pages')
@@ -754,6 +811,43 @@ function isOpen(item: Free, start: number, size: number): boolean {
   return true
 }
 
+/**
+ * True when a redirect from `source` to `target` moved one of the source's window values to
+ * another position: `/vuejs/core/discussions` → `/orgs/vuejs/discussions` put the owner after a
+ * word, so the positions do not hold the same thing in both paths. A value renamed in place
+ * (`/facebook/react` → `/react/react`) moves nothing.
+ */
+function movesValue(source: readonly string[], target: readonly string[], start: number, size: number): boolean {
+  for (let index = start; index < start + size; index++) {
+    const value = source[index] ?? ''
+    if (target[index] !== value && target.includes(value))
+      return true
+  }
+  return false
+}
+
+/**
+ * The group without the redirect targets that a member's redirect moved a value into (see
+ * {@link movesValue}): such a target is a different endpoint (an organisation's page reached from
+ * a repository's), however alike the pages look and whatever links to both.
+ */
+function withoutMovedTargets(group: Group, facts: SiblingFacts): Group {
+  const moved = new Set<string>()
+  for (const item of group.items) {
+    for (const target of facts.redirects.get(item.path) ?? []) {
+      const other = group.items.find(candidate => candidate.path === target)
+      if (other && movesValue(item.segments, other.segments, group.start, group.size))
+        moved.add(target)
+    }
+  }
+  return moved.size === 0
+    ? group
+    : {
+        ...group,
+        items: group.items.filter(item => !moved.has(item.path)),
+      }
+}
+
 /** Marks a group when the evidence holds; returns the accepted values, or null. */
 function accept(group: Group, index: PassIndex, facts: SiblingFacts): Accepted | null {
   // Cheap checks first: most groups hold one value and can never become a template.
@@ -762,7 +856,7 @@ function accept(group: Group, index: PassIndex, facts: SiblingFacts): Accepted |
   // An earlier group of this pass may have claimed an overlapping position.
   if (!group.items.every(item => isOpen(item, group.start, group.size)))
     return null
-  const members = sameTemplate(group, facts)
+  const members = sameTemplate(withoutMovedTargets(group, facts), facts)
   if (new Set(members.items.map(item => tupleOf(item, group.start, group.size))).size < 2 || areSections(members, index))
     return null
   const evidence = evidenceFor(members, facts, isRepeated(members, index))

@@ -91,6 +91,22 @@ Versioning follows [docs/release-policy.md](docs/release-policy.md).
   each connection attempt 250 ms, less than an IPv4 connect across continents, so on a network
   without working IPv6 every live call failed with `ETIMEDOUT` while `curl` worked. The CLI now
   allows a second per attempt, unless Node's own flag sets it.
+- **SVG icons are assets, not API operations.** A favicon or logo served as `image/svg+xml`
+  (`/y18.svg`, `/assets/logo/…-favicon.svg`) was taken for XML data and listed, probed and given
+  a client function. Images, fonts, audio and video are never data, whatever their media type
+  ends in.
+- **A symbol and a name in one path become one template.** Quote pages such as
+  `/get-quote/equity/AXISBANK/Axis-Bank-Limited` were listed once per company. A name with `-` or
+  `_` between words now counts as seen before when an earlier response spelled the same words with
+  spaces ("Axis Bank Limited"), and an upper-case symbol (`AXISBANK`) beside a name is no longer
+  treated as an id mixed with words (decision 0035).
+- **A redirect target keeps its own operation.** `/vuejs/core/discussions` redirects to
+  `/orgs/vuejs/discussions`; the two were merged into `/{param1}/{param2}/discussions`. A path
+  that a sibling's redirect moved a value into (here `vuejs`, from first to second) is no longer
+  a member of that sibling's template (decision 0060).
+- **A host with code-only API operations is not listed as serving only pages.** A second page
+  host whose scripts hold routes nobody called (decision 0061) is now listed with the site's own
+  hosts in `AGENT.md`, and its host file no longer says "Serves pages only".
 
 ## 0.1.2 (2026-11-03)
 
