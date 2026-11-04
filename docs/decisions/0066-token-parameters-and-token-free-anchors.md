@@ -21,8 +21,9 @@ tokens in the committed output. Neither carried personal data.
 
 ## Decision
 - **Token parameters.** While learning (0047), every non-empty value of a query or form
-  parameter is grouped by name. When at least two distinct values of a name are opaque and they
-  are at least half of its distinct values, every value of that name is learnt as a secret unless
+  parameter is grouped by name. When at least two distinct values of a name are opaque (an opaque
+  segment or an opaque blob: the shape rules that redact a value where it sits) and they are at
+  least half of its distinct values, every value of that name is learnt as a secret unless
   constant across sessions, so it is redacted in every place it appears. One random-looking
   search (`q=`) among readable ones does not make a name a token parameter.
 - **Token-free anchors.** In an anchor, a run of 16 or more token characters (`[\w+-]`, with
@@ -37,4 +38,6 @@ tokens in the committed output. Neither carried personal data.
 ## Consequences
 - A parameter used for tokens whose values all look like hex ids (a digest under its own name)
   is still not redacted by shape; an explicit `redact.fields` entry covers it.
+- Update (2026-11-05): the first version counted only opaque segments. EPFO's states are opaque
+  blobs, not segments, so the rule never fired there; blobs count too.
 - Patterns from pages with neighbouring tokens are more general and match later sessions.
