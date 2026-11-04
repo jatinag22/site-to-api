@@ -173,8 +173,8 @@ document without them.
   `confirm`, `prompt` or `beforeunload` ("Leave site?"). The page sends the request only once
   the dialog is accepted. In a browser a wrapper must accept it (`page.on('dialog')`); over plain
   HTTP it sends the request directly. A step gets a dialog when its request is the first step
-  request of the dialog's page (any page for a document request) to start after the dialog
-  opened and no later than 2 seconds after it closed. `alert()` and dismissed or
+  request of the dialog's page (any page for a document request) to start after the click that
+  opened the dialog and no later than 2 seconds after it closed. `alert()` and dismissed or
   unanswered dialogs mark nothing. `message` is the dialog's text, whitespace collapsed and
   redacted like other free text. What the person typed into a prompt is never written; it is in
   the request like any other input. A merged step takes the dialogs of the first session in which

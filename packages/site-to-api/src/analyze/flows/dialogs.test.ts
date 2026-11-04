@@ -52,6 +52,54 @@ describe('guardedRequests', () => {
     expect(result.has(guarded.id)).toBe(true)
   })
 
+  it('counts from the click that opened the dialog, which capture may see after the request', () => {
+    // A script accepted the dialog before capture handled Chrome's report that it opened.
+    const click: CaptureEvent = {
+      t: 'action',
+      ts: 1_000,
+      pageUrl: PAGE,
+      kind: 'click',
+      label: 'Rename',
+      selector: '.rename',
+      field: null,
+    }
+    const beforeClick = request(990, '/api/lists')
+    const guarded = request(1_010, '/api/lists/42')
+    const result = guardedRequests([
+      click,
+      dialog({ ts: 1_050, answeredTs: 1_100, type: 'prompt' }),
+    ], [beforeClick, guarded], everyStep)
+    expect([
+      ...result.keys(),
+    ]).toEqual([guarded.id])
+  })
+
+  it('ignores a click on another page, or one long before the dialog', () => {
+    const early = request(1_010, '/api/lists/42')
+    const result = guardedRequests([
+      {
+        t: 'action',
+        ts: 1_000,
+        pageUrl: 'https://lists.example.test/other',
+        kind: 'click',
+        label: 'x',
+        selector: 'a',
+        field: null,
+      },
+      {
+        t: 'action',
+        ts: 500,
+        pageUrl: PAGE,
+        kind: 'click',
+        label: 'x',
+        selector: 'a',
+        field: null,
+      },
+      dialog({ ts: 3_000, answeredTs: 3_100 }),
+    ], [early], everyStep)
+    expect(result.size).toBe(0)
+  })
+
   it('never gives a dialog a request sent before it opened, or long after it closed', () => {
     const early = request(4_900, '/api/early')
     const late = request(7_100, '/api/late')

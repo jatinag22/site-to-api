@@ -15,7 +15,8 @@ likely to meet; this page has all of them.
   timing: the first step request of the dialog's page that started within 2 seconds of the person
   accepting it. A guarded request the page sent later than that (after a slow animation or a
   second round trip) is not marked, and a step whose request happened to follow a dialog it does
-  not depend on can be. Dialogs in other tabs of the same page URL are not told apart. The person
+  not depend on can be, as can a request the page sent between the click and the dialog (a check
+  before asking). Dialogs in other tabs of the same page URL are not told apart. The person
   answering Chrome's own dialog in a headed capture is checked by hand (docs/testing.md), not by
   an automated test.
 - A saved profile (`--user-data-dir`) keeps cookies that outlive the browser. A login the site
