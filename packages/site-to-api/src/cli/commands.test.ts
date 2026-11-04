@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runCapture } from '../capture'
 import { pipelineCommands } from './commands'
 import { createProgram, run } from './program'
+import { stampSkill } from './skill'
 
 vi.mock('../capture', async importOriginal => ({
   ...await importOriginal<typeof import('../capture')>(),
@@ -89,6 +90,48 @@ describe('capture', () => {
   it('only suggests build once two sessions exist', async () => {
     await sessions(2)
     expect(await nextStep()).toBe('Next: `site-to-api build`')
+  })
+})
+
+describe('stale skill copy', () => {
+  /** The info lines a capture prints with stdout a terminal or not. */
+  async function captureInfo(tty: boolean): Promise<string[]> {
+    const info = vi.spyOn(consola, 'info').mockImplementation(() => {})
+    vi.spyOn(consola, 'success').mockImplementation(() => {})
+    const previous = process.stdout.isTTY
+    process.stdout.isTTY = tty
+    try {
+      await run([
+        'node',
+        'site-to-api',
+        '--cwd',
+        dir,
+        '--raw-dir',
+        'captures',
+        'capture',
+        '--minimized',
+        '--script',
+        'drive.mjs',
+      ], pipelineCommands)
+    }
+    finally {
+      process.stdout.isTTY = previous
+    }
+    return info.mock.calls.map(call => String(call[0]))
+  }
+
+  beforeEach(async () => {
+    await sessions(1)
+    await mkdir(join(dir, '.claude', 'skills', 'site-to-api'), { recursive: true })
+    await writeFile(join(dir, '.claude', 'skills', 'site-to-api', 'SKILL.md'), stampSkill('---\nname: site-to-api\n---\n', '0.0.1'))
+  })
+
+  it('tells an agent that the project\'s copy is from an older version', async () => {
+    expect(await captureInfo(false)).toContainEqual(expect.stringMatching(/^Agents: this project's copy of the site-to-api skill \(.*\.claude\/skills\/site-to-api\/SKILL\.md\) is from site-to-api 0\.0\.1; this is .*\. Run `site-to-api init --agent` to update it\.$/))
+  })
+
+  it('keeps a person\'s terminal free of it', async () => {
+    expect((await captureInfo(true)).some(line => line.includes('is from site-to-api'))).toBe(false)
   })
 })
 

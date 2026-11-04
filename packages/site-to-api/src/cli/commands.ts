@@ -24,7 +24,7 @@ import { VERSION } from '../version'
 import { checkCommands } from './check'
 import { counted, shown, warn } from './output'
 import { resolveConfig } from './program'
-import { skillPointer } from './skill'
+import { skillPointer, staleSkillNotice } from './skill'
 
 function parseNumber(value: string): number {
   const parsed = Number(value)
@@ -43,9 +43,10 @@ function printWarnings(warnings: string[]): void {
 }
 
 /**
- * After a capture or build, one line telling an agent where the skill is. Only when the output is
- * not a terminal (an agent's or a script's): a person at a terminal gets clean output, and finds
- * the line in `--help`.
+ * After a capture or build, one line telling an agent where the skill is, and one more when the
+ * project's copy of it is from an older version. Only when the output is not a terminal (an
+ * agent's or a script's): a person at a terminal gets clean output, and finds the pointer in
+ * `--help`.
  */
 function pointAgentsToSkill(cwd: string): void {
   if (process.stdout.isTTY === true)
@@ -53,6 +54,9 @@ function pointAgentsToSkill(cwd: string): void {
   const pointer = skillPointer(cwd)
   if (pointer !== null)
     consola.info(pointer)
+  const stale = staleSkillNotice(cwd)
+  if (stale !== null)
+    consola.info(stale)
 }
 
 function parseChannel(value: string): string {
