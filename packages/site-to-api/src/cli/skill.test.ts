@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { join } from 'pathe'
+import { dirname, join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { packagedSkill, skillPathFor } from './skill'
+import { parse } from 'yaml'
+import { isOlderVersion, packagedSkill, readSkillCopy, skillPathFor, staleSkillNotice, stampSkill } from './skill'
 
 let dir: string
 
@@ -49,5 +50,95 @@ describe('packagedSkill', () => {
     expect(packagedSkill()).toBe(existsSync(expected)
       ? expected
       : null)
+  })
+})
+
+const SKILL = '---\nname: site-to-api\ndescription: Wrap a site.\n---\n\n# site-to-api\n'
+
+/** The YAML between a skill's `---` lines. */
+function frontmatter(skill: string): unknown {
+  return parse(skill.slice(4, skill.indexOf('\n---\n', 3)))
+}
+
+describe('stampSkill and readSkillCopy', () => {
+  it('records the version as the frontmatter\'s last field and reads it back as unedited', () => {
+    const stamped = stampSkill(SKILL, '0.2.0')
+    expect(stamped).toMatch(/^---\nname: site-to-api\ndescription: Wrap a site\.\nmetadata:\n {2}site-to-api-version: "0\.2\.0"\n {2}site-to-api-sha256: "[0-9a-f]{64}"\n---\n\n# site-to-api\n$/)
+    expect(readSkillCopy(stamped)).toEqual({ stamped: true, version: '0.2.0', edited: false })
+  })
+
+  it('tells an edit anywhere in the copy, frontmatter included', () => {
+    const stamped = stampSkill(SKILL, '0.2.0')
+    expect(readSkillCopy(`${stamped}\nOur own rule.\n`)).toEqual({ stamped: true, version: '0.2.0', edited: true })
+    expect(readSkillCopy(stamped.replace('Wrap a site.', 'Wrap our site.'))).toEqual({ stamped: true, version: '0.2.0', edited: true })
+  })
+
+  it('finds no stamp in a skill copied some other way', () => {
+    expect(readSkillCopy(SKILL)).toEqual({ stamped: false })
+    expect(readSkillCopy('# no frontmatter\n')).toEqual({ stamped: false })
+  })
+
+  it('refuses a skill it cannot stamp without breaking its frontmatter', () => {
+    expect(() => stampSkill('# site-to-api\n', '0.2.0')).toThrow('without frontmatter')
+    expect(() => stampSkill('---\nname: x\nmetadata:\n  a: b\n---\n', '0.2.0')).toThrow('`metadata` field')
+  })
+
+  it('keeps the repository\'s skill valid for Agent Skills loaders: fields intact, metadata a map of strings', async () => {
+    const source = await readFile(fileURLToPath(new URL('../../../../skills/site-to-api/SKILL.md', import.meta.url)), 'utf8')
+    const stamped = stampSkill(source, '1.2.3-beta.0')
+    const original = frontmatter(source)
+    expect(original).toBeTypeOf('object')
+    expect(frontmatter(stamped)).toEqual({
+      ...(typeof original === 'object'
+        ? original
+        : {}),
+      metadata: {
+        'site-to-api-version': '1.2.3-beta.0',
+        'site-to-api-sha256': expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+    })
+    expect(stamped.slice(stamped.indexOf('\n---\n', 3))).toBe(source.slice(source.indexOf('\n---\n', 3)))
+    expect(readSkillCopy(stamped)).toEqual({ stamped: true, version: '1.2.3-beta.0', edited: false })
+  })
+})
+
+describe('isOlderVersion', () => {
+  it('compares major, minor and patch as numbers', () => {
+    expect(isOlderVersion('0.1.2', '0.2.0')).toBe(true)
+    expect(isOlderVersion('0.9.0', '0.10.0')).toBe(true)
+    expect(isOlderVersion('1.0.0', '0.10.0')).toBe(false)
+    expect(isOlderVersion('0.2.0', '0.2.0')).toBe(false)
+  })
+
+  it('puts a prerelease before its release', () => {
+    expect(isOlderVersion('0.2.0-alpha.0', '0.2.0')).toBe(true)
+    expect(isOlderVersion('0.2.0', '0.2.0-alpha.0')).toBe(false)
+    expect(isOlderVersion('0.2.0-alpha.0', '0.2.0-alpha.1')).toBe(true)
+    expect(isOlderVersion('0.2.0-beta.0', '0.2.0-alpha.1')).toBe(false)
+  })
+
+  it('never calls a version it cannot read older', () => {
+    expect(isOlderVersion('dev', '0.2.0')).toBe(false)
+    expect(isOlderVersion('0.1.0', 'dev')).toBe(false)
+  })
+})
+
+describe('staleSkillNotice', () => {
+  async function copy(relative: string, content: string): Promise<void> {
+    await mkdir(dirname(join(dir, relative)), { recursive: true })
+    await writeFile(join(dir, relative), content)
+  }
+
+  it('names the copies from an older version, edited or not, and says to run init --agent', async () => {
+    await copy('.claude/skills/site-to-api/SKILL.md', stampSkill(SKILL, '0.1.2'))
+    await copy('.agents/skills/site-to-api/SKILL.md', `${stampSkill(SKILL, '0.1.2')}\nOur own rule.\n`)
+    expect(staleSkillNotice(dir, '0.2.0', dir)).toBe('Agents: this project\'s copy of the site-to-api skill (.claude/skills/site-to-api/SKILL.md, .agents/skills/site-to-api/SKILL.md) is from site-to-api 0.1.2; this is 0.2.0. Run `site-to-api init --agent` to update it.')
+  })
+
+  it('says nothing for current copies, unstamped copies or none', async () => {
+    expect(staleSkillNotice(dir, '0.2.0', dir)).toBeNull()
+    await copy('.claude/skills/site-to-api/SKILL.md', stampSkill(SKILL, '0.2.0'))
+    await copy('.agents/skills/site-to-api/SKILL.md', SKILL)
+    expect(staleSkillNotice(dir, '0.2.0', dir)).toBeNull()
   })
 })

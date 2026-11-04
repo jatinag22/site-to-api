@@ -1,6 +1,9 @@
+import type { SkillCopy } from './skill'
 import { existsSync } from 'node:fs'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'pathe'
+import { VERSION } from '../version'
+import { readSkillCopy, SKILL_COPIES, skillPathFor, stampSkill } from './skill'
 
 const CONFIG_TEMPLATE = `import { defineConfig } from 'site-to-api'
 
@@ -37,12 +40,7 @@ const GITIGNORE_ENTRY = `
 .site-to-api/
 `
 
-/**
- * Where `init --agent` puts the skill: Claude Code's project skills, and the shared folder that
- * Codex and other agents reading Agent Skills use (the one `npx skills add` writes for them).
- */
-const CLAUDE_SKILL = '.claude/skills/site-to-api/SKILL.md'
-const AGENTS_SKILL = '.agents/skills/site-to-api/SKILL.md'
+const [CLAUDE_SKILL, AGENTS_SKILL] = SKILL_COPIES
 
 /** In an instructions file, this text means a pointer to the skill is there already. */
 const POINTER_MARK = 'skills/site-to-api/SKILL.md'
@@ -60,29 +58,59 @@ export interface InitOptions {
    * to leave agent files alone.
    */
   agentSkill?: string
+  /** The package version the copies are stamped with; this package's own by default. */
+  version?: string
 }
 
 export interface InitResult {
   created: string[]
   skipped: string[]
+  /** Skill copies from an older version, unedited, replaced with this version's. */
+  updated: string[]
   /** Files left alone for a reason the person should know, with what to do about it. */
   notes: string[]
 }
 
-async function copySkill(cwd: string, skill: string, result: InitResult): Promise<void> {
-  for (const relative of [CLAUDE_SKILL, AGENTS_SKILL]) {
+/** Why an existing skill copy that differs from this version's was kept, and how to update it. */
+function keptNote(path: string, copy: SkillCopy, skillPath: string, version: string): string {
+  if (!copy.stamped)
+    return `Kept ${path}: it differs from this version's skill and was not copied by \`init --agent\` (no site-to-api version in its frontmatter), so it may hold your own changes. Delete it and run \`site-to-api init --agent\` again to replace it.`
+  return copy.version === version
+    ? `Kept ${path}: it was edited after \`init --agent\` copied it.`
+    : `Kept ${path}: it was edited after \`init --agent\` copied it from site-to-api ${copy.version}. To update it to ${version}, bring your changes over to ${skillPath}, or delete the copy and run \`site-to-api init --agent\` again.`
+}
+
+/**
+ * Copies the skill, stamped with `version`, to each skill folder. An existing copy is replaced
+ * only when its stamp shows `init --agent` wrote it and nobody edited it since: an older version
+ * left as shipped. An edited copy, or one without a stamp (copied by hand or by `npx skills
+ * add`) that differs from this version's skill, is kept, with how to update it.
+ */
+async function copySkill(cwd: string, skillPath: string, skill: string, version: string, result: InitResult): Promise<void> {
+  const stamped = stampSkill(skill, version)
+  for (const relative of SKILL_COPIES) {
     const path = join(cwd, relative)
     if (!existsSync(path)) {
       await mkdir(dirname(path), { recursive: true })
-      await writeFile(path, skill)
+      await writeFile(path, stamped)
       result.created.push(path)
+      continue
     }
-    else if (await readFile(path, 'utf8') === skill) {
+    const current = await readFile(path, 'utf8')
+    if (current === stamped || current === skill) {
       result.skipped.push(path)
+      continue
+    }
+    const copy = readSkillCopy(current)
+    if (copy.stamped && !copy.edited) {
+      await writeFile(path, stamped)
+      result.updated.push(path)
+      result.notes.push(copy.version === version
+        ? `Updated ${path}: it was this version's skill from another build, unedited.`
+        : `Updated ${path} from site-to-api ${copy.version}'s skill to ${version}'s: it was unedited.`)
     }
     else {
-      // Edited by hand, or from another version: never overwritten.
-      result.notes.push(`Kept ${path}: it differs from this version's skill (edited, or from another version). Delete it and run \`site-to-api init --agent\` again to replace it.`)
+      result.notes.push(keptNote(path, copy, skillPathFor(skillPath, cwd), version))
     }
   }
 }
@@ -123,11 +151,17 @@ async function addPointers(cwd: string, result: InitResult): Promise<void> {
 
 /**
  * Writes a starter config and makes sure raw captures are gitignored; with `agentSkill`, also
- * sets the project up for coding agents. Never overwrites a file: running it again changes
- * nothing.
+ * sets the project up for coding agents. Never overwrites a file the person may have changed:
+ * the one file it replaces is a skill copy it wrote itself, unedited, from an older version.
+ * Running it twice in a row changes nothing the second time.
  */
 export async function initProject(cwd: string, options: InitOptions = {}): Promise<InitResult> {
-  const result: InitResult = { created: [], skipped: [], notes: [] }
+  const result: InitResult = {
+    created: [],
+    skipped: [],
+    updated: [],
+    notes: [],
+  }
   const { created, skipped } = result
 
   const configPath = join(cwd, 'site-to-api.config.ts')
@@ -152,7 +186,7 @@ export async function initProject(cwd: string, options: InitOptions = {}): Promi
   }
 
   if (options.agentSkill !== undefined) {
-    await copySkill(cwd, await readFile(options.agentSkill, 'utf8'), result)
+    await copySkill(cwd, options.agentSkill, await readFile(options.agentSkill, 'utf8'), options.version ?? VERSION, result)
     await addPointers(cwd, result)
   }
 

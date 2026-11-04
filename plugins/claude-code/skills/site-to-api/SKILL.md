@@ -20,8 +20,10 @@ npx site-to-api init --agent            # config, gitignore for .site-to-api/, t
 ```
 
 `init --agent` copies this skill into `.claude/skills/` and `.agents/skills/` and adds a pointer
-line to an existing `AGENTS.md` or `CLAUDE.md`. It never overwrites; run it again after an upgrade
-only once the old copies are deleted. The installed package always has the current skill at
+line to an existing `AGENTS.md` or `CLAUDE.md`. Each copy records the version it came from (under
+`metadata` in its frontmatter). After an upgrade, run `init --agent` again: it replaces copies
+nobody edited and keeps edited ones, saying how to update them. `capture` and `build` say when the
+project's copy is from an older version. The installed package always has the current skill at
 `node_modules/site-to-api/skills/site-to-api/SKILL.md`.
 
 The Claude Code plugin needs the CLI installed globally (`npm install -g site-to-api`). With the

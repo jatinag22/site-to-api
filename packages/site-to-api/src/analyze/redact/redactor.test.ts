@@ -1398,6 +1398,31 @@ describe('createRedactor: personal data in response records (decision 0063)', ()
     expect(r.value('women', { in: 'query', name: 'gender' })).toBe('xxxxx')
   })
 
+  it('keeps a service health check readable, but not a person\'s health', () => {
+    expect(r.json({
+      health: 'UP',
+      healthCheck: 'ok',
+      services: [
+        { name: 'db', healthStatus: 'healthy' },
+      ],
+      healthy: true,
+    }, { in: 'response-body' })).toEqual({
+      health: 'UP',
+      healthCheck: 'ok',
+      services: [
+        { name: 'db', healthStatus: 'healthy' },
+      ],
+      healthy: true,
+    })
+    expect(r.json({ healthStatus: 'FIT', medicalStatus: 'ok' }, { in: 'response-body' }))
+      .toEqual({ healthStatus: 'XXX', medicalStatus: 'xx' })
+    expect(r.json({
+      member: { name: 'Quill Ferro', healthStatus: 'ok' },
+    }, { in: 'response-body' })).toEqual({
+      member: { name: 'Xxxxx Xxxxx', healthStatus: 'xx' },
+    })
+  })
+
   it('masks special-category data wherever it is, and a category only in a person record', () => {
     expect(r.json({
       physicallyHandicapType: 'LOCOMOTOR',

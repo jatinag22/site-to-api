@@ -42,5 +42,30 @@ there worked from `--help` and the bundled code and got rules wrong (it took a r
 ## Consequences
 - Every release carries the skill matching its CLI; a skill copied into a project by
   `init --agent` goes stale on upgrade until the person deletes it and runs `init --agent` again.
+  (Superseded by the update below.)
 - The plugin's `plugins/claude-code/skills/site-to-api/SKILL.md` stays a copy that
   `agent-files.test.ts` keeps identical to the source.
+
+## Update (2026-11-04): copies record their version
+
+Keeping every differing copy left upgraded projects with a stale skill, and the "Kept" note could
+not say whether the person had edited it or it was simply old.
+
+- `init --agent` adds a stamp as the copy's last frontmatter field:
+  `metadata: { site-to-api-version, site-to-api-sha256 }`, the package version and a SHA-256 of
+  the skill exactly as that version shipped it. `metadata` is the Agent Skills field for extra
+  string keys, so loaders accept it, and `name` and `description` are untouched. The repository's
+  skill must not have a `metadata` field of its own (a second key would be invalid YAML); a unit
+  test stamps it and parses the result.
+- The rule on a later `init --agent`: remove the stamp lines and hash the rest. Matching the
+  stamped hash means nobody edited the copy, so it is replaced with this version's stamped skill
+  and reported. Not matching means it was edited: kept, with the path of the installed skill to
+  bring the changes over to. A copy without a stamp (made by hand, by `npx skills add`, or with
+  the stamp lines changed) is left alone when it equals this version's skill and kept with a note
+  when it differs. A hash of the original was chosen over comparing with the stamped version's
+  skill because the CLI does not have old versions' skills to compare with.
+- `capture` and `build`, in the same non-terminal runs that print the skill pointer, add one line
+  when a stamped copy names an older version than the running one (numeric
+  `major.minor.patch`, a prerelease before its release; an unreadable version never counts as
+  older), saying to run `site-to-api init --agent`. Edited copies count too: init then explains
+  how to update them.

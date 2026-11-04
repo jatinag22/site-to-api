@@ -358,6 +358,21 @@ function titleNames(text: string, values: readonly string[]): boolean {
  */
 const CODE_NAME = /^[a-z]{2}[a-z\d]*(?:[A-Z][a-z][a-z\d]*)+$/
 
+/** First words of method names: `getRecentRequests`, `LoadServiceRecord`, `get-user`. */
+const CODE_VERBS = 'add|check|create|delete|do|download|edit|export|fetch|find|generate|get|init|list|load|print|remove|save|set|show|submit|update|upload|validate|verify|view'
+
+/**
+ * Other spellings of a method name: PascalCase (`GetUser`, ASP.NET and WCF actions) and
+ * kebab-case or snake_case (`get-user`, `load_service_record`) compounds that start with a verb.
+ * Titles and slugs rarely start with one; one that does (`list-of-rivers`) becomes its own
+ * operation, a duplicate rather than a merge, as for camelCase in decision 0060.
+ */
+const VERB_CODE_NAME = new RegExp(`^(?:(?:${capitalized(CODE_VERBS)})(?:[A-Z][a-z][a-z\\d]*)+|(?:${CODE_VERBS})(?:[-_][a-z\\d]+)+)$`)
+
+function capitalized(alternatives: string): string {
+  return alternatives.split('|').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join('|')
+}
+
 /**
  * A value usable as data: not empty, not a version, not a reserved endpoint word, not a code name
  * (decision 0060). Splitting a camelCase username into its own operation costs a duplicate; merging
@@ -369,6 +384,7 @@ function isDataValue(segment: string): boolean {
     && !/^v\d+(?:\.\d+)*$/i.test(value)
     && !RESERVED.has(value.toLowerCase())
     && !CODE_NAME.test(value)
+    && !VERB_CODE_NAME.test(value)
 }
 
 function tupleOf(item: Free, start: number, size: number): string {
