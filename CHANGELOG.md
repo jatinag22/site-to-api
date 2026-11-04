@@ -107,6 +107,11 @@ Versioning follows [docs/release-policy.md](docs/release-policy.md).
 - **A host with code-only API operations is not listed as serving only pages.** A second page
   host whose scripts hold routes nobody called (decision 0061) is now listed with the site's own
   hosts in `AGENT.md`, and its host file no longer says "Serves pages only".
+- **The repository beside an owner named in a response is templated too.** When a response named
+  an organisation under a personal field (`login: vitest-dev` in GitHub's sponsors sidebar), its
+  repository stayed literal: `/{owner}/vitest/latest-commit` and about fifteen more beside
+  `/{owner}/{repo}/latest-commit`. Such an owner is now compared with the other owner/repo pairs
+  like any value, so its paths join the shared template (decision 0056).
 
 ## 0.1.2 (2026-11-03)
 
