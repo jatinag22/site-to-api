@@ -557,6 +557,42 @@ function learnValue(item: Located, forms: readonly string[], learnt: Learnt, isA
   }
 }
 
+/** Distinct opaque values a query or form parameter needs before all its values are treated as tokens. */
+const MIN_OPAQUE_PARAMETER_VALUES = 2
+
+/** The distinct values seen under one query or form parameter name. */
+interface ParameterValues {
+  values: Set<string>
+  opaque: Set<string>
+  forms: Set<string>
+}
+
+function noteParameter(parameters: Map<string, ParameterValues>, item: Located, forms: readonly string[]): void {
+  if (!isQueryLike(item.in) || item.name === null)
+    return
+  const parameter = parameters.get(item.name) ?? {
+    values: new Set(),
+    opaque: new Set(),
+    forms: new Set(),
+  }
+  parameter.values.add(item.value)
+  if (isOpaquePathSegment(item.value))
+    parameter.opaque.add(item.value)
+  forms.forEach(form => parameter.forms.add(form))
+  parameters.set(item.name, parameter)
+}
+
+/**
+ * A parameter whose values are mostly random tokens is a token parameter: its other values are
+ * tokens too, even where their shape alone would pass (`_HDIV_STATE_=14-2-0A1B…`, decision 0066).
+ */
+function learnTokenParameters(parameters: ReadonlyMap<string, ParameterValues>, learnt: Learnt): void {
+  for (const { values, opaque, forms } of parameters.values()) {
+    if (opaque.size >= MIN_OPAQUE_PARAMETER_VALUES && opaque.size * 2 >= values.size)
+      forms.forEach(form => learnt.unlessConstant.add(form))
+  }
+}
+
 /** One pass over every value of the capture: where each value was seen and which are secrets. */
 function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: RedactContext['in'], name: string | null) => boolean): Learnt {
   const learnt: Learnt = {
@@ -568,6 +604,7 @@ function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: Red
     publicLabels: new Set(),
   }
   const pages = navigatedPages(exchanges)
+  const parameters = new Map<string, ParameterValues>()
   for (const exchange of exchanges) {
     for (const item of valuesOf(exchange)) {
       const forms = formsOf(item)
@@ -578,12 +615,15 @@ function learnValues(exchanges: readonly Exchange[], isAlwaysSecret: (where: Red
       }
       if (item.value === '')
         continue
-      if (item.key === true)
+      if (item.key === true) {
         learnKey(item.value, learnt)
-      else
-        learnValue(item, forms, learnt, isAlwaysSecret, exchange.request.host, pages)
+        continue
+      }
+      learnValue(item, forms, learnt, isAlwaysSecret, exchange.request.host, pages)
+      noteParameter(parameters, item, forms)
     }
   }
+  learnTokenParameters(parameters, learnt)
   return learnt
 }
 

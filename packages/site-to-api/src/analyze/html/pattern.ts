@@ -49,6 +49,45 @@ export function capture(pattern: string, input: string): string | null {
 const DATA_NUMBER = /\d{3,}|\d\.\d{3,}/
 
 /**
+ * A run of 16 or more token characters mixing letters and digits: another session value next to
+ * this one (`?q=<encrypted>&state=`), or the cut-off tail of one at the anchor's start.
+ */
+const TOKEN_RUN = /[\w+-]{16,}={0,2}/g
+
+function isTokenRun(run: string): boolean {
+  return /\d/.test(run) && /[a-z]/i.test(run)
+}
+
+/**
+ * The anchor as a pattern, with every token run in it matched by its character class rather than
+ * literally: written literally it leaks that session's value and finds nothing in the next one.
+ */
+function anchorLiteral(text: string): string {
+  const runs = [
+    ...text.matchAll(TOKEN_RUN),
+  ].filter(match => isTokenRun(match[0]))
+  if (runs.length === 0)
+    return looseLiteral(text)
+  let pattern = ''
+  let from = 0
+  for (const run of runs) {
+    pattern += escapeRegex(text.slice(from, run.index).replace(/\s+/g, ' ')).replace(/ /g, '\\s*')
+    pattern += /^[\w-]+$/.test(run[0])
+      ? '[\\w-]+'
+      : '[\\w+=-]+'
+    from = run.index + run[0].length
+  }
+  return pattern + escapeRegex(text.slice(from).replace(/\s+/g, ' ')).replace(/ /g, '\\s*')
+}
+
+/** The anchor text with its token runs left out, for checks on the literal part. */
+function withoutTokenRuns(text: string): string {
+  return text.replace(TOKEN_RUN, run => isTokenRun(run)
+    ? ' '
+    : run)
+}
+
+/**
  * A pattern that finds `value` at `index` in `input` from the text before it: tries ever longer
  * anchors (starting at a quote, word or punctuation boundary) until the first match of the
  * pattern captures exactly this occurrence. Anchors holding data numbers are never used. `null`
@@ -74,12 +113,12 @@ export function anchoredPattern(input: string, index: number, value: string): st
     const startsClean = length === before.length || /[\s{,;:(=>[]/.test(before.charAt(before.length - length - 1))
     // An anchor holding data (a coordinate `13.40538024902344`, an id, a timestamp) only finds
     // the value on this one page: the next page has another number there.
-    if (!startsClean || anchorText.trim() === '' || DATA_NUMBER.test(anchorText))
+    if (!startsClean || anchorText.trim() === '' || DATA_NUMBER.test(withoutTokenRuns(anchorText)))
       continue
     const trailingSpace = /\s$/.test(anchorText)
       ? '\\s*'
       : ''
-    const pattern = `${looseLiteral(anchorText)}${trailingSpace}${group}`
+    const pattern = `${anchorLiteral(anchorText.trim())}${trailingSpace}${group}`
     const match = new RegExp(pattern).exec(input)
     if (match && match[1] === value && match.index + match[0].length === index + value.length)
       return pattern

@@ -129,7 +129,32 @@ function renderStep(step: FlowStep, index: number, flow: Flow, resolver: StepRes
   return lines
 }
 
-function renderFlow(flow: Flow, resolver: StepResolver): string[] {
+/** Link texts that say nothing out of context (markdownlint MD059): a site's own `Click here`. */
+const GENERIC_LABEL = /^(?:click here|here|link|more)$/i
+
+/**
+ * Each flow's heading: its name, with the first step's operation after a name that says nothing,
+ * and numbered from the second flow of the same name (`Submit (2)`), so headings stay unique.
+ */
+function flowTitles(flows: readonly Flow[]): Map<string, string> {
+  const seen = new Map<string, number>()
+  return new Map(flows.map((flow) => {
+    const first = flow.steps[0]?.operationId
+    const base = GENERIC_LABEL.test(flow.name.trim()) && first !== undefined
+      ? `${flow.name}: ${first}`
+      : flow.name
+    const count = (seen.get(base) ?? 0) + 1
+    seen.set(base, count)
+    return [
+      flow.id,
+      count === 1
+        ? base
+        : `${base} (${count})`,
+    ]
+  }))
+}
+
+function renderFlow(flow: Flow, title: string, resolver: StepResolver): string[] {
   const where = flow.trigger.pageUrl
     ? ` on ${code(flow.trigger.pageUrl)}`
     : ''
@@ -139,7 +164,7 @@ function renderFlow(flow: Flow, resolver: StepResolver): string[] {
   return [
     `<a id="${anchor(flow.id)}"></a>`,
     '',
-    `### ${text(flow.name)}`,
+    `### ${text(title)}`,
     '',
     `Trigger: ${flow.trigger.kind} ${code(flow.trigger.label)}${where}. Seen in ${sessions}.`,
     '',
@@ -205,11 +230,11 @@ function renderSessionTable(session: FlowsDocument['session']): string[] {
   ]
 }
 
-function renderContents(flows: readonly Flow[]): string[] {
+function renderContents(flows: readonly Flow[], titles: ReadonlyMap<string, string>): string[] {
   if (flows.length === 0)
     return ['No flows found.', '']
   return [
-    ...flows.map(flow => `- [${text(flow.name)}](#${anchor(flow.id)}): ${flow.steps.map(step => code(step.operationId)).join(' → ')}`),
+    ...flows.map(flow => `- [${text(titles.get(flow.id) ?? flow.name)}](#${anchor(flow.id)}): ${flow.steps.map(step => code(step.operationId)).join(' → ')}`),
     '',
   ]
 }
@@ -218,6 +243,7 @@ function renderContents(flows: readonly Flow[]): string[] {
 export function renderFlowsMarkdown(doc: FlowsDocument, operations: readonly Operation[]): string {
   // Operation ids are unique per host only; the resolver finds a step's host from its exchanges.
   const resolver = createStepResolver(operations, doc)
+  const titles = flowTitles(doc.flows)
   const sessions = `${doc.sessions.length === 1
     ? 'session'
     : 'sessions'} ${doc.sessions.map(code).join(', ')}`
@@ -234,8 +260,8 @@ export function renderFlowsMarkdown(doc: FlowsDocument, operations: readonly Ope
     ...renderSessionTable(doc.session),
     '## Flows',
     '',
-    ...renderContents(doc.flows),
-    ...doc.flows.flatMap(flow => renderFlow(flow, resolver)),
+    ...renderContents(doc.flows, titles),
+    ...doc.flows.flatMap(flow => renderFlow(flow, titles.get(flow.id) ?? flow.name, resolver)),
     '## Computed values',
     '',
     computedIntro,
