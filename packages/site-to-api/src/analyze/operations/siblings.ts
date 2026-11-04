@@ -441,10 +441,20 @@ function tupleOf(item: Free, start: number, size: number): string {
   return item.segments.slice(start, start + size).join('/')
 }
 
+/**
+ * True when the sibling rule may still judge a position: unmarked, or marked only because it holds
+ * a learnt value (decision 0056). A learnt owner kept out would leave its repository literal
+ * (`/{owner}/vitest`) while every other pair became `/{owner}/{repo}`.
+ */
+function isOpenAt(marks: Marks, index: number): boolean {
+  const found = marks.get(index)
+  return found === undefined || found.learnt === true
+}
+
 function groupKey(item: Free, start: number, size: number): { key: string, literal: boolean } | null {
   const { segments, marks } = item
   for (let index = start; index < start + size; index++) {
-    if (marks.has(index) || !isDataValue(segments[index]!))
+    if (!isOpenAt(marks, index) || !isDataValue(segments[index]!))
       return null
   }
   // At least one literal segment must stay, so `/about-us` next to `/contact-us` never merges;
@@ -786,11 +796,13 @@ function isRepeated(group: Group, index: PassIndex): boolean {
 
 function mark(item: Free, start: number, size: number, evidence: SiblingEvidence[]): void {
   for (let index = start; index < start + size; index++) {
+    // A learnt value keeps its name (`owner`) and its trace.
+    const learnt = item.marks.get(index)
     item.marks.set(index, {
-      evidence: evidence.includes('links') || evidence.includes('earlier-value')
+      evidence: learnt !== undefined || evidence.includes('links') || evidence.includes('earlier-value')
         ? ['varies', 'value-trace']
         : ['varies'],
-      sourceName: null,
+      sourceName: learnt?.sourceName ?? null,
     })
   }
 }
@@ -805,7 +817,7 @@ interface Accepted {
 
 function isOpen(item: Free, start: number, size: number): boolean {
   for (let index = start; index < start + size; index++) {
-    if (item.marks.has(index))
+    if (!isOpenAt(item.marks, index))
       return false
   }
   return true

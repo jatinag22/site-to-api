@@ -27,3 +27,11 @@ values; names derived from paths were never redacted.
 A user's own pages and calls collapse into `/{owner}…` templates, which is what a wrapper needs.
 A host name that holds a learnt value (a `<user>.github.io` site) is not covered; the leak check
 still stops such a build.
+
+Update (0.1.3): a learnt value no longer takes its position out of the sibling rule (0035). A
+public GitHub capture learnt `vitest-dev` from `login` in a sponsors sidebar. Its segment became
+`{owner}` on sight, the sibling rule skipped marked positions, and the repository beside it stayed
+literal: about fifteen `/{owner}/vitest/…` operations next to `/{owner}/{repo}/…`. A position
+marked only because of a learnt value now still joins sibling groups as a data value. When a group
+is accepted, the position keeps its name and its `value-trace` evidence. When none is, it stays a
+parameter as before.

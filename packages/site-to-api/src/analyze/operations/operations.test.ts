@@ -925,6 +925,64 @@ describe('buildOperations: learnt values in paths (decision 0056)', () => {
     expect(JSON.stringify(operations.map(operation => [operation.operationId, operation.path, operation.summary]))).not.toContain(user)
   })
 
+  it('still templates the repository beside an owner learnt from a response (`/{owner}/{repo}`, not `/{owner}/vitest`)', () => {
+    const repo = (owner: string, name: string, sessionId: string): Exchange[] => [
+      get('/dashboard', {
+        sessionId,
+        responseBody: jsonBody({
+          repos: [
+            { owner, name },
+          ],
+        }),
+      }),
+      get(`/${owner}/${name}/latest-commit`, {
+        sessionId,
+        responseBody: jsonBody({
+          oid: 'a',
+          author: { login: 'x' },
+        }),
+      }),
+      get(`/${owner}/${name}/refs`, {
+        sessionId,
+        responseBody: jsonBody({
+          refs: ['main'],
+          cacheKey: 'k',
+        }),
+      }),
+    ]
+    const exchanges = [
+      ...repo('expressjs', 'express', 's1'),
+      ...repo('koajs', 'koa', 's1'),
+      // A public sidebar names the organisation under `login`, so the redactor learns it.
+      get('/vitest-dev/vitest/_sidebar/sponsors', {
+        sessionId: 's2',
+        responseBody: jsonBody({
+          sponsorables: [
+            { login: 'vitest-dev', profilePath: '/vitest-dev' },
+          ],
+        }),
+      }),
+      ...repo('vitest-dev', 'vitest', 's2'),
+    ]
+    const redactor = createRedactor({
+      exchanges,
+      config: {
+        examples: 'masked',
+        maxExamples: 3,
+        patterns: [],
+        fields: [],
+      },
+    })
+    expect(redactor.isLearnt('vitest-dev')).toBe(true)
+    const operations = buildOperations(exchanges, { sourceRoutes: [], isSecretKey: redactor.isSecretKey, isLearntValue: redactor.isLearnt })
+    expect(paths(operations)).toEqual([
+      'GET /{owner}/{param2}/_sidebar/sponsors',
+      'GET /{owner}/{param2}/latest-commit',
+      'GET /{owner}/{param2}/refs',
+      'GET /dashboard',
+    ])
+  })
+
   it('templates a name a response body taught, and never a plain word or host name a cookie holds', () => {
     const exchanges = [
       get('/api/me', {

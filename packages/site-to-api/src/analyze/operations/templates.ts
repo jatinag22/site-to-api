@@ -13,6 +13,11 @@ interface Mark {
   evidence: Evidence[]
   /** Name from a source route template. */
   sourceName: string | null
+  /**
+   * Set when only a learnt value made this a parameter (decision 0056). The value is still data
+   * the sibling rule can compare, so the repository beside a learnt owner can be templated too.
+   */
+  learnt?: true
 }
 
 /** Parameter positions of one observed path. */
@@ -132,6 +137,7 @@ export function markParameters(paths: string[], routes: SourceRoute[], linkedSlu
           sourceName: index === 0
             ? 'owner'
             : null,
+          learnt: true,
         })
       }
       else if (isStrongIdentifier(segment, segments[index - 1]) && !isRpcMethodAt(segments, index)) {
