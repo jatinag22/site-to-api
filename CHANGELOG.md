@@ -27,6 +27,43 @@ Versioning follows [docs/release-policy.md](docs/release-policy.md).
 - **The skill states the CLI's rules.** New session ids, `build --session`, host filters, expired
   logins for `probe` and `check`, and `gen.mcp` being off by default.
 
+### Fixed
+
+- **Dialogs during capture.** In a capture by hand, Chrome now shows `alert()`, `confirm()`,
+  `prompt()` and "Leave site?" dialogs for you to answer. Before, every one was dismissed, so a step
+  behind "Are you sure?" was silently cancelled and its request never captured. Capture scripts
+  keep Playwright's default (`page.on('dialog', dialog => dialog.accept())` accepts) and get a
+  warning when a confirmation was dismissed. Each dialog and its answer is recorded in
+  `events.jsonl`; the text typed into a prompt is not.
+- **Endpoints a navigation menu links to stay separate operations.** Controller and method names
+  in lowerCamelCase (`/portal/accountLedger/home`, `/portal/serviceRecordNew/loadServiceRecord`)
+  are no longer merged into `/portal/{param1}/{param2}`, and an XHR is never merged into a
+  template of pages, even when it failed (decision 0060).
+- **An endpoint seen only in a site's code is listed under one host.** On a site that sends no
+  `Referer`, or for a route in an inline script, a relative route was listed under every host
+  that served pages. It now goes to the page that loaded the script, the script's own site or
+  the only site; when the capture cannot tell, a build warning names it instead (decision 0061).
+- **A session with no requests no longer counts.** A capture whose browser was closed before any
+  page loaded is still saved, now with a warning; `build` skips it with a warning that names it,
+  and "Loaded N sessions" counts only the sessions it used.
+- **Personal data in response records is masked like request fields.** With `--examples masked`,
+  a profile answer kept the person's name, gender, national and account numbers, the visible
+  digits of values the site had partly masked (`XXXX XXXX 1234`), and tokens in the query of a
+  same-site URL (`/verify?state=…`); a typed captcha answer stayed in form examples. All are
+  now masked in place, keeping their format, as are special-category fields (disability,
+  health, medical, blood group, religion, caste, nationality, and a category inside a person
+  record). Values in a person record never become a schema `enum` (decision 0063).
+- **The session count after a capture skips empty sessions.** "Capture again for a second
+  sample" now counts only sessions `build` would use, not a session whose browser was closed
+  before any page loaded.
+- **Method names in PascalCase, kebab-case and snake_case stay separate operations.** A menu
+  linking to `/Orders/GetOrders` and `/Orders/LoadDetails`, or `/orders/get-orders` and
+  `/orders/load-details`, no longer merges them into one template when they start with a verb
+  (decision 0060).
+- **A service's health check stays readable.** `health: "UP"`, `healthCheck: "ok"` and other
+  health-check values outside a person record are no longer masked; a person's health status
+  still is (decision 0063).
+
 ## 0.1.2 (2026-11-03)
 
 The first release on npm (0.1.0 was published by hand; 0.1.1 was tagged on GitHub but never
@@ -122,33 +159,6 @@ rewrites one:
 - **The MCP server moved from `client/mcp/` to `mcp/` next to the client.** Delete the old folder.
 - **Your own files in the client folder are kept,** and hand edits to generated files are reported
   instead of overwritten.
-
-### Fixed
-
-- **Dialogs during capture.** In a capture by hand, Chrome now shows `alert()`, `confirm()`,
-  `prompt()` and "Leave site?" dialogs for you to answer. Before, every one was dismissed, so a step
-  behind "Are you sure?" was silently cancelled and its request never captured. Capture scripts
-  keep Playwright's default (`page.on('dialog', dialog => dialog.accept())` accepts) and get a
-  warning when a confirmation was dismissed. Each dialog and its answer is recorded in
-  `events.jsonl`; the text typed into a prompt is not.
-- **Endpoints a navigation menu links to stay separate operations.** Controller and method names
-  in lowerCamelCase (`/portal/accountLedger/home`, `/portal/serviceRecordNew/loadServiceRecord`)
-  are no longer merged into `/portal/{param1}/{param2}`, and an XHR is never merged into a
-  template of pages, even when it failed (decision 0060).
-- **An endpoint seen only in a site's code is listed under one host.** On a site that sends no
-  `Referer`, or for a route in an inline script, a relative route was listed under every host
-  that served pages. It now goes to the page that loaded the script, the script's own site or
-  the only site; when the capture cannot tell, a build warning names it instead (decision 0061).
-- **A session with no requests no longer counts.** A capture whose browser was closed before any
-  page loaded is still saved, now with a warning; `build` skips it with a warning that names it,
-  and "Loaded N sessions" counts only the sessions it used.
-- **Personal data in response records is masked like request fields.** With `--examples masked`,
-  a profile answer kept the person's name, gender, national and account numbers, the visible
-  digits of values the site had partly masked (`XXXX XXXX 1234`), and tokens in the query of a
-  same-site URL (`/verify?state=…`); a typed captcha answer stayed in form examples. All are
-  now masked in place, keeping their format, as are special-category fields (disability,
-  health, medical, blood group, religion, caste, nationality, and a category inside a person
-  record). Values in a person record never become a schema `enum` (decision 0063).
 
 ### Known issues
 

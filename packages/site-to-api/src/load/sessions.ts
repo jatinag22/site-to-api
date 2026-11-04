@@ -184,14 +184,39 @@ async function loadSession(dir: string, name: string, warnings: string[]): Promi
 }
 
 /**
- * Number of session folders (folders with a `meta.json`) under an existing `rawDir`, without
- * loading them. Used to tell the person after a capture whether a second sample would help.
+ * Number of sessions under an existing `rawDir` that recorded traffic, without loading them. Used
+ * to tell the person after a capture whether a second sample would help, so it skips what `build`
+ * skips: folders without a valid `meta.json`, and sessions closed before any page loaded.
  */
 export async function countSessions(rawDir: string): Promise<number> {
   const root = resolve(rawDir)
-  return (await readdir(root, { withFileTypes: true }))
-    .filter(entry => entry.isDirectory() && existsSync(join(root, entry.name, 'meta.json')))
-    .length
+  let count = 0
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (entry.isDirectory() && await recordedTraffic(join(root, entry.name)))
+      count++
+  }
+  return count
+}
+
+/** Whether a session has HAR entries or a stream, the test `loadSession` skips sessions by. */
+async function recordedTraffic(dir: string): Promise<boolean> {
+  const metaText = await readText(join(dir, 'meta.json'))
+  const meta = SessionMetaSchema.safeParse(metaText === null
+    ? undefined
+    : parseJson(metaText))
+  if (!meta.success)
+    return false
+  const harText = await readText(join(dir, meta.data.har))
+  const har = HarFileSchema.safeParse(harText === null
+    ? undefined
+    : parseJson(harText))
+  if (har.success && har.data.log.entries.length > 0)
+    return true
+  const events = await readText(join(dir, meta.data.events))
+  return events !== null && events.split('\n').some((line) => {
+    const event = CaptureEventSchema.safeParse(parseJson(line))
+    return event.success && (event.data.t === 'ws' || event.data.t === 'sse')
+  })
 }
 
 /** `*` matches any run of characters; everything else literally. */

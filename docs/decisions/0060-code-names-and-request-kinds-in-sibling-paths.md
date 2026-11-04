@@ -39,3 +39,9 @@ parameter value: a duplicate, never a merge. PascalCase controllers (ASP.NET's `
 are not covered by rule 1; when their pages share chrome and a menu links to them they can still
 merge, unless they were requested in different ways. Kebab-case endpoint names linked from a menu
 are likewise left to rule 2 and to the response-likeness test of 0035.
+
+Update (0.1.3): rule 1 also covers method names in other spellings when they start with a verb
+(`get`, `load`, `view`, `update`, ...): PascalCase compounds (`GetOrders`, `LoadDetails`) and
+lower-case kebab-case or snake_case compounds (`get-orders`, `view_profile`). A slug that starts
+with one of those verbs (`list-of-rivers`) becomes its own operation, a duplicate rather than a
+merge. Single PascalCase words (`/Orders/Details`) are still left to rule 2.
