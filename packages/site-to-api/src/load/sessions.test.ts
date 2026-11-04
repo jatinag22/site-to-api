@@ -365,6 +365,26 @@ describe('loadSessions', () => {
       expect(warning).not.toContain(root)
   })
 
+  it('keeps dialog events for the flows stage (decision 0064)', async () => {
+    const dialog = {
+      t: 'dialog',
+      ts: 1_767_261_600_100,
+      pageUrl: 'https://shop.test/lists',
+      type: 'confirm',
+      message: 'Delete the list?',
+      answer: 'accepted',
+      answeredTs: 1_767_261_600_900,
+    }
+    await writeSession('s1', meta('s1', '2026-01-01T10:00:00.000Z'), [
+      entry({ url: 'https://shop.test/ok' }),
+    ], [
+      JSON.stringify(dialog),
+    ])
+    const { sessions, warnings } = await loadSessions(root)
+    expect(warnings).toEqual([])
+    expect(sessions[0]?.events).toEqual([dialog])
+  })
+
   it('uses an incomplete session with a warning, and keeps the network error of a failed page load', async () => {
     const failed = entry({ url: 'https://shop.test/', status: -1, resourceType: 'document' })
     const response = failed.response as Record<string, unknown>

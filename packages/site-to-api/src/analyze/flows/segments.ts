@@ -19,6 +19,11 @@ export interface Segment {
 
 const STEP_KINDS = new Set(['api', 'page', 'bot-protection'])
 
+/** Whether an exchange becomes a flow step: an `api`, `page` or `bot-protection` exchange with a known operation. */
+export function becomesStep(exchange: Exchange, operation: Operation | undefined): operation is Operation {
+  return operation !== undefined && STEP_KINDS.has(exchange.kind)
+}
+
 /**
  * A navigation this soon after a click or submit is the result of that action, not a new one:
  * the requests after it still belong to the click that caused it.
@@ -145,7 +150,7 @@ export function splitSession(input: {
   }))
   for (const exchange of input.exchanges) {
     const operation = input.operationOf(exchange)
-    if (!operation || !STEP_KINDS.has(exchange.kind))
+    if (!becomesStep(exchange, operation))
       continue
     let position = 0
     while (position + 1 < starts.length && (starts[position + 1]?.ts ?? Number.POSITIVE_INFINITY) <= exchange.startedAt)

@@ -26,6 +26,13 @@ Versioning follows [docs/release-policy.md](docs/release-policy.md).
   `check` replay against the live site and need a login that is still valid, the per-site MCP
   server is off unless `--mcp`, and `site-to-api mcp` serves the folder.
 
+- **Flow steps say when the page asked first.** A step whose request the page sent only after
+  the person accepted a `confirm()`, a `prompt()` or "Leave site?" lists those dialogs in
+  `flows.json` (`dialogs`: type and text, redacted; never what was typed into a prompt).
+  `flows.md` says to accept the dialog in a browser and to send the request directly over plain
+  HTTP, and `AGENT.md` marks the step `(after confirm())`. `flows.json` is now format version 2;
+  `gen` and `site-to-api mcp` still read version 1 folders.
+
 ### Changed
 
 - **The skill states the CLI's rules.** New session ids, `build --session`, host filters, expired

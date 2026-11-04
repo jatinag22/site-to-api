@@ -8,7 +8,11 @@
  */
 import { z } from 'zod'
 
-export const FLOWS_FORMAT_VERSION = 1
+/**
+ * Version 2 added the optional `dialogs` of a step (decision 0064). A version 1 document is a valid
+ * version 2 document without them, so readers accept both; `build` writes the current version.
+ */
+export const FLOWS_FORMAT_VERSION = 2
 
 export const SourceRefSchema = z.object({
   /** Original source path when a sourcemap was available, otherwise the bundle URL path. */
@@ -103,6 +107,18 @@ export const FlowStepSchema = z.object({
   outputs: z.record(z.string(), z.string()),
   /** Exchange ids this step was derived from, for debugging. */
   observedIn: z.array(z.string()),
+  /**
+   * JavaScript dialogs the person accepted just before the page sent this request (decision 0064),
+   * in the order they closed: the page sends it only after a `confirm()` returns true, a `prompt()`
+   * gets an answer, or the person chooses to leave the page (`beforeunload`). Over plain HTTP send
+   * the request directly; in a browser the dialog must be accepted. `message` is the dialog's
+   * text, redacted like any other text. What a person typed into a prompt is never recorded; it
+   * is in the request like any other input. Absent when no dialog guarded the step.
+   */
+  dialogs: z.array(z.object({
+    type: z.enum(['confirm', 'prompt', 'beforeunload']),
+    message: z.string(),
+  })).optional(),
 })
 export type FlowStep = z.infer<typeof FlowStepSchema>
 
@@ -182,7 +198,10 @@ export function cookieNeedsBrowser(cookie: Pick<SessionRequirement['cookies'][nu
 
 export const FlowsDocumentSchema = z.object({
   $schema: z.string().optional(),
-  formatVersion: z.literal(FLOWS_FORMAT_VERSION),
+  formatVersion: z.union([
+    z.literal(1),
+    z.literal(FLOWS_FORMAT_VERSION),
+  ]),
   generatedBy: z.string(),
   sessions: z.array(z.string()),
   session: z.array(SessionRequirementSchema),

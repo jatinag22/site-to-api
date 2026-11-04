@@ -2,7 +2,8 @@
  * JavaScript dialogs in scripted captures (decision 0059), against the saved-lists fixture page:
  * a script that accepts the `confirm()` before a delete gets the `DELETE` captured and documented;
  * a script that does not handle dialogs gets Playwright's dismissal and a warning; a dialog a
- * script leaves open does not hold up saving. Every dialog is in `events.jsonl` with its answer.
+ * script leaves open does not hold up saving. Every dialog is in `events.jsonl` with its answer,
+ * and `build` marks the flow step each accepted dialog guarded (decision 0064).
  */
 import type { ResolvedConfig } from '../packages/site-to-api/src'
 import type { CaptureEvent, DialogEvent } from '../packages/site-to-api/src/model'
@@ -136,6 +137,40 @@ describe('a capture script that accepts the dialogs', () => {
       expect.stringMatching(/^DELETE \/api\/lists\//),
       expect.stringMatching(/^POST \/api\/lists\//),
     ]))
+
+    // Decision 0064: the step behind each dialog says so, and nothing else does.
+    const methodOf = new Map(analysis.operations.map(operation => [operation.operationId, operation.method]))
+    const steps = analysis.flows.flows.flatMap(flow => flow.steps.map(step => ({
+      flow: flow.trigger.label,
+      method: methodOf.get(step.operationId),
+      dialogs: step.dialogs,
+    })))
+    expect(steps.filter(step => step.dialogs !== undefined)).toEqual([
+      {
+        flow: 'Rename',
+        method: 'POST',
+        dialogs: [
+          { type: 'prompt', message: 'New name for "Weekend"' },
+        ],
+      },
+      {
+        flow: 'Delete',
+        method: 'DELETE',
+        dialogs: [
+          { type: 'confirm', message: 'Delete the list "Weekend"? This cannot be undone.' },
+        ],
+      },
+    ])
+    const flowsJson = await readFile(join(work, 'accepts', 'handoff', 'flows.json'), 'utf8')
+    expect(JSON.parse(flowsJson)).toMatchObject({ formatVersion: 2 })
+    const flowsMd = await readFile(join(work, 'accepts', 'handoff', 'flows.md'), 'utf8')
+    expect(flowsMd).toContain('Sent after the person accepted `confirm()` `Delete the list "Weekend"? This cannot be undone.`.')
+    expect(flowsMd).toContain('Sent after the person accepted `prompt()` `New name for "Weekend"`.')
+    // The prompt's answer is never written as a dialog's text or a step's input origin.
+    expect(flowsJson).not.toContain('Weekly shop')
+    expect(flowsMd).not.toContain('Weekly shop')
+    const guide = await readFile(join(work, 'accepts', 'handoff', 'AGENT.md'), 'utf8')
+    expect(guide).toMatch(/\(after confirm\(\)\)/)
   })
 })
 
