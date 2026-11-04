@@ -52,6 +52,11 @@ likely to meet; this page has all of them.
 
 - The generated code covers HTTP only; WebSocket channels are documented in AsyncAPI, to open with
   any WebSocket client.
+- On a network without working IPv6, Node's `fetch` gives up on a distant host's IPv4 address
+  after 250 ms (`ETIMEDOUT`) where `curl` connects. The CLI's own requests allow a second per
+  attempt; an app using the generated client in Node sets this itself, with
+  `net.setDefaultAutoSelectFamilyAttemptTimeout(1000)` or
+  `--network-family-autoselection-attempt-timeout=1000`.
 
 ## Testing
 
