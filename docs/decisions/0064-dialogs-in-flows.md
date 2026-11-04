@@ -23,8 +23,7 @@ What the capture gives to tie a dialog to a request:
 ## Decision
 - **Rule.** An accepted `confirm`, `prompt` or `beforeunload` dialog guards the earliest flow-step
   request (an `api`, `page` or `bot-protection` exchange with an operation) of the same session
-  that starts no earlier than the dialog opened and 250 ms before it closed, and no later than
-  2 seconds after it closed (the window the flows stage already uses for a navigation that
+  that starts after the dialog opened and no later than 2 seconds after it closed (the window the flows stage already uses for a navigation that
   follows a click). The request must come from the dialog's page (URLs compared without the
   fragment), unless it is a document request (the navigation a "Leave site?" let through) or its
   page is unknown. Ties on start time go by capture order. One dialog guards at most one request;
@@ -66,3 +65,9 @@ What the capture gives to tie a dialog to a request:
   told apart. `docs/limitations.md` says so.
 - Every `flows.json` now says `formatVersion: 2`. An older `site-to-api` reading a new handoff
   folder refuses it and asks for a rebuild, as it would for any newer format.
+
+Update (0.1.3, before release): the lower bound is the time the dialog opened, not 250 ms before
+it closed. Both times are when capture received Chrome's report. On a slow CI runner the close
+report reached capture more than 250 ms after the page had resumed and sent its `DELETE`, so the
+step went unmarked. The page sends nothing while its dialog is open, so the open time is a
+lower bound that does not depend on how fast reports arrive.
