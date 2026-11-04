@@ -63,6 +63,8 @@ const QUERY_SECRET_WORDS = new Set([
   'key',
   'samlresponse',
   'assertion',
+  // A captcha or security-question answer the person typed (`answer=7xk2p`, decision 0063).
+  'answer',
 ])
 
 /**

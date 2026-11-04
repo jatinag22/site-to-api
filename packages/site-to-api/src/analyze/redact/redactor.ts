@@ -23,9 +23,11 @@
  *    replaced by their shape unless identical in every session.
  * 5. Personal data (email, phone, card, PAN, Aadhaar, configured patterns) is masked keeping its
  *    format, constant or not. So are values under personal field names (`username`, `displayName`,
- *    `firstName`, `address`, `city`, `zip`, `dob`, `userId`, see `personal-data.ts`), and `name`
- *    and `id` inside an object that describes a person (under `user`, `account`, `profile`,
- *    `customer`, or holding a `username`/`email` itself).
+ *    `firstName`, `address`, `city`, `zip`, `dob`, `userId`, `uan`, `bankAccNo`, `gender`,
+ *    `masked*`, see `personal-data.ts`), and `name`, `id` and id-like numbers inside an object that
+ *    describes a person (under `user`, `account`, `profile`, `customer`, `member`, `userinfo`, or
+ *    holding a `username`/`email`/`dob` itself). Numbers the site partly masked (`XXXX 1234`)
+ *    lose their visible digits (decision 0063).
  * 6. JSON object keys that are themselves secret or personal values are replaced by their shape
  *    (decision 0042): sites key maps by session tokens, emails or user ids
  *    (`{"sessions": {"<token>": {...}}}`). A key is secret when it is a JWT, a learnt secret, a
@@ -45,7 +47,7 @@ import { isBotProtectionHeader } from '../classify'
 import { describeShape, inspectJwt } from '../shape'
 import { isOpaqueBlob } from './blobs'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
-import { carriesDeviceSignals, isDeviceSignalHeader, isFingerprintField, isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskDeviceSignals, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
+import { carriesDeviceSignals, isDeviceSignalHeader, isFingerprintField, isIdLikeNumber, isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskDeviceSignals, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { CREDENTIAL_HEADERS, isPublicValue, isPublishableKeyName, isSecretName, nameWords } from './secret-names'
 
 interface RedactorInput {
@@ -140,6 +142,8 @@ const JWT_IN_TEXT = /eyJ[\w-]*\.eyJ[\w-]*\.[\w-]*/g
 const URLENCODED = /^[\w.%[\]-]+=[^&\s]*(?:&[\w.%[\]-]+=[^&\s]*)*$/
 /** Web and WebSocket URLs: a `recoveryUrl: wss://...?t=<token>` carries tokens like any URL. */
 const ABSOLUTE_URL = /^(?:https?|wss?):\/\/\S+$/i
+/** A same-site URL with a query (`/app/verify?state=<token>`): its query is redacted like an absolute URL's. */
+const RELATIVE_URL_WITH_QUERY = /^\/(?!\/)[^\s?#]*\?\S+$/
 /** URLs inside longer text (`reconnect to wss://...`, an HTML attribute, a log line). */
 const URL_IN_TEXT = /\b(?:https?|wss?):\/\/[^\s"'<>`\\]+/gi
 /** Punctuation that ends a sentence around a URL rather than belonging to it. */
@@ -368,7 +372,7 @@ function* expand(item: Located, depth: number): Generator<Located> {
     yield* jsonValues(json, item.in, item.name, depth + 1)
     return
   }
-  const whole = ABSOLUTE_URL.test(item.value)
+  const whole = ABSOLUTE_URL.test(item.value) || RELATIVE_URL_WITH_QUERY.test(item.value)
   // A URL's query, its fragment (`#access_token=...`) and a hash router's own query
   // (`#/cb?token=...`) all carry parameters; plain text may be URL-encoded itself.
   const parts = whole
@@ -410,7 +414,7 @@ function maskByName(text: string, name: string | null | undefined, personRecord:
   // A user agent or device description in a body fingerprints whoever captured it (0048); the
   // `User-Agent` header has its own rules.
   const fingerprint = isFingerprintField(name) && !header
-  return fingerprint || isPersonalField(name) || (personRecord && isPersonRecordField(name))
+  return fingerprint || isPersonalField(name) || (personRecord && (isPersonRecordField(name) || isIdLikeNumber(text)))
     ? maskKeepingFormat(text)
     : null
 }
@@ -709,7 +713,7 @@ export function createRedactor(input: RedactorInput): Redactor {
     const json = parseJson(text)
     if (json !== undefined)
       return JSON.stringify(redactJson(json, context, depth + 1))
-    if (ABSOLUTE_URL.test(text))
+    if (ABSOLUTE_URL.test(text) || RELATIVE_URL_WITH_QUERY.test(text))
       return redactUrl(text, depth)
     if (URLENCODED.test(text) && text.includes('='))
       return redactQuery(text, depth)
@@ -779,7 +783,7 @@ export function createRedactor(input: RedactorInput): Redactor {
       return placeholder(text)
     if (isPhoneField(context.name) && maskPhoneField(text) !== null)
       return maskKeepingFormat(text)
-    if (isPersonalField(context.name) || (personRecord && isPersonRecordField(context.name)))
+    if (isPersonalField(context.name) || (personRecord && (isPersonRecordField(context.name) || isIdLikeNumber(text))))
       return maskKeepingFormat(text)
     const masked = maskPersonalData(text, patterns)
     return masked === text
