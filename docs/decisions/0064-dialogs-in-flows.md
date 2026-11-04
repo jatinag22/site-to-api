@@ -23,7 +23,9 @@ What the capture gives to tie a dialog to a request:
 ## Decision
 - **Rule.** An accepted `confirm`, `prompt` or `beforeunload` dialog guards the earliest flow-step
   request (an `api`, `page` or `bot-protection` exchange with an operation) of the same session
-  that starts after the dialog opened and no later than 2 seconds after it closed (the window the flows stage already uses for a navigation that
+  that starts after the click or submit that opened the dialog (on the dialog's page, at most
+  2 seconds before capture saw it open; when there is none, after capture saw it open) and no
+  later than 2 seconds after it closed (the window the flows stage already uses for a navigation that
   follows a click). The request must come from the dialog's page (URLs compared without the
   fragment), unless it is a document request (the navigation a "Leave site?" let through) or its
   page is unknown. Ties on start time go by capture order. One dialog guards at most one request;
@@ -71,3 +73,12 @@ it closed. Both times are when capture received Chrome's report. On a slow CI ru
 report reached capture more than 250 ms after the page had resumed and sent its `DELETE`, so the
 step went unmarked. The page sends nothing while its dialog is open, so the open time is a
 lower bound that does not depend on how fast reports arrive.
+
+Update 2 (0.1.3, before release): the open time was not a safe bound either. Both dialog times
+are when Node handled Chrome's reports; a capture script, or Playwright's default handler,
+accepts the dialog when it handles its own copy of the "opening" report, and on a slow CI runner
+the page resumed and sent its request before capture's copy was handled (`e2e/dialogs.test.ts`
+failed again, on the prompt). The lower bound is now the click or submit that opened the dialog,
+which the page records itself on the clock its requests use, before the dialog and so before the
+request. Cost: a request the page sends between that click and the dialog (a check before asking)
+is taken for the guarded one.
