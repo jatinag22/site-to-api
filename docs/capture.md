@@ -71,7 +71,9 @@ prompt. How they are answered depends on who drives the browser (decision 0059):
 
 Every dialog is recorded in `events.jsonl` as a `dialog` event: its type, its text, whether it was
 `accepted`, `dismissed` or left `unanswered`, and when. The text typed into a `prompt()` is never
-recorded there, only whether it was accepted.
+recorded there, only whether it was accepted. `build` marks the flow step whose request followed
+an accepted `confirm()`, `prompt()` or "Leave site?" with that dialog (`dialogs` in `flows.json`,
+"Sent after the person accepted ..." in `flows.md`, decision 0064).
 
 ## Logged-in captures with a saved profile
 

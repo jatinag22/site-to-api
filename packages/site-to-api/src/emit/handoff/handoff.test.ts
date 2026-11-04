@@ -267,6 +267,24 @@ describe('renderAgentGuide', () => {
     expect(guide).toContain('`src/auth/crypto.ts:8 encryptPassword` using `crypto.subtle.encrypt` (name=RSA-OAEP, hash=SHA-256)')
   })
 
+  it('marks a step the page sent only after the person accepted a dialog (decision 0064)', () => {
+    const analysis = fixture()
+    const step = analysis.flows.flows[0]?.steps[1]
+    if (!step)
+      throw new Error('fixture has no second step')
+    step.dialogs = [
+      { type: 'prompt', message: 'Name?' },
+      { type: 'confirm', message: 'Sure?' },
+    ]
+    expect(renderAgentGuide(analysis, {
+      toolVersion: '0.1.0',
+      examples: 'masked',
+      probed: false,
+      client: 'none',
+      probe: null,
+    })).toContain('`postApiAuthLogin` → `getApiOrders` (after prompt(), confirm())')
+  })
+
   it('lists every gap with what would resolve it', () => {
     expect(guide).toContain('`getDeals` returns text/html whose record layout was inferred from one sample')
     expect(guide).toContain('`getApiProductsByIdRelated`')

@@ -30,7 +30,8 @@ should not hear them.
 JavaScript dialogs (decision 0059): in a headed capture without a script, capture leaves each
 dialog to Chrome's own for the person to answer; scripts and headless runs keep Playwright's
 default. Every dialog and its answer is a `dialog` event in `events.jsonl`, recorded from the
-DevTools protocol, never with the text typed into a prompt.
+DevTools protocol, never with the text typed into a prompt. The flows stage marks the step each
+accepted dialog guarded (decision 0064).
 
 ## Stages of `build`
 
@@ -63,8 +64,10 @@ All stages are pure functions over the data contracts in `packages/site-to-api/s
    URL-encoded, base64, JSON-string and substring variants. Values with no producer are matched
    against `transform` events (computed by the page) and form typing (`user-input`).
 6. **flows** (`src/analyze/flows`): splits the timeline at the person's actions (click, submit,
-   navigate), turns each segment into a flow of steps with typed inputs and outputs, merges flows
-   seen in several sessions, and derives per-host session requirements.
+   navigate), turns each segment into a flow of steps with typed inputs and outputs, marks the
+   step whose request followed an accepted `confirm()`, `prompt()` or "Leave site?" dialog
+   (decision 0064), merges flows seen in several sessions, and derives per-host session
+   requirements.
 7. **channels** (`src/analyze/channels`): rebuilds WebSocket connections from the `ws` capture
    events, and server-sent event streams from the `sse` events and `text/event-stream` bodies
    (decision 0050), and turns them into channels (decision 0023). Frames stand in as exchanges for the

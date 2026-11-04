@@ -139,8 +139,20 @@ function hostsSection(analysis: Analysis, context: AgentGuideContext, index: Ind
   return lines
 }
 
+/** ` (after confirm())` when the page asked a dialog before sending the step (decision 0064). */
+function dialogMark(step: Flow['steps'][number]): string {
+  const types = [
+    ...new Set((step.dialogs ?? []).map(dialog => dialog.type === 'beforeunload'
+      ? '"Leave site?"'
+      : `${dialog.type}()`)),
+  ]
+  return types.length === 0
+    ? ''
+    : ` (after ${types.join(', ')})`
+}
+
 function flowLine(flow: Flow, resolver: StepResolver): string {
-  const steps = stepList(flow.steps.map(step => operationName(step.operationId, resolver.operation(step)?.host ?? null, resolver)))
+  const steps = stepList(flow.steps.map(step => `${operationName(step.operationId, resolver.operation(step)?.host ?? null, resolver)}${dialogMark(step)}`))
   const confirmed = flow.seenInSessions > 1
     ? `, seen in ${flow.seenInSessions} sessions`
     : ''

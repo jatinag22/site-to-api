@@ -11,9 +11,13 @@ likely to meet; this page has all of them.
 - Interactive capture (closing the window to finish) is covered by an abort test but not by an
   automated headful test. In interactive mode a browser crash looks like quitting; both save a
   complete session with a note.
-- Dialogs (`confirm()`, `prompt()`, "Leave site?") are recorded in `events.jsonl`, but `flows.json`
-  does not yet mark a step that needed a confirmation. The person answering Chrome's own dialog in
-  a headed capture is checked by hand (docs/testing.md), not by an automated test.
+- A flow step is marked as sent after a dialog (`dialogs` in `flows.json`, decision 0064) by
+  timing: the first step request of the dialog's page that started within 2 seconds of the person
+  accepting it. A guarded request the page sent later than that (after a slow animation or a
+  second round trip) is not marked, and a step whose request happened to follow a dialog it does
+  not depend on can be. Dialogs in other tabs of the same page URL are not told apart. The person
+  answering Chrome's own dialog in a headed capture is checked by hand (docs/testing.md), not by
+  an automated test.
 - A saved profile (`--user-data-dir`) keeps cookies that outlive the browser. A login the site
   keeps in session storage or in session cookies does not survive between captures.
 

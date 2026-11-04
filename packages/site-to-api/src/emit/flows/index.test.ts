@@ -126,6 +126,33 @@ describe('renderFlowsMarkdown', () => {
     expect(markdown).toContain('  - from step `s3` of [`load-login`](#load-login) response `body./publicKey`')
   })
 
+  it('says a step was sent after a dialog, and that plain HTTP sends it directly (decision 0064)', () => {
+    const [first] = doc.flows
+    const [step] = first?.steps ?? []
+    if (!first || !step)
+      throw new Error('the shop scenario has no flows')
+    const guarded: FlowsDocument = {
+      ...doc,
+      flows: [
+        {
+          ...first,
+          steps: [
+            {
+              ...step,
+              dialogs: [
+                { type: 'prompt', message: 'New name for `Weekend`' },
+                { type: 'confirm', message: 'Rename the list?' },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    const rendered = renderFlowsMarkdown(guarded, capture.operations)
+    expect(rendered).toContain('   - Sent after the person accepted `prompt()` `` New name for `Weekend` ``, then `confirm()` `Rename the list?`. In a browser the dialog must be accepted; over plain HTTP send the request directly. The text typed into a prompt is sent in the request, like any other input.')
+    expect(markdown).not.toContain('Sent after the person accepted')
+  })
+
   it('summarises session requirements per host', () => {
     expect(markdown).toContain('| `shop.example.test` | browser | `_abck` (browser), `session` (`getLogin`) | Akamai | no |')
   })

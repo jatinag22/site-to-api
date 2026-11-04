@@ -20,9 +20,10 @@ import { FLOWS_FORMAT_VERSION } from '../../model'
 import { isBotProtectionHeader } from '../classify'
 import { botProtectionVendor, responseText, responseValues } from '../correlate'
 import { describeShape } from '../shape'
+import { guardedRequests } from './dialogs'
 import { createLocationGeneralizer } from './items'
 import { formatLocation, keySafeLocation, lastPointerToken, outputName, slugify, uniqueName } from './locations'
-import { splitSession } from './segments'
+import { becomesStep, splitSession } from './segments'
 import { sessionRequirements } from './session'
 import { looksTyped, typedInputField } from './typed-input'
 
@@ -287,8 +288,13 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
   ]))
 
   const groups = new Map<string, Segment[]>()
+  // Dialogs the person accepted before a step's request, by exchange id (decision 0064).
+  const dialogsByExchange = new Map<string, NonNullable<FlowStep['dialogs']>>()
   for (const sessionId of sessionIds) {
     const session = sessionById.get(sessionId)
+    const guarded = guardedRequests(session?.events ?? [], exchangesBySession.get(sessionId) ?? [], exchange => becomesStep(exchange, operationOf(exchange)))
+    for (const [exchangeId, dialogs] of guarded)
+      dialogsByExchange.set(exchangeId, dialogs)
     const segments = splitSession({
       sessionId,
       events: session?.events ?? [],
@@ -590,6 +596,11 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
       })
       const inputs = collectInputs(occurrences, draftStep.operation, tracesByExchange, (trace, exchange) => originOf(trace, exchange, draftStep.operation, draft.id), inputKeyOf)
       const representative = occurrences[0]?.exchanges[0]
+      // The first session whose occurrence a dialog guarded says what it asked.
+      const guarded = occurrences.flatMap(step => step.exchanges).find(exchange => dialogsByExchange.has(exchange.id))
+      const dialogs = guarded === undefined
+        ? undefined
+        : dialogsByExchange.get(guarded.id)
       return {
         id: draftStep.id,
         operationId: draftStep.operation.operationId,
@@ -602,6 +613,15 @@ export function buildFlows(input: BuildFlowsInput): FlowsDocument {
         inputs: Object.fromEntries(inputs),
         outputs: {},
         observedIn: occurrences.flatMap(step => step.exchanges.map(exchange => exchange.id)),
+        ...(dialogs === undefined
+          ? {}
+          : {
+              dialogs: dialogs.map(dialog => ({
+                type: dialog.type,
+                // Dialog text names what is confirmed ("Delete the list of jane@example.com?").
+                message: safeText(dialog.message.replace(/\s+/g, ' ').trim()),
+              })),
+            }),
       }
     })
     return {

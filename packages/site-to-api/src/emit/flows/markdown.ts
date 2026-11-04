@@ -81,6 +81,24 @@ function sentFromText(step: FlowStep, operation: Operation | undefined): string 
     : 'unknown (no initiator stack)'
 }
 
+const DIALOG_NAMES: Record<NonNullable<FlowStep['dialogs']>[number]['type'], string> = {
+  confirm: '`confirm()`',
+  prompt: '`prompt()`',
+  beforeunload: '"Leave site?" (`beforeunload`)',
+}
+
+/** What the page asked before sending the step (decision 0064), or null when nothing. */
+function dialogText(step: FlowStep): string | null {
+  const dialogs = step.dialogs ?? []
+  if (dialogs.length === 0)
+    return null
+  const asked = dialogs.map(dialog => `${DIALOG_NAMES[dialog.type]} ${code(dialog.message)}`).join(', then ')
+  const typed = dialogs.some(dialog => dialog.type === 'prompt')
+    ? ' The text typed into a prompt is sent in the request, like any other input.'
+    : ''
+  return `Sent after the person accepted ${asked}. In a browser the dialog must be accepted; over plain HTTP send the request directly.${typed}`
+}
+
 function renderStep(step: FlowStep, index: number, flow: Flow, resolver: StepResolver): string[] {
   const operation = resolver.operation(step) ?? undefined
   const lines = [`${index + 1}. ${operationLine(step, operation)} (step ${code(step.id)}, ${step.kind})`]
@@ -92,6 +110,9 @@ function renderStep(step: FlowStep, index: number, flow: Flow, resolver: StepRes
     item('Browser only: a real browser must run this step; it is not a client function.')
   else
     item(`SDK function ${code(`${sdkFunctionName(step.operationId)}()`)}, response schema ${code(responseSchemaName(step.operationId))}`)
+  const dialog = dialogText(step)
+  if (dialog !== null)
+    item(dialog)
   item(`Sent from: ${sentFromText(step, operation)}`)
   const inputs = Object.entries(step.inputs)
   if (inputs.length === 0) {

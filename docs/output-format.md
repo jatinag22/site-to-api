@@ -36,7 +36,8 @@ The entry point for a coding agent: a short index, at most about 25 KB on any si
    out a token or sets a response cookie; then flows whose steps feed each other or that submit a
    form; then the rest; within each, by sessions that showed it, then capture order. A flow shows
    six steps (runs of one step as `` `op` ×5 ``, then "… (N more steps)") and 80 characters of its
-   name.
+   name. A step the page sent only after the person accepted a dialog is marked
+   `(after confirm())`, `(after prompt())` or `(after "Leave site?")` (decision 0064).
    **GraphQL operations** (only when the capture has GraphQL requests, decision 0027): one line
    per endpoint (`POST host/path`) with its operation count by type and a link to the host file.
    **Dispatcher endpoints** (only when the capture has one, decision 0039): one line per
@@ -163,6 +164,22 @@ another flow is referenced as `<flowId>.<stepId>` (`sign-in.s2`), as are all ref
 `computedValues[].uses`. `flows.md` renders each flow as a numbered list of steps with operation id,
 SDK function, response schema, inputs and their origins, the code that sends the request and any
 computed values.
+
+`formatVersion` is 2 since steps can carry `dialogs`; readers accept 1 as well, which is the same
+document without them.
+
+- **`dialogs`** (optional, decision 0064): the JavaScript dialogs the person accepted just before
+  the page sent the step's request, in the order they closed, as `{ type, message }` with `type`
+  `confirm`, `prompt` or `beforeunload` ("Leave site?"). The page sends the request only once
+  the dialog is accepted. In a browser a wrapper must accept it (`page.on('dialog')`); over plain
+  HTTP it sends the request directly. A step gets a dialog when its request is the first step
+  request of the dialog's page (any page for a document request) to start between 250 ms before
+  the dialog closed (never before it opened) and 2 seconds after. `alert()` and dismissed or
+  unanswered dialogs mark nothing. `message` is the dialog's text, whitespace collapsed and
+  redacted like other free text. What the person typed into a prompt is never written; it is in
+  the request like any other input. A merged step takes the dialogs of the first session in which
+  one guarded it. `flows.md` adds "Sent after the person accepted `confirm()` `<text>`. ..." to the
+  step, and `AGENT.md`'s Key flows line marks it ``(after confirm())``.
 
 ## `specs/<host>.yaml`
 

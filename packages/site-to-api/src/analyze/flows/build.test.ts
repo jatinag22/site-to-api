@@ -1,10 +1,10 @@
 import type { ResolvedConfig } from '../../config/schema'
-import type { CaptureEvent, Exchange, FlowsDocument, LoadedSession, Operation, Redactor, ValueTrace } from '../../model'
+import type { CaptureEvent, DialogEvent, Exchange, FlowsDocument, LoadedSession, Operation, Redactor, ValueTrace } from '../../model'
 import type { BuildFlowsInput } from './index'
 import { describe, expect, it } from 'vitest'
 import { exchange, formBody, jsonBody } from '../../../test/helpers'
 import { CLIENT_VERSION, CONSTANT_API_KEY, fakeHtmlLocator, fakeSourceResolver, HOST, SECRET_VALUES, shopCapture } from '../../../test/scenarios'
-import { FlowsDocumentSchema } from '../../model'
+import { FLOWS_FORMAT_VERSION, FlowsDocumentSchema } from '../../model'
 import { traceValues } from '../correlate'
 import { createRedactor } from '../redact'
 import { buildFlows } from './index'
@@ -65,7 +65,7 @@ describe('buildFlows: shop scenario', () => {
 
   it('produces a valid document', () => {
     expect(FlowsDocumentSchema.safeParse(doc).success).toBe(true)
-    expect(doc.formatVersion).toBe(1)
+    expect(doc.formatVersion).toBe(FLOWS_FORMAT_VERSION)
     expect(doc.generatedBy).toBe('site-to-api 1.2.3')
     expect(doc.sessions).toEqual(['a', 'b'])
   })
@@ -290,6 +290,107 @@ function build(exchanges: Exchange[], operations: Operation[], sessions: LoadedS
   }
   return buildFlows(input)
 }
+
+describe('buildFlows: dialogs', () => {
+  const page = 'https://lists.example.test/lists'
+  const click: CaptureEvent = {
+    t: 'action',
+    ts: 1_000,
+    pageUrl: page,
+    kind: 'click',
+    label: 'Delete',
+    selector: 'button.delete',
+    field: null,
+  }
+  const confirm = (message: string, answer: DialogEvent['answer'] = 'accepted'): DialogEvent => ({
+    t: 'dialog',
+    ts: 1_010,
+    pageUrl: page,
+    type: 'confirm',
+    message,
+    answer,
+    answeredTs: 3_000,
+  })
+  const remove = (sessionId: string): Exchange => ({
+    ...exchange({
+      url: 'https://lists.example.test/api/lists/42',
+      method: 'DELETE',
+      sessionId,
+      startedAt: 3_005,
+    }),
+    pageUrl: page,
+  })
+  const reload = (sessionId: string): Exchange => ({
+    ...exchange({ url: 'https://lists.example.test/api/lists', sessionId, startedAt: 3_050 }),
+    pageUrl: page,
+  })
+
+  it('marks the request sent after an accepted confirm, with the dialog text redacted', () => {
+    const exchanges = [
+      remove('a'),
+      reload('a'),
+    ]
+    const doc = build(exchanges, [
+      op('deleteApiListsById', exchanges.slice(0, 1)),
+      op('getApiLists', exchanges.slice(1)),
+    ], [
+      loaded('a', [
+        click,
+        confirm('Delete the list   of jane.doe@example.com?\nThis cannot be undone.'),
+      ]),
+    ])
+    expect(FlowsDocumentSchema.safeParse(doc).success).toBe(true)
+    const [guarded, after] = flow(doc, 'delete').steps
+    expect(guarded?.dialogs).toEqual([
+      {
+        type: 'confirm',
+        message: expect.stringMatching(/^Delete the list of .+\? This cannot be undone\.$/),
+      },
+    ])
+    expect(JSON.stringify(doc)).not.toContain('jane.doe@example.com')
+    // The refresh after the delete was not what the dialog held up.
+    expect(after).not.toHaveProperty('dialogs')
+  })
+
+  it('keeps the dialog of a merged step when only one session showed it', () => {
+    const exchanges = [
+      remove('a'),
+      remove('b'),
+    ]
+    const doc = build(exchanges, [
+      op('deleteApiListsById', exchanges),
+    ], [
+      loaded('a', [click]),
+      loaded('b', [
+        click,
+        confirm('Delete the list?'),
+      ]),
+    ])
+    const step = flow(doc, 'delete').steps[0]
+    expect(flow(doc, 'delete').seenInSessions).toBe(2)
+    expect(step?.dialogs).toEqual([
+      { type: 'confirm', message: 'Delete the list?' },
+    ])
+  })
+
+  it('writes no dialogs when none was accepted', () => {
+    const exchanges = [
+      remove('a'),
+    ]
+    const doc = build(exchanges, [
+      op('deleteApiListsById', exchanges),
+    ], [
+      loaded('a', [
+        click,
+        {
+          ...confirm('Delete the list?'),
+          answer: 'dismissed',
+        },
+      ]),
+    ])
+    expect(flow(doc, 'delete').steps[0]).not.toHaveProperty('dialogs')
+  })
+})
 
 describe('buildFlows: segments and merging', () => {
   it('does not merge flows whose operation sequences differ, and keeps ids unique', () => {
