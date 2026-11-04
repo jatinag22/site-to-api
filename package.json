@@ -1,7 +1,7 @@
 {
   "name": "site-to-api-monorepo",
   "type": "module",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "packageManager": "pnpm@10.14.0",
   "description": "Capture a website's traffic once and get OpenAPI specs, request flows and a typed client that a coding agent can build a wrapper from.",
