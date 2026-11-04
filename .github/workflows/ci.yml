@@ -31,6 +31,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: What changed
+    # Pull requests that change only docs, or only version numbers and the CHANGELOG (a release
+    # pull request; the release workflow runs every check on the release commit before tagging),
+    # skip the end-to-end steps. The job still runs and passes, so the required check is met.
+    # Lint and unit tests always run: they cover Markdown and docs/configuration.md.
+    runs-on: ubuntu-latest
+    outputs:
+      e2e: ${{ steps.decide.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request' && inputs.ref == ''
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Decide
+        id: decide
+        env:
+          PULL_REQUEST: ${{ github.event_name == 'pull_request' && inputs.ref == '' }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$PULL_REQUEST" != "true" ]; then echo "e2e=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          changed=$(git diff --name-only "$BASE...HEAD")
+          echo "$changed"
+          # Docs: Markdown outside the shipped skill, and docs/.
+          rest=$(echo "$changed" | grep -Ev '^(docs/.*|[^/]*\.md|packages/[^/]+/[^/]*\.md)$' || true)
+          # Version bumps: package.json files whose only changed lines are "version".
+          manifests=$(echo "$rest" | grep -E '(^|/)package\.json$' || true)
+          if [ -n "$manifests" ] && ! git diff -U0 "$BASE...HEAD" -- $manifests | grep -E '^[+-] ' | grep -Ev '^[+-]\s*"version": ' | grep -q .; then
+            rest=$(echo "$rest" | grep -Ev '(^|/)package\.json$' || true)
+          fi
+          if [ -z "$rest" ]; then e2e=false; else e2e=true; fi
+          echo "e2e=$e2e" >> "$GITHUB_OUTPUT"
+
   check:
     name: Lint, typecheck, unit tests (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
@@ -56,24 +90,35 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run knip
       - run: pnpm exec vitest --run --project site-to-api --project runtime
+        if: needs.changes.outputs.e2e == 'true'
 
   e2e:
     name: End-to-end (capture → build → probe → gen)
+    needs: changes
     runs-on: ubuntu-latest
     steps:
+      - if: needs.changes.outputs.e2e != 'true'
+        run: echo "Only docs or version numbers changed; the release workflow checks the release commit."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.e2e == 'true'
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: needs.changes.outputs.e2e == 'true'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: needs.changes.outputs.e2e == 'true'
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.e2e == 'true'
       - run: pnpm --filter site-to-api exec playwright install --with-deps chromium
+        if: needs.changes.outputs.e2e == 'true'
       - run: pnpm run build
+        if: needs.changes.outputs.e2e == 'true'
       - run: pnpm exec vitest --run --project e2e
+        if: needs.changes.outputs.e2e == 'true'
 
   package-static:
     name: Pack and check the packages (manifests, publint, neutral runtime)
