@@ -202,6 +202,9 @@ export function rankHosts(analysis: Analysis, pageHosts: readonly SessionRequire
     ? browsed
     : new Set((analysis.startUrls ?? []).flatMap(url => hostOfUrl(url)).map(siteOf))
   const ownHost = (host: string): boolean => site.size === 0 || site.has(siteOf(host))
+  // A code-only route placed on a page host (decision 0061) is an API operation of that host, so
+  // the host is ranked like any API host although the capture saw only its pages.
+  const hasApiOperation = (host: string): boolean => analysis.operations.some(operation => operation.host === host && operation.kind === 'api')
   const unresolved = unresolvedHosts(analysis, sessions)
   const browsedHosts = new Set(analysis.operations
     .filter(operation => operation.kind === 'page' && !operation.sourceOnly && !framed.has(operation.host))
@@ -217,7 +220,7 @@ export function rankHosts(analysis: Analysis, pageHosts: readonly SessionRequire
     // A host that served only pages is one of the site's page hosts when it is on the site's
     // domain or served a page the person browsed; a host whose pages were all framed (an ad
     // network's sync page) or that only answered a captcha widget is a third party.
-    if (pageOnly.has(host)) {
+    if (pageOnly.has(host) && !hasApiOperation(host)) {
       const served = analysis.operations.some(operation => operation.host === host && !operation.sourceOnly)
       return !served || ownHost(host)
         ? 'pages'
