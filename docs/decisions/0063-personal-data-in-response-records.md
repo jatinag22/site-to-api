@@ -59,6 +59,10 @@ A long number in a user record (a timestamp, a loyalty balance) is masked too; e
 format, and schemas keep its type. Status labels in a person record (`panStatus`,
 `qualification`, `lastUpdate`) describe the record rather than identify the person and stay
 readable; a status about health (`healthStatus`) is masked by its word. A person record's codes
-lose their enum, so a generated client accepts any string there. A response field named for
-health in a non-personal sense (`healthCheck: "ok"`) is masked too. A partly masked code that is
+lose their enum, so a generated client accepts any string there.
+
+Update (0.1.3): a service's health check stays readable. Outside a person record, a field whose
+only special-category word is `health` (or `healthy`) keeps a value that is one of a health
+check's words (`ok`, `UP`, `healthy`, `degraded`, `SERVING`, ...). Any other value
+(`healthStatus: "FIT"`), and any health field inside a person record, is still masked. A partly masked code that is
 not personal (`REF XXX-1234`) keeps its letters but loses its digits.

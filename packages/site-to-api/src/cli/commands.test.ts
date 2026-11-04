@@ -30,9 +30,27 @@ afterEach(async () => {
 /** Writes `count` session folders and makes the mocked capture report the last one. */
 async function sessions(count: number): Promise<void> {
   const rawDir = join(dir, 'captures')
+  const meta = (sessionId: string): CaptureResult['meta'] => ({
+    formatVersion: 1,
+    sessionId,
+    toolVersion: 'test',
+    startUrl: null,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    completedAt: '2026-01-01T00:01:00.000Z',
+    browser: { channel: null, headless: true, userAgent: 'test' },
+    har: 'traffic.har',
+    events: 'events.jsonl',
+    scripts: [],
+  })
+  // Sessions with a request, since the count after a capture skips empty ones.
   for (let index = 0; index < count; index++) {
     await mkdir(join(rawDir, `s${index}`), { recursive: true })
-    await writeFile(join(rawDir, `s${index}`, 'meta.json'), '{}')
+    await writeFile(join(rawDir, `s${index}`, 'meta.json'), JSON.stringify(meta(`s${index}`)))
+    await writeFile(join(rawDir, `s${index}`, 'traffic.har'), JSON.stringify({
+      log: {
+        entries: [{}],
+      },
+    }))
   }
   const sessionId = `s${count - 1}`
   const result: CaptureResult = {
@@ -40,18 +58,7 @@ async function sessions(count: number): Promise<void> {
     warnings: [],
     requests: 1,
     events: 0,
-    meta: {
-      formatVersion: 1,
-      sessionId,
-      toolVersion: 'test',
-      startUrl: null,
-      startedAt: '2026-01-01T00:00:00.000Z',
-      completedAt: '2026-01-01T00:01:00.000Z',
-      browser: { channel: null, headless: true, userAgent: 'test' },
-      har: 'traffic.har',
-      events: 'events.jsonl',
-      scripts: [],
-    },
+    meta: meta(sessionId),
   }
   vi.mocked(runCapture).mockResolvedValue(result)
 }

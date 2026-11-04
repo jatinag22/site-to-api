@@ -47,7 +47,7 @@ import { isBotProtectionHeader } from '../classify'
 import { describeShape, inspectJwt } from '../shape'
 import { isOpaqueBlob } from './blobs'
 import { isOpaquePathSegment, isSecretPathSegment } from './path-tokens'
-import { carriesDeviceSignals, isDeviceSignalHeader, isFingerprintField, isIdLikeNumber, isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isTrackingIdName, maskDeviceSignals, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
+import { carriesDeviceSignals, isDeviceSignalHeader, isFingerprintField, isIdLikeNumber, isPersonalField, isPersonObject, isPersonRecordField, isPhoneField, isServiceHealth, isTrackingIdName, maskDeviceSignals, maskKeepingFormat, maskPersonalData, maskPhoneField, PERSONAL_DATA_PATTERNS } from './personal-data'
 import { CREDENTIAL_HEADERS, isPublicValue, isPublishableKeyName, isSecretName, nameWords } from './secret-names'
 
 interface RedactorInput {
@@ -414,6 +414,8 @@ function maskByName(text: string, name: string | null | undefined, personRecord:
   // A user agent or device description in a body fingerprints whoever captured it (0048); the
   // `User-Agent` header has its own rules.
   const fingerprint = isFingerprintField(name) && !header
+  if (!personRecord && isServiceHealth(name, text))
+    return null
   return fingerprint || isPersonalField(name) || (personRecord && (isPersonRecordField(name) || isIdLikeNumber(text)))
     ? maskKeepingFormat(text)
     : null
